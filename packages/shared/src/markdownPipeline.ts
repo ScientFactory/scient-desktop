@@ -123,7 +123,7 @@ function rehypePreserveBareAnchorPlaceholders() {
 }
 
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
-export function rehypePreserveImageSourceMeta() {
+function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const src = node.properties?.src;
@@ -143,7 +143,7 @@ export function rehypePreserveImageSourceMeta() {
   };
 }
 
-export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
+const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
@@ -298,7 +298,12 @@ function remarkKeepWindowsPathDestinations(this: Processor) {
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
-
-// SCIENT-FORK:START — document/chat profiles share the canonical Windows destination owner.
-export { remarkKeepWindowsPathDestinations };
+// SCIENT-FORK:START — document/chat profiles share the canonical Windows destination owner;
+// Scient's chat pipeline (apps/web/src/scient/markdown/scientMarkdownPipeline.ts) extends the
+// image metadata pass and the sanitizer schema.
+export {
+  CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  rehypePreserveImageSourceMeta,
+  remarkKeepWindowsPathDestinations,
+};
 // SCIENT-FORK:END

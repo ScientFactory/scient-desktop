@@ -19,6 +19,7 @@ import {
   createPackageWithOptions,
   extractAll,
   getRawHeader,
+  listPackage,
   statFile,
   type DirectoryRecord,
 } from "@electron/asar";
@@ -62,6 +63,10 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
+import {
+  stageFileExchangeForDesktopBuild,
+  validatePackagedFileExchange,
+} from "./lib/scient-file-exchange-build.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -134,7 +139,9 @@ const RepoRoot = Effect.service(Path.Path).pipe(
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
-const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+// Decodes the repo's pnpm-workspace.yaml. A PR CI test calls this too, so a bad
+// entry fails the PR instead of the nightly desktop build.
+export const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
@@ -1061,6 +1068,10 @@ import {
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
+  "!apps/desktop/resources/file-exchange",
+  "!apps/desktop/resources/file-exchange/**/*",
+  "!apps/desktop/prod-resources/file-exchange",
+  "!apps/desktop/prod-resources/file-exchange/**/*",
   // Cursor finds platform assets by walking up from argv[1]. Keep them outside
   // asar so spawning helpers and loading native addons both use real paths.
   "!**/node_modules/@cursor/sdk-*/**/*",
@@ -1069,10 +1080,14 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // Native publication is spawned only from the host resources path.
   "!apps/server/dist/file-exchange",
   "!apps/server/dist/file-exchange/**/*",
-  "!apps/desktop/resources/file-exchange",
-  "!apps/desktop/resources/file-exchange/**/*",
-  "!apps/desktop/prod-resources/file-exchange",
-  "!apps/desktop/prod-resources/file-exchange/**/*",
+  // Packaged consumers use extraResources, not these staging copies. Keep
+  // individual exclusions so prod-resources/icon.png remains available.
+  "!apps/desktop/prod-resources/resource-monitor",
+  "!apps/desktop/prod-resources/resource-monitor/**/*",
+  "!apps/desktop/prod-resources/whisper-runtime",
+  "!apps/desktop/prod-resources/whisper-runtime/**/*",
+  "!apps/desktop/prod-resources/synctex-runtime",
+  "!apps/desktop/prod-resources/synctex-runtime/**/*",
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1104,6 +1119,10 @@ export const MAC_FILE_EXCLUSIONS = [
 export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+  "!apps/desktop/prod-resources/kde-capture",
+  "!apps/desktop/prod-resources/kde-capture/**/*",
+  "!apps/desktop/prod-resources/hyprland-capture",
+  "!apps/desktop/prod-resources/hyprland-capture/**/*",
 ] as const;
 
 // Scient's packaged runtimes are emitted once at Electron's top-level
@@ -1111,6 +1130,10 @@ export const LINUX_FILE_EXCLUSIONS = [
 // every executable and DLL, so retaining either staging tree in app.asar would
 // create two additional loose copies of the same binaries and bloat installs.
 export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
+  "!apps/desktop/resources/file-exchange",
+  "!apps/desktop/resources/file-exchange/**/*",
+  "!apps/desktop/prod-resources/file-exchange",
+  "!apps/desktop/prod-resources/file-exchange/**/*",
   "!apps/desktop/resources/resource-monitor",
   "!apps/desktop/resources/resource-monitor/**/*",
   "!apps/desktop/resources/whisper-runtime",
@@ -3090,6 +3113,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
       extendInfo: {
+        // macOS 26 offers Messages/Mail codes in every text field unless opted out.
+        NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
         // Files open wherever they live, so macOS needs a reason to show for
@@ -3273,6 +3298,9 @@ export const buildWslRuntimeArchiveArgs = (
 ): ReadonlyArray<string> => [
   "-czf",
   archivePath,
+  // GNU tar and bsdtar match this against nested paths. Leave build maps in
+  // dist for debugging; only omit them from the installed WSL runtime.
+  "--exclude=*.map",
   ...WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.map((prefix) => `--exclude=${prefix}*`),
   ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
 ];
@@ -3538,6 +3566,90 @@ export const validatePackagedComputeBridges = Effect.fn("validatePackagedCompute
   },
 );
 
+// Inspect the emitted archive and every staged runtime file after packaging
+// (and signing). Signatures may change bytes, so compare presence and mode,
+// rather than demanding equality with the unsigned staging input.
+export const validatePackagedDesktopRuntimeResources = Effect.fn(
+  "validatePackagedDesktopRuntimeResources",
+)(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly resourcesDir: string;
+  readonly stageResourcesDir: string;
+}) {
+  const path = yield* Path.Path;
+  yield* Effect.tryPromise({
+    try: async () => {
+      const runtimeTrees = [
+        "resource-monitor",
+        "whisper-runtime",
+        "synctex-runtime",
+        ...(input.platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
+      ];
+      const asarPath = path.join(input.resourcesDir, "app.asar");
+      const members = listPackage(asarPath, { isPack: false }).map((member) =>
+        member.replaceAll("\\", "/").replace(/^\//, ""),
+      );
+      for (const tree of runtimeTrees) {
+        const prefix = `apps/desktop/prod-resources/${tree}`;
+        if (members.some((member) => member === prefix || member.startsWith(`${prefix}/`))) {
+          throw new Error(`Duplicate runtime staging tree in app.asar: ${prefix}`);
+        }
+        const stagedRoot = path.join(input.stageResourcesDir, tree);
+        const entries = await NodeFSP.readdir(stagedRoot, { recursive: true });
+        let fileCount = 0;
+        for (const relative of entries) {
+          const staged = await NodeFSP.stat(path.join(stagedRoot, relative));
+          if (!staged.isFile()) continue;
+          fileCount++;
+          const packagedPath = path.join(input.resourcesDir, tree, relative);
+          const packaged = await NodeFSP.stat(packagedPath);
+          if (!packaged.isFile() || packaged.size === 0) {
+            throw new Error(`Missing or empty external runtime file: ${packagedPath}`);
+          }
+          if (
+            input.platform !== "win" &&
+            (staged.mode & 0o111) !== 0 &&
+            (packaged.mode & 0o111) === 0
+          ) {
+            throw new Error(`External runtime lost executable mode: ${packagedPath}`);
+          }
+        }
+        if (fileCount === 0) throw new Error(`Empty staged runtime: ${stagedRoot}`);
+      }
+      const requiredExecutables = [
+        `resource-monitor/${resourceMonitorExecutableName(input.platform)}`,
+        `whisper-runtime/whisper-server${input.platform === "win" ? ".exe" : ""}`,
+        `synctex-runtime/synctex${input.platform === "win" ? ".exe" : ""}`,
+        ...(input.platform === "linux"
+          ? ["kde-capture/t3-kde-snap-shot", "hyprland-capture/t3-hyprland-snap-shot"]
+          : []),
+      ];
+      for (const relative of requiredExecutables) {
+        const executable = await NodeFSP.stat(path.join(input.resourcesDir, relative));
+        if (
+          !executable.isFile() ||
+          executable.size === 0 ||
+          (input.platform !== "win" && (executable.mode & 0o111) === 0)
+        ) {
+          throw new Error(`Required external runtime is not executable: ${relative}`);
+        }
+      }
+      if (input.platform === "linux") {
+        const icon = statFile(asarPath, path.join("apps", "desktop", "prod-resources", "icon.png"));
+        if (!("size" in icon) || icon.size === 0) {
+          throw new Error("Missing Linux registration icon in app.asar");
+        }
+      }
+    },
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: "verify packaged Desktop runtime resources",
+        exitCode: 1,
+        stderrTail: String(cause),
+      }),
+  });
+});
+
 function collectUnpackedAsarFiles(
   directory: DirectoryRecord,
   parentPath = "",
@@ -3605,10 +3717,7 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   const probeRoot = yield* fs.makeTempDirectoryScoped({
     prefix: "t3code-windows-primary-native-probe-",
   });
-  const fffEntryPath = path.join(
-    input.asarPath,
-    "node_modules/@ff-labs/fff-node/dist/src/index.js",
-  );
+  const fffEntryPath = path.join(input.asarPath, "node_modules/@ff-labs/fff-node/dist/index.js");
   const probeEnv = { ...process.env };
   delete probeEnv.ELECTRON_NO_ASAR;
   delete probeEnv.NODE_OPTIONS;
@@ -3865,8 +3974,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find((member) =>
-      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
+    const forbiddenMember = members.find(
+      (member) =>
+        member.endsWith(".map") ||
+        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
     );
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
@@ -4184,6 +4295,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     platform: options.platform,
     arch: options.arch,
     verbose: options.verbose,
+  });
+  yield* Effect.tryPromise({
+    try: () =>
+      stageFileExchangeForDesktopBuild({
+        repoRoot,
+        stageResourcesDir,
+        platform: options.platform,
+        arch: options.arch,
+      }),
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: `stage file exchange (${options.platform}/${options.arch})`,
+        exitCode: 1,
+        stderrTail: cause instanceof Error ? cause.message : String(cause),
+      }),
   });
   yield* runCommand(
     ChildProcess.make(
@@ -4530,6 +4656,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.SCIC_PREVIEW_EXPECTED;
     delete buildEnv.SCIC_PREVIEW_EXPECTED_BUNDLE_ID;
   }
+  if (options.platform === "mac") buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED = "1";
+  else delete buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED;
 
   if (hostPlatform === "win32") {
     const python = yield* resolvePythonForNodeGyp();
@@ -4585,6 +4713,36 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       platform: options.platform,
       arch: options.arch,
     });
+  }
+  if (options.platform === "mac") {
+    const macDirectories = (yield* fs.readDirectory(stageDistDir)).filter((entry) =>
+      entry.startsWith("mac"),
+    );
+    let bundles = 0;
+    for (const directory of macDirectories) {
+      const app = path.join(
+        stageDistDir,
+        directory,
+        `${resolveDesktopProductName(appVersion)}.app`,
+      );
+      if (!(yield* fs.exists(app))) continue;
+      bundles++;
+      yield* Effect.tryPromise({
+        try: () => validatePackagedFileExchange(app, options.arch),
+        catch: (cause) =>
+          new BuildCommandFailedError({
+            command: "verify packaged file exchange",
+            exitCode: 1,
+            stderrTail: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+    }
+    if (bundles === 0)
+      return yield* new BuildCommandFailedError({
+        command: "verify packaged file exchange",
+        exitCode: 1,
+        stderrTail: "No packaged macOS app found for helper validation.",
+      });
   }
   if (options.platform === "mac" && nativePreviewPath !== undefined) {
     const macDirectories = (yield* fs.readDirectory(stageDistDir)).filter((entry) =>
@@ -4689,6 +4847,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* validatePackagedComputeBridges(
       path.join(resources, options.platform === "win" ? WINDOWS_SERVER_ASAR_RESOURCE : "app.asar"),
     );
+    yield* validatePackagedDesktopRuntimeResources({
+      platform: options.platform,
+      resourcesDir: resources,
+      stageResourcesDir: stageProdResourcesDir,
+    });
   }
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 

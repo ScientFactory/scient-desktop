@@ -8,6 +8,7 @@ export function needsWindowsPackaging(paths) {
     ".github/workflows/ci.yml",
     ".github/workflows/windows-packaging.yml",
     ".github/workflows/remote-server-packaging.yml",
+    ".github/workflows/linux-packaging.yml",
     ".github/workflows/release.yml",
     ".github/scripts/windows-packaging-ci-gate.mjs",
     ".github/scripts/windows-packaging-ci-gate.test.mjs",
@@ -35,6 +36,43 @@ export function needsWindowsPackaging(paths) {
   );
 }
 
+/** Linux assembly/native changes need an AppImage; ordinary renderer edits do not. */
+export function needsLinuxPackaging(paths) {
+  const exact = new Set([
+    ".github/scripts/linux-packaging-probe.test.mjs",
+    ".github/workflows/ci.yml",
+    ".github/workflows/linux-packaging.yml",
+    ".github/workflows/release.yml",
+    ".github/scripts/windows-packaging-ci-gate.mjs",
+    ".github/scripts/windows-packaging-ci-gate.test.mjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ".npmrc",
+    ".node-version",
+    ".nvmrc",
+    "vite.config.ts",
+    "t3.json",
+    "tsconfig.base.json",
+  ]);
+  const prefixes = [
+    "apps/desktop/",
+    "native/",
+    "patches/",
+    "scripts/build-desktop-artifact",
+    "scripts/stage-",
+    "scripts/lib/",
+    "scripts/qualify-linux-",
+    "scripts/measure-linux-",
+  ];
+  return paths.some(
+    (path) =>
+      exact.has(path) ||
+      path.endsWith("/package.json") ||
+      prefixes.some((prefix) => path.startsWith(prefix)),
+  );
+}
+
 function detectChanges() {
   try {
     const event = JSON.parse(NodeFS.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
@@ -51,18 +89,21 @@ function detectChanges() {
     )
       .split("\0")
       .filter(Boolean);
-    return needsWindowsPackaging(paths);
+    return { changed: needsWindowsPackaging(paths), linux_changed: needsLinuxPackaging(paths) };
   } catch {
-    console.warn("Could not establish the changed paths; running Windows packaging qualification.");
-    return true;
+    console.warn("Could not establish the changed paths; running desktop packaging qualification.");
+    return { changed: true, linux_changed: true };
   }
 }
 
 if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === "detect") {
-    const changed = detectChanges();
-    NodeFS.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
-    console.log("Windows packaging required:", changed);
+    const result = detectChanges();
+    NodeFS.appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `changed=${result.changed}\nlinux_changed=${result.linux_changed}\n`,
+    );
+    console.log("Desktop packaging required:", result);
   } else if (process.argv[2] === "check") {
     const results = {
       workspace: process.env.WORKSPACE_RESULT,
@@ -73,6 +114,13 @@ if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]
     console.log("Windows packaging gate:", results);
     const remote = { ...results, native: process.env.REMOTE_SERVER_RESULT };
     console.log("Remote server packaging gate:", remote);
-    if (!testGatePasses(results) || !testGatePasses(remote)) process.exitCode = 1;
+    const linux = {
+      ...results,
+      changed: process.env.LINUX_CHANGED,
+      native: process.env.LINUX_NATIVE_RESULT,
+    };
+    console.log("Linux packaging gate:", linux);
+    if (!testGatePasses(results) || !testGatePasses(remote) || !testGatePasses(linux))
+      process.exitCode = 1;
   } else throw new Error("Expected detect or check");
 }

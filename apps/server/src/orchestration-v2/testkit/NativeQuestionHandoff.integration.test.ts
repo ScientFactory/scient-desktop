@@ -32,7 +32,8 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
-import { historicalMessage, historyCost, selectHistory } from "../ScientHistoricalContext.ts";
+import { historicalMessage } from "../ScientHistoricalContext.ts";
+import { historyCost, selectHistory } from "@t3tools/provider-core/server/handoffBudget";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -80,6 +81,7 @@ it.live(
                 const frames = child ? childFrames : sourceFrames;
                 if (!child) options = input.options;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(frames),
@@ -100,6 +102,7 @@ it.live(
                       Effect.asVoid,
                     ),
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(frames),
                 };

@@ -1,3 +1,4 @@
+// SCIENT-FORK:START — Scient modules this sink composes (fork history, running-fork capture, ...).
 import {
   ProviderTextSnapshotError,
   type ProviderTextSnapshotOwner,
@@ -20,11 +21,14 @@ import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
 import {
   readCurrentRunningForkOwner,
   runningForkAuthorityChanged,
+  makeRunningForkTextCapture,
 } from "./scient-fork/runningForkSource.ts";
+// SCIENT-FORK:END
 import {
   CommandId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -113,10 +117,12 @@ interface EventSinkTransactionHooks {
 }
 
 export interface EventSinkV2Shape {
+  // SCIENT-FORK:START — a running fork's captured text, written and read in one transaction.
   readonly captureRunningForkText?: (input: {
     readonly owner: ProviderTextSnapshotOwner;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ProviderTextSnapshotProjection, EventSinkV2Error | ProviderTextSnapshotError>;
+  // SCIENT-FORK:END
 
   readonly write: (
     input: EventSinkTransactionHooks & {
@@ -181,19 +187,38 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
+  /**
+   * Atomically commit only while the stored provider thread still equals
+   * `expected`, the row its writer read, so a read-modify-write of the row
+   * cannot overwrite an update published in between. The whole row is
+   * compared because not every writer moves `updatedAt`.
+   */
+  readonly writeIfProviderThreadUnchanged: (input: {
+    readonly expected: OrchestrationV2ProviderThread;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
   readonly commitCommand: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
+    // SCIENT-FORK:START — a running fork's captured source, rechecked at commit.
     readonly runningForkSource?: {
       readonly owner: ProviderTextSnapshotOwner;
       readonly capture: ProviderTextSnapshotProjection;
     };
+    // SCIENT-FORK:END
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
-    /** SCIENT-FORK: a new fork's inherited history, recorded with its creation. */
+    // SCIENT-FORK:START — a new fork's inherited history, recorded with its creation.
     readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
+    // SCIENT-FORK:END
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -446,7 +471,12 @@ const layerBase: Layer.Layer<
           yield* effectOutbox.enqueue(input.effects);
           if (input.transactionHooks !== undefined) yield* input.transactionHooks.finalize;
           return committed;
-        }),
+        }).pipe(
+          // Every streamed agent event is a write, so its statements would
+          // dominate the trace file. This span and its sql.transaction span
+          // still time each write, including the commit.
+          Effect.withTracerEnabled(false),
+        ),
         (storedEvents) =>
           Effect.gen(function* () {
             yield* eventStore.publishCommitted(storedEvents);
@@ -617,6 +647,39 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const writeIfProviderThreadUnchangedEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfProviderThreadUnchanged",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.provider_thread_id": input.expected.id,
+      });
+      const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
+
+      return yield* commitAndPublish(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_provider_threads
+            WHERE provider_thread_id = ${input.expected.id}
+            LIMIT 1
+          `;
+          if (rows[0]?.payload_json !== expectedJson) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({ events: normalized });
+          yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents };
+        }),
+        (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
+      );
+    });
+
     const existingCommandResult = (commandId: CommandId) =>
       Effect.gen(function* () {
         const existing = yield* commandReceipts.getByCommandId(commandId);
@@ -637,49 +700,35 @@ const layerBase: Layer.Layer<
       readCurrentRunningForkOwner({ projectionStore, projectStore }, owner);
     // SCIENT-FORK:END
 
-    const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
-      input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
-    ) {
-      const result = yield* commitAndPublish(
+    // SCIENT-FORK:START — a running fork's captured text, written with this sink's steps.
+    const writeRunningForkText = makeRunningForkTextCapture({
+      commitAndPublish,
+      readOwner: readRunningForkOwner,
+      appendAndApply: (events) =>
         Effect.gen(function* () {
-          yield* readRunningForkOwner(input.owner);
-          const normalized = yield* normalizeEvents(input.events);
-          const storedEvents = yield* eventStore.append({ events: normalized });
+          const storedEvents = yield* eventStore.append({ events: yield* normalizeEvents(events) });
           yield* applyStoredEvents(storedEvents);
-          yield* readRunningForkOwner(input.owner);
-          // The fork's one full read of its source, at the captured frame.
-          const projection = yield* projectionStore.getThreadProjection(input.owner.threadId);
-          const sourceSequence = yield* eventStore.latestSequence({
-            threadId: input.owner.threadId,
-          });
-          const project = yield* projectStore.get(projection.thread.projectId);
-          if (Option.isNone(project))
-            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-          return {
-            projection,
-            sourceSequence,
-            storedEvents,
-            workspaceRoot: project.value.workspaceRoot,
-          };
+          return storedEvents;
         }),
-        (committed) =>
-          Effect.gen(function* () {
-            yield* eventStore.publishCommitted(committed.storedEvents);
-            yield* publishLiveEvents(committed.storedEvents);
-          }),
-      ).pipe(
+      publish: (storedEvents) =>
+        eventStore
+          .publishCommitted(storedEvents)
+          .pipe(Effect.andThen(publishLiveEvents(storedEvents))),
+      latestSequence: (threadId) => eventStore.latestSequence({ threadId }),
+      projectionStore,
+      projectStore,
+    });
+    const captureRunningForkText = (
+      input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
+    ) =>
+      writeRunningForkText(input).pipe(
         Effect.mapError((cause) =>
           Schema.is(ProviderTextSnapshotError)(cause)
             ? cause
             : new EventSinkWriteError({ eventCount: input.events.length, cause }),
         ),
       );
-      return {
-        projection: result.projection,
-        sourceSequence: result.sourceSequence,
-        workspaceRoot: result.workspaceRoot,
-      };
-    });
+    // SCIENT-FORK:END
 
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
@@ -795,9 +844,25 @@ const layerBase: Layer.Layer<
             }
           }),
       );
+      // SCIENT-FORK:START — first and reused command receipts share the bounded read representation.
+      const returnedEvents = result.committed
+        ? yield* eventStore.readByCommandId({ commandId: input.commandId }).pipe(
+            Stream.runCollect,
+            Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
+            Effect.mapError(
+              (cause) =>
+                new EventSinkWriteError({
+                  commandId: input.commandId,
+                  eventCount: input.events.length,
+                  cause,
+                }),
+            ),
+          )
+        : result.storedEvents;
+      // SCIENT-FORK:END
       return {
         receipt: result.receipt,
-        storedEvents: result.storedEvents,
+        storedEvents: returnedEvents,
         committed: result.committed,
         cancelledEffectCount: result.cancelledEffectIds.length,
       };
@@ -973,7 +1038,9 @@ const layerBase: Layer.Layer<
     };
 
     return EventSinkV2.of({
+      // SCIENT-FORK:START — running-fork text capture.
       captureRunningForkText,
+      // SCIENT-FORK:END
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
           Effect.mapError(
@@ -1016,6 +1083,12 @@ const layerBase: Layer.Layer<
                 ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                 cause,
               }),
+          ),
+        ),
+      writeIfProviderThreadUnchanged: (input) =>
+        writeIfProviderThreadUnchangedEffect(input).pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),
         ),
       commitCommand: (input) =>

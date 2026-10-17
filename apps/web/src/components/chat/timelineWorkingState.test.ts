@@ -3,7 +3,7 @@ import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-run
 import { describe, expect, it } from "vite-plus/test";
 import { hasServerAcknowledgedLocalDispatch, type LocalDispatchSnapshot } from "../ChatView.logic";
 import { derivePhase } from "../../session-logic";
-import { resolveTimelineWorking } from "./timelineWorkingState";
+import { isOnlySendBusy, resolveTimelineWorking } from "./timelineWorkingState";
 
 const previousPrompt = MessageId.make("prompt-1");
 const sentPrompt = MessageId.make("prompt-2");
@@ -165,5 +165,34 @@ describe("resolveTimelineWorking", () => {
         dispatchReset: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("isOnlySendBusy", () => {
+  const sendOnly = {
+    isSendBusy: true,
+    phase: "ready",
+    isConnecting: false,
+    isCompacting: false,
+    awaitingBootstrapTurn: false,
+    isForkingThread: false,
+    isRevertingCheckpoint: false,
+    isPreparingWorktree: false,
+  } as const;
+
+  it("is true only while the send alone makes the thread busy", () => {
+    expect(isOnlySendBusy(sendOnly)).toBe(true);
+    expect(isOnlySendBusy({ ...sendOnly, isSendBusy: false })).toBe(false);
+    expect(isOnlySendBusy({ ...sendOnly, phase: "running" })).toBe(false);
+    for (const cause of [
+      "isConnecting",
+      "isCompacting",
+      "awaitingBootstrapTurn",
+      "isForkingThread",
+      "isRevertingCheckpoint",
+      "isPreparingWorktree",
+    ] as const) {
+      expect(isOnlySendBusy({ ...sendOnly, [cause]: true })).toBe(false);
+    }
   });
 });

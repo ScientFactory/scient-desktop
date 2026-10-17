@@ -68,6 +68,9 @@ import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCod
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type { BuiltInDriversEnv } from "./builtInDrivers.ts";
 import { DroidDriver } from "./Drivers/DroidDriver.ts";
+import type { DroidDriverEnv } from "./Drivers/DroidDriver.ts";
+import { MuseDriver, type MuseCompositionEnv } from "./MuseDriverComposition.ts";
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as OmpExecutableGate from "./omp/OmpExecutableGate.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -81,6 +84,7 @@ import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import { SECRET_REDACTED } from "../settingsSecrets.ts";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
 
@@ -97,6 +101,9 @@ const TestPtyAdapterLive = Layer.succeed(
     spawn: () => Effect.die("PTY must not start in provider instance registry tests"),
   }),
 );
+
+// The mock CLIs from makeTildeProviderFixtures are scripts Windows cannot execute.
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -477,6 +484,40 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("runs Claude instance probes in the server state dir, not the server cwd", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const claudeId = ProviderInstanceId.make("claude_state_dir");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            // Packaged desktop builds start the server in $HOME, where some
+            // `claude` wrappers refuse to run.
+            environment: [{ name: "T3_CLAUDE_REQUIRED_CWD", value: stateDir, sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      expect(yield* claude!.snapshot.refresh).toMatchObject({
+        status: "ready",
+        version: "2.1.219",
+        auth: { status: "authenticated" },
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -546,7 +587,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       Effect.provide(testLayer),
     );
 
-  it.live("refreshes Claude usage after redeeming a reset", () =>
+  it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
     Effect.gen(function* () {
       const { outcome, after } = yield* redeemClaudeReset({
         result: "reset",
@@ -557,14 +598,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }),
   );
 
-  it.live("reports Claude's answer when a claim changed nothing and the re-probe fails", () =>
-    Effect.gen(function* () {
-      const { outcome } = yield* redeemClaudeReset({
-        result: "already_used",
-        usageFailsAfterClaim: true,
-      });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
-    }),
+  it.live.skipIf(windowsHost)(
+    "reports Claude's answer when a claim changed nothing and the re-probe fails",
+    () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* redeemClaudeReset({
+          result: "already_used",
+          usageFailsAfterClaim: true,
+        });
+        expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
+      }),
   );
 
   it.live(
@@ -665,6 +708,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   const layerWithAcpRegistry = AcpRegistrySupport.layerFromHost.pipe(Layer.provideMerge(layerBase));
   const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provideMerge(layerWithAcpRegistry),
+    Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -675,6 +719,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droidId = ProviderInstanceId.make("droid_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const museId = ProviderInstanceId.make("muse_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
@@ -682,8 +727,10 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droidDriverKind = ProviderDriverKind.make("droid");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const museDriverKind = ProviderDriverKind.make("muse");
 
       const configMap: ProviderInstanceConfigMap = {
+        [museId]: { driver: museDriverKind, displayName: "Muse", enabled: false, config: {} },
         [codexId]: {
           driver: codexDriverKind,
           displayName: "Codex",
@@ -726,14 +773,23 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<
-        | BuiltInDriversEnv
         | CodexDriverEnv
         | ClaudeDriverEnv
         | CursorDriverEnv
         | GrokCompositionRequirements
         | OpenCodeCompositionEnv
+        | DroidDriverEnv
+        | MuseCompositionEnv
       >({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, DroidDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          DroidDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          MuseDriver,
+        ],
         configMap,
       });
 
@@ -743,9 +799,9 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(6);
+      expect(instances).toHaveLength(7);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, droidId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, droidId, grokId, openCodeId, museId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -757,6 +813,14 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droid = yield* registry.getInstance(droidId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const muse = yield* registry.getInstance(museId);
+      expect(muse?.driverKind).toBe(museDriverKind);
+      expect(muse?.auth?.credentialBinding?.key).toBe("muse:native-host-account");
+      expect(muse?.managedRuntimeActions).toBeDefined();
+      const museSnapshot = yield* muse!.snapshot.getSnapshot;
+      expect(museSnapshot.instanceId).toBe(museId);
+      expect(museSnapshot.enabled).toBe(false);
+      expect(museSnapshot.setup?.canAuthenticate).toBe(false);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
@@ -915,6 +979,67 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
         } satisfies ProviderInstance;
       }),
   });
+
+  it.effect("withholds unresolved credentials before creation and preserves config errors", () =>
+    Effect.gen(function* () {
+      const created: Array<{ readonly instanceId: string; readonly enabled: boolean }> = [];
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [makeRecordingDriver(created)],
+        configMap: {
+          [ProviderInstanceId.make("config_marker")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: SECRET_REDACTED },
+          },
+          [ProviderInstanceId.make("invalid_config")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: SECRET_REDACTED, binaryPath: false },
+          },
+          [ProviderInstanceId.make("env_marker")]: {
+            driver: antigravityDriverKind,
+            environment: [{ name: "TOKEN", value: "", sensitive: true, valueRedacted: true }],
+          },
+          [ProviderInstanceId.make("materialized_env")]: {
+            driver: antigravityDriverKind,
+            environment: [
+              { name: "TOKEN", value: "materialized-token", sensitive: true, valueRedacted: true },
+            ],
+          },
+          [ProviderInstanceId.make("ordinary_empty_env")]: {
+            driver: antigravityDriverKind,
+            environment: [{ name: "OPTION", value: "", sensitive: false }],
+          },
+          [ProviderInstanceId.make("explicit_empty_secret")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: "" },
+          },
+          [ProviderInstanceId.make("nonsecret_marker")]: {
+            driver: antigravityDriverKind,
+            config: { binaryPath: SECRET_REDACTED, apiKey: "actual-key" },
+          },
+        },
+      });
+      expect(created.map((entry) => entry.instanceId).toSorted()).toEqual(
+        [
+          "materialized_env",
+          "ordinary_empty_env",
+          "explicit_empty_secret",
+          "nonsecret_marker",
+        ].toSorted(),
+      );
+      const unavailable = yield* registry.listUnavailable;
+      expect(unavailable).toHaveLength(3);
+      expect(
+        unavailable.find((entry) => entry.instanceId === "invalid_config")?.unavailableReason,
+      ).toContain("Invalid config");
+      for (const id of ["config_marker", "env_marker"]) {
+        const snapshot = unavailable.find((entry) => entry.instanceId === id);
+        expect(snapshot?.availability).toBe("unavailable");
+        expect(snapshot?.enabled).toBe(false);
+        expect(snapshot?.unavailableReason).toContain("credentials could not be read");
+        expect(snapshot?.unavailableReason).not.toContain(SECRET_REDACTED);
+      }
+    }),
+  );
 
   it.effect("resolves every envelope/config flag combination per most-restrictive-wins", () =>
     Effect.gen(function* () {

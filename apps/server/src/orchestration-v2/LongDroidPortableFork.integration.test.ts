@@ -472,8 +472,14 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             const resolution = done.contextTransfers[0]?.resolution;
             assert.ok(resolution?.strategy === "portable_context");
             assert.equal(resolution.contextHandoffId, done.contextHandoffs[0]?.id);
+            const retained = yield* store.resolveContextHistory({
+              handoffs: [done.contextHandoffs[0]!],
+              coverage: done.contextHandoffs[0]!.history!.coverage,
+              budget: 64_000,
+              alreadyDeliveredItemIds: new Set(),
+            });
             assert.deepEqual(
-              done.contextHandoffs[0]?.history?.messages.map((message) => message.text),
+              retained.messages.map((message) => message.text),
               [sourceText, sourceAnswer],
             );
             assert.equal(done.contextHandoffs[0]?.delivery?.status, "inline");

@@ -34,10 +34,14 @@ vi.mock("@react-navigation/native", () => ({
   useNavigation: () => native,
   useRoute: () => ({ params: native.params }),
 }));
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({ _tag: "Initial" }),
-  useAtomSet: () => vi.fn(),
-}));
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@effect/atom-react")>();
+  return {
+    ...actual,
+    useAtomValue: () => ({ _tag: "Initial" }),
+    useAtomSet: () => vi.fn(),
+  };
+});
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
@@ -164,6 +168,7 @@ async function open(runtimeMode: RuntimeMode, model = grok) {
     root.render(
       <ThreadSettingsPickerScreen
         environmentId={null}
+        projectId={null}
         providerGroups={[{ providerKey: "grok", providerLabel: "Grok", models: [model] }]}
         selectedModel={model.selection}
         onSelectModel={vi.fn()}

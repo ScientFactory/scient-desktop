@@ -63,6 +63,7 @@ vi.mock("./ScientAgentInlineSetup", () => ({
   ScientAgentInlineSetup: inlineSetup("Scient Agent"),
 }));
 vi.mock("./OmpInlineSetup", () => ({ OmpInlineSetup: inlineSetup("Oh My Pi") }));
+vi.mock("./MuseInlineSetup", () => ({ MuseInlineSetup: inlineSetup("Muse Code") }));
 
 import {
   AssistedProviderSetupHost,
@@ -111,6 +112,7 @@ describe("AssistedProviderSetupHost", () => {
     ["cursor", "Cursor"],
     ["droid", "Droid"],
     ["grok", "Grok"],
+    ["muse", "Muse Code"],
   ] as const)("routes the %s composer surface through one controller", (driver, name) => {
     const value = provider(driver, name);
     const markup = renderToStaticMarkup(
@@ -135,6 +137,7 @@ describe("AssistedProviderSetupHost", () => {
     ["cursor", "Cursor"],
     ["droid", "Droid"],
     ["grok", "Grok"],
+    ["muse", "Muse Code"],
   ] as const)("keeps the %s management capabilities explicit", (driver, name) => {
     const markup = renderToStaticMarkup(
       <AssistedProviderSetupHost

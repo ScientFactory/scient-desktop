@@ -4,9 +4,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
-const root = NodeURL.fileURLToPath(new URL("..", import.meta.url));
+const root = NodePath.resolve(import.meta.dirname, "..");
 const argumentsByName = new Map(
   process.argv.slice(2).map((argument) => {
     const separator = argument.indexOf("=");
@@ -95,7 +94,6 @@ try {
       { stdio: "inherit", cwd: scratch },
     );
   }
-  await NodeFSP.rm(NodePath.join(destination, "scient-file-exchange"), { force: true });
   await NodeFSP.writeFile(
     NodePath.join(destination, "publication-artifact.json"),
     `${JSON.stringify({ protocol: 1, platform, arch, probe, executable: NodePath.basename(executable) })}\n`,

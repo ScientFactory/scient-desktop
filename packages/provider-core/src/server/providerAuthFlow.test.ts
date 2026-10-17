@@ -21,6 +21,37 @@ import * as ProviderAuthFlow from "./providerAuthFlow.ts";
 const instanceId = ProviderInstanceId.make("auth-flow-test");
 const method = { id: "browser", name: "Browser", description: null, type: "agent" as const };
 
+it.effect("does not turn unverified native completion into an account-status witness", () =>
+  Effect.gen(function* () {
+    const controller = yield* ProviderAuthFlow.make({
+      instanceId,
+      credentialBinding: { owner: "provider", key: "native-host-account" },
+      methods: Effect.succeed([method]),
+      accountVerified: false,
+      successMessage: "Native account setup finished. Verification is unavailable.",
+      authenticate: () => Effect.void,
+      logout: Effect.void,
+    });
+    yield* controller.start("owner");
+    const state = yield* controller.subscribe("owner").pipe(
+      Stream.filter((state) => state.phase === "idle" && state.flowId !== null),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+    assert.strictEqual(state.accountVerified, false);
+    assert.strictEqual(state.phase, "idle");
+    assert.strictEqual(
+      state.message,
+      "Native account setup finished. Verification is unavailable.",
+    );
+    const other = yield* controller
+      .subscribe("other")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.strictEqual(other.accountVerified, false);
+    assert.isNull(other.interaction);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("distinguishes pending method discovery from an agent with no sign-in methods", () =>
   Effect.gen(function* () {
     const discovered = yield* Deferred.make<ReadonlyArray<typeof method>>();

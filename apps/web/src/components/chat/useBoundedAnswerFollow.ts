@@ -7,8 +7,8 @@ import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
 
-/** How much of a newly arrived message the reveal shows: its first lines. */
-const FIRST_LINES_PX = 48;
+/** How much of a message counts as its start being shown: its first lines. */
+export const FIRST_LINES_PX = 48;
 /** The timeline's estimated row height, for a row not yet measured. */
 const ESTIMATED_ROW_SIZE = 90;
 /** How the reveal moves: a top speed and how gently it eases to a stop. */
@@ -344,11 +344,29 @@ export function useBoundedAnswerFollow({
       else revealTop = Math.max(revealTop, viewport.scrollTop);
     };
     const onKey = (event: KeyboardEvent) => {
+      // Only a key that scrolls the timeline counts (as in ChatView's own key
+      // handling): focus in the timeline or nowhere, unmodified, not typing. A
+      // key moving through a menu, a dialog or the composer leaves the follow be.
+      const target = event.target;
+      const document = viewport.ownerDocument;
       if (
-        event.target instanceof Element &&
-        event.target.closest("input, textarea, [contenteditable=true]")
+        !(target instanceof Node) ||
+        (!viewport.contains(target) &&
+          target !== document.body &&
+          target !== document.documentElement) ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        (target instanceof Element &&
+          target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))
       )
         return;
+      // A key scrolling a nested region (tool output) leaves the timeline where it is.
+      const direction = ["ArrowUp", "PageUp", "Home"].includes(event.key) ? -1 : 1;
+      if (viewport.contains(target) && !isTimelineScrollTarget(target, viewport, direction)) return;
       if (["ArrowUp", "PageUp", "Home"].includes(event.key)) cancel();
       else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) yieldToReader();
     };

@@ -65,6 +65,8 @@ import Migration021 from "./migrations/021_ForkCheckpointOwnership.ts";
 import Migration022 from "./migrations/022_ForkHistory.ts";
 import Migration023 from "./migrations/023_ForkHistoryLookups.ts";
 import Migration024 from "./migrations/024_LegacySourceReconciliation.ts";
+import Migration025 from "./migrations/025_ContextHistorySources.ts";
+import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -129,6 +131,8 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 22, name: "fork-history", effect: Migration022 },
   { id: 23, name: "fork-history-lookups", effect: Migration023 },
   { id: 24, name: "legacy-source-reconciliation", effect: Migration024 },
+  { id: 25, name: "context-history-sources", effect: Migration025 },
+  { id: 26, name: "compact-archived-projection-handoffs", effect: Migration026 },
 ] as const;
 
 const loader = Migrator.fromRecord(

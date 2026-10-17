@@ -72,11 +72,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
@@ -313,11 +315,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
@@ -428,7 +432,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             () => events.filter((event) => event.type === "turn.terminal").length === 2,
             "user turn terminal after replace",
           );
-          assert.isTrue(yield* hasPendingBackgroundWork);
+          // Native completion was published while idle, before the wake replay.
+          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
           assert.lengthOf(continuationRequests, 1);
 
           yield* Queue.offer(
@@ -506,11 +512,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
                 };
@@ -628,15 +636,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => terminals().length === 2, "switched turn terminal");
+        // Model and effort now change on the live process, so turn thinking
+        // off: that launch flag still needs another process.
         yield* runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId,
             providerThread: { ...providerThread, status: "active" },
             now,
             attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-d"),
-            text: "Switch back.",
+            text: "Stop thinking.",
             attachments: [],
             providerTurnOrdinal: 3,
+            modelSelection: { ...alternateModel, options: [{ id: "thinking", value: false }] },
           }),
         );
         assert.lengthOf(processQueues, 3);
@@ -689,11 +700,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };

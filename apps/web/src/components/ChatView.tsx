@@ -2,11 +2,14 @@ import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import * as DateTime from "effect/DateTime";
+// SCIENT-FORK:START — the reading-end rule and send framing (chat/readerScrollPolicy.ts).
 import {
   canApplySendAnchor,
+  latestTurnUnfinished,
   savedPositionIsAtEnd,
   readerAtReadingEnd,
 } from "./chat/readerScrollPolicy";
+// SCIENT-FORK:END
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -110,6 +113,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
+  resolveProjectProviderInstanceEnabled,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -135,6 +139,8 @@ import {
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -161,6 +167,8 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
+// SCIENT-FORK:START — placement uses the timeline's own anchor offset (CHAT_TIMELINE_ANCHOR_OFFSET).
+// SCIENT-FORK:END
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -171,7 +179,9 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { useTimelineEndControl } from "./chat/useTimelineEndControl";
+// SCIENT-FORK:START — the Scroll to end control and its unread count (chat/useTimelineEndControl.ts).
+import { followModeAfterEndTransition, useTimelineEndControl } from "./chat/useTimelineEndControl";
+// SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -228,14 +238,17 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  readTimelinePosition,
   timelineContentOverflowsViewport,
+  readTimelinePosition,
+  // SCIENT-FORK:START — a run started elsewhere is not anchored on its own; only this
+  // window's sends are framed (chat/responseFollow.ts).
+  // SCIENT-FORK:END
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
 // SCIENT-FORK:START — the send follow, its working row and the draft composer's motion.
 import { useQueuedDeliveryFollow, useResponseFollow } from "./chat/responseFollow";
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
-import { useTimelineWorking } from "./chat/timelineWorkingState";
+import { isOnlySendBusy, useTimelineWorking } from "./chat/timelineWorkingState";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — fork command, baseline, dialog wiring and landing.
 import {
@@ -254,6 +267,7 @@ import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
+  projectPendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -279,6 +293,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -379,6 +394,7 @@ import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelCon
 // marked blocks below, and `~/scient/threadQueue`.
 import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
 import {
+  deriveQueueAcknowledgedUserMessages,
   pendingQueueAdmissionPreviews,
   optimisticTimelineMessages,
   settleQueueAdmissionPreview,
@@ -601,7 +617,10 @@ import {
   shouldOfferResumeCompaction,
   shouldCompactBeforeSend,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
@@ -688,6 +707,9 @@ import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+// SCIENT-FORK:START — Stop acknowledgement belongs to the captured thread/attempt.
+import { useStopGeneration } from "../scient/chat/useStopGeneration";
+// SCIENT-FORK:END
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
 import {
@@ -722,10 +744,8 @@ import { useAssetUrls } from "../assets/assetUrls";
 // SCIENT-FORK:START — effective skill inventory.
 import { useEffectiveActiveProviderSkills } from "../scient/skills/useEffectiveActiveProviderSkills";
 // SCIENT-FORK:END
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  recallableComposerPrompt,
-} from "./chat/composerPromptHistory";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 // SCIENT-FORK:START — compute tab close and figure follower wiring.
 import {
   useCloseComputeOwnedSurfaces,
@@ -1850,6 +1870,10 @@ function ChatViewContent(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  const activeThreadLiveTokenUsage = useMemo(
+    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
+    [serverProjection?.providerTurns],
+  );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -1904,19 +1928,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [committedServerMessageIds, serverProjection]);
   // SCIENT-FORK:START — the queue strip hides a preview once the server owns
   // the message; the acknowledged user rows are that source of truth.
-  const serverAcknowledgedUserMessages = useMemo<ReadonlyArray<ChatMessage>>(
-    () =>
-      (serverProjection?.messages ?? [])
-        .filter((message) => message.role === "user")
-        .map((message) => ({
-          id: message.id,
-          role: "user" as const,
-          text: message.text,
-          runId: message.runId ?? null,
-          streaming: false,
-          createdAt: DateTime.formatIso(message.createdAt),
-          updatedAt: DateTime.formatIso(message.updatedAt),
-        })),
+  const serverAcknowledgedUserMessages = useMemo(
+    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
     [serverProjection],
   );
   // SCIENT-FORK:END
@@ -1957,6 +1970,12 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerSelectedModelSelection = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return draft?.activeProvider
+      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+      : null;
+  });
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -2017,6 +2036,8 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [composerRef],
   );
+  // SCIENT-FORK:START — Scroll to end's visibility is owned by useTimelineEndControl (below).
+  // SCIENT-FORK:END
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
@@ -2131,6 +2152,9 @@ function ChatViewContent(props: ChatViewProps) {
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
+  // SCIENT-FORK:START — isTimelineAtLogicalEnd uses the reading-end rule; it is defined
+  // with readerAtEndNow below, where the composer inset is known.
+  // SCIENT-FORK:END
   // Whether the timeline's rows extend past the viewport above the composer.
   // The composer only rests when there is reading space to give back.
   const [timelineOverflows, setTimelineOverflows] = useState(false);
@@ -2474,6 +2498,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : visibleThreadError;
 
+  // SCIENT-FORK:START — a saved reading position's anchor survives a reload or a thread switch.
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -2489,16 +2514,19 @@ function ChatViewContent(props: ChatViewProps) {
         (readTimelinePosition(routeThreadKey)?.anchorMessageId as MessageId | undefined) ?? null,
     });
   }
+  // SCIENT-FORK:END
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  // The end is the running turn's latest content while the thread works,
-  // otherwise the latest answer's text; up to its last three lines may be hidden.
-  const threadWorkingRef = useRef(false);
+  // SCIENT-FORK:START — reserved room is released by the reader, Scroll to end or an unused
+  // anchor (MessagesTimeline's onReleaseUnusedAnchor), not when its run settles. The reading
+  // end is an unfinished turn's latest content, otherwise the latest answer's text; up to
+  // its last three lines may be hidden (chat/readerScrollPolicy.ts).
+  const turnUnfinishedRef = useRef(false);
   const readerAtEndNow = useCallback(
     () =>
       readerAtReadingEnd(
         legendListRef.current?.getState(),
         composerTimelineInset,
-        threadWorkingRef.current,
+        turnUnfinishedRef.current,
       ),
     [composerTimelineInset],
   );
@@ -2506,6 +2534,7 @@ function ChatViewContent(props: ChatViewProps) {
     () => readerAtEndNow() ?? isAtEndRef.current,
     [readerAtEndNow],
   );
+  // SCIENT-FORK:END
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
@@ -3484,9 +3513,13 @@ function ChatViewContent(props: ChatViewProps) {
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+          activeProject?.id ?? null,
+        ),
       ),
-    [providerStatuses, settings],
+    [providerStatuses, settings, activeProject?.id],
   );
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
@@ -3542,8 +3575,15 @@ function ChatViewContent(props: ChatViewProps) {
   // V2 derives these from projected turn items and checkpoint scopes; the V1
   // activity stream the fork used to read no longer exists on the wire.
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(serverVisibleTurnItems),
-    [serverVisibleTurnItems],
+    () =>
+      deriveLatestContextWindowSnapshot(
+        serverVisibleTurnItems,
+        activeThreadLiveTokenUsage,
+        serverProjection?.providerThreads.find(
+          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+        ),
+      ),
+    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
   );
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
   const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
@@ -3904,6 +3944,10 @@ function ChatViewContent(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
+  // Once the server owns the setup run, follow-ups queue behind it.
+  const sendQueuesBehindSetup =
+    isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
+  const [setupQueueSendThreadKey, setSetupQueueSendThreadKey] = useState<string | null>(null);
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
@@ -3949,12 +3993,9 @@ function ChatViewContent(props: ChatViewProps) {
   const isOriginWorking =
     phase === "running" || isSendBusy || isConnecting || isCompacting || awaitingBootstrapTurn;
   const isWorking = isOriginWorking || isForkingThread;
-  // The latest turn is unfinished while it runs, or when it ended interrupted or
-  // with an error; a fork, revert or send setup alone doesn't make it so.
-  threadWorkingRef.current =
-    activeRunningTurnId !== null ||
-    activeLatestRun?.status === "interrupted" ||
-    activeLatestRun?.status === "failed";
+  // SCIENT-FORK:START — the reading end follows the latest turn's state.
+  turnUnfinishedRef.current = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
+  // SCIENT-FORK:END
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
@@ -3987,19 +4028,21 @@ function ChatViewContent(props: ChatViewProps) {
   // while its run starts (chat/timelineWorkingState.ts).
   const timelineWorking = useTimelineWorking({
     threadWorking: isWorking,
-    onlySendBusy:
-      isSendBusy &&
-      phase !== "running" &&
-      !isConnecting &&
-      !isCompacting &&
-      !awaitingBootstrapTurn &&
-      !isForkingThread &&
-      !isRevertingCheckpoint &&
-      !isPreparingWorktree,
+    onlySendBusy: isOnlySendBusy({
+      isSendBusy,
+      phase,
+      isConnecting,
+      isCompacting,
+      awaitingBootstrapTurn,
+      isForkingThread,
+      isRevertingCheckpoint,
+      isPreparingWorktree,
+    }),
     dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
     projection: serverProjection,
     optimisticMessages: optimisticUserMessages,
-  }); // SCIENT-FORK:END
+  });
+  // SCIENT-FORK:END
   // Server-side workspace preparation: unlike the local-dispatch flag this
   // survives reloads and shows on remote viewers of the same thread.
   useEffect(() => {
@@ -4335,11 +4378,13 @@ function ChatViewContent(props: ChatViewProps) {
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. Before the first
-  // snapshot arrives the starting session stands in for it.
+  // snapshot arrives the starting session stands in for it. Once the server
+  // has the thread, a send queues behind the setup run instead.
   const worktreeSetupBlocksSend =
-    worktreeSetup !== null
+    !sendQueuesBehindSetup &&
+    (worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : isPreparingWorktree;
+      : isPreparingWorktree);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -4721,7 +4766,14 @@ function ChatViewContent(props: ChatViewProps) {
                     (activeProviderInstanceId === null ||
                       provider.instanceId === activeProviderInstanceId) &&
                     provider.driver === selectedProvider &&
-                    provider.enabled &&
+                    // The destination project may override the machine switch.
+                    (environment.serverConfig?.settings
+                      ? resolveProjectProviderInstanceEnabled(
+                          environment.serverConfig.settings,
+                          candidate.projectId,
+                          provider.instanceId,
+                        )
+                      : provider.enabled) &&
                     provider.installed &&
                     provider.status !== "error" &&
                     provider.auth.status !== "unauthenticated" &&
@@ -4951,7 +5003,9 @@ function ChatViewContent(props: ChatViewProps) {
   }, [composerRef]);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
-  const onInterrupt = useCallback(async () => {
+  // SCIENT-FORK:START — the owned acknowledgement composes the original interrupt command.
+  const performInterrupt = useCallback(async () => {
+    // SCIENT-FORK:END
     if (
       !activeThread ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
@@ -4968,7 +5022,19 @@ function ChatViewContent(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
       );
     }
+    // SCIENT-FORK:START — only an accepted command keeps the acknowledgement.
+    return result._tag !== "Failure";
+    // SCIENT-FORK:END
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  // SCIENT-FORK:START — acknowledge Stop while durable cancellation finishes.
+  const { isStopping, onInterrupt } = useStopGeneration({
+    threadKey: activeThreadKey,
+    runId: activeRunningTurnId ?? activeLatestRun?.runId ?? null,
+    canInterrupt: canInterruptRunningThread,
+    projection: serverProjection,
+    operation: performInterrupt,
+  });
+  // SCIENT-FORK:END
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -5063,6 +5129,15 @@ function ChatViewContent(props: ChatViewProps) {
     )
       return;
     if (nextOpen && hasTerminalWriteAccess() && terminalUiState.terminalIds.length === 0) {
+      // Server-created setup terminals exist before this client's drawer mounts.
+      // Reuse them before allocating a shell from the still-empty UI state.
+      const existingTerminalId =
+        runningTerminalIds.find((id) => !panelTerminalIds.has(id)) ??
+        activeServerOrderedTerminalIds.find((id) => !panelTerminalIds.has(id));
+      if (existingTerminalId !== undefined) {
+        storeEnsureTerminal(activeThreadRef, existingTerminalId, { open: true, active: true });
+        return;
+      }
       if (!activeThreadId || activeTerminalTarget === null) return;
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
@@ -5078,12 +5153,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
     setTerminalOpen(nextOpen);
   }, [
+    activeServerOrderedTerminalIds,
     activeTerminalTarget,
     activeThreadId,
     activeThreadRef,
     allocatableActiveTerminalIds,
     environmentId,
     openTerminal,
+    panelTerminalIds,
+    runningTerminalIds,
     hasTerminalWriteAccess,
     setTerminalOpen,
     storeEnsureTerminal,
@@ -5366,7 +5444,6 @@ function ChatViewContent(props: ChatViewProps) {
         (script) => commandForProjectScript(script.id) === input.keybindingCommand,
       );
       const changesKeybinding =
-        isElectron &&
         input.keybinding !== undefined &&
         (input.keybinding?.trim() || null) !== previousKeybinding &&
         (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
@@ -5427,8 +5504,6 @@ function ChatViewContent(props: ChatViewProps) {
           ),
         );
       }
-
-      if (!isElectron) return updateResult;
 
       const scriptId = input.keybindingCommand
         ? projectScriptIdFromCommand(input.keybindingCommand)
@@ -6633,6 +6708,13 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // SCIENT-FORK:START — reader navigation (A): the end control owns Scroll to end and its
+  // unread count (chat/useTimelineEndControl.ts) and changes the follow modes once per
+  // transition. The timeline never pins to its end, so a report of leaving it is never
+  // swallowed (that hid Scroll to end while an answer grew below). One owner for the send
+  // follow (chat/responseFollow.ts). The reader's navigation cancels placement and the
+  // follow without removing reserved room. Not extracted: these refs are shared with
+  // upstream's anchor callbacks below and ChatView has no browser harness.
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
   const {
     showScrollToBottom,
@@ -6647,12 +6729,25 @@ function ChatViewContent(props: ChatViewProps) {
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
+      // The follow modes change once per transition, as in upstream's handler;
+      // a first send being placed keeps its own.
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "reached") === null) return;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      // The reader came back to the end on their own: the anchored run framing is over.
+      setTimelineAnchor(releaseChatTimelineAnchor);
+    },
+    onLeftEnd: () => {
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "left") === null) return;
+      timelineScrollModeRef.current = "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = null;
     },
   });
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
-  // SCIENT-FORK:START — one owner for the send follow: which prompt's response is followed,
-  // settled by that prompt's own V2 run (chat/responseFollow.ts).
+  // One owner for the send follow: which prompt's response is followed, settled by that
+  // prompt's own V2 run (chat/responseFollow.ts).
   const responseFollow = useResponseFollow({
     threadKey: routeThreadKey,
     runs: serverProjection?.runs,
@@ -6661,14 +6756,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const { start: startResponseFollow, clear: clearResponseFollow } = responseFollow;
   const followSentPrompt = responseFollow.followSent;
-  // SCIENT-FORK:END
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
-  // re-pins on its own (independent of the refs), so the timeline needs a
-  // render-visible flag to switch it off once the user scrolls away.
+  // State mirror of the follow mode refs. The timeline never pins to its end;
+  // this flag only lets tool activity release the first message's anchor.
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorIndexRef = useRef<number | null>(null);
@@ -6741,6 +6834,7 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     cancelTimelinePositioningRef.current = cancelTimelinePositioning;
   }, [cancelTimelinePositioning]);
+  // SCIENT-FORK:END
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) =>
       timelineContentOverflowsViewport((list ?? legendListRef.current)?.getState(), {
@@ -6755,7 +6849,9 @@ function ChatViewContent(props: ChatViewProps) {
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
     timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
     composerRef.current?.collapseForTimelineScrollKey(key);
+    // SCIENT-FORK:START — Page Up always cancels placement and the follow; Page Down never does.
     if (key === "PageUp") cancelTimelinePositioning();
+    // SCIENT-FORK:END
   });
   useEffect(() => {
     const controller = createPageScrollController({
@@ -6781,6 +6877,10 @@ function ChatViewContent(props: ChatViewProps) {
   const onComposerPageScrollRelease = useCallback(() => {
     pageScrollControllerRef.current?.releaseActiveKey();
   }, []);
+  // SCIENT-FORK:START — reader navigation (C): Scroll to end is one-shot (it releases reserved
+  // room, ends the follow and never re-arms following); a send captures whether the reader
+  // was at the end and frames the prompt; a queued prompt delivered while at the end gets
+  // the same follow (chat/responseFollow.ts).
   // Explicit navigation is a one-shot operation; it never enables live following.
   const scrollToEnd = useCallback(
     (animated = false) => {
@@ -6827,15 +6927,13 @@ function ChatViewContent(props: ChatViewProps) {
         // to the end. Retain existing tail space until it can disappear without
         // clamping the viewport.
         cancelTimelinePositioning();
-        // SCIENT-FORK:START — a later prompt's whole response is followed to the end.
+        // A later prompt's whole response is followed to the end.
         followSentPrompt(messageId, snapshot.firstMessage);
-        // SCIENT-FORK:END
         return;
       }
       cancelPositionRestoreRef.current?.();
-      // SCIENT-FORK:START — the first prompt keeps its placement; its answer is revealed.
+      // The first prompt keeps its placement; its answer is revealed.
       followSentPrompt(messageId, snapshot.firstMessage);
-      // SCIENT-FORK:END
       timelineScrollModeRef.current = "anchoring-new-turn";
       setTimelinePositioningPending(true);
       positionedTimelineAnchorRef.current = null;
@@ -6843,8 +6941,8 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadKey, cancelTimelinePositioning, followSentPrompt],
   );
-  // SCIENT-FORK:START — a queued prompt the server delivers while the reader is at the end
-  // gets the same follow as a send (chat/responseFollow.ts).
+  // A queued prompt the server delivers while the reader is at the end gets the same follow
+  // as a send.
   const latestPrompt = useMemo(
     () => timelineMessages.findLast((message) => message.role === "user") ?? null,
     [timelineMessages],
@@ -6880,6 +6978,10 @@ function ChatViewContent(props: ChatViewProps) {
           }
           return;
         }
+        // SCIENT-FORK:START — reader navigation (D): wheel, touch, scrollbar drag and keys cancel
+        // placement and the follow only when moving toward older content that can scroll
+        // (touch direction and scrollbar-drag detection are Scient); moving toward the end
+        // never cancels.
         const handleManualNavigation = () => {
           cancelTimelinePositioningRef.current();
         };
@@ -7024,6 +7126,7 @@ function ChatViewContent(props: ChatViewProps) {
           scrollNode.removeEventListener("touchmove", handleTouchMove);
           document.removeEventListener("keydown", handleKeyDown);
         };
+        // SCIENT-FORK:END
       });
     };
     attach(12);
@@ -7036,6 +7139,9 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
 
+  // SCIENT-FORK:START — reader navigation (E): only the first message is placed, by message id at
+  // the timeline's anchor offset; measurement updates never restart a finished or cancelled
+  // placement, and its end clears the positioning flag.
   const onTimelineAnchorReady = useCallback((messageId: MessageId, _anchorIndex: number) => {
     // Measurement updates may not restart a completed or cancelled placement.
     if (timelineScrollModeRef.current !== "anchoring-new-turn") {
@@ -7084,6 +7190,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
     requestAnimationFrame(() => positionAnchor(12));
   }, []);
+  // SCIENT-FORK:END
   const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
     if (settledTimelineAnchorRef.current !== messageId) {
       return;
@@ -7126,46 +7233,20 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, []);
 
+  // SCIENT-FORK:START — reserved room nobody can reach is released (MessagesTimeline reports it).
   const releaseUnusedTimelineAnchor = useCallback(() => {
     setTimelineAnchor(releaseChatTimelineAnchor);
   }, []);
-
+  // SCIENT-FORK:END
   const onToolOutputCollapsedAtEnd = useCallback(() => {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   }, [composerRef]);
 
-  // Manual navigation and streaming growth both leave the timeline's own
-  // follow bookkeeping here; the end-control hook owns the pill and the
-  // unread count.
-  const onIsAtEndChange = useCallback(
-    (isAtEnd: boolean) => {
-      if (
-        !isAtEnd &&
-        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-      ) {
-        // Streaming growth flickers isAtEnd while the timeline is still pinned
-        // to the live edge. Re-pin the reader and keep the pill hidden; leaving
-        // the end here would break follow with no scroll event to re-arm it.
-        resetEndControlForThread(true);
-        return;
-      }
-      onEndControlIsAtEndChange(isAtEnd);
-      if (isAtEnd) {
-        timelineScrollModeRef.current = "following-end";
-        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-        setTimelineLiveFollowEnabled(true);
-        // Reachable only once manual navigation has already broken follow, so
-        // the anchored run framing is over: the user scrolled back to the live
-        // edge and expects the stream to stick to it again, exactly like the
-        // scroll-to-bottom pill (#6519).
-        setTimelineAnchor(releaseChatTimelineAnchor);
-      } else {
-        timelineScrollModeRef.current = "free-scrolling";
-        liveFollowUserScrollGenerationRef.current = null;
-      }
-    },
-    [onEndControlIsAtEndChange, resetEndControlForThread],
-  );
+  // SCIENT-FORK:START — the end-control hook owns the pill, the unread count
+  // and the follow modes (its onReachedEnd/onLeftEnd above). The tool-activity
+  // release below is upstream's, unchanged; it sits inside this pair only because
+  // the diff cannot align it past upstream's removed end handler.
+  const onIsAtEndChange = onEndControlIsAtEndChange;
 
   useLayoutEffect(() => {
     if (timelineScrollModeRef.current !== "anchoring-new-turn") return;
@@ -7186,10 +7267,12 @@ function ChatViewContent(props: ChatViewProps) {
     timelineEntries,
     timelineLiveFollowEnabled,
   ]);
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — reader navigation (F): a thread switch resets the end control (a thread
+  // returned to mid-history shows it right away), the follow and placement, per route thread.
   useEffect(() => {
     setPullRequestDialogState(null);
-    // A thread returned to mid-history shows the end control right away.
     const followEnd = savedPositionIsAtEnd(readTimelinePosition(routeThreadKey));
     resetEndControlForThread(followEnd);
     timelineScrollIntentRef.current = null;
@@ -7208,6 +7291,7 @@ function ChatViewContent(props: ChatViewProps) {
       anchorUserScrollGenerationRef.current += 1;
     };
   }, [routeThreadKey, resetEndControlForThread, clearResponseFollow]);
+  // SCIENT-FORK:END
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
@@ -8093,6 +8177,20 @@ function ChatViewContent(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
+  const pendingHandoff = useMemo(
+    () =>
+      resolvePendingHandoff(
+        serverProjection,
+        composerSelectedModelSelection ?? activeThread?.modelSelection,
+        providerStatuses,
+      ),
+    [
+      serverProjection,
+      composerSelectedModelSelection,
+      activeThread?.modelSelection,
+      providerStatuses,
+    ],
+  );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
@@ -8136,6 +8234,8 @@ function ChatViewContent(props: ChatViewProps) {
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
       updatedAt: activeContextWindow.updatedAt,
+      // Only the live report carries a TTL, and only when it is the window's source.
+      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens
@@ -8481,6 +8581,8 @@ function ChatViewContent(props: ChatViewProps) {
           void handleUnsettleActiveThread();
           return;
         }
+        // Same as the sidebar Settle button: settle, then open the next thread.
+        if (settleAndAdvance(activeThreadRef)) return;
 
         void settleThread(activeThreadRef).then((result) => {
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -9213,6 +9315,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const threadId = activeThread.id;
+    const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
@@ -9237,6 +9340,7 @@ function ChatViewContent(props: ChatViewProps) {
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -9325,7 +9429,7 @@ function ChatViewContent(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       !queueEditsReady ||
-      isSendBusy ||
+      (isSendBusy && !sendQueuesBehindSetup) ||
       isConnecting ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
@@ -9728,7 +9832,7 @@ function ChatViewContent(props: ChatViewProps) {
     // upload, and the sent turn must carry what the user actually submitted.
     const composerThreadContextsSnapshot = [...composerThreadContexts];
     const submissionTargetKey = composerTargetKey(scopeThreadRef(environmentId, threadIdForSend));
-    const isFirstMessage = !isServerThread || activeMessageCount === 0;
+    const isFirstMessage = !sendQueuesBehindSetup && (!isServerThread || activeMessageCount === 0);
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
@@ -9778,7 +9882,7 @@ function ChatViewContent(props: ChatViewProps) {
       keepFullHistory,
       messageText: messageTextForSend,
     });
-    const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
+    const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -9955,19 +10059,23 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
-      beginLocalDispatch({
-        preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
-        submissionIntent: resolvedSubmissionIntent,
-      });
-      setWorktreeSetupRef(
-        multipleModelSelections === null && baseBranchForWorktree
-          ? {
-              environmentId: activeThread.environmentId,
-              threadId: threadIdForSend,
-              ownerKey: worktreeSetupOwnerKey,
-            }
-          : null,
-      );
+      if (sendQueuesBehindSetup) {
+        setSetupQueueSendThreadKey(activeThreadKey);
+      } else {
+        beginLocalDispatch({
+          preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
+          submissionIntent: resolvedSubmissionIntent,
+        });
+        setWorktreeSetupRef(
+          multipleModelSelections === null && baseBranchForWorktree
+            ? {
+                environmentId: activeThread.environmentId,
+                threadId: threadIdForSend,
+                ownerKey: worktreeSetupOwnerKey,
+              }
+            : null,
+        );
+      }
 
       const submissionIdentityResult = await settlePromise(async () => {
         if (options?.steer || directAnnotation) return undefined;
@@ -9996,7 +10104,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (submissionIdentityResult._tag === "Failure") {
         sendInFlightRef.current = false;
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
         setThreadError(
           threadIdForSend,
           chatActionErrorMessage(squashAtomCommandFailure(submissionIdentityResult)),
@@ -10195,7 +10303,7 @@ function ChatViewContent(props: ChatViewProps) {
           // Each request now owns its background thread. The original draft is
           // ready for another prompt while checkout and setup scripts finish.
           sendInFlightRef.current = false;
-          resetLocalDispatch();
+          if (!sendQueuesBehindSetup) resetLocalDispatch();
           releasedComposer = true;
           await starts;
           if (startedCount > 0) {
@@ -10287,7 +10395,7 @@ function ChatViewContent(props: ChatViewProps) {
           }
           if (!releasedComposer) {
             sendInFlightRef.current = false;
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
           }
         }
         return;
@@ -10315,6 +10423,7 @@ function ChatViewContent(props: ChatViewProps) {
       );
       const previewQueueAdmission =
         compactBeforeSend ||
+        sendQueuesBehindSetup ||
         shouldPreviewQueueAdmission({
           ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
           phase,
@@ -10626,7 +10735,7 @@ function ChatViewContent(props: ChatViewProps) {
             settleQueueAdmissionPreview(existing, messageIdForSend, queued),
           );
           if (queued) {
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
             void threadQueue.refresh();
           } else {
             if (previewQueueAdmission)
@@ -10736,9 +10845,9 @@ function ChatViewContent(props: ChatViewProps) {
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
       }
-      if (turnStartSucceeded && submissionId) resetLocalDispatch();
+      if (turnStartSucceeded && submissionId) if (!sendQueuesBehindSetup) resetLocalDispatch();
     } catch (cause) {
       if (!requestAccepted && submittedMessageId) {
         setOptimisticUserMessages((existing) =>
@@ -10746,11 +10855,14 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
       setThreadError(threadIdForSend, chatActionErrorMessage(cause));
-      resetLocalDispatch();
+      if (!sendQueuesBehindSetup) resetLocalDispatch();
     } finally {
       // Release only this settled attempt. Its durable identity handles an
       // ambiguous response; navigation does not manufacture another send.
-      if (composerSendGenerationRef.current === sendGeneration) sendInFlightRef.current = false;
+      if (composerSendGenerationRef.current === sendGeneration) {
+        sendInFlightRef.current = false;
+        setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
+      }
     }
   }
 
@@ -10815,6 +10927,7 @@ function ChatViewContent(props: ChatViewProps) {
         string,
         import("@t3tools/contracts").UserInputAttachments[string]
       >();
+      const providerAnswers = { ...answers };
       for (const question of pendingInput.questions) {
         const target = questionAttachmentDraftId(
           environmentId,
@@ -10824,6 +10937,10 @@ function ChatViewContent(props: ChatViewProps) {
         );
         if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
         const draft = useComposerDraftStore.getState().getComposerDraft(target);
+        providerAnswers[question.id] = projectPendingUserInputAnswer(
+          answers[question.id],
+          draft?.threadContexts ?? [],
+        );
         const attachments = draft ? [...draft.images, ...draft.files] : [];
         if (attachments.length === 0) continue;
         const uploaded = getUploadedAttachments({ environmentId, images: attachments });
@@ -10849,7 +10966,7 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           requestId,
-          answers,
+          answers: providerAnswers,
           ...(attachmentsByQuestionId.size > 0
             ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
             : {}),
@@ -10922,6 +11039,20 @@ function ChatViewContent(props: ChatViewProps) {
       const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
       if (nextPrompt !== currentPrompt) {
         setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        if (activeThreadId) {
+          const store = useComposerDraftStore.getState();
+          const questionTarget = questionAttachmentDraftId(
+            environmentId,
+            activeThreadId,
+            activePendingUserInput.requestId,
+            questionId,
+          );
+          store.addThreadContexts(
+            composerDraftTarget,
+            store.getComposerDraft(questionTarget)?.threadContexts ?? [],
+            { appendReference: false },
+          );
+        }
       }
       setPendingUserInputAnswersByRequestId((existing) => {
         const question =
@@ -10952,21 +11083,17 @@ function ChatViewContent(props: ChatViewProps) {
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       activePendingRequestKey,
+      activeThreadId,
       composerDraftTarget,
       composerRef,
+      environmentId,
       pendingUserInputAnswersByRequestId,
       setComposerDraftPrompt,
     ],
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (
-      questionId: string,
-      value: string,
-      nextCursor: number,
-      expandedCursor: number,
-      _cursorAdjacentToMention: boolean,
-    ) => {
+    (questionId: string, value: string) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -10986,16 +11113,10 @@ function ChatViewContent(props: ChatViewProps) {
           ),
         },
       }));
-      const snapshot = composerRef.current?.readSnapshot();
-      if (
-        snapshot?.value !== value ||
-        snapshot.cursor !== nextCursor ||
-        snapshot.expandedCursor !== expandedCursor
-      ) {
-        composerRef.current?.focusAt(nextCursor);
-      }
+      // The editor owns this selection. Resetting it before the answer renders
+      // can re-enter Lexical with offsets from the previous skill token.
     },
-    [activePendingUserInput, activePendingRequestKey, composerRef],
+    [activePendingUserInput, activePendingRequestKey],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -11601,6 +11722,16 @@ function ChatViewContent(props: ChatViewProps) {
   }, [cancelWorktreeSetup, draftId, setupTarget.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
+  const onResumeRef = useRef(onResume);
+  onResumeRef.current = onResume;
+  const onCompactContextRef = useRef(onCompactContext);
+  onCompactContextRef.current = onCompactContext;
+  const onComposerSend = useCallback(
+    (...args: Parameters<typeof onSend>) => onSendRef.current(...args),
+    [],
+  );
+  const onComposerResume = useCallback(() => onResumeRef.current(), []);
+  const onComposerCompactContext = useCallback(() => onCompactContextRef.current(), []);
   // Resend once the cancelled dispatch has settled and the composer is free.
   // Every state that makes `onSend` bail and wait is part of the readiness
   // check, so the flag survives a reconnect, a reverting checkpoint, or a
@@ -11666,13 +11797,22 @@ function ChatViewContent(props: ChatViewProps) {
     (runId: RunId, filePath?: string) => {
       if (!diffAvailable || !activeThreadRef) return;
       runAfterPendingFileSave("diff", () => {
+        const diffOpen =
+          selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
+          "diff";
         explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
         useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
         useRightPanelStore.getState().open(activeThreadRef, "diff");
         onDiffPanelOpen?.();
       });
     },
-    [activeThreadRef, diffAvailable, diffOpen, onDiffPanelOpen, runAfterPendingFileSave],
+    [activeThreadRef, diffAvailable, onDiffPanelOpen, runAfterPendingFileSave],
+  );
+  const onTimelineRollbackCheckpoint = useCallback(
+    (input: { readonly checkpointId: string; readonly scopeId: string }) => {
+      if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
+    },
+    [onRollbackCheckpoint, paintOnlyDisplayedTimeline],
   );
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.
@@ -12028,7 +12168,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
+      // clears the native window buttons, which sit over the right panel, not this header.
+      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls
@@ -12268,7 +12410,22 @@ function ChatViewContent(props: ChatViewProps) {
                 {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
-                footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
+                footer={
+                  paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
+                    threadStatusLine
+                  ) : (
+                    <>
+                      <div className="chat-content-lane">
+                        <HandoffRow
+                          endpoints={pendingHandoff}
+                          providers={providerStatuses}
+                          pending
+                        />
+                      </div>
+                      {threadStatusLine}
+                    </>
+                  )
+                }
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 contextTransfers={
@@ -12290,13 +12447,12 @@ function ChatViewContent(props: ChatViewProps) {
                 }
                 routeThreadKey={displayedTimelineKey}
                 displayThreadKey={displayedTimelineKey}
+                paintOnly={paintOnlyDisplayedTimeline}
                 onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
                 onOpenThread={onOpenRelatedThread}
                 parentThreadLink={paintOnlyDisplayedTimeline ? null : parentThreadLink}
                 onForkFromRun={paintOnlyDisplayedTimeline ? async () => {} : onForkFromRun}
-                onRollbackCheckpoint={(input) => {
-                  if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
-                }}
+                onRollbackCheckpoint={onTimelineRollbackCheckpoint}
                 supportsConversationRollback={
                   !paintOnlyDisplayedTimeline && supportsConversationRollback
                 }
@@ -12341,25 +12497,35 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerTimelineInset}
+                // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
+                // placement in flight, the send follow (chat/responseFollow.ts) and releasing
+                // unused reserved room.
                 timelinePositioningPending={timelinePositioningPending}
                 readingFollowPromptId={responseFollow.promptId}
-                // SCIENT-FORK:START — the send follow's lifecycle (chat/responseFollow.ts).
                 responseFollow={responseFollow.timeline}
-                // SCIENT-FORK:END
                 onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
+                // SCIENT-FORK:END
                 onIsAtEndChange={onIsAtEndChange}
+                // SCIENT-FORK:START — the unread count below, for the Scroll to end control.
                 onUnreadBelowChange={setUnreadBelowCount}
+                // SCIENT-FORK:END
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
+                // SCIENT-FORK:START — the reader's navigation cancels placement and the follow.
                 onManualNavigation={cancelTimelinePositioning}
+                // SCIENT-FORK:END
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 // SCIENT-FORK:START
                 onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
                 // SCIENT-FORK:END
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                // SCIENT-FORK:START — the restore waits for history, and may page in older turns.
                 positionHistoryLoading={paintOnlyDisplayedTimeline || threadDetailLoading}
+                // SCIENT-FORK:END
                 topFadeEnabled={!hasTimelineTopBanner}
+                // SCIENT-FORK:START — older pages for the restore and for citations.
                 loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
+                // SCIENT-FORK:END
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}
@@ -12372,11 +12538,13 @@ function ChatViewContent(props: ChatViewProps) {
                   style={{ bottom: scrollToEndClearance + 4 }}
                 >
                   <Button
+                    // SCIENT-FORK:START — the label says how many answers are unread below.
                     aria-label={
                       unreadBelowCount > 0
                         ? `Scroll to end, ${unreadBelowCount} unread ${unreadBelowCount === 1 ? "message" : "messages"} below`
                         : "Scroll to end"
                     }
+                    // SCIENT-FORK:END
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -12389,6 +12557,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <ChevronDownIcon className="size-3.5" />
                     Scroll to end
                   </Button>
+                  {/* SCIENT-FORK:START — the unread count badge. */}
                   {unreadBelowCount > 0 && (
                     <span
                       aria-hidden="true"
@@ -12397,6 +12566,7 @@ function ChatViewContent(props: ChatViewProps) {
                       {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
                     </span>
                   )}
+                  {/* SCIENT-FORK:END */}
                 </div>
               )}
             </div>
@@ -12593,8 +12763,16 @@ function ChatViewContent(props: ChatViewProps) {
                               }
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
+                              // SCIENT-FORK:START — explicit Stop acknowledgement.
+                              isStopping={isStopping}
+                              // SCIENT-FORK:END
                               isConnecting={isConnecting || !queueEditsReady}
-                              isSendBusy={isSendBusy || isResuming}
+                              isSendBusy={
+                                (isSendBusy && !sendQueuesBehindSetup) ||
+                                (setupQueueSendThreadKey !== null &&
+                                  setupQueueSendThreadKey === activeThreadKey) ||
+                                isResuming
+                              }
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
@@ -12612,7 +12790,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             ? "Preparing worktree"
                                             : projectCloneSendBlockReason
                               }
-                              isPreparingWorktree={isPreparingWorktree}
+                              isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={null}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
@@ -12671,6 +12849,7 @@ function ChatViewContent(props: ChatViewProps) {
                               pullRequestRepository={
                                 supportsPullRequests ? activeProjectRepository : null
                               }
+                              threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
                               restingControlsHost={restingComposerControlsHost}
                               restingControlsHaveLeadingContext={
                                 mountComposerContextStrip &&
@@ -12689,9 +12868,9 @@ function ChatViewContent(props: ChatViewProps) {
                               onPageScrollKeyDown={onComposerPageScrollKeyDown}
                               onPageScrollKeyUp={onComposerPageScrollKeyUp}
                               onPageScrollRelease={onComposerPageScrollRelease}
-                              onCompactContext={onCompactContext}
-                              onSend={onSend}
-                              onResume={onResume}
+                              onCompactContext={onComposerCompactContext}
+                              onSend={onComposerSend}
+                              onResume={onComposerResume}
                               onInterrupt={onInterrupt}
                               onImplementPlanInNewThread={onImplementPlanInNewThread}
                               onForkConversation={onForkConversation}

@@ -25,8 +25,11 @@
  */
 import {
   defaultInstanceIdForDriver,
+  providerInstanceConfigEnabledFlag,
+  resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
+  type ProviderInstanceId,
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -43,6 +46,9 @@ import * as ProviderHostLive from "./ProviderHostLive.ts";
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import type * as ServerConfig from "../config.ts";
+// SCIENT-FORK:START — drivers share the process-wide lifecycle coordinator.
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
+// SCIENT-FORK:END
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -50,6 +56,9 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
       | ProviderHost.ProviderHost
+      // SCIENT-FORK:START — supplied below.
+      | ProviderLifecycleCoordinator.ProviderLifecycleCoordinator
+      // SCIENT-FORK:END
     >
   | Settings.ServerSettingsService
   // Requirements of the `ProviderHost.ProviderHost` the drivers receive.
@@ -73,6 +82,29 @@ export const deriveProviderInstanceConfigMap = (
     merged[instanceId] = { driver: driver.driverKind };
   }
 
+  // A project that turns an instance on needs it alive and probed even when
+  // the machine itself has it off, or a thread in that project would route
+  // to an instance nobody ever checked in on. Fold every project's
+  // `providerInstances[id].enabled` overrides in: an instance already enabled
+  // is untouched, and one absent from settings entirely (deleted) stays out.
+  for (const overrides of Object.values(settings.projectSettingsOverrides)) {
+    for (const [rawInstanceId, projectOverride] of Object.entries(
+      overrides?.providerInstances ?? {},
+    )) {
+      if (projectOverride.enabled !== true) continue;
+      const instanceId = rawInstanceId as ProviderInstanceId;
+      const existing = merged[instanceId];
+      if (existing === undefined || resolveProviderInstanceEnabled(existing)) continue;
+      merged[instanceId] = {
+        ...existing,
+        enabled: true,
+        ...(providerInstanceConfigEnabledFlag(existing.config) === false
+          ? { config: { ...(existing.config as Record<string, unknown>), enabled: true } }
+          : {}),
+      };
+    }
+  }
+
   return merged as ProviderInstanceConfigMap;
 };
 
@@ -87,7 +119,7 @@ export const deriveProviderInstanceConfigMap = (
  * configs, so the only way the watcher could fail is a settings stream
  * tear-down, which logs and exits cleanly.
  */
-const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
+export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
@@ -148,4 +180,9 @@ export const layer = Layer.unwrap(
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
   }),
+).pipe(
+  // SCIENT-FORK:START — the same memoized layer the server and runtime actions use, so
+  // account and runtime changes share one provider-wide lease.
+  Layer.provideMerge(ProviderLifecycleCoordinator.layer),
+  // SCIENT-FORK:END
 );

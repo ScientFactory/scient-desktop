@@ -3,11 +3,13 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type RunId,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  isOrchestrationV2WorkActive,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -24,6 +26,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -33,6 +36,13 @@ import {
   cancelledTurnItemWork,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
+
+// SCIENT-FORK:START ? an explicitly authorized update continues only a turn it
+// cuts mid-way. A settled turn that the restart wakes for the awaited work it
+// lost follows its project's continuation preference instead.
+const updateMayContinue = (run: Pick<OrchestrationV2Run, "status">): boolean =>
+  run.status === "running" || run.status === "starting";
+// SCIENT-FORK:END
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -289,10 +299,35 @@ export const make = Effect.gen(function* () {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
       };
-      // Queued runs have not started provider work. Preserve their execution
-      // identities and order, but require explicit consent before draining them.
-      for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* projections
+              .getThreadRecords(projection.thread.id, ["messages"], {
+                messageIds: queuedRuns.map((run) => run.userMessageId),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderRuntimeRecoveryError({
+                      operation: "read-projections",
+                      threadId: projection.thread.id,
+                      cause,
+                    }),
+                ),
+              )).messages;
+      const bufferedMessageIds = new Set(
+        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      );
+      // Buffered wakes lost their output with the process. Durable queued messages
+      // keep their execution identities and order until the user resumes them.
+      for (const run of queuedRuns) {
+        if (bufferedMessageIds.has(run.userMessageId)) {
+          runs.push(run);
+          continue;
+        }
+        if (run.queueHeld === true) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -423,6 +458,31 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+      }
+      // A blocking delegate_task wait dies with the turn that made it, and its
+      // continuation never got the tool result. Let the child's result wake
+      // the parent like an async task, so it reaches the continued turn.
+      const cutRunIds = new Set(runs.map((run) => run.id));
+      for (const task of projection.subagents ?? []) {
+        if (
+          task.origin !== "app_owned" ||
+          task.runId === null ||
+          !cutRunIds.has(task.runId) ||
+          task.completionWake !== "settled_only" ||
+          !isOrchestrationV2WorkActive(task.status)
+        )
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "subagent.updated",
+          threadId: projection.thread.id,
+          runId: task.runId,
+          nodeId: task.id,
+          driver: task.driver,
+          providerInstanceId: task.providerInstanceId,
+          occurredAt: now,
+          payload: { ...task, completionWake: "always", updatedAt: now },
+        });
       }
       // Process loss also orphans background-capable turn items on already-
       // settled runs (e.g. post-settle Waiting work). Skip items already
@@ -566,7 +626,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? restartContinuationRun(projection, now)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -697,9 +757,9 @@ export const make = Effect.gen(function* () {
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        const run = restartContinuationRun(projection);
+        const run = restartContinuationRun(projection, yield* DateTime.now);
         if (!run) return;
-        const updateRequested = updateIntent.get(threadId) === run.id;
+        const updateRequested = updateMayContinue(run) && updateIntent.get(threadId) === run.id;
         if (
           !updateRequested &&
           (enabled === null ||
@@ -749,8 +809,8 @@ export const make = Effect.gen(function* () {
     const selected = new Map<ThreadId, RunId>();
     for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      const run = restartContinuationRun(projection);
-      if (run !== undefined) selected.set(threadId, run.id);
+      const run = restartContinuationRun(projection, yield* DateTime.now);
+      if (run !== undefined && updateMayContinue(run)) selected.set(threadId, run.id);
     }
     yield* Ref.set(updateContinuations, selected);
     return [...selected.keys()];

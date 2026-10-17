@@ -1,6 +1,6 @@
 import type { OrchestrationV2Run } from "@t3tools/contracts";
 import { useMemo } from "react";
-import type { ChatMessage } from "../../types";
+import type { ChatMessage, SessionPhase } from "../../types";
 import { promptRunStarting } from "./responseFollow";
 
 /**
@@ -33,6 +33,32 @@ export function resolveTimelineWorking(input: {
   if (!input.onlySendBusy) return true;
   return (
     input.optimisticPromptShown || input.latestUserMessageId !== input.dispatchBaselineUserMessageId
+  );
+}
+
+/**
+ * ChatView is busy only because a send is being dispatched: no run, connection,
+ * compaction, bootstrap turn, fork, checkpoint revert or worktree preparation.
+ */
+export function isOnlySendBusy(state: {
+  isSendBusy: boolean;
+  phase: SessionPhase;
+  isConnecting: boolean;
+  isCompacting: boolean;
+  awaitingBootstrapTurn: boolean;
+  isForkingThread: boolean;
+  isRevertingCheckpoint: boolean;
+  isPreparingWorktree: boolean;
+}): boolean {
+  return (
+    state.isSendBusy &&
+    state.phase !== "running" &&
+    !state.isConnecting &&
+    !state.isCompacting &&
+    !state.awaitingBootstrapTurn &&
+    !state.isForkingThread &&
+    !state.isRevertingCheckpoint &&
+    !state.isPreparingWorktree
   );
 }
 

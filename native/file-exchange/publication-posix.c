@@ -122,6 +122,18 @@ static int absolute_directory(const char *path) {
   return result;
 }
 #ifdef __APPLE__
+/* Some macOS volume drivers silently turn RENAME_SWAP into a destructive rename. */
+static int volume_refuses_swap(int fd) {
+  struct attrlist attributes = {0};
+  attributes.bitmapcount = ATTR_BIT_MAP_COUNT;
+  attributes.volattr = ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES;
+  struct { uint32_t length; vol_capabilities_attr_t volume; } result = {0};
+  if (fgetattrlist(fd, &attributes, &result, sizeof(result), 0)) return -1;
+  if (result.length != sizeof(result)) { errno = EIO; return -1; }
+  uint32_t valid = result.volume.valid[VOL_CAPABILITIES_INTERFACES];
+  uint32_t available = result.volume.capabilities[VOL_CAPABILITIES_INTERFACES];
+  return (valid & VOL_CAP_INT_RENAME_SWAP) && !(available & VOL_CAP_INT_RENAME_SWAP);
+}
 static int clone_volume_available(int fd) {
   struct attrlist attributes = {0};
   attributes.bitmapcount = ATTR_BIT_MAP_COUNT;
@@ -412,11 +424,18 @@ int platform_operation(Context *context, const char *operation, const char *sour
                        const char *destination, Entry *before, Entry *after_source,
                        Entry *after_destination, Flush *flush, int *applied) {
   if (!strcmp(operation, "exchange")) {
+#ifdef __APPLE__
+    int refuses = volume_refuses_swap(context->parent);
+    if (refuses < 0) return errno;
+    if (refuses) return ENOTSUP;
+#endif
     int original = regular_fd(context->parent, destination, 0);
     if (original < 0) return errno;
     int stage = regular_fd(context->record, source, 1);
     if (stage < 0) { int error = errno; close(original); return error; }
-    int error = identify(stage, before);
+    Entry original_entry = {0};
+    int error = identify(original, &original_entry);
+    if (!error) error = identify(stage, before);
     struct stat staged = {0};
     if (!error && fstat(stage, &staged)) error = errno;
     /* Preserve the observed file policy before exposing the new bytes. The
@@ -444,6 +463,12 @@ int platform_operation(Context *context, const char *operation, const char *sour
     *applied = 1;
     int source_error = inspect(context->record, source, after_source);
     int destination_error = inspect(context->parent, destination, after_destination);
+    if (!source_error && (!after_source->present ||
+        strcmp(after_source->dev, original_entry.dev) || strcmp(after_source->ino, original_entry.ino)))
+      source_error = EIO;
+    if (!destination_error && (!after_destination->present ||
+        strcmp(after_destination->dev, before->dev) || strcmp(after_destination->ino, before->ino)))
+      destination_error = EIO;
     flush->source_file = flush_entry(context->record, source);
     flush->destination_file = flush_entry(context->parent, destination);
     flush->source_directory = flush_directory(context->record);

@@ -236,6 +236,32 @@ describe("Antigravity setup", () => {
     setup.confirm.mockReset().mockResolvedValue(false);
   });
 
+  it("does not present unverified native completion as signed in, and keeps credential removal reachable", () => {
+    setup.auth = authState({
+      phase: "idle",
+      authorizationUrl: null,
+      accountVerified: false,
+      message: "Native setup finished. Verification is unavailable.",
+    });
+    hooks.beginRender();
+    const view = ProviderAuthenticationSection({
+      environmentId,
+      environmentLabel: "Remote Meta device",
+      instanceId,
+      provider: {
+        ...provider,
+        driver: ProviderDriverKind.make("muse"),
+        auth: { status: "unknown", canLogout: true },
+      },
+      readOnly: false,
+    });
+    expect(button(view, "Change account")).toBeNull();
+    expect(button(view, "Sign in")).toBeDefined();
+    expect(button(view, "Sign out")).toBeDefined();
+    const description = visitElements(view, (element) => element.props.role === "status");
+    expect(description?.props.children).toBe("Native setup finished. Verification is unavailable.");
+  });
+
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
     setCallback(renderSetup(), callbackUrl);

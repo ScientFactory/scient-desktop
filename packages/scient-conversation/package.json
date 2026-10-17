@@ -12,6 +12,10 @@
       "types": "./src/providerCitationMarkdown.ts",
       "import": "./src/providerCitationMarkdown.ts"
     },
+    "./answer-visibility": {
+      "types": "./src/answerVisibility.ts",
+      "import": "./src/answerVisibility.ts"
+    },
     "./chat-math-delimiters": {
       "types": "./src/chatMathDelimiters.ts",
       "import": "./src/chatMathDelimiters.ts"

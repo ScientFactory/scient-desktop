@@ -206,7 +206,7 @@ export const make = Effect.gen(function* () {
     let temporaryDirectory: string | null = null;
     return Effect.gen(function* () {
       if (yield* fileSystem.exists(finalDirectory)) return;
-      const stagingDirectory = `${finalDirectory}.tmp-${yield* crypto.randomUUIDv4}`;
+      const stagingDirectory = `${finalDirectory}.tmp-${yield* crypto.randomUUIDv4()}`;
       temporaryDirectory = stagingDirectory;
       const compressedPath = input.syncTexPath;
       const plainPath = compressedPath.replace(/\.gz$/iu, "");

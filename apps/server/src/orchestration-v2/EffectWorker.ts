@@ -19,7 +19,6 @@ import {
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { AttachmentRollbackPruneService } from "./AttachmentRollbackPruneService.ts";
-import { ThreadFileRelease } from "./scient-fork/ThreadFileRelease.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -31,7 +30,11 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+// SCIENT-FORK: conversation-fork outbox effects run in scient-fork.
+import {
+  makeScientForkEffects,
+  type ScientForkEffectsContext,
+} from "./scient-fork/ScientForkEffects.ts";
 // SCIENT-FORK:START checkpoint-capture-final-attempt
 import {
   CheckpointCaptureFinalAttempt,
@@ -102,14 +105,13 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
-  | ConversationForkService
+  | ScientForkEffectsContext
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const rollbackPrune = yield* AttachmentRollbackPruneService;
-    const threadFileRelease = yield* ThreadFileRelease;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -119,24 +121,16 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
-    const conversationForks = yield* ConversationForkService;
+    // SCIENT-FORK: conversation-fork outbox effects.
+    const scientForkEffects = yield* makeScientForkEffects;
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          // SCIENT-FORK:START — conversation-fork outbox effects run in scient-fork.
           case "scient-fork.provision":
-            return conversationForks.provision(effect.threadId, willRetry).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
           case "scient.release-thread-files":
-            return threadFileRelease.release(effect.threadId).pipe(
+            return scientForkEffects(effect.request.type, effect.threadId, willRetry).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -146,6 +140,7 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          // SCIENT-FORK:END
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({
@@ -253,9 +248,24 @@ export const layerExecutor: Layer.Layer<
                 providerSessionId: request.providerSessionId,
                 providerThreadId: request.providerThreadId,
                 providerTurnId: request.providerTurnId,
-                ...(request.subagent === undefined ? {} : { subagent: request.subagent }),
+                ...(request.subagent === undefined
+                  ? {}
+                  : {
+                      subagent: {
+                        ...request.subagent,
+                        requestedAt: DateTime.makeUnsafe(effect.createdAt),
+                      },
+                    }),
               })
               .pipe(
+                Effect.tapError((cause) =>
+                  request.subagent === undefined
+                    ? Effect.void
+                    : Effect.logWarning("orchestration-v2.subagent-stop-failed", {
+                        effectId: effect.id,
+                        cause,
+                      }),
+                ),
                 Effect.catch((cause) =>
                   Effect.gen(function* () {
                     if (
@@ -277,29 +287,38 @@ export const layerExecutor: Layer.Layer<
                     return "not-interrupted" as const;
                   }),
                 ),
-                // Live native children remain SDK-authoritative. Only a released
-                // session permits repairing the captured child locally.
-                Effect.flatMap((outcome) =>
-                  request.subagent !== undefined && outcome !== "session-absent"
-                    ? Effect.void
-                    : threads
-                        .dispatch({
-                          type: "thread.background-work.settle",
-                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                          threadId: effect.threadId,
-                          providerThreadId: request.providerThreadId,
-                          providerTurnId: request.providerTurnId,
-                          ...(request.subagent === undefined
-                            ? {}
-                            : {
-                                subagent: {
-                                  ...request.subagent,
-                                  providerSessionId: request.providerSessionId,
-                                },
-                              }),
-                        })
-                        .pipe(Effect.asVoid),
-                ),
+                // A native outcome and physical session release are distinct proofs.
+                Effect.flatMap((outcome) => {
+                  if (
+                    request.subagent !== undefined &&
+                    outcome !== "session-absent" &&
+                    typeof outcome !== "object"
+                  )
+                    return Effect.void;
+                  return threads
+                    .dispatch({
+                      type: "thread.background-work.settle",
+                      commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                      threadId: effect.threadId,
+                      providerThreadId: request.providerThreadId,
+                      providerTurnId: request.providerTurnId,
+                      ...(request.subagent === undefined
+                        ? {}
+                        : {
+                            subagent: {
+                              ...request.subagent,
+                              providerSessionId: request.providerSessionId,
+                              ...(typeof outcome === "object"
+                                ? {
+                                    stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                                    outcome,
+                                  }
+                                : {}),
+                            },
+                          }),
+                    })
+                    .pipe(Effect.asVoid);
+                }),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -359,44 +378,64 @@ export const layerExecutor: Layer.Layer<
                     if (message === undefined || run === undefined) return yield* error;
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
-                    yield* threads.dispatch({
-                      type: "message.dispatch",
-                      commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
-                      threadId: effect.threadId,
-                      messageId: message.id,
-                      text: message.text,
-                      ...(message.context ? { context: message.context } : {}),
-                      attachments: message.attachments,
-                      ...(message.selectedScientSkillNames === undefined
-                        ? {}
-                        : { selectedScientSkillNames: message.selectedScientSkillNames }),
-                      // A user's follow-up starts on the thread's saved selection,
-                      // which already holds the steer's choice. A delegated
-                      // completion stays pinned to the run it reports to.
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { modelSelection: run.modelSelection }),
-                      dispatchMode: {
-                        type:
-                          message.delegatedCompletion === undefined
-                            ? "start_immediately"
-                            : "queue_after_active",
-                      },
-                      createdBy: message.createdBy,
-                      creationSource: message.creationSource,
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { delegatedCompletion: message.delegatedCompletion }),
-                      ...(message.notification === undefined
-                        ? {}
-                        : { notification: message.notification }),
-                      ...(message.scheduledTaskId === undefined
-                        ? {}
-                        : { scheduledTaskId: message.scheduledTaskId }),
-                      ...(message.senderThreadId === undefined
-                        ? {}
-                        : { senderThreadId: message.senderThreadId }),
-                    });
+                    yield* threads
+                      .dispatch({
+                        type: "message.dispatch",
+                        commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+                        threadId: effect.threadId,
+                        messageId: message.id,
+                        text: message.text,
+                        ...(message.context ? { context: message.context } : {}),
+                        attachments: message.attachments,
+                        ...(message.selectedScientSkillNames === undefined
+                          ? {}
+                          : { selectedScientSkillNames: message.selectedScientSkillNames }),
+                        // A user's follow-up starts on the thread's saved selection,
+                        // which already holds the steer's choice. A delegated
+                        // completion stays pinned to the run it reports to.
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { modelSelection: run.modelSelection }),
+                        dispatchMode: {
+                          type:
+                            message.delegatedCompletion === undefined
+                              ? "start_immediately"
+                              : "queue_after_active",
+                        },
+                        createdBy: message.createdBy,
+                        creationSource: message.creationSource,
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { delegatedCompletion: message.delegatedCompletion }),
+                        ...(message.notification === undefined
+                          ? {}
+                          : { notification: message.notification }),
+                        ...(message.scheduledTaskId === undefined
+                          ? {}
+                          : { scheduledTaskId: message.scheduledTaskId }),
+                        ...(message.senderThreadId === undefined
+                          ? {}
+                          : { senderThreadId: message.senderThreadId }),
+                      })
+                      .pipe(
+                        // The turn that just completed leaves no further retry
+                        // target once the instance is off: the completed turn
+                        // stands as the thread's result instead of going
+                        // through the outbox's bounded retry on a refusal that
+                        // retrying cannot change.
+                        Effect.catchTags({
+                          ThreadManagementProviderInstanceDisabledError: (disabledError) =>
+                            Effect.logInfo(
+                              "orchestration-v2.effect-worker.steer-follow-up-disabled",
+                              {
+                                threadId: effect.threadId,
+                                messageId: message.id,
+                                projectId: disabledError.projectId,
+                                instanceId: disabledError.instanceId,
+                              },
+                            ),
+                        }),
+                      );
                   }),
                 ),
                 Effect.mapError(

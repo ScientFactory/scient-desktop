@@ -30,8 +30,6 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
-  findLatestCompletedAssistantMessageId,
-  findPrecedingCompletedAssistantMessageId,
   timelineEntryTurnFoldRunId,
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
@@ -56,130 +54,6 @@ import type { WorkLogEntry } from "../../session-logic";
 const decodeBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const decodeJsonBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeJsonBoundaryItem = Schema.encodeSync(OrchestrationV2TurnItemJson);
-
-describe("findLatestCompletedAssistantMessageId", () => {
-  it("selects the latest settled terminal response while a newer turn is active", () => {
-    const result = findLatestCompletedAssistantMessageId({
-      timelineEntries: [
-        {
-          id: "assistant-1-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:10Z",
-          message: {
-            id: "assistant-1" as never,
-            role: "assistant",
-            text: "Completed response",
-            runId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:10Z",
-            updatedAt: "2026-01-01T00:00:11Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "assistant-2-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:20Z",
-          message: {
-            id: "assistant-2" as never,
-            role: "assistant",
-            text: "Still working",
-            runId: "turn-2" as never,
-            createdAt: "2026-01-01T00:00:20Z",
-            updatedAt: "2026-01-01T00:00:21Z",
-            streaming: false,
-          },
-        },
-      ],
-      latestRun: {
-        runId: RunId.make("turn-2"),
-        status: "running",
-        startedAt: "2026-01-01T00:00:19Z",
-        completedAt: null,
-      },
-      runningRunId: RunId.make("turn-2"),
-    });
-
-    expect(result).toBe("assistant-1");
-  });
-});
-
-describe("findPrecedingCompletedAssistantMessageId", () => {
-  it("uses the terminal completed response before the selected user message", () => {
-    const result = findPrecedingCompletedAssistantMessageId({
-      timelineEntries: [
-        {
-          id: "assistant-commentary-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:01Z",
-          message: {
-            id: "assistant-commentary" as never,
-            role: "assistant",
-            text: "Interim",
-            runId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:01Z",
-            updatedAt: "2026-01-01T00:00:01Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "assistant-final-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:02Z",
-          message: {
-            id: "assistant-final" as never,
-            role: "assistant",
-            text: "Final",
-            runId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:02Z",
-            updatedAt: "2026-01-01T00:00:02Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "selected-user-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:03Z",
-          message: {
-            id: "selected-user" as never,
-            role: "user",
-            text: "Fork this",
-            runId: null,
-            createdAt: "2026-01-01T00:00:03Z",
-            updatedAt: "2026-01-01T00:00:03Z",
-            streaming: false,
-          },
-        },
-      ],
-      sourceUserMessageId: "selected-user" as never,
-    });
-
-    expect(result).toBe("assistant-final");
-  });
-
-  it("returns no checkpoint boundary before the first user message", () => {
-    expect(
-      findPrecedingCompletedAssistantMessageId({
-        timelineEntries: [
-          {
-            id: "selected-user-entry",
-            kind: "message",
-            createdAt: "2026-01-01T00:00:00Z",
-            message: {
-              id: "selected-user" as never,
-              role: "user",
-              text: "Start here",
-              runId: null,
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-              streaming: false,
-            },
-          },
-        ],
-        sourceUserMessageId: "selected-user" as never,
-      }),
-    ).toBeNull();
-  });
-});
 
 describe("expanded tool group scrolling", () => {
   const entries = [{ id: "first" }, { id: "second" }];
@@ -1402,34 +1276,70 @@ describe("deriveMessagesTimelineRows", () => {
     expect(first.kind === "work" && first.entry.toolLifecycleStatus).toBe("inProgress");
   });
 
-  it("shows the CUA action title for a retained tool item", () => {
+  it.each(["cua_repl.js", "node_repl.js", "js"])(
+    "shows the %s action title for a retained tool item",
+    (toolName) => {
+      const fixture = makeStreamingTimelineFixture();
+      const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+      if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+      const item = {
+        ...source.item,
+        title: null,
+        toolName,
+        input: {
+          code: "await game.getAXStateAndScreenshot();",
+          title: "Inspect Saga music screen",
+        },
+      };
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [{ ...source, item }],
+        optimisticMessages: [],
+      });
+      const work = entries.find((entry) => entry.kind === "work");
+      expect(work?.kind === "work" && workEntryDisplayLabel(work.entry, undefined)).toBe(
+        "Inspect Saga music screen",
+      );
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        isWorking: false,
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.find((row) => row.kind === "work")).toMatchObject({
+        displayLabel: "Inspect Saga music screen",
+      });
+    },
+  );
+
+  it("recovers the failed Sky call stored as a generic js integration", () => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
     if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
     const item = {
       ...source.item,
-      title: null,
-      toolName: "cua_repl.js",
-      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+      type: "dynamic_tool" as const,
+      status: "failed" as const,
+      title: "js",
+      toolName: "node_repl.js",
+      toolSource: { key: "mcp:node_repl", name: "node repl", kind: "integration" as const },
+      input: {
+        title: "Restrict the breakpoint to Git actions",
+        code: "await sky.type_text({app:'T3 Code (Nightly)',text:'debug(ga.run)'});",
+      },
     };
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: [{ ...source, item }],
       optimisticMessages: [],
     });
-    const work = entries.find((entry) => entry.kind === "work");
-    expect(work?.kind === "work" && workEntryDisplayLabel(work.entry, undefined)).toBe(
-      "Inspect Saga music screen",
+    const entry = entries.find((row) => row.kind === "work");
+    expect(entry?.kind === "work" && workEntryDisplayLabel(entry.entry, undefined)).toBe(
+      "Restrict the breakpoint to Git actions",
     );
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: entries,
-      isWorking: false,
-      runningRunId: fixture.runId,
-      activeTurnStartedAt: fixture.time(0),
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
-    expect(rows.find((row) => row.kind === "work")).toMatchObject({
-      displayLabel: "Inspect Saga music screen",
+    expect(entry?.kind === "work" && entry.entry).toMatchObject({
+      toolSurface: "computer",
+      toolSource: { key: "computer-use", kind: "computer" },
     });
   });
 
@@ -6622,6 +6532,116 @@ describe("live subagents after their parent turn settles", () => {
       supportsConversationRollback: false,
     });
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
+  });
+});
+
+describe("subagent continued by a later turn", () => {
+  // Stored shape from #15891: resuming a subagent moves its item to the
+  // resuming run, but the item keeps the ordinal from the turn that started it.
+  const threadId = ThreadId.make("parent-thread");
+  const run1 = RunId.make("run-1");
+  const run2 = RunId.make("run-2");
+  const at = (second: number) =>
+    DateTime.makeUnsafe(`2026-10-09T10:00:${String(second).padStart(2, "0")}Z`);
+  const base = (id: string, runId: RunId, ordinal: number, second: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  });
+  const user = (id: string, runId: RunId, ordinal: number, second: number) => ({
+    ...base(id, runId, ordinal, second),
+    type: "user_message" as const,
+    messageId: MessageId.make(id),
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    inputIntent: "turn_start" as const,
+    text: `Prompt ${id}`,
+    attachments: [],
+  });
+  const assistant = (id: string, runId: RunId, ordinal: number, second: number) => ({
+    ...base(id, runId, ordinal, second),
+    type: "assistant_message" as const,
+    messageId: MessageId.make(id),
+    text: `Answer ${id}`,
+    streaming: false,
+  });
+  const reasoning = (id: string, runId: RunId, ordinal: number, second: number) => ({
+    ...base(id, runId, ordinal, second),
+    type: "reasoning" as const,
+    text: "Thinking",
+    streaming: false,
+  });
+  const items: OrchestrationV2TurnItem[] = [
+    user("prompt-1", run1, 1_000_001, 0),
+    reasoning("reasoning-1", run1, 1_000_002, 1),
+    {
+      ...base("subagent", run2, 1_000_003, 2),
+      completedAt: at(40),
+      updatedAt: at(40),
+      type: "subagent",
+      subagentId: NodeId.make("subagent"),
+      origin: "provider_native",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      childThreadId: null,
+      prompt: "Research the bug",
+      result: "Found it",
+    },
+    assistant("answer-1", run1, 1_000_004, 3),
+    user("prompt-2", run2, 2_000_001, 30),
+    reasoning("reasoning-2", run2, 2_000_002, 31),
+    assistant("answer-2", run2, 2_000_003, 32),
+    {
+      ...base("send-message", run2, 2_000_004, 33),
+      type: "dynamic_tool",
+      toolName: "SendMessage",
+      input: { to: "subagent" },
+      output: "Sent",
+    },
+    assistant("closing-2", run2, 2_000_005, 41),
+  ];
+
+  it("keeps each turn's fold between its own prompt and answer", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items.map((item) => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId: run2,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(30)),
+        completedAt: DateTime.formatIso(at(41)),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.id)).toEqual([
+      "prompt-1",
+      `turn-fold:${run1}`,
+      "answer-1",
+      "prompt-2",
+      `turn-fold:${run2}`,
+      "closing-2",
+    ]);
   });
 });
 

@@ -1,7 +1,11 @@
 # Overleaf manuscript engine
 
 This is an unmounted server foundation, not an available product feature. No
-routes, UI, automatic synchronization or network publication coordinator uses it.
+routes, UI, automatic synchronization or network publication coordinator uses
+it; the coordinator is being built in steps. Its plan, contract, owner decisions
+and status live on the working-documents PR
+[#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
+closed rather than merged; this file records what is implemented.
 The planned workflow is manual, folder-first synchronization through a private
 bare Git repository. The workspace's repository and checkpoint index do not
 participate in its merge protocol.
@@ -55,10 +59,22 @@ file with the manuscript atomically. Compile the shipped C source with:
 pnpm run build:file-exchange
 ```
 
-The helper is not discovered from the workspace or PATH at runtime. Its current
-consumer supplies an absolute path; packaged resolution and signing remain an
-integration gate. The coordinator must supply the helper again on recovery of
-an exchange-based record; it cannot silently switch that record to the fallback.
+The macOS artifact pipeline compiles the requested arm64, x64 or universal slices
+from source and stages the protocol-1 helper outside ASAR at
+`Contents/Resources/file-exchange/scient-file-exchange`. The existing signing hook
+signs it with hardened runtime and empty helper entitlements, and verifies its
+signature and team against the app. Final bundle validation checks its receipt,
+executable permissions, architecture and protocol on a compatible host.
+
+Desktop supplies that absolute server-host path through its private bootstrap.
+The helper is never discovered from the workspace or PATH at runtime. Development
+uses the explicit `build:file-exchange` output. A separately launched server may
+set the absolute host-owned `SCIENT_FILE_EXCHANGE_PATH`; a client path cannot
+select the remote server's helper. A packaged macOS installation preserves the
+required path even when damaged, so a missing or incompatible helper fails
+visibly instead of silently falling back. Recovery resolves the current app's
+resource path rather than persisting an obsolete installation path; it preserves
+the journaled mechanism and refuses to downgrade an exchange-based record.
 Without a helper the primitive moves the old file aside and
 publishes a complete file through an exclusive hard link. Unsupported link
 volumes are refused before displacement. This fallback has a missing-path window
@@ -87,15 +103,123 @@ planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
 ordinary Markdown underline headings are not publication failures.
 
+## Disposable Git protocol qualification
+
+`pnpm overleaf:qualify:git` rehearses the actual Git executor and bare repository
+against a local disposable remote, without Cloud traffic. It exercises publication,
+fresh independent reads, stale-push rejection, file/folder renames and positive
+acceptance evidence after a simulated discarded acknowledgement and later edits.
+It never automatically retries publication. Missing history remains unknown;
+simulating an acknowledgement loss does not prove behavior under real network loss.
+
+For Cloud qualification, create a fresh disposable project with Git access and
+no collaborators, then run this in your own interactive terminal:
+
+```sh
+pnpm overleaf:qualify:git --cloud --project https://www.overleaf.com/project/PROJECT_ID --output /absolute/new-report.json
+```
+
+Enter the token only at the hidden prompt. The script accepts only credential-free
+official Cloud URLs, asks for disposable-project confirmation, uses private
+operation-scoped askpass files and removes its local repositories/runtime afterward.
+The new report is private, redacts push output and contains no project URL,
+token or manuscript content. The project retains the probe files and history for
+inspection. Never use a working manuscript or put credentials in command arguments.
+
+The script pauses for browser edits, History labels/revert, displayed-author
+inspection, and comments/tracked-change inspection across a content-preserving
+rename. Features not exercised are unverified rather than reported as lost. A
+browser confirmation alone is not evidence: the probe fetches the required edit
+before attempting a stale push and verifies restoration to the pre-ack tree
+before testing acceptance after a revert. Missing changes stop the run without
+another push. Git startup failures are reported using fixed diagnostic categories;
+raw errors and credentials are never included. A completed run is an observation
+report, not an automatic qualification verdict.
+Review failed, unknown and unverified observations before proceeding to the
+coordinator; local rehearsal does not qualify Overleaf's Git bridge.
+
+The disposable Cloud probe confirmed non-fast-forward rejection without remote
+mutation, preserved commit/tree identity on fresh reads, and positive acceptance
+evidence in bounded history after a browser restore. A content-preserving Git
+rename appeared as delete/create in browser History and lost the file's comments
+and tracked suggestions. Publication appeared as **You (via Git)**, not a Scient
+author label. The coordinator's review must disclose the rename loss and must not
+promise that label. A discarded acknowledgement was simulated after an accepted
+push; actual network loss remains unverified.
+
+## Connection state
+
+`OverleafStateStore` keeps each manual connection's durable state under
+`stateDir/overleaf`, outside every workspace. A connection document changes
+only by compare-and-set on its revision, through a synced temporary file, a
+rename and a directory sync, so a crash or a full disk leaves the previous or
+the next complete document, never a partial one. Orphaned temporaries are
+removed when a process takes the lease. An unreadable or newer-schema document
+is reported as such, never treated as missing or reset; it can only be moved
+to `quarantine/` with its bytes intact.
+
+`OverleafConnectionState` defines what a document and a replacement must
+keep, and the store refuses violations, validating every document before it is
+written. The base never moves backwards or changes without a new generation.
+Each publication attempt records its operation, request, plan digest,
+workspace authority, parent, candidate and base generation; those never
+change, and only its classification may move forward: `unknown` to
+`accepted`, `out-of-date`, `not-sent` or `superseded-unresolved`, and
+`superseded-unresolved` to `accepted`. Each outcome needs its kind of evidence.
+A new attempt takes a fresh number and is recorded `unknown` on the current
+base, before any send. Acceptance adopts exactly the candidate on the base it
+was built for; a rejection or `not-sent` leaves the base alone. A base change
+must supersede every attempt still unknown in the same replacement, and late
+acceptance of a superseded attempt is recorded without moving the later base.
+At most sixteen attempts may be unresolved. A pending apply link is immutable
+until cleared. A retained copy keeps its revision, time and sync count; a
+changed copy never becomes releasable again, and a copy is dropped only after
+seven days and a later completed sync (`completedSyncCount`).
+`overleafRequiredPins` names the private refs (bases, local snapshots, pending
+apply target, unresolved attempts) that cleanup must keep.
+
+Request receipts are created once per request ID. A repeat with the same
+payload returns the original receipt instead of running again; reuse with a
+different payload, or a second different terminal status, is refused.
+
+Writes require a process lease: an exclusive lock on `lease.sqlite`, held by
+a dedicated SQLite connection for the store's lifetime and released by the
+kernel if the process dies. Another server sharing the directory gets
+`OverleafStateLockedError` instead of waiting or stealing. The lease is taken
+at the first write rather than at startup, so a server that started while an
+older one was still exiting gains write access once the older one is gone.
+Reads need no lease.
+
+The applier's application directory (displaced copies and journals) is
+`stateDir/overleaf/retained/<connection>` when Scient's state shares the
+checkout's volume and lies outside it. Otherwise it is a hidden
+`.scient-overleaf/<environment>/<connection>` folder beside the checkout on the
+project's own disk, so projects on external disks are supported. Either way it
+is private, owned by the server user, not a symlink and outside the checkout,
+so checkout cleanup cannot erase it. Its location is recorded as the disk's
+volume UUID (from `diskutil`) plus the folder's file ID, never the device
+number, so a disk mounted again under another path is recognized. Once
+recorded, nothing is created: a missing folder (unplugged disk, deleted
+folder) or a different folder in its place is reported, never replaced.
+Before use, a probe exchanges two files through the host's exchange helper;
+a disk that cannot (exFAT and FAT among them) is refused. Without a helper,
+the declared development fallback requires hard links instead. Each refusal
+has its own reason: disk not connected, no volume UUID, unsupported file
+system, read-only or shared parent, checkout at the root of its disk, unsafe
+folder, missing or replaced folder.
+
 ## Remaining integration gates
 
+The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
+defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
 checkout suspension for checkpoint restores and worktree/VCS operations, and
 the editor-flush bridge. The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
-in the development app. Real Overleaf Cloud protocol behavior and packaged,
-signed macOS helper behavior are separate gates. A local bare Git remote does
-not establish the Cloud bridge's commit/history or publication-acknowledgement
-semantics. Server Pro, Windows and Linux remain unverified product environments.
+in the development app. The exercised Cloud protocol behavior is recorded on #535;
+packaged, signed macOS helper behavior is a separate gate. A local bare Git
+remote does not establish the Cloud bridge's commit/history or
+publication-acknowledgement semantics. Server Pro, Windows and Linux remain
+unverified product environments.

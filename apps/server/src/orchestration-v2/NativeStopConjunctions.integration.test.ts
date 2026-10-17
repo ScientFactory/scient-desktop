@@ -311,6 +311,7 @@ emit({ kind: "ready" });
               .writeFileString(commands, encodeReceipt(value) + "\n", { flag: "a" })
               .pipe(Effect.orDie);
           return {
+            stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
             setPermissionMode: () =>
               Effect.die("Permission-mode mutation is outside this fixture."),
             messages: Stream.fromQueue(messages).pipe(
@@ -347,6 +348,7 @@ emit({ kind: "ready" });
             }),
             close,
             setModel: () => Effect.die("No model switch in captured Stop proof"),
+            applyFlagSettings: () => Effect.die("No flag settings change in captured Stop proof"),
           };
         }).pipe(Effect.orDie),
       forkSession: () => Effect.die("No fork in Stop conjunction proof"),

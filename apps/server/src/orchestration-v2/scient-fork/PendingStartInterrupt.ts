@@ -1,6 +1,7 @@
 /** Interrupts a run whose provider start is still pending. Native turn identity is
  * read only from a recorded receipt; it is never invented before one arrives. */
 import {
+  CommandId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -14,6 +15,33 @@ import * as Schema from "effect/Schema";
 
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type { ProviderTurnControlServiceV2Shape } from "../ProviderTurnControlService.ts";
+import type { PendingOrchestrationEffectV2 } from "../EffectOutbox.ts";
+
+export const PendingStartInterruptRequest = Schema.Struct({
+  type: Schema.Literal("provider-run.interrupt"),
+  runId: RunId,
+  expectedAttemptId: RunAttemptId,
+  providerSessionId: ProviderSessionId,
+  providerThreadId: ProviderThreadId,
+});
+
+type PendingStartInterruptOwner = Omit<typeof PendingStartInterruptRequest.Type, "type">;
+
+/** Keep an accepted native start alive until its exact turn receipt can be interrupted. */
+export function pendingStartInterruptEffect(
+  input: PendingStartInterruptOwner & {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+  },
+): PendingOrchestrationEffectV2 {
+  const { commandId, threadId, ...owner } = input;
+  return {
+    id: `effect:${commandId}:provider-run.interrupt:${owner.expectedAttemptId}`,
+    commandId,
+    threadId,
+    request: { type: "provider-run.interrupt", ...owner },
+  };
+}
 
 /** Private pending-start control: native turn identity is not invented before its receipt. */
 export class ProviderRunInterruptError extends Schema.TaggedError<ProviderRunInterruptError>()(
@@ -28,13 +56,9 @@ export class ProviderRunInterruptError extends Schema.TaggedError<ProviderRunInt
 
 const isProviderRunInterruptError = Schema.is(ProviderRunInterruptError);
 
-export type InterruptPendingStart = (input: {
-  readonly threadId: ThreadId;
-  readonly runId: RunId;
-  readonly expectedAttemptId: RunAttemptId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerThreadId: ProviderThreadId;
-}) => Effect.Effect<Option.Option<ProviderTurnId>, ProviderRunInterruptError>;
+export type InterruptPendingStart = (
+  input: PendingStartInterruptOwner & { readonly threadId: ThreadId },
+) => Effect.Effect<Option.Option<ProviderTurnId>, ProviderRunInterruptError>;
 
 export const makeInterruptPendingStart =
   (deps: {

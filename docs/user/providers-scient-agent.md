@@ -17,6 +17,10 @@ model picker. On macOS (Apple silicon and Intel), Linux (x86-64 and ARM64, glibc
 (x86-64 and ARM64), **Install** is available when Scient has a qualified Scient Agent release. **Manage** provides update, repair, and removal for that private installation.
 Installing the executable does not connect a model account.
 
+If the release server temporarily fails with HTTP 500, 502, 503, or 504, the installer retries
+twice before reporting the failure. Cancellation still stops installation, and downloaded
+bytes must pass size, checksum, and runtime checks before activation.
+
 Until the first qualified release is published, setup explains that no release is available.
 You can use a locally built `scient-agent` executable (0.1.0 or newer): set **Binary path** if it
 is not on the server's `PATH`. Scient preserves an explicit custom path rather than replacing

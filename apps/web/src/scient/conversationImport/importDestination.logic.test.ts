@@ -1,3 +1,4 @@
+import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
@@ -68,7 +69,7 @@ describe("newChatModelSelection", () => {
   ) =>
     newChatModelSelection({
       config,
-      settings: { ...DEFAULT_UNIFIED_SETTINGS, ...config.settings },
+      settings: mergeEnvironmentSettings(config.settings, DEFAULT_UNIFIED_SETTINGS),
       project: target,
       ...carry,
     });

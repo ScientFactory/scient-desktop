@@ -1,6 +1,8 @@
-import { CheckIcon, CopyIcon, PlayIcon, WrapTextIcon } from "lucide-react";
+import { Check, Copy } from "lucide";
+import { PlayIcon, WrapTextIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { MorphIcon } from "~/components/MorphIcon";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -81,7 +83,8 @@ export function CodeBlockActions({
           render={
             <Button
               type="button"
-              variant="ghost"
+              // As upstream's code block (#13208): a wrapped block shows its toggle on.
+              variant={wrapped ? "secondary" : "ghost-muted"}
               size="icon-xs"
               aria-pressed={wrapped}
               onClick={() => onWrapChange(!wrapped)}
@@ -116,14 +119,14 @@ export function CodeBlockActions({
           render={
             <Button
               type="button"
-              variant="ghost"
+              variant="ghost-muted"
               size="icon-xs"
               onClick={() => void copy()}
               aria-label={copyLabel}
             />
           }
         >
-          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+          <MorphIcon className="size-3" icon={copied ? Check : Copy} />
         </TooltipTrigger>
         <TooltipPopup side="top">{copyLabel}</TooltipPopup>
       </Tooltip>

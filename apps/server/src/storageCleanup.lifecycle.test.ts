@@ -190,6 +190,14 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                 })),
               execute: (input) =>
                 Effect.gen(function* () {
+                  if (input.operation === "StorageCleanup.branchChanged") {
+                    assert.deepEqual(
+                      input.args,
+                      input.args[0] === "rev-parse"
+                        ? ["rev-parse", "--git-path", "index"]
+                        : ["symbolic-ref", "--quiet", "HEAD"],
+                    );
+                  }
                   if (input.args[0] === "worktree" && input.args[1] === "move") {
                     assert.isFalse(input.args.includes("--force"));
                     isolatedPath = input.args[3]!;
@@ -204,12 +212,17 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),
                     stdout:
-                      input.operation === "StorageCleanup.localChanges" && protection === "dirty"
-                        ? " M tracked.txt\0"
-                        : input.operation === "StorageCleanup.ignoredFiles" &&
-                            protection === "ignored"
-                          ? ".env\0"
-                          : "",
+                      input.operation === "StorageCleanup.branchChanged"
+                        ? input.args[0] === "rev-parse"
+                          ? path.join(config.baseDir, "fixture-index")
+                          : "refs/heads/feature\n"
+                        : input.operation === "StorageCleanup.localChanges" &&
+                            protection === "dirty"
+                          ? " M tracked.txt\0"
+                          : input.operation === "StorageCleanup.ignoredFiles" &&
+                              protection === "ignored"
+                            ? ".env\0"
+                            : "",
                     stderr: "",
                     stdoutTruncated: false,
                     stderrTruncated: false,

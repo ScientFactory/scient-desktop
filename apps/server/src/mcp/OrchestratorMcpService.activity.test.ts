@@ -23,11 +23,19 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
+
+const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 const projectId = ProjectId.make("project-mcp-orchestrator-detail");
@@ -130,7 +138,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -156,6 +164,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
@@ -201,7 +210,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -227,6 +236,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
@@ -329,7 +339,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -346,6 +356,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
             return Effect.die(`unexpected thread ${threadId}`);
           },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
@@ -479,7 +490,7 @@ it("cross-project reads require a user attachment and writes retain caller autho
   const targetProjection = (threadId: ThreadId) =>
     threadId === childThreadId ? localProjection : foreignProjection(threadId);
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: (caller) =>
@@ -545,6 +556,7 @@ it("cross-project reads require a user attachment and writes retain caller autho
               } as unknown as ThreadManagementService.ThreadManagementSendResult;
             }),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),

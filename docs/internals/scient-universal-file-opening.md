@@ -262,11 +262,13 @@ incomplete and would create a second browser implementation.
 
 Scient owns the contracts, preparation service, asset capability, presentation
 adapters, right-panel descriptor, breadcrumb navigator, and shared file-path
-clipboard behavior. Universal file opening and file-path affordances touch five
+clipboard behavior. Universal file opening and file-path affordances touch seven
 inherited T3 files:
 
 1. `ChatMarkdown.tsx`: primary-click routing for workspace versus direct files,
-   the HTML Browser action, and delegation to the shared path-copy handler.
+   the HTML Browser action, delegation to the shared path-copy handler, and
+   `MarkdownFileLink`'s fallback to the file preview when the browser cannot
+   open a file. Every edit is in a marked region.
 2. `ChatView.tsx`: one lazy mount for the Scient file surface and the active
    workspace root supplied to right-panel full-path copying.
 3. `rightPanelStore.ts`: the existing `openScient` branch refreshes a matching
@@ -277,6 +279,12 @@ inherited T3 files:
    editor/save lifecycle.
 5. `RightPanelTabs.tsx`: the existing file-tab context menu offers relative and
    full path copying through the shared handler.
+6. `markdown-links.ts` (marked): file links canonicalize their paths, resolve
+   against the editable workspace root, keep `~/` links as authored, and copy
+   the workspace-relative path.
+7. `browser/openFileInPreview.ts` (unmarked): HTML links keep T3's
+   browser-first behavior, PDF links open Scient's file surface instead, and
+   workspace files are addressed as `workspace-file` resources.
 
 The inherited editor/save lifecycle, Browser manager, and attachment/image paths
 are unchanged. The workspace viewer consumes the same native watcher stream

@@ -14,6 +14,10 @@ import {
   ThreadId,
   EventId,
   ComposerContextId,
+  ContextHandoffId,
+  ProviderThreadId,
+  ProviderInstanceId,
+  RunId,
   OrchestrationMessageContext,
   TurnId,
   TurnItemId,
@@ -338,6 +342,90 @@ const produceText = (input: ScientConversationExportRequest) =>
   });
 
 describe("ConversationExportService", () => {
+  it.effect("captures unique retained summaries losslessly through bounded source pages", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = DateTime.makeUnsafe("2026-10-12T00:00:00Z");
+      const handoffId = ContextHandoffId.make("export-retained-summary");
+      const text = 'Unique original summary 🧪\n\\"\ud800 ' + "retained ".repeat(12_000);
+      yield* store.apply({
+        id: EventId.make("export-summary"),
+        type: "context-handoff.updated",
+        threadId: THREAD,
+        occurredAt: now,
+        payload: {
+          id: handoffId,
+          threadId: THREAD,
+          targetRunId: RunId.make("export-target"),
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("export-provider"),
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: text,
+          createdByProviderInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const original = (yield* store.getThreadProjection(THREAD)).turnItems[0]!;
+      yield* store.apply({
+        id: EventId.make("export-summary-row"),
+        type: "turn-item.updated",
+        threadId: THREAD,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: TurnItemId.make("export-summary-row"),
+          ordinal: 100,
+          type: "handoff",
+          status: "completed",
+          contextHandoffId: handoffId,
+          summary: text,
+          updatedAt: now,
+          providerThreadId: null,
+          providerTurnId: null,
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("export-provider"),
+          fromProviderInstanceIds: [],
+          toProviderInstanceId: ProviderInstanceId.make("codex"),
+          strategy: "manual_context",
+        },
+      });
+      const snapshots = yield* ConversationSnapshotService.ConversationSnapshotService;
+      const captured = yield* snapshots.capture({
+        threadId: THREAD,
+        selection: { workLog: false, reasoning: false, throughMessageId: null },
+      });
+      assert.equal(
+        captured.snapshot.messages.find((message) => message.id.startsWith("handoff-summary:"))
+          ?.text,
+        text,
+      );
+      assert.equal(
+        captured.snapshot.messages.filter((message) => message.role !== "system").length,
+        2,
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("refuses oversized capture before decoding a native SQLite body", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json =
+        json_set(payload_json, '$.text', replace(hex(zeroblob(33 * 1024 * 1024)), '00', 'x'))
+        WHERE thread_id = ${THREAD} AND type = 'user_message'`;
+      const heap = process.memoryUsage().heapUsed;
+      const service = yield* ConversationExportService.ConversationExportService;
+      const error = yield* service.prepare(THREAD).pipe(Effect.flip);
+      assert.equal(error._tag, "ScientConversationExportError");
+      if (error._tag === "ScientConversationExportError") assert.equal(error.reason, "too-large");
+      assert.isBelow(process.memoryUsage().heapUsed - heap, 8 * 1024 * 1024);
+    }).pipe(Effect.provide(TestLayer)),
+  );
   if (pandocBinary !== null)
     it.live(
       "exports Mermaid source and unresolved bibliography keys through the real Word path",

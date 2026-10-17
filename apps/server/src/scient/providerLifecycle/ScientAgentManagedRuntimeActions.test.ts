@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -16,6 +17,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import {
   canonicalOmpExecutablePath,
@@ -77,6 +79,88 @@ const canLease = (gate: OmpExecutableGateShape, executable: string) =>
   );
 
 describe("managed Scient Agent activation", () => {
+  it.live(
+    "recovers the real factory's download while retaining isolated smoke and RPC admission",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "scient-agent-download-factory-"),
+        );
+        const bytes = Buffer.from("synthetic executable");
+        const candidate = {
+          ...artifact,
+          size: bytes.length,
+          checksum: {
+            algorithm: "sha256" as const,
+            digest: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+          },
+        };
+        const gate = yield* makeOmpExecutableGate({ processWaitTimeout: "20 millis" });
+        const fetch = vi
+          .fn()
+          .mockResolvedValueOnce(new Response("unavailable", { status: 500 }))
+          .mockResolvedValueOnce(
+            new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
+          );
+        const events: string[] = [];
+        vi.stubGlobal("fetch", fetch);
+        try {
+          const runtime = yield* makeQualifiedManagedScientAgentRuntime({
+            baseDir,
+            environment: { OPENAI_API_KEY: "canary" },
+            dependencies: {
+              smoke: async (executable, _args, _name, env) => {
+                expect(await NodeFSP.readFile(executable)).toEqual(bytes);
+                expect(env?.OPENAI_API_KEY).toBeUndefined();
+                expect(env?.HOME).not.toBe(baseDir);
+                events.push("smoke");
+              },
+            },
+            qualification: (input) =>
+              Effect.gen(function* () {
+                expect(yield* canLease(gate, input.executablePath)).toBe(false);
+                const identity = yield* canonicalOmpExecutablePath(input.executablePath).pipe(
+                  Effect.provide(NodeServices.layer),
+                );
+                const activation = input.activations.find((held) => held.identity === identity);
+                expect(activation).toBeDefined();
+                yield* Effect.scoped(
+                  gate.acquireProcess(identity, {
+                    target: scientAgentTarget,
+                    kind: "one-shot",
+                    activation,
+                  }),
+                ).pipe(Effect.orDie);
+                events.push("qualification");
+              }),
+          }).pipe(
+            Effect.provideService(OmpExecutableGate, gate),
+            Effect.provide(NodeServices.layer),
+          );
+          yield* Effect.promise(() =>
+            runtime.install({
+              artifact: candidate,
+              signal: new AbortController().signal,
+              beforeActivate: async () => {
+                events.push("admission");
+              },
+            }),
+          );
+          expect(fetch).toHaveBeenCalledTimes(2);
+          expect(events).toEqual(["smoke", "admission", "qualification"]);
+          expect(yield* Effect.promise(() => runtime.status(candidate))).toMatchObject({
+            installed: true,
+            selected: true,
+            activeVersion: "0.1.0",
+          });
+          expect(yield* canLease(gate, runtime.launchPath(candidate))).toBe(true);
+        } finally {
+          vi.unstubAllGlobals();
+          NodeFS.rmSync(baseDir, { recursive: true, force: true });
+        }
+      }),
+  );
+
   it.live(
     "holds the executable from after the activation window through commit, without deadlocking its own qualification",
     () =>

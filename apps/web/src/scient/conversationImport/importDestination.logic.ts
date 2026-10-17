@@ -75,7 +75,11 @@ export function newChatModelSelection(input: {
   // A draft thread's own selection, as the chat view builds it.
   const threadModelSelection = projectDefault ?? NO_PROVIDER_MODEL_SELECTION;
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(config.providers), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(config.providers),
+      settings,
+      project.id,
+    ),
   );
   const { selectedProviderEntry } = resolveComposerProviderSelection({
     entries,

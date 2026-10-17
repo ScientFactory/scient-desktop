@@ -30,7 +30,8 @@
     "packages/scient-operations/src/operation.ts",
     "packages/contracts/src/scient/skillRpcs.ts",
     "apps/server/src/scient/ScientServerLayers.ts",
-    "packages/contracts/src/scient/orchestrationV2Schemas.ts"
+    "packages/contracts/src/scient/orchestrationV2Schemas.ts",
+    "scripts/scient-alignment-checks.json"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",

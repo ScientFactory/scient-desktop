@@ -32,6 +32,7 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
 const McpSessions = await providerCore("McpProviderSessions");
 const Settings = await app("serverSettings");
 const Config = await app("config");
+const { nativeHistoryEstimate } = await app("orchestration-v2/scient-fork/NativeHistoryEstimate");
 const NodeServices = await import(
   NodeURL.pathToFileURL(require.resolve("@effect/platform-node/NodeServices"))
 );
@@ -62,21 +63,30 @@ const dependencies = Layer.mergeAll(
   Layer.mock(Git.GitWorkflowService)({}),
   Layer.mock(Project.ProjectService)({}),
   Layer.mock(Auth.ProviderAuthService)({}),
-  Layer.mock(Projection.ProjectionStoreV2)({
-    getThreadProjection: () =>
-      Effect.sync(() => {
-        fullReads++;
-        throw new Error("full transcript read");
-      }),
-    hasUnpairedRunInterruptRequest: () => Effect.succeed(false),
-    getTurnStartContext: () =>
-      Effect.sync(() => {
-        fullReads++;
-        return { ...current, hasConversation: true };
-      }),
-    getTurnStartHistory: () => Effect.sync(() => current.turnItems),
-    getRuntimeRecoveryProjection: () => Effect.sync(() => current),
-  }),
+  Layer.effect(
+    Projection.ProjectionStoreV2,
+    Effect.gen(function* () {
+      const production = yield* Projection.ProjectionStoreV2;
+      return Projection.ProjectionStoreV2.of({
+        ...production,
+        getThreadProjection: () =>
+          Effect.sync(() => {
+            fullReads++;
+            throw new Error("full transcript read");
+          }),
+        hasUnpairedRunInterruptRequest: () => Effect.succeed(false),
+        getTurnStartContext: () =>
+          Effect.sync(() => {
+            fullReads++;
+            return { ...current, hasConversation: true };
+          }),
+        getTurnStartHistory: () => Effect.sync(() => current.turnItems),
+        getNativeHistoryEstimates: () =>
+          Effect.sync(() => current.turnItems.map(nativeHistoryEstimate)),
+        getRuntimeRecoveryProjection: () => Effect.sync(() => current),
+      });
+    }),
+  ).pipe(Layer.provide(Projection.layerMemory)),
   Layer.mock(Sessions.ProviderSessionManagerV2)({ open: () => Effect.succeed(session) }),
   Layer.mock(Policy.RuntimePolicyV2)({
     resolve: () =>

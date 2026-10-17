@@ -31,6 +31,10 @@ Scient never installs an update on its own. Restarting interrupts running agent
 turns and terminal commands, so let them finish before choosing **Restart**.
 Threads, settings, and project files remain in their existing locations.
 
+If the app restarts on its old version, Scient tells you the update did not
+apply. It does not install that version again on its own, even when another
+device asks. Use the update control on that machine to retry.
+
 Choose **Stable** or **Beta** in **Settings → General → Update track**. Existing
 Stable installations stay on Stable until you choose Beta. Beta offers previews
 from a separate release feed. Before the first Beta is published, choosing Beta
@@ -61,6 +65,12 @@ Changes apply to connected environments that support the setting. After an offli
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
 If you previously enabled continuation only for updates, enable this setting once to allow recovery
 without a connected client.
+A thread that finished its turn to wait on a monitor, subagent, or background task
+is woken and told that this work stopped. A background shell, such as a dev server,
+does not wake it; the thread learns about it with your next message.
+A thread is not resumed while it waits for your approval, answer, or secret, or
+while it is archived, snoozed, or settled. After three automatic resumes in a row,
+the thread waits for your next message.
 
 The action depends on how that environment started:
 
@@ -112,7 +122,30 @@ in [Run Scient in the background](./background-service.md).
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
 
+Only one server can use a Scient data directory at a time. If startup reports
+that another server owns it, stop that server before retrying, or use a separate
+data directory and pair with the running server.
+
 ## Update providers
+
+The sidebar's **Update everything** action shows the eligible updates for each
+connected environment before you confirm. It updates providers first, then
+supported remote servers, and installs this desktop app last. Servers requiring
+an exact Scient release artifact are included only when that artifact is
+available from Scient's release repository. Disconnected environments, missing
+maintenance permissions, and incompatible release channels are excluded. The
+confirmation lists each environment it skips and why, such as one that is
+offline, lacks permission, needs a manual update, or needs a Scient server
+release that is not published yet. Use the notice or **Settings → Connections**
+for those.
+
+While the update runs, hover the control to see each environment's progress.
+When it finishes, one summary lists what was updated and each failure. When
+this desktop app installs last, the summary appears after it restarts.
+
+The confirmation identifies the servers that will restart and whether they can
+resume interrupted threads. Continuation still requires that server's supported
+capability and enabled setting; it does not revive stopped or settled work.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
@@ -120,3 +153,7 @@ at once. Hover it to see which providers it will update. Two kinds are left
 out on purpose: providers that only offer a manual update command, and
 Scient-managed runtimes, which keep their own qualified update and repair
 actions rather than a bulk path.
+
+The provider update checks setting also controls whether Scient downloads model
+catalog updates. With it off, new models may not appear until you turn it on
+and refresh provider status.

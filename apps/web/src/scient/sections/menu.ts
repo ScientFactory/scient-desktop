@@ -12,20 +12,20 @@ export type SectionMenuAction =
 
 /**
  * The Section submenu for one or more threads, listing General and every
- * section in sidebar order. The current choice is checked only when every
- * selected thread shares it; choosing General removes the section.
+ * section of one catalog in sidebar order. The current choice is checked only
+ * when every selected thread shares it; choosing General removes the section.
  */
 export function buildSectionSubmenu(input: {
   readonly sections: readonly ThreadSection[];
   readonly generalIndex: number;
-  /** Each selected thread's section id (null when unsectioned). */
+  /**
+   * Each selected thread's current section, or null when it shows in General
+   * (unsectioned, or its section is gone from its catalog).
+   */
   readonly currentSectionIds: ReadonlyArray<string | null>;
 }): ContextMenuItem<SectionMenuId> {
   const count = input.currentSectionIds.length;
-  const known = new Set<string>(input.sections.map((section) => section.id));
-  const current = new Set(
-    input.currentSectionIds.map((id) => (id !== null && known.has(id) ? id : null)),
-  );
+  const current = new Set(input.currentSectionIds);
   const shared = current.size === 1 ? [...current][0]! : undefined;
   const byId = new Map(input.sections.map((section) => [section.id as string, section]));
   const choices = sectionLayoutOrder(input.sections, input.generalIndex).map((id) => {

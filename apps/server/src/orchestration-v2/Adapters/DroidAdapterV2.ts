@@ -10,6 +10,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyDroidModelAndEffort,
   droidReplacedDefaultNotice,
+  droidRequestFailureDetail,
   confirmDroidAutonomy,
   findSelectDroidConfigOption,
   makeDroidCredentialRedactor,
@@ -456,10 +457,9 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
               Effect.tapError((error) =>
                 Effect.gen(function* () {
                   const model = executingModel;
-                  const detail =
-                    isAcpRequestError(error) && typeof error.data === "string"
-                      ? error.data.trim()
-                      : error.message;
+                  const detail = isAcpRequestError(error)
+                    ? droidRequestFailureDetail(error)
+                    : error.message;
                   if (
                     typeof model === "string" &&
                     model.trim() &&
@@ -536,9 +536,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         cause,
         message: redact(
           isAcpRequestError(cause)
-            ? typeof cause.data === "string" && cause.data.trim()
-              ? cause.data.trim()
-              : cause.message
+            ? droidRequestFailureDetail(cause) || cause.message
             : String(cause),
         ),
         class: "provider_error",

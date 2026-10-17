@@ -386,6 +386,9 @@ export function useScientThreadFork({
               sourceAssistantMessageId: pending.command.sourceAssistantMessageId ?? null,
               sourceUserMessageId: pending.command.sourceUserMessageId ?? null,
               sourceRunningRunId: pending.command.sourceRunningRunId ?? null,
+              ...(pending.workspaceNotice === undefined
+                ? {}
+                : { workspaceNotice: pending.workspaceNotice }),
             }
           : await resolveOptions(source);
         if (
@@ -494,6 +497,9 @@ export function useScientThreadFork({
                 ...(options.displayTitle === undefined
                   ? {}
                   : { displayTitle: options.displayTitle }),
+                ...(options.workspaceMode === "local" && eligibility.workspaceNotice !== undefined
+                  ? { workspaceNotice: eligibility.workspaceNotice }
+                  : {}),
                 ...(options.composerDraftSource
                   ? { composerDraftFingerprint: composerFingerprint(options.composerDraftSource) }
                   : {}),

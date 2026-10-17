@@ -93,9 +93,12 @@ It follows chat's rendering decisions per message:
 
 Kept line breaks are written as explicit hard breaks (`\` before the newline) in text only, never
 inside code or math, so every Markdown renderer shows them as chat does. Work log and reasoning are
-attached to the message chat shows them under (the terminal answer of their turn), using the
-grouping shared with chat (`@scientfactory/conversation/work-log-grouping`, the same functions
-`MessagesTimeline.logic.ts` imports; that subpath has no parser code). Assets are addressed as
+attached to the terminal answer of their turn, using the export's own grouping
+(`packages/scient-conversation/src/workLogGrouping.ts`). It approximates chat's timeline grouping in
+`MessagesTimeline.logic.ts` but is a separate, turn-keyed copy: chat does not call it, and the two can
+differ (for example, the export's "Worked for" label on an interrupted turn). Chat's kept answers
+(earlier real answers left visible when a turn folds) do not change this: the work still attaches
+to the turn's terminal answer. Assets are addressed as
 `scient-asset:<id>`; file-excerpt quotes become a quotation plus the project-relative source file
 and are listed in `citations`. Images referenced by a path on the original computer (for example,
 an image whose source is `./figures/plot.png`) become an "Image not included" placeholder with a

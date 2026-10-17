@@ -25,6 +25,7 @@ describe("provider-native model catalogs", () => {
     const kind = ProviderDriverKind.make(driver);
     const onChange = vi.fn();
     const onFavoriteModelsChange = vi.fn();
+    const onToggleFavorite = vi.fn();
     await act(() =>
       root.render(
         <ProviderModelsSection
@@ -47,12 +48,13 @@ describe("provider-native model catalogs", () => {
           modelOrder={[]}
           onChange={onChange}
           onFavoriteModelsChange={onFavoriteModelsChange}
+          onToggleFavorite={onToggleFavorite}
           onHiddenModelsChange={vi.fn()}
           onModelOrderChange={vi.fn()}
         />,
       ),
     );
-    return { onChange, onFavoriteModelsChange };
+    return { onChange, onFavoriteModelsChange, onToggleFavorite };
   }
   it.each(["pi", "antigravity"])(
     "keeps %s catalog curation without offering invented models",
@@ -65,7 +67,8 @@ describe("provider-native model catalogs", () => {
       );
       expect(favorite).not.toBeNull();
       await act(() => favorite!.click());
-      expect(callbacks.onFavoriteModelsChange).toHaveBeenCalledWith(["local/model"]);
+      expect(callbacks.onToggleFavorite).toHaveBeenCalledWith("local/model");
+      expect(callbacks.onFavoriteModelsChange).not.toHaveBeenCalled();
       expect(callbacks.onChange).not.toHaveBeenCalled();
     },
   );

@@ -1,3 +1,5 @@
+// SCIENT-FORK:START — file links canonicalize paths, keep `~/` links as authored and copy the
+// workspace-relative path (scient-universal-file-opening.md).
 import {
   collapseAbsoluteFilePath,
   fileBasename,
@@ -16,6 +18,7 @@ import {
   parseFileUrlHref,
   splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
+// SCIENT-FORK:END
 
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { isTerminalLinkActivation } from "./terminal-links";
@@ -28,12 +31,14 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  // SCIENT-FORK:START — home-relative links are resolved by the environment that owns the files.
   /**
    * The link as authored when it is written from the home folder
    * (`~/notes.md`). `filePath` holds only the client's guess at where that
    * is; the environment that owns the files is asked with this spelling.
    */
   homeRelativePath?: string;
+  // SCIENT-FORK:END
 }
 
 export function shouldOpenMarkdownFileLinkInEditor(
@@ -43,11 +48,15 @@ export function shouldOpenMarkdownFileLinkInEditor(
   return isTerminalLinkActivation(event, platform);
 }
 
+// SCIENT-FORK:START — the browser target follows the canonical workspace-file policy
+// (browser/openFileInPreview.ts), so the PDF-only default is gone; links are matched to their
+// authored source by a decoded lookup key.
 /** Canonical key for matching React Markdown's encoded href to authored source. */
 export function markdownLinkLookupKey(href: string): string {
   const normalized = normalizeMarkdownLinkDestination(href);
   return safeDecodeURIComponent(rewriteMarkdownFileUriHref(normalized) ?? normalized);
 }
+// SCIENT-FORK:END
 
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
@@ -58,17 +67,22 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
 /**
  * Inline code spans mostly hold identifiers, commands, and refs (`node.meta`,
  * `origin/main`) rather than deliberate link destinations, so auto-linking
- * them demands stronger path evidence than an explicit markdown link does.
+ * them demands stronger path evidence than an explicit markdown link does:
+ * an unambiguous path prefix, a file extension, or a :line suffix.
  */
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
   workspaceRoot: string | null | undefined = cwd,
+  // SCIENT-FORK:END
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
 
+  // SCIENT-FORK:START — explicit `./` and `../` paths keep their segments inside the workspace,
+  // and a `~/` path keeps its authored spelling.
   const candidateBase = inlineCodePathNamesFromWorkspaceRoot(candidate, cwd, baseDir)
     ? cwd
     : baseDir;
@@ -84,6 +98,7 @@ export function resolveInlineCodeFileLinkMeta(
     preserveRelativeSegments,
   );
   return withAuthoredHomeRelativePath(candidate, meta);
+  // SCIENT-FORK:END
 }
 
 /**
@@ -106,10 +121,15 @@ export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
   workspaceRoot: string | null | undefined = cwd,
+  // SCIENT-FORK:END
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
+  // SCIENT-FORK:START — a `~/` link keeps its authored spelling. This region runs through
+  // buildFileLinkMetaFromTarget: home-relative links, the relative copy path, and canonical
+  // file-link paths resolved against the editable workspace root.
   const meta = buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
   return withAuthoredHomeRelativePath(href, meta);
 }
@@ -176,3 +196,4 @@ function buildFileLinkMetaFromTarget(
     ...(column !== undefined ? { column } : {}),
   };
 }
+// SCIENT-FORK:END

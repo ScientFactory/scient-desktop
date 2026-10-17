@@ -19,18 +19,22 @@ fallback glyphs during a cold font load instead of staying invisible.
 rewrite that only prepended `swap` lost to that later declaration, which is
 why the shipped swap variant is used instead of a transform.)
 
-## ChatMarkdown seam
+## Pipeline and host seams
 
-The inherited-host seam is `ChatMarkdown.tsx` only: the import block for the
-four math modules, `remarkScientMath` plus `remarkScientSingleDollarMath`
-plus `remarkScientMathRefinements` in both remark plugin arrays (the
-single-dollar plugin must follow `remarkScientMath` so `$$` forms keep their
-upstream construct), one unconditional `useScientMathMarkdownText` call, one
-`useScientMathRemarkPlugins` call that threads the original message text to
-the refinement plugin (`remarkPlugins={remarkPlugins}` at the render site),
-and two `components` branches — `code` routes
-`language-math` nodes to `ScientInlineMath`, `pre` routes them to
-`ScientDisplayMath`. Normalization is length-preserving (every rewrite swaps
+The remark plugin arrays are built in `scient/markdown/scientMarkdownPipeline.ts`:
+`remarkScientMath` plus `remarkScientSingleDollarMath` plus
+`remarkScientMathRefinements` in both chat arrays (the single-dollar plugin
+must follow `remarkScientMath` so `$$` forms keep their upstream construct).
+The inherited hosts carry marked mounts only. In `ChatMarkdown.tsx`: the math
+imports, one unconditional `useScientMathMarkdownText` call, one
+`useScientMathRemarkPlugins(remarkPlugins, text)` call that threads the
+original message text to the refinement plugin
+(`remarkPlugins={scientRemarkPlugins}` at the render site), and two
+`components` branches — `code` routes `language-math` nodes to
+`ScientInlineMath`, `pre` routes them to `ScientDisplayMath`, each inside
+`ScientMathFindSurface`. In `markdown-clipboard.ts`: the calls to
+`scient/clipboard/mathClipboard.ts` (`mathAwareRange` and the TeX-source
+replacement). Normalization is length-preserving (every rewrite swaps
 a two-character delimiter for the two-character `$$`), so character offsets
 never move and offset-based behavior — task-list toggling in rendered file
 previews, list-item positions — stays correct on every surface with no
@@ -140,9 +144,10 @@ is still streaming — matching the Shiki highlight cache — so the growing
 prefixes of an unclosed block never occupy entries. Every rendered or
 fallback math element carries `data-markdown-copy` with its dollar-form
 source, so highlight-and-copy (`markdown-clipboard.ts`) round-trips math
-instead of serializing KaTeX's DOM. Both copy forms use `$$` — the only
-dollar form that re-renders on paste now that single-dollar spans are not
-recognized — with newline framing keeping display math a block.
+instead of serializing KaTeX's DOM. Both copy forms use `$$`, which always
+re-renders on paste (a single-dollar span would have to pass the guarded
+tokenizer's plausibility rules), with newline framing keeping display math a
+block.
 
 The shared `scient-math.css` stylesheet resets the chat surface's aggressive
 `overflow-wrap`/`word-break` inside equations. Display math wraps between KaTeX's
@@ -180,7 +185,9 @@ there as plain text rather than rendering as typeset math.
 
 ## Upstream maintenance
 
-Do not fork T3's Markdown renderer. When `ChatMarkdown.tsx` changes upstream,
+Keep math to these mounts in T3's Markdown renderer. (The `pre` path is
+already Scient's for code blocks and rich fences; see
+[chat diagrams](./scient-chat-diagrams.md).) When `ChatMarkdown.tsx` changes upstream,
 reapply this narrow adapter and rerun the focused math tests before accepting
 the update. Retirement condition: if T3 adds native math rendering, drop the
 Scient plugin and components and keep only delimiter normalization, if it is

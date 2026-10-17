@@ -53,6 +53,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
+                stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 setPermissionMode: () =>
                   Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
@@ -61,6 +62,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     offeredMessages.push(message);
                   }),
                 setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
               }),
@@ -201,11 +203,13 @@ describe("ClaudeAdapterV2 attachments", () => {
               Effect.sync(() => {
                 openCount += 1;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
                 };

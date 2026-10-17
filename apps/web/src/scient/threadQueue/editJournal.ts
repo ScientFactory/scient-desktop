@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { ThreadId, PlanId } from "@t3tools/contracts";
 import type { ScopedThreadRef, ScientThreadQueueItem, RunId, MessageId } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftId } from "../../composerDraftStore";
+import { createIndexedDbConnection } from "../storage/indexedDbConnection";
 import { migrateQueueComposerContext } from "./composerSnapshot";
 
 /** Local recovery payload; native run IDs never pass through the legacy queue codec. */
@@ -37,30 +38,16 @@ type StoredSession = Omit<QueueEditSession, "ordinary" | "edited"> & {
   ordinary: StoredDraft;
   edited: StoredDraft;
 };
-let database: Promise<IDBDatabase> | undefined;
-function db() {
-  return (database ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("scient-queue-edit-journal", 2);
-    request.addEventListener("upgradeneeded", () => {
-      if (!request.result.objectStoreNames.contains("edits"))
-        request.result.createObjectStore("edits", { keyPath: "journalKey" });
-      if (!request.result.objectStoreNames.contains("files"))
-        request.result.createObjectStore("files");
-    });
-    request.addEventListener("success", () => {
-      request.result.addEventListener("versionchange", () => request.result.close());
-      resolve(request.result);
-    });
-    request.addEventListener("error", () => {
-      database = undefined;
-      reject(request.error);
-    });
-    request.addEventListener("blocked", () => {
-      database = undefined;
-      reject(new Error("Close older Scient windows and reload to recover queue editing storage."));
-    });
-  }));
-}
+const journal = createIndexedDbConnection({
+  name: "scient-queue-edit-journal",
+  version: 2,
+  upgrade: (database) => {
+    if (!database.objectStoreNames.contains("edits"))
+      database.createObjectStore("edits", { keyPath: "journalKey" });
+    if (!database.objectStoreNames.contains("files")) database.createObjectStore("files");
+  },
+  blockedMessage: "Close older Scient windows and reload to recover queue editing storage.",
+});
 function result<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
@@ -69,11 +56,22 @@ function result<T>(request: IDBRequest<T>): Promise<T> {
 }
 // Attachment bytes are written once per object, not cloned on every keystroke.
 // Keys are journal-owned so completion can remove precisely its own blobs.
-const savedFiles = new Map<string, File>();
+// The record belongs to one connection: storage reopened after a close may have
+// been deleted or cleared, so its blobs are written again.
+const savedFilesByConnection = new WeakMap<IDBDatabase, Map<string, File>>();
+function savedFilesFor(transaction: IDBTransaction) {
+  let savedFiles = savedFilesByConnection.get(transaction.db);
+  if (!savedFiles) savedFilesByConnection.set(transaction.db, (savedFiles = new Map()));
+  return savedFiles;
+}
 export async function writeQueueEditJournal(session: QueueEditSession | string) {
-  const database = await db();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(["edits", "files"], "readwrite");
+  await journal.transaction(["edits", "files"], "readwrite", (transaction) =>
+    writeJournal(transaction, session),
+  );
+}
+function writeJournal(transaction: IDBTransaction, session: QueueEditSession | string) {
+  return new Promise<void>((resolve, reject) => {
+    const savedFiles = savedFilesFor(transaction);
     const entries = transaction.objectStore("edits");
     const files = transaction.objectStore("files");
     const written = new Map<string, File>();
@@ -120,10 +118,16 @@ export async function writeQueueEditJournal(session: QueueEditSession | string) 
     );
   });
 }
-async function decode(session: StoredSession): Promise<QueueEditSession> {
-  const database = await db();
-  const transaction = database.transaction("files", "readonly");
-  const files = transaction.objectStore("files");
+function decode(session: StoredSession): Promise<QueueEditSession> {
+  return journal.transaction("files", "readonly", (transaction) =>
+    decodeDrafts(transaction.objectStore("files"), session),
+  );
+}
+async function decodeDrafts(
+  files: IDBObjectStore,
+  session: StoredSession,
+): Promise<QueueEditSession> {
+  const savedFiles = savedFilesFor(files.transaction);
   const draft = async (value: StoredDraft): Promise<ComposerThreadDraftState> => {
     const attachment = async <
       A extends { name: string; mimeType: string; file?: File | null; fileRef?: string },
@@ -159,9 +163,10 @@ async function decode(session: StoredSession): Promise<QueueEditSession> {
   return { ...session, ordinary, edited };
 }
 export async function readQueueEditJournals(): Promise<QueueEditSession[]> {
-  const database = await db();
-  const entries: (StoredSession | ExtractedIntentRecord)[] = await result(
-    database.transaction("edits", "readonly").objectStore("edits").getAll(),
+  const entries: (StoredSession | ExtractedIntentRecord)[] = await journal.transaction(
+    "edits",
+    "readonly",
+    (transaction) => result(transaction.objectStore("edits").getAll()),
   );
   return Promise.all(
     entries
@@ -170,9 +175,10 @@ export async function readQueueEditJournals(): Promise<QueueEditSession[]> {
   );
 }
 export async function readQueueEditJournal(key: string): Promise<QueueEditSession | undefined> {
-  const database = await db();
-  const entry: StoredSession | undefined = await result(
-    database.transaction("edits", "readonly").objectStore("edits").get(key),
+  const entry: StoredSession | undefined = await journal.transaction(
+    "edits",
+    "readonly",
+    (transaction) => result(transaction.objectStore("edits").get(key)),
   );
   return entry ? decode(entry) : undefined;
 }
@@ -197,9 +203,16 @@ export async function updateExtractedIntent(
   intentId: string,
   update: (current: ExtractedIntentRecord | undefined) => ExtractedIntentRecord,
 ): Promise<ExtractedIntentRecord> {
-  const database = await db();
+  return journal.transaction("edits", "readwrite", (transaction) =>
+    updateIntent(transaction, intentId, update),
+  );
+}
+function updateIntent(
+  transaction: IDBTransaction,
+  intentId: string,
+  update: (current: ExtractedIntentRecord | undefined) => ExtractedIntentRecord,
+): Promise<ExtractedIntentRecord> {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction("edits", "readwrite");
     const entries = transaction.objectStore("edits");
     const request = entries.get(`intent:${intentId}`);
     let saved: ExtractedIntentRecord;
@@ -227,9 +240,8 @@ export async function updateExtractedIntent(
 export async function readExtractedIntent(
   intentId: string,
 ): Promise<ExtractedIntentRecord | undefined> {
-  const database = await db();
-  const value: unknown = await result(
-    database.transaction("edits", "readonly").objectStore("edits").get(`intent:${intentId}`),
+  const value: unknown = await journal.transaction("edits", "readonly", (transaction) =>
+    result(transaction.objectStore("edits").get(`intent:${intentId}`)),
   );
   if (value === undefined) return undefined;
   const record = decodeIntent(value);

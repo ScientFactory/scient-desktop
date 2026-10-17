@@ -33,6 +33,7 @@ function renderEditor(driver: string, hasShippedDriver: boolean): string {
       modelOrder={[]}
       onHiddenModelsChange={vi.fn()}
       onFavoriteModelsChange={vi.fn()}
+      onToggleFavorite={vi.fn()}
       onModelOrderChange={vi.fn()}
     />,
   );

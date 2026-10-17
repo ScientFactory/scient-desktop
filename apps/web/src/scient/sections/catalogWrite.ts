@@ -2,7 +2,7 @@ import { type ThreadSection, threadSectionCatalogsEqual } from "@t3tools/contrac
 
 import { readThreadSections, type SectionLayout } from "./logic";
 
-/** The catalog as stored on the primary server. */
+/** The catalog as stored on its environment's server. */
 export type LiveLayout = {
   readonly sections: readonly ThreadSection[];
   readonly generalIndex: number;

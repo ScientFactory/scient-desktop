@@ -3377,10 +3377,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   kind: "turn_start",
                 });
               } else if (payload !== null) {
+                // Pi may already be streaming before its wake reaches T3.
+                // Let Pi atomically queue the prompt or start an idle run.
                 yield* send({
                   type: "prompt",
                   message: payload.message,
-                  ...(joiningWork ? { streamingBehavior: "steer" } : {}),
+                  streamingBehavior: "steer",
                   ...(payload.images.length === 0 ? {} : { images: payload.images }),
                 });
                 pendingPromptResponses.push({

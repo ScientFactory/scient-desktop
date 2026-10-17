@@ -288,6 +288,32 @@ describe("fork lifecycle across navigation and remounts", () => {
     ).toBe(request.prompt);
   });
 
+  it("shows a removed worktree's project-folder notice again when a kept fork is retried", async () => {
+    const notice = "The original worktree was removed, so this fork works in the project folder.";
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        workspaceNotice: notice,
+        newWorktree: false,
+        sourceAssistantMessageId: source.messageId,
+        sourceUserMessageId: null,
+      }),
+    );
+    commands.dispatch.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Connection lost"))),
+    );
+    await render();
+    await act(() => hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"));
+    commands.options.mockClear();
+    await render(origin, "remounted");
+    await act(() => hook.prepareFork(source));
+    expect(hook.preview?.locked).toBe(true);
+    expect(commands.options).not.toHaveBeenCalled();
+    expect(hook.preview?.options?.workspaceNotice).toBe(notice);
+  });
+
   it("opens the fork on its own after the request lost its connection", async () => {
     vi.useFakeTimers();
     try {

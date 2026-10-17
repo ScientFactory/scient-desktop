@@ -54,8 +54,8 @@ describe("ChatMarkdown math seam", () => {
   });
 
   it("threads the original text through the per-message plugin hook", () => {
-    expect(chatMarkdownSource).toContain("useScientMathRemarkPlugins(");
-    expect(chatMarkdownSource).toContain("remarkPlugins={remarkPlugins}");
+    expect(chatMarkdownSource).toContain("useScientMathRemarkPlugins(remarkPlugins, text)");
+    expect(chatMarkdownSource).toContain("remarkPlugins={scientRemarkPlugins}");
   });
 
   it("routes math code nodes to the Scient components, with streaming state", () => {

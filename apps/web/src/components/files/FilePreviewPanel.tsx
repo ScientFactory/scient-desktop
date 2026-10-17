@@ -2491,6 +2491,7 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
+              threadRef={threadRef}
             />
           ) : // SCIENT-FORK:START — the read failure says why nothing can be shown
           relativePath && blockingReadFailure ? (

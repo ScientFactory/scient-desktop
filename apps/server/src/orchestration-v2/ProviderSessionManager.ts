@@ -6,7 +6,13 @@ import {
   retireUnusableOwner,
   makeSessionRetirement,
 } from "./scient-provider/SessionRetirement.ts";
-import { makeProviderTextSnapshots } from "./scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK:START — running-fork text capture lives in its owned module.
+import {
+  makeProviderTextSnapshots,
+  plainEventSubscription,
+  type ProviderTextSnapshotManagerShape,
+} from "./scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK:END
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
 import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
 import {
@@ -169,21 +175,9 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 ]);
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
-export interface ProviderSessionManagerV2Shape {
-  readonly captureRunningForkText?: (
-    owner: ProviderAdapter.ProviderTextSnapshotOwner,
-  ) => Effect.Effect<
-    ProviderAdapter.CapturedProviderText,
-    ProviderAdapter.ProviderTextSnapshotError
-  >;
-  readonly withCapturedForkText?: <A, E, R>(
-    capture: ProviderAdapter.CapturedProviderText,
-    commit: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | ProviderAdapter.ProviderTextSnapshotError, R>;
-  readonly releaseCapturedForkText?: (
-    capture: ProviderAdapter.CapturedProviderText,
-  ) => Effect.Effect<void>;
-
+// SCIENT-FORK:START — running-fork text members live in ProviderTextSnapshotManagerShape.
+export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManagerShape {
+  // SCIENT-FORK:END
   readonly shutdown: Effect.Effect<void>;
   readonly withProviderWorkAdmission: <A, E, R>(
     identity: ProviderAdapter.ProviderAdapterV2InitiatedWorkIdentity,
@@ -323,6 +317,8 @@ interface ReleaseEntryInput {
   readonly providerSessionId: ProviderSessionId;
   readonly reason: ProviderSessionReleaseReason;
   readonly detail?: string;
+  /** The thread whose detach released the session; it is no longer attached. */
+  readonly detachedThreadId?: ThreadId;
   readonly cancelIdleFiber?: boolean;
   readonly onlyIfIdleGeneration?: number;
   readonly gracefulSubscribers?: boolean;
@@ -331,7 +327,9 @@ interface ReleaseEntryInput {
 }
 
 type ProviderSessionEventSignal =
+  // SCIENT-FORK:START — subscribers also receive running-fork text snapshot batches.
   | { readonly type: "event"; readonly event: ProviderAdapter.ProviderAdapterV2InternalEvent }
+  // SCIENT-FORK:END
   | {
       readonly type: "failure";
       readonly cause: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
@@ -1035,6 +1033,117 @@ export const layerWithOptions = (
       // SCIENT-FORK: abandonment belongs to the exact canonical consumer.
       const releaseEventConsumer = disposeRetiredEventConsumer;
 
+      // Reads the background tasks a released session's process left on its
+      // provider threads. Read as soon as the session leaves the live map:
+      // after that, a replacement session with the same id can open and report
+      // tasks of its own on the same provider threads. Server shutdown keeps
+      // rosters, since startup recovery clears them and records the cancelled
+      // work. Only runtimes whose tasks end with their process opt in (Claude,
+      // Muse). OpenCode's background subagents run on a server shared by its
+      // sessions and can outlive this one, so their roster stays.
+      const readReleasedBackgroundTasks = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly detachedThreadId?: ThreadId;
+      }) =>
+        Effect.gen(function* () {
+          if (
+            input.reason === "server_shutdown" ||
+            input.entry.runtime.backgroundTasksEndWithProcess !== true
+          ) {
+            return [];
+          }
+          const providerSessionId = input.entry.runtime.providerSessionId;
+          // A detach that released the session already removed its thread
+          // from the attached set.
+          const threadIds = new Set(input.entry.attachedThreadIds);
+          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+          const released = [];
+          for (const threadId of threadIds) {
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            for (const providerThread of projection.providerThreads) {
+              const tasks = providerThread.pendingBackgroundTasks ?? [];
+              if (providerThread.providerSessionId !== providerSessionId || tasks.length === 0) {
+                continue;
+              }
+              released.push({
+                threadId,
+                providerSessionId,
+                providerThreadId: providerThread.id,
+                taskIds: new Set(tasks.map((task) => task.taskId)),
+              });
+            }
+          }
+          return released;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-session-release-roster-read-failed", {
+              providerSessionId: input.entry.runtime.providerSessionId,
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        );
+      type ReleasedBackgroundTasks = Effect.Success<
+        ReturnType<typeof readReleasedBackgroundTasks>
+      >[number];
+
+      // Removes the tasks `readReleasedBackgroundTasks` found from their
+      // rosters. Their process is gone, so nothing will report them ending,
+      // and a leftover roster keeps the thread Waiting (#15239). Tasks a
+      // replacement session reported since are left in place. The write
+      // commits only if the stored row still equals what was read, and is
+      // retried a few times when a provider update lands in between.
+      const writeReleasedBackgroundWorkEvents = (
+        released: ReadonlyArray<ReleasedBackgroundTasks>,
+      ) =>
+        Effect.forEach(
+          released,
+          ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
+            Effect.gen(function* () {
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const projection = yield* projectionStore.getThreadRecords(threadId, [
+                  "providerThreads",
+                ]);
+                const providerThread = projection.providerThreads.find(
+                  (candidate) => candidate.id === providerThreadId,
+                );
+                const tasks = providerThread?.pendingBackgroundTasks ?? [];
+                const remaining = tasks.filter((task) => !taskIds.has(task.taskId));
+                if (providerThread === undefined || remaining.length === tasks.length) return;
+                const now = yield* DateTime.now;
+                const { committed } = yield* eventSink.writeIfProviderThreadUnchanged({
+                  expected: providerThread,
+                  events: [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                      type: "provider-thread.updated",
+                      threadId,
+                      driver: providerThread.driver,
+                      providerInstanceId: providerThread.providerInstanceId,
+                      occurredAt: now,
+                      payload: {
+                        ...providerThread,
+                        pendingBackgroundTasks: remaining,
+                        updatedAt: now,
+                      },
+                    },
+                  ],
+                });
+                if (committed) return;
+              }
+              yield* Effect.logWarning(
+                "orchestration-v2.provider-session-release-roster-conflict",
+                {
+                  providerSessionId,
+                  providerThreadId,
+                },
+              );
+            }),
+          { discard: true },
+        );
+
       // SCIENT-FORK: captured data callbacks retain the existing physical/logical close order.
       const closeRetiringEntry = makeSessionRetirement({
         closeTimeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
@@ -1064,6 +1173,18 @@ export const layerWithOptions = (
             reason: input.reason,
             releasedAt: input.releasedAt,
           }),
+        readReleasedWork: (
+          entry: LiveSessionEntry,
+          input: ReleaseEntryInput & { readonly releasedAt: DateTime.Utc },
+        ) =>
+          readReleasedBackgroundTasks({
+            entry,
+            reason: input.reason,
+            ...(input.detachedThreadId === undefined
+              ? {}
+              : { detachedThreadId: input.detachedThreadId }),
+          }),
+        writeReleasedWork: writeReleasedBackgroundWorkEvents,
       });
 
       const awaitClosingEntry = Effect.fnUntraced(function* (
@@ -1196,16 +1317,13 @@ export const layerWithOptions = (
               releasingRuntimes.add(existing.runtime);
               return [true, current] as const;
             });
-            const reserve =
-              candidate.runtime.textSnapshots === undefined
-                ? reserveMutation
-                : textSnapshotRegistry.permit.withPermit(
-                    reserveMutation.pipe(
-                      Effect.tap((reserved) =>
-                        reserved ? textSnapshotRegistry.retire(candidate.runtime) : Effect.void,
-                      ),
-                    ),
-                  );
+            // SCIENT-FORK:START — a reserved owner retires its running-fork text waiters.
+            const reserve = textSnapshotRegistry.mutateAndRetire(
+              candidate.runtime,
+              reserveMutation,
+              { retires: (reserved) => reserved },
+            );
+            // SCIENT-FORK:END
             const invalidation = yield* (
               candidate.runtime.invalidateInitiatedWork === undefined
                 ? reserve
@@ -1354,7 +1472,13 @@ export const layerWithOptions = (
           ),
         );
 
-      const scheduleIdleReleaseInternal = (providerSessionId: ProviderSessionId) =>
+      // Provider activity restarts the pin budget, so background work that keeps
+      // reporting progress (a long Claude workflow) is never cut off; only work
+      // that went silent for maxIdlePinMs is released.
+      const scheduleIdleReleaseInternal = (
+        providerSessionId: ProviderSessionId,
+        options?: { readonly providerActivity?: boolean },
+      ) =>
         Effect.gen(function* () {
           const key = sessionKey(providerSessionId);
           const current = yield* Ref.get(sessions);
@@ -1387,6 +1511,7 @@ export const layerWithOptions = (
               idleGeneration: generation,
               idleFiber,
               lastActivityAtMs,
+              ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
             });
             return updated;
           });
@@ -1409,7 +1534,10 @@ export const layerWithOptions = (
       });
       // SCIENT-FORK:END
 
-      const touchActivity = (providerSessionId: ProviderSessionId) =>
+      const touchActivity = (
+        providerSessionId: ProviderSessionId,
+        options?: { readonly providerActivity?: boolean },
+      ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
@@ -1426,7 +1554,7 @@ export const layerWithOptions = (
               });
               return updated;
             });
-            yield* scheduleIdleReleaseInternal(providerSessionId);
+            yield* scheduleIdleReleaseInternal(providerSessionId, options);
           }),
         );
 
@@ -1885,11 +2013,13 @@ export const layerWithOptions = (
         );
 
       const makeEventSubscription = (
-        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
         subscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
+        // SCIENT-FORK:START — the subscription binds a running-fork text consumer to this runtime.
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ): Effect.Effect<ProviderAdapter.ProviderTextSnapshotSubscription> =>
+        // SCIENT-FORK:END
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
           const subscriberId = yield* Ref.getAndUpdate(nextSubscriberId, (value) => value + 1);
@@ -1898,7 +2028,9 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
+          // SCIENT-FORK:START — close below ends the text consumer before this removal.
           const removeSubscription = Ref.modify(subscribers, (current) => {
+            // SCIENT-FORK:END
             if (!current.has(subscriberId)) {
               return [false, current] as const;
             }
@@ -1912,14 +2044,9 @@ export const layerWithOptions = (
                 : Effect.void,
             ),
           );
-          const close = Effect.uninterruptible(
-            Effect.gen(function* () {
-              // SCIENT-FORK: end this subscriber's running-fork text consumer first.
-              const endingSnapshots = textSnapshotRegistry.endConsumer(subscriberId);
-              if (endingSnapshots !== undefined) yield* endingSnapshots;
-              yield* removeSubscription;
-            }),
-          );
+          // SCIENT-FORK:START — end this subscriber's running-fork text consumer first.
+          const close = textSnapshotRegistry.closeSubscription(subscriberId, removeSubscription);
+          // SCIENT-FORK:END
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
@@ -1928,18 +2055,9 @@ export const layerWithOptions = (
             ),
             Stream.ensuring(close),
           );
-          return {
-            events: events.pipe(
-              Stream.filter(
-                (event): event is ProviderAdapter.ProviderAdapterV2Event =>
-                  event.type !== "internal.text_snapshot",
-              ),
-            ),
-            snapshotEvents: events,
-            // SCIENT-FORK: running-fork text consumer bound to this exact subscriber.
-            textSnapshotConsumer: textSnapshotRegistry.consumer(subscriberId, runtime, queue),
-            close,
-          } satisfies ProviderAdapter.ProviderTextSnapshotSubscription;
+          // SCIENT-FORK:START — running-fork text consumer bound to this exact subscriber.
+          return textSnapshotRegistry.subscription({ subscriberId, runtime, queue, events, close });
+          // SCIENT-FORK:END
         });
 
       const decorateRuntime = (
@@ -1951,10 +2069,12 @@ export const layerWithOptions = (
         sessionScope: Scope.Closeable,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
-        const subscribeEvents = makeEventSubscription(runtime, eventSubscribers);
+        // SCIENT-FORK:START — subscribers never see the native event consumer or text-snapshot owner.
+        const subscribeEvents = makeEventSubscription(eventSubscribers, runtime);
         const subscriberRuntime = { ...runtime };
         delete subscriberRuntime.eventConsumer;
         delete subscriberRuntime.textSnapshots;
+        // SCIENT-FORK:END
         // Every provider's turn operations pass through here, so this is where they are
         // counted. Only turn starts are timed: until the provider accepts the turn.
         const turnMetrics = (operation: string, model?: string) =>
@@ -1968,12 +2088,12 @@ export const layerWithOptions = (
             },
           });
         return {
+          // SCIENT-FORK:START — the manager alone reads the running-fork text subscription.
           ...subscriberRuntime,
           mcpSessionInjection,
           subscribeTextSnapshotEvents: subscribeEvents,
-          subscribeEvents: subscribeEvents.pipe(
-            Effect.map(({ events, close }) => ({ events, close })),
-          ),
+          subscribeEvents: plainEventSubscription(subscribeEvents),
+          // SCIENT-FORK:END
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
           ),
@@ -2236,12 +2356,15 @@ export const layerWithOptions = (
 
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
+        // SCIENT-FORK:START — the pump reads the native stream, including text batches.
         return (entry.runtime.textSnapshots?.events ?? entry.runtime.events).pipe(
+          // SCIENT-FORK:END
           Stream.runForEach((event) => {
             if (shutdownSignal.received) return Effect.void;
-            // SCIENT-FORK: running-fork text batches go only to their exact consumer.
+            // SCIENT-FORK:START — running-fork text batches go only to their exact consumer.
             if (event.type === "internal.text_snapshot")
               return textSnapshotRegistry.route(entry.runtime, event);
+            // SCIENT-FORK:END
             if (event.type === "authentication.invalidated") {
               // A single pump owns this observation, independently of run
               // subscribers. Never accept instance identity from the provider.
@@ -2271,7 +2394,7 @@ export const layerWithOptions = (
                     event.providerThreadId,
                     event.runOrdinal,
                   )
-                : touchActivity(entry.runtime.providerSessionId),
+                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
@@ -2321,8 +2444,10 @@ export const layerWithOptions = (
             Effect.gen(function* () {
               // A provider that exits on the shutdown signal is released by shutdown.
               if (shutdownSignal.received) return;
+              // SCIENT-FORK:START — an ended pump retires its text waiters and marks the pump ended.
               yield* textSnapshotRegistry.retire(entry.runtime);
               entry.eventPump.ended = true;
+              // SCIENT-FORK:END
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
               );
@@ -2373,8 +2498,8 @@ export const layerWithOptions = (
       // Parent of every session scope. On layer close, shutdown releases the
       // live sessions first, then closes any session whose open is still in
       // flight, time-boxed so a stuck adapter cannot hold up server shutdown.
-      // Parallel, so one session whose close hangs does not stop the rest from
-      // closing within the time box.
+      // Both steps run in parallel. The service launcher kills the server
+      // 5 s after it asks it to stop, and a busy server can hold 15 sessions.
       const sessionScopes = yield* Scope.make("parallel");
       const shutdown = Effect.gen(function* () {
         const activeSessions = [
@@ -2402,7 +2527,7 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          { discard: true },
+          { concurrency: "unbounded", discard: true },
         );
       });
       yield* Effect.addFinalizer(() =>
@@ -2433,10 +2558,7 @@ export const layerWithOptions = (
 
       const service = ProviderSessionManagerV2.of({
         // SCIENT-FORK:START — running-fork text capture.
-        captureRunningForkText: textSnapshotRegistry.capture,
-        withCapturedForkText: (capture, commit) =>
-          textSnapshotRegistry.withCurrent(capture.token, undefined, commit),
-        releaseCapturedForkText: (capture) => textSnapshotRegistry.release(capture.token),
+        ...textSnapshotRegistry.manager,
         // SCIENT-FORK:END
         shutdown,
         // SCIENT-FORK:START — execution authority of the exact live native owner.
@@ -2967,7 +3089,9 @@ export const layerWithOptions = (
                 );
               }
             }
+            // SCIENT-FORK:START — the detach mutation runs under the text-snapshot permit below.
             const detachMutation = Ref.modify(sessions, (current) => {
+              // SCIENT-FORK:END
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
                 return [
@@ -3017,15 +3141,13 @@ export const layerWithOptions = (
                 updated,
               ] as const;
             });
-            const detachResult = yield* currentEntry?.runtime.textSnapshots === undefined
-              ? detachMutation
-              : textSnapshotRegistry.permit.withPermit(
-                  detachMutation.pipe(
-                    Effect.tap(() =>
-                      textSnapshotRegistry.retire(currentEntry.runtime, input.threadId),
-                    ),
-                  ),
-                );
+            // SCIENT-FORK:START — a detached thread retires its running-fork text waiters.
+            const detachResult = yield* textSnapshotRegistry.mutateAndRetire(
+              currentEntry?.runtime,
+              detachMutation,
+              { threadId: input.threadId, retires: () => true },
+            );
+            // SCIENT-FORK:END
             if (Option.isSome(detachResult)) {
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
             }
@@ -3055,6 +3177,7 @@ export const layerWithOptions = (
                 expectedRuntime: detached.value.runtime,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
+                detachedThreadId: input.threadId,
               });
               return;
             }

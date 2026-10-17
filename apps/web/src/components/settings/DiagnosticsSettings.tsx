@@ -811,6 +811,7 @@ export function DiagnosticsSettingsPanel() {
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
+  const isResourceInitialLoading = isResourcePending && resourceData === null;
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
@@ -1023,11 +1024,17 @@ export function DiagnosticsSettingsPanel() {
           <StatBlock
             label="Samples"
             value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
-            tooltip="In-memory process samples retained by the server. This resets when the server restarts."
+            tooltip="In-memory process samples retained by the server. The server samples only while diagnostics is open, and this resets when the server restarts."
           />
           <StatBlock
             label="Interval"
-            value={resourceData ? formatDuration(resourceData.sampleIntervalMs) : "..."}
+            value={
+              resourceData
+                ? resourceData.sampleIntervalMs === 0
+                  ? "On demand"
+                  : formatDuration(resourceData.sampleIntervalMs)
+                : "..."
+            }
           />
           <StatBlock
             label="Processes"
@@ -1054,7 +1061,7 @@ export function DiagnosticsSettingsPanel() {
         <ProcessResourceHistoryTable
           processes={resourceData?.topProcesses ?? []}
           emptyLabel={
-            isResourcePending && resourceData === null
+            isResourceInitialLoading
               ? "Collecting process resource samples..."
               : "No process resource samples found for this window."
           }
@@ -1330,6 +1337,8 @@ export function DiagnosticsSettingsPanel() {
           <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
         )}
       </SettingsSection>
+      {/* SCIENT-FORK:START — OpenTelemetry export remains held by the safety envelope. */}
+      {/* SCIENT-FORK:END */}
     </SettingsPageContainer>
   );
 }

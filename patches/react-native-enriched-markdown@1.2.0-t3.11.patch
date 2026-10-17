@@ -1,0 +1,691 @@
+diff --git a/ReactNativeEnrichedMarkdown.podspec b/ReactNativeEnrichedMarkdown.podspec
+index b164049..39d7892 100644
+--- a/ReactNativeEnrichedMarkdown.podspec
++++ b/ReactNativeEnrichedMarkdown.podspec
+@@ -146,5 +146,12 @@ Pod::Spec.new do |s|
+   # spm_dependency-generated duplicate RaTeXFFI modulemap to strip, and only one
+   # signature is collected during archive assembly, so nothing collides.
+ 
++  # SCIENT-FORK:START — native default-Copy parity uses the production pasteboard path.
++  s.test_spec 'ScientClipboard' do |test|
++    test.ios.source_files = 'tests/ios/CanonicalClipboardTests.m'
++    test.libraries = 'c++'
++    test.requires_app_host = true
++  end
++  # SCIENT-FORK:END
+   install_modules_dependencies(s)
+ end
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt b/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
+index 360a436..9eb4fa2 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
+@@ -1,6 +1,9 @@
+ package com.swmansion.enriched.markdown.renderer
+ 
+ import android.text.SpannableStringBuilder
++// SCIENT-FORK:START
++import com.swmansion.enriched.markdown.utils.text.view.CanonicalClipboardSpan
++// SCIENT-FORK:END
+ import android.text.TextPaint
+ import android.text.style.ReplacementSpan
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+@@ -27,6 +30,13 @@ class LinkRenderer(
+     val recognizedLink = node.getAttribute("recognizedLink") == "true"
+ 
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
++      // SCIENT-FORK:START — bind source before display-only pill content is substituted.
++      val occurrence = node.getAttribute("clipboardLinkIndex")?.toIntOrNull()
++      (config.style.selectionClipboard.sourceForLink(occurrence, url)
++        ?: if (recognizedLink) config.style.selectionClipboard.recognizedLinkTextByUrl[url] else null)?.let { source ->
++        builder.setSpan(CanonicalClipboardSpan(source, occurrence ?: start), start, end, SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE)
++      }
++      // SCIENT-FORK:END
+       val variant = factory.styleCache.resolvedVariantForUrl(url)
+       if (variant?.pill != null && canPresentAsPill(builder, start, end)) {
+         val fontFamily = variant.fontFamily.ifEmpty { factory.styleCache.linkFontFamily }.ifEmpty { blockStyle.fontFamily }
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
+index 746bd66..faff51b 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
+@@ -200,7 +200,7 @@ private fun TextView.copyWithHTML() {
+         if (canonical !=
+           null
+         ) {
+-          clipboardHtml(html, config)
++          clipboardHtml(html, config, selectedText, canonical)
+         } else {
+           html
+         },
+@@ -218,7 +218,7 @@ private fun TextView.copyMarkdownToClipboard() {
+   val selected = text.subSequence(selectionStart, selectionEnd) as? android.text.Spanned
+   if (config != null && selected != null && canonicalClipboardText(selected, config) != null) {
+     val escaped = markdown.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+-    clipboard.setPrimaryClip(ClipData.newHtmlText("Markdown", markdown, clipboardHtml("<pre>$escaped</pre>", config)))
++    clipboard.setPrimaryClip(ClipData.newHtmlText("Markdown", markdown, clipboardHtml("<pre>$escaped</pre>", config, selected, canonicalClipboardText(selected, config))))
+   } else {
+     clipboard.setPrimaryClip(ClipData.newPlainText("Markdown", markdown))
+   }
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
+index 386aeea..b448cc9 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
+@@ -3,12 +3,31 @@ package com.swmansion.enriched.markdown.utils.text.view
+ import android.text.Spanned
+ import com.swmansion.enriched.markdown.spans.LinkSpan
+ import org.json.JSONObject
++// SCIENT-FORK:START
++import org.json.JSONArray
++import java.net.URLEncoder
++// SCIENT-FORK:END
++
++// SCIENT-FORK:START — one captured value per native link occurrence.
++data class CanonicalLinkSource(val url: String, val source: String?)
++class CanonicalClipboardSpan(val text: String, val occurrence: Int)
++// SCIENT-FORK:END
+ 
+ /** Optional application metadata for selections containing a configured link. */
+ data class SelectionClipboardConfig(
+   val linkTextByUrl: Map<String, String> = emptyMap(),
+   val htmlAttributes: Map<String, String> = emptyMap(),
++  // SCIENT-FORK:START
++  val linkSources: List<CanonicalLinkSource> = emptyList(),
++  val recognizedLinkTextByUrl: Map<String, String> = emptyMap(),
++  val contextFragment: String? = null,
++  // SCIENT-FORK:END
+ ) {
++  // SCIENT-FORK:START — validate the URL at the stable parser index before binding it.
++  fun sourceForLink(index: Int?, url: String): String? =
++    index?.let { linkSources.getOrNull(it) }?.takeIf { it.url == url }?.source
++  // SCIENT-FORK:END
++
+   companion object {
+     fun parse(value: String?): SelectionClipboardConfig =
+       runCatching {
+@@ -23,7 +42,15 @@ data class SelectionClipboardConfig(
+               (values.opt(name) as? String)?.let { name to it }
+             }.toMap()
+         }
+-        SelectionClipboardConfig(strings("linkTextByUrl"), strings("htmlAttributes"))
++        // SCIENT-FORK:START — preserve null entries so parse indices never shift.
++        val entries = json.optJSONArray("linkSources")
++        val sources = (0 until (entries?.length() ?: 0)).map { index ->
++          val entry = entries?.optJSONObject(index)
++          CanonicalLinkSource(entry?.optString("url") ?: "", entry?.opt("source") as? String)
++        }
++        SelectionClipboardConfig(strings("linkTextByUrl"), strings("htmlAttributes"), sources,
++          strings("recognizedLinkTextByUrl"), json.opt("contextFragment") as? String)
++        // SCIENT-FORK:END
+       }.getOrDefault(SelectionClipboardConfig())
+   }
+ }
+@@ -32,14 +59,23 @@ internal fun canonicalClipboardText(
+   text: Spanned,
+   config: SelectionClipboardConfig,
+ ): String? {
+-  val replacements =
+-    text
++  // SCIENT-FORK:START — captured spans retain full source even for a partial selection.
++  val canonical = text.getSpans(0, text.length, CanonicalClipboardSpan::class.java)
++    .map { Triple(text.getSpanStart(it).coerceAtLeast(0), text.getSpanEnd(it).coerceAtMost(text.length), it.text) }
++    .filter { it.second > it.first }
++  // SCIENT-FORK:END
++  val replacements = (canonical + text
+       .getSpans(0, text.length, LinkSpan::class.java)
+       .mapNotNull { link ->
++        // SCIENT-FORK:START — context fallback cannot overwrite a bound file occurrence.
++        val start = text.getSpanStart(link).coerceAtLeast(0)
++        val end = text.getSpanEnd(link).coerceAtMost(text.length)
++        if (canonical.any { it.first < end && it.second > start }) return@mapNotNull null
++        // SCIENT-FORK:END
+         config.linkTextByUrl[link.url]?.let { replacement ->
+           Triple(text.getSpanStart(link).coerceAtLeast(0), text.getSpanEnd(link).coerceAtMost(text.length), replacement)
+         }
+-      }.filter { it.second > it.first }
++      }.filter { it.second > it.first })
+       .sortedByDescending { it.first }
+   if (replacements.isEmpty()) return null
+   return StringBuilder(text.toString())
+@@ -48,9 +84,47 @@ internal fun canonicalClipboardText(
+     }.toString()
+ }
+ 
++// SCIENT-FORK:START — clipboard authority is the actual selected context, never the full draft.
++internal fun selectedContextFragment(selectedUrls: Set<String>, canonical: String, config: SelectionClipboardConfig): String? {
++  return runCatching {
++    val raw = config.contextFragment ?: return null
++    if (raw.length > 16_000_000) return null
++    val payload = JSONObject(raw)
++    if (payload.opt("version") !is Number || (payload.opt("version") as Number).toDouble() != 1.0) return null
++    val source = payload.optJSONObject("source") ?: return null
++    if (source.opt("environmentId") !is String || source.optString("environmentId").isBlank()) return null
++    val records = payload.optJSONArray("records") ?: return null
++    if (records.length() > 200) return null
++    val ids = mutableSetOf<String>()
++    for (index in 0 until records.length()) {
++      val record = records.optJSONObject(index) ?: return null
++      val id = record.opt("contextId") as? String ?: return null
++      val kind = record.opt("kind") as? String ?: return null
++      if (id.isEmpty() || kind.isEmpty() || record.opt("version") !is Number || (record.opt("version") as Number).toDouble() != 1.0) return null
++      val url = "t3-context://v1/$kind/$id"
++      if (url in selectedUrls && canonical.contains("$url)")) {
++        ids.add(id)
++        (record.opt("screenshotContextId") as? String)?.let { ids.add(it) }
++      }
++    }
++    val copied = JSONArray()
++    for (index in 0 until records.length()) {
++      val record = records.getJSONObject(index)
++      if (record.optString("contextId") in ids) copied.put(record)
++    }
++    if (copied.length() == 0) return null
++    payload.put("records", copied).toString()
++  }.getOrNull()
++}
++// SCIENT-FORK:END
++
+ internal fun clipboardHtml(
+   html: String,
+   config: SelectionClipboardConfig,
++  // SCIENT-FORK:START
++  selected: Spanned? = null,
++  canonical: String? = null,
++  // SCIENT-FORK:END
+ ): String {
+   fun escape(value: String) =
+     value
+@@ -58,8 +132,14 @@ internal fun clipboardHtml(
+       .replace("\"", "&quot;")
+       .replace("<", "&lt;")
+       .replace(">", "&gt;")
++  // SCIENT-FORK:START — generic app attributes retain their existing behavior.
++  val selectedFragment = if (selected != null && canonical != null) selectedContextFragment(selected.getSpans(0, selected.length, LinkSpan::class.java).map { it.url }.toSet(), canonical, config) else null
++  val contextAttributes = selectedFragment?.let {
++    mapOf("data-t3-context-fragment" to URLEncoder.encode(it, "UTF-8").replace("+", "%20"))
++  } ?: emptyMap()
++  // SCIENT-FORK:END
+   val attributes =
+-    config.htmlAttributes
++    (config.htmlAttributes + contextAttributes)
+       .filterKeys { it.matches(Regex("[A-Za-z_][A-Za-z0-9:_-]*")) }
+       .entries
+       .joinToString(" ") { (name, value) -> "$name=\"${escape(value)}\"" }
+diff --git a/repair/package/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/CanonicalClipboardTest.kt b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/CanonicalClipboardTest.kt
+new file mode 100644
+index 0000000..b35fbaa
+--- /dev/null
++++ b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/CanonicalClipboardTest.kt
+@@ -0,0 +1,57 @@
++package com.swmansion.enriched.markdown.utils.text.view
++
++import android.text.SpannableString
++import android.text.Spanned
++import org.junit.Assert.*
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [35], manifest = Config.NONE)
++class CanonicalClipboardTest {
++  @Test fun repeatedUrlAndLabelKeepTheirOwnFormatting() {
++    val text = SpannableString("😀 details then details")
++    text.setSpan(CanonicalClipboardSpan("[**details**](</repo/a.ts>)", 0), 3, 10, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    text.setSpan(CanonicalClipboardSpan("[*details*](</repo/a.ts>)", 1), 16, 23, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    assertEquals("😀 [**details**](</repo/a.ts>) then [*details*](</repo/a.ts>)", canonicalClipboardText(text, SelectionClipboardConfig()))
++    assertEquals("[*details*](</repo/a.ts>)", canonicalClipboardText(text.subSequence(18, 21) as Spanned, SelectionClipboardConfig()))
++  }
++  @Test fun parserIndexAndUrlMustBothMatch() {
++    val config = SelectionClipboardConfig.parse("""{"linkSources":[{"url":"/repo/a.ts","source":"first"},{"url":"/repo/a.ts","source":"second"}]}""")
++    assertEquals("first", config.sourceForLink(0, "/repo/a.ts"))
++    assertEquals("second", config.sourceForLink(1, "/repo/a.ts"))
++    assertNull(config.sourceForLink(1, "/repo/b.ts"))
++    assertNull(config.sourceForLink(-1, "/repo/a.ts"))
++    assertNull(config.sourceForLink(null, "/repo/a.ts"))
++  }
++  @Test fun absentMetadataKeepsOrdinaryCopy() {
++    assertNull(canonicalClipboardText(SpannableString("ordinary text"), SelectionClipboardConfig.parse("invalid")))
++  }
++  @Test fun recognizedFileSourceKeepsFullCanonicalCopyForAPartialSelection() {
++    val text = SpannableString("/tmp/frame.png")
++    text.setSpan(CanonicalClipboardSpan("[frame.png](</tmp/frame.png>)", 0), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    assertEquals("[frame.png](</tmp/frame.png>)", canonicalClipboardText(text.subSequence(3, 8) as Spanned, SelectionClipboardConfig()))
++  }
++  @Test fun selectedContextOnlyKeepsAnnotationScreenshotDependency() {
++    val raw = """{"version":1,"source":{"environmentId":"remote"},"records":[{"version":1,"kind":"preview-annotation","contextId":"a","label":"A","annotationId":"a","pageUrl":"https://example.com","pageTitle":null,"comment":"A","targetSummary":"A","styleChanges":[],"screenshotContextId":"shot"},{"version":1,"kind":"image","contextId":"shot","label":"Shot","attachmentId":"uploaded","name":"shot.png","mimeType":"image/png","sizeBytes":1},{"version":1,"kind":"terminal","contextId":"b","label":"B","terminalId":"b","terminalLabel":"B","lineStart":0,"lineEnd":0,"text":"unselected"}]}"""
++    val config = SelectionClipboardConfig(contextFragment = raw)
++    val url = "t3-context://v1/preview-annotation/a"
++    val selected = selectedContextFragment(setOf(url), "[A]($url)", config)!!
++    val copied = org.json.JSONObject(selected).getJSONArray("records")
++    assertEquals(2, copied.length())
++    assertEquals("a", copied.getJSONObject(0).getString("contextId"))
++    assertEquals("shot", copied.getJSONObject(1).getString("contextId"))
++    assertEquals("remote", org.json.JSONObject(selected).getJSONObject("source").getString("environmentId"))
++    assertNull(selectedContextFragment(setOf("/repo/a.ts"), "[A]($url)", config))
++    assertNull(selectedContextFragment(setOf("$" + "ui"), "$" + "ui", config))
++    assertNull(selectedContextFragment(emptySet(), "ordinary", config))
++  }
++  @Test fun malformedAndUnknownVersionFragmentsDoNotGrantClipboardMetadata() {
++    val url = "t3-context://v1/terminal/a"
++    for (raw in listOf("invalid", "{\"version\":2}", "{\"version\":true}", "{\"version\":1.5}", "{\"version\":1,\"source\":{},\"records\":[]}")) {
++      assertNull(selectedContextFragment(setOf(url), "[A]($url)", SelectionClipboardConfig(contextFragment = raw)))
++    }
++  }
++}
+diff --git a/cpp/parser/MD4CParser.cpp b/cpp/parser/MD4CParser.cpp
+index c99a52d..2c6b78e 100644
+--- a/cpp/parser/MD4CParser.cpp
++++ b/cpp/parser/MD4CParser.cpp
+@@ -21,6 +21,7 @@ public:
+   std::vector<std::shared_ptr<MarkdownASTNode>> nodeStack;
+   std::string currentText;
+   const char *inputText = nullptr;
++  size_t clipboardLinkIndex = 0;
+   bool inHtmlBlock = false;
+   std::string htmlBlockContent;
+ 
+@@ -45,6 +46,7 @@ public:
+     nodeStack.push_back(root);
+     currentText.clear();
+     currentText.reserve(256);
++    clipboardLinkIndex = 0;
+     inHtmlBlock = false;
+     htmlBlockContent.clear();
+   }
+@@ -301,6 +303,9 @@ public:
+     switch (type) {
+       case MD_SPAN_A: {
+         auto node = std::make_shared<MarkdownASTNode>(NodeType::Link);
++        // SCIENT-FORK:START — occurrence identity survives block rendering and pill collapse.
++        node->setAttribute("clipboardLinkIndex", std::to_string(impl->clipboardLinkIndex++));
++        // SCIENT-FORK:END
+         if (detail) {
+           auto *linkDetail = static_cast<MD_SPAN_A_DETAIL *>(detail);
+           std::string url = impl->getAttributeText(&linkDetail->href);
+@@ -426,6 +431,17 @@ public:
+       return 0;
+     }
+ 
++    // SCIENT-FORK:START — app projection leaves literal control characters as
++    // numeric entities so they cannot split a parsed link or create a block.
++    if (type == MD_TEXT_ENTITY) {
++      const std::string entity(text, size);
++      if (entity == "&#9;") impl->currentText.push_back('\t');
++      else if (entity == "&#10;") impl->currentText.push_back('\n');
++      else if (entity == "&#13;") impl->currentText.push_back('\r');
++      return 0;
++    }
++    // SCIENT-FORK:END
++
+     // Handle text content (normal text, code text, LaTeX math, etc.)
+     if (type == MD_TEXT_NORMAL || type == MD_TEXT_CODE || type == MD_TEXT_LATEXMATH) {
+       impl->currentText.append(text, size);
+diff --git a/ios/parser/ENRMTextLinkAttributes.h b/ios/parser/ENRMTextLinkAttributes.h
+index 9d36943..842fbfe 100644
+--- a/ios/parser/ENRMTextLinkAttributes.h
++++ b/ios/parser/ENRMTextLinkAttributes.h
+@@ -2,6 +2,10 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
++// SCIENT-FORK:START — dictionary includes parse index so identical adjacent sources stay distinct.
++static NSString *const ENRMCanonicalClipboardAttributeName = @"ENRMCanonicalClipboard";
++// SCIENT-FORK:END
++
+ // Rendering metadata only. Copy reconstruction retains the source semantics.
+ static NSString *const ENRMRecognizedLinkAttributeName = @"ENRMRecognizedLink";
+ static NSString *const ENRMRecognizedLinkOriginalUnderlineAttributeName = @"ENRMRecognizedLinkOriginalUnderline";
+diff --git a/ios/renderer/LinkRenderer.m b/ios/renderer/LinkRenderer.m
+index c9fd57d..9ba6502 100644
+--- a/ios/renderer/LinkRenderer.m
++++ b/ios/renderer/LinkRenderer.m
+@@ -88,6 +88,29 @@ - (void)renderNodeContent:(MarkdownASTNode *)node
+ 
+   NSNumber *underlineStyle = @(linkUnderline ? NSUnderlineStyleSingle : NSUnderlineStyleNone);
+ 
++  // SCIENT-FORK:START — immutable occurrence source survives the single-character pill.
++  NSString *indexValue = node.attributes[@"clipboardLinkIndex"];
++  NSScanner *scanner = [NSScanner scannerWithString:indexValue ?: @""];
++  NSInteger occurrence = -1;
++  NSArray *sources = _config.selectionClipboard[@"linkSources"];
++  if ([scanner scanInteger:&occurrence] && scanner.isAtEnd && occurrence >= 0 &&
++      [sources isKindOfClass:NSArray.class] && occurrence < (NSInteger)sources.count) {
++    NSDictionary *entry = sources[(NSUInteger)occurrence];
++    if ([entry isKindOfClass:NSDictionary.class] && [entry[@"url"] isEqual:url] &&
++        [entry[@"source"] isKindOfClass:NSString.class]) {
++      [output addAttribute:ENRMCanonicalClipboardAttributeName
++                     value:@{@"text": entry[@"source"], @"index": @(occurrence)} range:range];
++    }
++  }
++  if (recognizedLink && ![output attribute:ENRMCanonicalClipboardAttributeName atIndex:range.location effectiveRange:NULL]) {
++    NSDictionary *recognized = _config.selectionClipboard[@"recognizedLinkTextByUrl"];
++    NSString *source = [recognized isKindOfClass:NSDictionary.class] ? recognized[url] : nil;
++    if ([source isKindOfClass:NSString.class]) {
++      [output addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"text": source, @"recognizedStart": @(start)} range:range];
++    }
++  }
++  // SCIENT-FORK:END
++
+   // 3. Apply core link functionality (non-destructive)
+   [output addAttribute:NSLinkAttributeName value:url range:range];
+ 
+diff --git a/ios/utils/PasteboardUtils.m b/ios/utils/PasteboardUtils.m
+index 3e8c15d..fd83476 100644
+--- a/ios/utils/PasteboardUtils.m
++++ b/ios/utils/PasteboardUtils.m
+@@ -1,4 +1,7 @@
+ #import "PasteboardUtils.h"
++// SCIENT-FORK:START
++#import "ENRMTextLinkAttributes.h"
++// SCIENT-FORK:END
+ #import "ENRMImageAttachment.h"
+ #import "ENRMLinkPillText.h"
+ #import "HTMLGenerator.h"
+@@ -56,25 +59,40 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
+ 
+ #pragma mark - Public API
+ 
++// SCIENT-FORK:START — default Copy reconstructs each bound source before URL fallback.
+ static NSString *canonicalClipboardText(NSAttributedString *text, StyleConfig *config)
+ {
+   NSDictionary *links = config.selectionClipboard[@"linkTextByUrl"];
+-  if (![links isKindOfClass:NSDictionary.class])
+-    return nil;
+-  NSMutableString *result = [text.string mutableCopy];
+-  __block BOOL matched = NO;
+-  [text enumerateAttribute:NSLinkAttributeName
+-                   inRange:NSMakeRange(0, text.length)
+-                   options:NSAttributedStringEnumerationReverse
++  NSMutableArray<NSDictionary *> *replacements = [NSMutableArray array];
++  [text enumerateAttribute:ENRMCanonicalClipboardAttributeName
++                   inRange:NSMakeRange(0, text.length) options:0
+                 usingBlock:^(id value, NSRange range, BOOL *stop) {
+-                  NSString *replacement = value ? links[[value description]] : nil;
++                  if ([value isKindOfClass:NSDictionary.class] &&
++                      [value[@"text"] isKindOfClass:NSString.class]) {
++                    [replacements addObject:@{@"range": [NSValue valueWithRange:range], @"text": value[@"text"]}];
++                  }
++                }];
++  [text enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, text.length) options:0
++                usingBlock:^(id value, NSRange range, BOOL *stop) {
++                  for (NSDictionary *entry in replacements) {
++                    if (NSIntersectionRange(range, [entry[@"range"] rangeValue]).length) return;
++                  }
++                  NSString *replacement = [links isKindOfClass:NSDictionary.class] && value ? links[[value description]] : nil;
+                   if ([replacement isKindOfClass:NSString.class]) {
+-                    [result replaceCharactersInRange:range withString:replacement];
+-                    matched = YES;
++                    [replacements addObject:@{@"range": [NSValue valueWithRange:range], @"text": replacement}];
+                   }
+                 }];
+-  return matched ? result : nil;
++  if (replacements.count == 0) return nil;
++  [replacements sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
++    return [@([b[@"range"] rangeValue].location) compare:@([a[@"range"] rangeValue].location)];
++  }];
++  NSMutableString *result = [text.string mutableCopy];
++  for (NSDictionary *entry in replacements) {
++    [result replaceCharactersInRange:[entry[@"range"] rangeValue] withString:entry[@"text"]];
++  }
++  return result;
+ }
++// SCIENT-FORK:END
+ 
+ static NSString *escapeClipboardAttribute(NSString *value)
+ {
+@@ -85,9 +103,61 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
+                                 withString:@"&lt;"] stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"];
+ }
+ 
+-static void addSelectionMetadata(NSMutableDictionary *items, StyleConfig *config)
++// SCIENT-FORK:START — validate and filter the selected snapshot before clipboard export.
++static NSString *selectedContextFragment(NSAttributedString *selection, NSString *canonical, StyleConfig *config)
+ {
++  NSString *raw = config.selectionClipboard[@"contextFragment"];
++  if (![raw isKindOfClass:NSString.class] || raw.length > 16000000) return nil;
++  id decoded = [NSJSONSerialization JSONObjectWithData:[raw dataUsingEncoding:NSUTF8StringEncoding]
++                                               options:NSJSONReadingMutableContainers error:nil];
++  if (![decoded isKindOfClass:NSMutableDictionary.class]) return nil;
++  NSMutableDictionary *payload = decoded;
++  if (![payload[@"version"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)payload[@"version"]) == CFBooleanGetTypeID() || [payload[@"version"] doubleValue] != 1.0) return nil;
++  NSDictionary *source = payload[@"source"];
++  if (![source isKindOfClass:NSDictionary.class] || ![source[@"environmentId"] isKindOfClass:NSString.class] ||
++      [[source[@"environmentId"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length] == 0) return nil;
++  NSArray *records = payload[@"records"];
++  if (![records isKindOfClass:NSArray.class] || records.count > 200) return nil;
++  NSMutableSet *urls = [NSMutableSet set];
++  [selection enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, selection.length) options:0
++                     usingBlock:^(id value, NSRange range, BOOL *stop) { if (value) [urls addObject:[value description]]; }];
++  NSMutableSet *ids = [NSMutableSet set];
++  for (id entry in records) {
++    if (![entry isKindOfClass:NSDictionary.class]) return nil;
++    NSDictionary *record = entry;
++    if (![record[@"contextId"] isKindOfClass:NSString.class] || [record[@"contextId"] length] == 0 ||
++        ![record[@"kind"] isKindOfClass:NSString.class] || [record[@"kind"] length] == 0 ||
++        ![record[@"version"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)record[@"version"]) == CFBooleanGetTypeID() || [record[@"version"] doubleValue] != 1.0) return nil;
++    NSString *url = [NSString stringWithFormat:@"t3-context://v1/%@/%@", record[@"kind"], record[@"contextId"]];
++    if ([urls containsObject:url] && [canonical containsString:[url stringByAppendingString:@")"]]) {
++      [ids addObject:record[@"contextId"]];
++      if ([record[@"screenshotContextId"] isKindOfClass:NSString.class]) [ids addObject:record[@"screenshotContextId"]];
++    }
++  }
++  NSMutableArray *copied = [NSMutableArray array];
++  for (NSDictionary *record in records) { if ([ids containsObject:record[@"contextId"]]) [copied addObject:record]; }
++  if (copied.count == 0) return nil;
++  payload[@"records"] = copied;
++  NSData *encoded = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
++  return encoded ? [[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding] : nil;
++}
++// SCIENT-FORK:END
++
++static void addSelectionMetadata(NSMutableDictionary *items, StyleConfig *config,
++                                 NSAttributedString *selection, NSString *canonical)
++{
++  // SCIENT-FORK:START — file/Skill-only Copy carries no unrelated context payload.
++  NSString *fragment = selectedContextFragment(selection, canonical, config);
++  NSMutableDictionary *contextAttributes = [NSMutableDictionary dictionary];
++  if (fragment) {
++    contextAttributes[@"data-t3-context-fragment"] =
++        [fragment stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.alphanumericCharacterSet];
++    items[@"app.t3.context-fragment"] = [fragment dataUsingEncoding:NSUTF8StringEncoding];
++  }
++  // SCIENT-FORK:END
+   NSDictionary *attributes = config.selectionClipboard[@"htmlAttributes"];
++  if ([attributes isKindOfClass:NSDictionary.class]) [contextAttributes addEntriesFromDictionary:attributes];
++  attributes = contextAttributes;
+   NSMutableArray *encoded = [NSMutableArray array];
+   if ([attributes isKindOfClass:NSDictionary.class]) {
+     NSRegularExpression *validName = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z_][A-Za-z0-9:_-]*$"
+@@ -127,7 +197,7 @@ void copySelectionMarkdownToPasteboard(NSString *markdown, NSAttributedString *s
+     kUTIHTML : [[NSString stringWithFormat:@"<pre>%@</pre>", escapeClipboardAttribute(markdown)]
+         dataUsingEncoding:NSUTF8StringEncoding]
+   } mutableCopy];
+-  addSelectionMetadata(items, config);
++  addSelectionMetadata(items, config, selection, canonicalClipboardText(selection, config));
+   copyItemsToPasteboard(items);
+ }
+ 
+@@ -182,7 +252,7 @@ void copyAttributedStringToPasteboard(NSAttributedString *attributedString, NSSt
+     addHTMLData(items, attributedString, styleConfig);
+   }
+   if (canonicalText)
+-    addSelectionMetadata(items, styleConfig);
++    addSelectionMetadata(items, styleConfig, attributedString, canonicalText);
+ 
+   // RTF export requires preprocessing (backgrounds, markers, normalized spacing)
+   NSAttributedString *rtfPrepared = prepareAttributedStringForRTFExport(attributedString, styleConfig);
+diff --git a/lib/typescript/src/types/MarkdownTextProps.d.ts b/lib/typescript/src/types/MarkdownTextProps.d.ts
+index 761be03..f4d0cec 100644
+--- a/lib/typescript/src/types/MarkdownTextProps.d.ts
++++ b/lib/typescript/src/types/MarkdownTextProps.d.ts
+@@ -162,6 +162,12 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+      */
+     selectionClipboard?: {
+         linkTextByUrl: Record<string, string>;
++    /** SCIENT-FORK:START — ordered parsed-link sources, never folded by URL or label. */
++    linkSources?: Array<{ url: string; source: string | null }>;
++    recognizedLinkTextByUrl?: Record<string, string>;
++    /** Validated context snapshot; native Copy retains only selected records and screenshot dependencies. */
++    contextFragment?: string;
++    /** SCIENT-FORK:END */
+         htmlAttributes?: Record<string, string>;
+         mimeTypes?: Record<string, string>;
+     };
+diff --git a/src/types/MarkdownTextProps.ts b/src/types/MarkdownTextProps.ts
+index 73233a3..0963daf 100644
+--- a/src/types/MarkdownTextProps.ts
++++ b/src/types/MarkdownTextProps.ts
+@@ -174,6 +174,12 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+    */
+   selectionClipboard?: {
+     linkTextByUrl: Record<string, string>;
++    /** SCIENT-FORK:START — ordered parsed-link sources, never folded by URL or label. */
++    linkSources?: Array<{ url: string; source: string | null }>;
++    recognizedLinkTextByUrl?: Record<string, string>;
++    /** Validated context snapshot; native Copy retains only selected records and screenshot dependencies. */
++    contextFragment?: string;
++    /** SCIENT-FORK:END */
+     htmlAttributes?: Record<string, string>;
+     mimeTypes?: Record<string, string>;
+   };
+diff --git a/repair/package/tests/cpp/CanonicalLinkIndexTest.cpp b/tests/cpp/CanonicalLinkIndexTest.cpp
+new file mode 100644
+index 0000000..f27f039
+--- /dev/null
++++ b/tests/cpp/CanonicalLinkIndexTest.cpp
+@@ -0,0 +1,52 @@
++#include "../../cpp/parser/MD4CParser.hpp"
++#include <cassert>
++#include <vector>
++using namespace Markdown;
++static void links(const std::shared_ptr<MarkdownASTNode> &node, std::vector<std::shared_ptr<MarkdownASTNode>> &out) {
++  if (node->type == NodeType::Link) out.push_back(node);
++  for (const auto &child : node->children) links(child, out);
++}
++static std::string textContent(const std::shared_ptr<MarkdownASTNode> &node) {
++  std::string text = node->content;
++  for (const auto &child : node->children) text += textContent(child);
++  return text;
++}
++int main() {
++  MD4CParser parser;
++  Md4cFlags flags;
++  flags.latexMath = false;
++  std::vector<std::shared_ptr<MarkdownASTNode>> found;
++  links(parser.parse("[**details**](</repo/a.ts>) [*details*](/repo/a.ts)\n\n> [third](/repo/a.ts)", flags), found);
++  assert(found.size() == 3);
++  for (size_t index = 0; index < found.size(); ++index) {
++    assert(found[index]->attributes.at("clipboardLinkIndex") == std::to_string(index));
++    assert(found[index]->attributes.at("url") == "/repo/a.ts");
++  }
++  found.clear();
++  links(parser.parse("`[example](/repo/a.ts)` [next](/repo/a.ts)", flags), found);
++  assert(found.size() == 1 && found[0]->attributes.at("clipboardLinkIndex") == "0");
++  found.clear();
++  links(parser.parse("<https://example.com> [ref][file]\n\n[file]: /repo/a.ts", flags), found);
++  assert(found.size() == 2 && found[1]->attributes.at("clipboardLinkIndex") == "1");
++  found.clear();
++  links(parser.parse(R"([settings](C:\\Users\\me\\.t3\\settings.json))", flags), found);
++  assert(found.size() == 1 && found[0]->attributes.at("url") == R"(C:\Users\me\.t3\settings.json)");
++  found.clear();
++  links(parser.parse(R"([file](<C:\\_dir\\file](part).txt>))", flags), found);
++  assert(found.size() == 1 && found[0]->attributes.at("url") == R"(C:\_dir\file](part).txt)");
++  found.clear();
++  links(parser.parse("[line&#10;&#10;two&#9;three&#13;four](/repo/a.ts) [next](/repo/b.ts)", flags), found);
++  assert(found.size() == 2);
++  assert(textContent(found[0]) == "line\n\ntwo\tthree\rfour");
++  assert(found[0]->attributes.at("clipboardLinkIndex") == "0");
++  assert(found[1]->attributes.at("clipboardLinkIndex") == "1");
++  found.clear();
++  auto controls = parser.parse("&#9;# heading&#10;&#10;- item", flags);
++  assert(textContent(controls) == "\t# heading\n\n- item");
++  assert(controls->children.size() == 1 && controls->children[0]->type == NodeType::Paragraph);
++  assert(textContent(parser.parse(R"(before \&\#0\; after)", flags)) == "before &#0; after");
++  found.clear();
++  links(parser.parse(R"([details](</repo/a\&b.ts>) [literal](</repo/a\&amp;b.ts>))", flags), found);
++  assert(found.size() == 2 && found[0]->attributes.at("url") == "/repo/a&b.ts");
++  assert(found[1]->attributes.at("url") == "/repo/a&amp;b.ts");
++}
+diff --git a/repair/package/tests/ios/CanonicalClipboardTests.m b/tests/ios/CanonicalClipboardTests.m
+new file mode 100644
+index 0000000..a8415a2
+--- /dev/null
++++ b/tests/ios/CanonicalClipboardTests.m
+@@ -0,0 +1,77 @@
++#import <XCTest/XCTest.h>
++#import <UIKit/UIPasteboard.h>
++#import "PasteboardUtils.h"
++#import "ENRMTextLinkAttributes.h"
++#import "StyleConfig.h"
++
++@interface ScientCanonicalClipboardTests : XCTestCase
++@end
++@implementation ScientCanonicalClipboardTests
++- (void)testRepeatedIdentityAndPartialSelection
++{
++  NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:@"😀 details then details"];
++  [text addAttribute:NSLinkAttributeName value:@"/repo/a.ts" range:NSMakeRange(3, 7)];
++  [text addAttribute:NSLinkAttributeName value:@"/repo/a.ts" range:NSMakeRange(16, 7)];
++  [text addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"index": @0, @"text": @"[**details**](</repo/a.ts>)"} range:NSMakeRange(3, 7)];
++  [text addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"index": @1, @"text": @"[*details*](</repo/a.ts>)"} range:NSMakeRange(16, 7)];
++  StyleConfig *config = [StyleConfig new];
++  config.selectionClipboard = @{};
++  copyAttributedStringToPasteboard(text, nil, config);
++  XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string, @"😀 [**details**](</repo/a.ts>) then [*details*](</repo/a.ts>)");
++  copyAttributedStringToPasteboard([text attributedSubstringFromRange:NSMakeRange(18, 3)], nil, config);
++  XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string, @"[*details*](</repo/a.ts>)");
++}
++- (void)testContextFallbackAndOrdinaryCopy
++{
++  NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:@"Screenshot"];
++  [text addAttribute:NSLinkAttributeName value:@"t3-context://v1/image/shot" range:NSMakeRange(0, text.length)];
++  StyleConfig *config = [StyleConfig new];
++  config.selectionClipboard = @{@"linkTextByUrl": @{@"t3-context://v1/image/shot": @"![Screenshot](t3-context://v1/image/shot)"}};
++  copyAttributedStringToPasteboard(text, nil, config);
++  XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string, @"![Screenshot](t3-context://v1/image/shot)");
++  copyAttributedStringToPasteboard([[NSAttributedString alloc] initWithString:@"ordinary"], nil, config);
++  XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string, @"ordinary");
++}
++- (void)testSelectedContextScopeAndScreenshotDependency
++{
++  NSDictionary *annotation = @{@"version": @1, @"kind": @"preview-annotation", @"contextId": @"a", @"label": @"A", @"annotationId": @"a", @"pageUrl": @"https://example.com", @"pageTitle": NSNull.null, @"comment": @"A", @"targetSummary": @"A", @"styleChanges": @[], @"screenshotContextId": @"shot"};
++  NSDictionary *image = @{@"version": @1, @"kind": @"image", @"contextId": @"shot", @"label": @"Shot", @"attachmentId": @"uploaded", @"name": @"shot.png", @"mimeType": @"image/png", @"sizeBytes": @1};
++  NSDictionary *unselected = @{@"version": @1, @"kind": @"terminal", @"contextId": @"b", @"label": @"B", @"terminalId": @"b", @"terminalLabel": @"B", @"lineStart": @0, @"lineEnd": @0, @"text": @"unselected"};
++  NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"version": @1, @"source": @{@"environmentId": @"remote"}, @"records": @[annotation, image, unselected]} options:0 error:nil];
++  NSString *raw = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
++  NSString *url = @"t3-context://v1/preview-annotation/a";
++  StyleConfig *config = [StyleConfig new];
++  config.selectionClipboard = @{@"contextFragment": raw, @"linkTextByUrl": @{url: @"[A](t3-context://v1/preview-annotation/a)"}};
++  NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:@"A"];
++  [text addAttribute:NSLinkAttributeName value:url range:NSMakeRange(0, 1)];
++  copyAttributedStringToPasteboard(text, nil, config);
++  NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:UIPasteboard.generalPasteboard.items[0][@"app.t3.context-fragment"] options:0 error:nil];
++  XCTAssertEqualObjects([payload[@"records"] valueForKey:@"contextId"], (@[@"a", @"shot"]));
++  XCTAssertEqualObjects(payload[@"source"][@"environmentId"], @"remote");
++  for (NSString *value in @[@"file", @"$ui", @"ordinary"]) {
++    NSMutableAttributedString *other = [[NSMutableAttributedString alloc] initWithString:value];
++    [other addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"text": value, @"index": @0} range:NSMakeRange(0, value.length)];
++    copyAttributedStringToPasteboard(other, nil, config);
++    XCTAssertNil(UIPasteboard.generalPasteboard.items[0][@"app.t3.context-fragment"]);
++    NSData *html = [UIPasteboard.generalPasteboard dataForPasteboardType:kUTIHTML];
++    XCTAssertNotNil(html);
++    NSString *htmlText = [[NSString alloc] initWithData:html encoding:NSUTF8StringEncoding];
++    XCTAssertNotNil(htmlText);
++    XCTAssertFalse([htmlText containsString:@"data-t3-context-fragment"]);
++  }
++}
++- (void)testRecognizedFilePartialCopyAndUnknownVersionRefusal
++{
++  NSMutableAttributedString *file = [[NSMutableAttributedString alloc] initWithString:@"/tmp/frame.png"];
++  [file addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"text": @"[frame.png](</tmp/frame.png>)", @"recognizedStart": @0} range:NSMakeRange(0, file.length)];
++  StyleConfig *config = [StyleConfig new];
++  config.selectionClipboard = @{};
++  copyAttributedStringToPasteboard([file attributedSubstringFromRange:NSMakeRange(3, 5)], nil, config);
++  XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string, @"[frame.png](</tmp/frame.png>)");
++  for (NSString *raw in @[@"invalid", @"{\"version\":2}", @"{\"version\":true}", @"{\"version\":1.5}"]) {
++    config.selectionClipboard = @{@"contextFragment": raw};
++    copyAttributedStringToPasteboard(file, nil, config);
++    XCTAssertNil(UIPasteboard.generalPasteboard.items[0][@"app.t3.context-fragment"]);
++  }
++}
++@end

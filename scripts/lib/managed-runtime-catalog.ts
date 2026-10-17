@@ -27,6 +27,11 @@ import {
   resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   resolveScientAgentArtifactPolicy,
+  resolveMuseArtifactPolicy,
+  MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES,
+  MUSE_STABLE_CHANNEL_URL,
+  MUSE_DOWNLOAD_URL,
+  parseManagedMuseVersion,
   isSupportedScientAgentVersion,
   type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeProvider,
@@ -106,6 +111,7 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   pi: resolveReviewedPiArtifact,
   omp: resolveReviewedOmpArtifact,
   scient: resolveScientAgentArtifactPolicy,
+  muse: resolveMuseArtifactPolicy,
 };
 
 export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
@@ -1111,6 +1117,69 @@ async function discoverScientAgent(fetch_: Fetch): Promise<ManagedRuntimeCatalog
   return candidateProvider({ provider: "scient", version, artifacts: Object.fromEntries(entries) });
 }
 
+async function museStableVersion(fetch_: Fetch): Promise<string> {
+  const channel = record(
+    await metadataJson(fetch_, MUSE_STABLE_CHANNEL_URL),
+    "Muse stable channel",
+  );
+  const version = stringField(channel, "version", "Muse stable channel");
+  if (
+    channel.channel !== "muse-stable" ||
+    channel.state !== "public" ||
+    parseManagedMuseVersion(version) !== version ||
+    channel.manifest_url !==
+      `${MUSE_DOWNLOAD_URL}?channel=muse&version=${version}&file=manifest.json`
+  ) {
+    throw new Error("Muse stable channel does not identify its official public release.");
+  }
+  return version;
+}
+
+async function discoverMuse(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const version = await museStableVersion(fetch_);
+  const manifest = record(
+    await metadataJson(
+      fetch_,
+      `${MUSE_DOWNLOAD_URL}?channel=muse&version=${version}&file=manifest.json`,
+    ),
+    "Muse release manifest",
+  );
+  if (manifest.version !== version || manifest.checksum_algorithm !== "sha256") {
+    throw new Error("Muse release manifest differs from its stable channel or checksum policy.");
+  }
+  const artifacts = record(manifest.artifacts, "Muse release artifacts");
+  const entries = policyEntries("muse").map(({ key, policy }) => {
+    const manifestKey = policy.artifactName
+      .replace(/^muse-/u, "")
+      .replace(/\.exe$/u, "")
+      .replace("aarch64-", "aarch64_")
+      .replace("x86-", "x86_");
+    const asset = record(artifacts[manifestKey], "Muse release artifact");
+    // Raw executables download as-is; a larger release could never install.
+    const size = strictSize(Number(asset.size), "Muse release artifact");
+    if (size > MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES) {
+      throw new Error("Muse release artifact exceeds the installer's download limit.");
+    }
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url: stringField(asset, "url", "Muse release artifact"),
+        checksum: {
+          algorithm: "sha256" as const,
+          digest: strictDigest(
+            stringField(asset, "checksum", "Muse release artifact"),
+            "sha256",
+            "Muse release artifact",
+          ),
+        },
+        size,
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "muse", version, artifacts: Object.fromEntries(entries) });
+}
+
 const discoverers: Readonly<
   Record<
     ManagedRuntimeCatalogProvider,
@@ -1127,6 +1196,7 @@ const discoverers: Readonly<
   pi: discoverPi,
   omp: discoverOmp,
   scient: discoverScientAgent,
+  muse: discoverMuse,
 };
 
 export async function refreshManagedRuntimeCatalog(
@@ -1325,6 +1395,8 @@ async function discoverLatestVersion(
   fetch_: Fetch,
 ): Promise<string | undefined> {
   switch (provider) {
+    case "muse":
+      return museStableVersion(fetch_);
     case "antigravityAcp":
       return strictVersion(
         stringField(

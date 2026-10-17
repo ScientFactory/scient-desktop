@@ -151,11 +151,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const queue = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push({ nativeThreadId, queue });
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(queue),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
                   };
@@ -404,11 +406,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   // End this process stream so openQuery can replace it.
                   close: Queue.shutdown(sdkMessages),
@@ -603,11 +607,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };

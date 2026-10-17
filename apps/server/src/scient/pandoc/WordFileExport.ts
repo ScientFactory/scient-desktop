@@ -322,7 +322,7 @@ const make = Effect.gen(function* () {
         );
       yield* readSavedMarkdown(request);
       yield* withCapturedEpoch(root, mutationEpoch, () => Effect.void);
-      const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
       const converted = yield* words
@@ -484,7 +484,7 @@ const make = Effect.gen(function* () {
       citations: [],
       warnings: [],
     };
-    const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const fileName = exportFileName(title, ".docx");
     const reserved = yield* files.reserve({ exportId, fileName });
     const converted = yield* words

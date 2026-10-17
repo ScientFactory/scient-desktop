@@ -76,6 +76,61 @@ export function isWorkflowMemberOwnedBy(
   );
 }
 
+/** A rich workflow row is a display observation in its exact coordinator child,
+ * with a roster-bound conversation rather than a native task control cursor. */
+export function isRichWorkflowMemberOwnedBy(
+  member: OrchestrationV2Subagent,
+  node: OrchestrationV2ExecutionNode | undefined,
+  coordinator: OrchestrationV2Subagent,
+  coordinatorRoot: OrchestrationV2ExecutionNode,
+): boolean {
+  const index = member.presentation?.agentIndex;
+  return (
+    coordinator.origin === "provider_native" &&
+    coordinator.presentation?.kind === "workflow" &&
+    coordinator.nativeTaskRef?.driver === coordinator.driver &&
+    coordinator.nativeTaskRef.strength === "strong" &&
+    coordinatorRoot.kind === "root_turn" &&
+    coordinatorRoot.runId === null &&
+    coordinatorRoot.threadId === coordinator.childThreadId &&
+    coordinatorRoot.parentNodeId === null &&
+    coordinatorRoot.rootNodeId === coordinatorRoot.id &&
+    coordinatorRoot.nativeItemRef?.driver === coordinator.driver &&
+    coordinatorRoot.nativeItemRef.strength === "strong" &&
+    coordinatorRoot.nativeItemRef.nativeId === coordinator.nativeTaskRef.nativeId &&
+    member.id !== coordinator.id &&
+    member.origin === "provider_native" &&
+    member.driver === coordinator.driver &&
+    member.providerInstanceId === coordinator.providerInstanceId &&
+    member.presentation?.kind === "workflow_agent" &&
+    member.presentation.workflowId === coordinator.id &&
+    index !== undefined &&
+    member.childThreadId !== null &&
+    coordinator.workflow?.agents.filter((entry) => entry.index === index).length === 1 &&
+    coordinator.workflow.agents.some(
+      (entry) => entry.index === index && entry.childThreadId === member.childThreadId,
+    ) &&
+    member.threadId === coordinatorRoot.threadId &&
+    member.parentNodeId === coordinatorRoot.id &&
+    member.runId === null &&
+    member.providerThreadId === null &&
+    member.nativeTaskRef === null &&
+    node !== undefined &&
+    node.id === member.id &&
+    node.kind === "subagent" &&
+    node.threadId === member.threadId &&
+    node.runId === null &&
+    !node.countsForRun &&
+    node.parentNodeId === coordinatorRoot.id &&
+    node.rootNodeId === coordinatorRoot.id &&
+    node.providerThreadId === null &&
+    node.providerTurnId === null &&
+    node.nativeItemRef === null &&
+    node.runtimeRequestId === null &&
+    node.checkpointScopeId === null
+  );
+}
+
 /** Route a subagent row, tracking native workflow coordinators and their runless members. */
 export function routeWorkflowSubagentEvent(
   event: SubagentUpdatedEvent,
@@ -99,6 +154,7 @@ export function routeWorkflowSubagentEvent(
     const previous = coordinators.get(task.id);
     const ownedThreadIds = new Set(state.ownedThreadIds);
     const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
+    const workflowMemberParents = new Map(state.workflowMemberParents);
     if (
       ownership.ownsRun &&
       (previous === undefined ||
@@ -107,6 +163,13 @@ export function routeWorkflowSubagentEvent(
           previous.driver === task.driver))
     ) {
       coordinators.set(task.id, task);
+      if (task.childThreadId !== null) {
+        for (const member of task.workflow?.agents ?? []) {
+          if (member.childThreadId !== undefined) {
+            workflowMemberParents.set(member.childThreadId, task.childThreadId);
+          }
+        }
+      }
     } else if (
       previous?.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
       previous?.providerInstanceId === task.providerInstanceId &&
@@ -116,6 +179,16 @@ export function routeWorkflowSubagentEvent(
       coordinators.delete(task.id);
       if (previous.childThreadId !== null && previous.childThreadId !== input.threadId) {
         ownedThreadIds.delete(previous.childThreadId);
+        const revokedThreads = new Set([previous.childThreadId]);
+        // Member conversations follow the exact coordinator that enrolled them.
+        // Its authoritative transfer revokes their old subscriber too.
+        for (const [memberThreadId, parentThreadId] of workflowMemberParents) {
+          if (revokedThreads.has(parentThreadId)) {
+            revokedThreads.add(memberThreadId);
+            ownedThreadIds.delete(memberThreadId);
+            workflowMemberParents.delete(memberThreadId);
+          }
+        }
       }
       if (
         previous.providerThreadId !== null &&
@@ -133,12 +206,24 @@ export function routeWorkflowSubagentEvent(
         ...state,
         ownedThreadIds,
         ownedProviderThreadIds,
+        workflowMemberParents,
         workflowCoordinators: coordinators,
         workflowMembers: members,
       },
     ];
   }
-  if (belongs) return [true, state];
+  if (belongs) {
+    if (ownership.ownsRun && task.workflow !== undefined && task.childThreadId !== null) {
+      const workflowMemberParents = new Map(state.workflowMemberParents);
+      for (const member of task.workflow.agents) {
+        if (member.childThreadId !== undefined) {
+          workflowMemberParents.set(member.childThreadId, task.childThreadId);
+        }
+      }
+      return [true, { ...state, workflowMemberParents }];
+    }
+    return [true, state];
+  }
   const coordinator =
     task.parentNodeId === null ? undefined : state.workflowCoordinators.get(task.parentNodeId);
   const memberOwned = isWorkflowMemberOwnedBy(task, coordinator, event.driver);
@@ -189,7 +274,7 @@ export const releaseRevokedWorkflowTracking = <Open extends WorkflowTrackedProje
   },
 ) =>
   Effect.gen(function* () {
-    const { ids: revokedIds, threadIds: revokedThreadIds } = revoked;
+    const { ids, threadIds: revokedThreadIds } = revoked;
     const {
       openRunOwnedSubagents,
       activeBackgroundTurnItems,
@@ -197,6 +282,14 @@ export const releaseRevokedWorkflowTracking = <Open extends WorkflowTrackedProje
       activeChildSubagents,
     } = tracked;
     const open = yield* Ref.get(openRunOwnedSubagents);
+    const revokedIds = new Set([
+      ...ids,
+      // Rich workflow members are runless rows on the coordinator child
+      // thread. They lose the old subscriber with that exact child owner.
+      ...Array.from(open.subagents.values())
+        .filter((task) => revokedThreadIds.has(task.threadId))
+        .map((task) => task.id),
+    ]);
     const revokedItemIds = new Set([
       ...Array.from(open.turnItems.values())
         .filter((item) => revokedIds.has(item.subagentId))

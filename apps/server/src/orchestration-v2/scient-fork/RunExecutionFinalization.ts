@@ -3,11 +3,14 @@ import type {
   OrchestrationV2DomainEvent,
   ProviderTurnId,
   RunAttemptId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import type * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -160,3 +163,28 @@ export const isCommittedRootProviderTurn = (
   storedEvent.payload.nodeId === input.rootNode.id &&
   storedEvent.payload.runAttemptId === input.attemptId &&
   storedEvent.payload.providerThreadId === input.providerThread.id;
+
+// One schedule for every lost run: back off from 1 s to at most 30 s between tries.
+const lostRunFinalWriteSchedule = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+/**
+ * The failed final write for a run whose event stream broke. It can fail for the
+ * same reason the stream did (a full disk, say), and nothing else would end the
+ * run, so it keeps trying until it commits. The write itself skips a run that was
+ * stopped or replaced meanwhile.
+ */
+export const retryLostRunFinalWrite =
+  (runId: RunId) =>
+  <A, E, R>(write: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    write.pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Run final write after a broken event stream failed; retrying", {
+          runId,
+          cause,
+        }),
+      ),
+      Effect.retry({ schedule: lostRunFinalWriteSchedule }),
+    );

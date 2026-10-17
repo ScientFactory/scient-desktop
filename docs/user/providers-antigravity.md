@@ -161,6 +161,10 @@ instances can use different accounts on one environment.
 | Sign out or disconnect      | Stops that instance's sessions and clears its official ACP profile credentials; keeps runtime, threads, and files. |
 | Remove managed installation | Removes only Scient's shared ACP runtime; keeps account profiles, threads, files, and external installations.      |
 
+Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
+for Google sign-ins. Each group has separate five-hour and weekly limits and reset
+times. Limits refresh with provider status and include usage outside T3 Code.
+
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 

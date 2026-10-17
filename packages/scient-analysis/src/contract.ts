@@ -173,7 +173,7 @@ export type AnalysisArtifactRepresentationId = typeof AnalysisArtifactRepresenta
 export const AnalysisArtifactFileName = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(255),
-  Schema.isPattern(/^[^/\\\0]+$/u),
+  Schema.isPattern(/^[^/\\\x00]+$/u),
 ).pipe(Schema.brand("AnalysisArtifactFileName"));
 export type AnalysisArtifactFileName = typeof AnalysisArtifactFileName.Type;
 

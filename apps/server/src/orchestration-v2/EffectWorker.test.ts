@@ -1085,3 +1085,81 @@ it.effect("a native subagent stop does not settle its owner's background work", 
     assert.deepEqual(yield* Ref.get(events), ["stop-child"]);
   }),
 );
+
+it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
+  "a native subagent stop only repairs %s provider evidence",
+  (outcome) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layer = makeExecutorLayer({
+        events,
+        interrupt: (input) => {
+          assert.equal(input.subagent?.nativeTaskId, "native-task");
+          assert.equal(
+            DateTime.toEpochMillis(input.subagent!.requestedAt!),
+            DateTime.toEpochMillis(now),
+          );
+          return Ref.update(events, (current) => [...current, "stop-child"]).pipe(
+            Effect.andThen(
+              outcome === "failed"
+                ? new ProviderTurnControlService.ProviderTurnControlError({
+                    threadId,
+                    providerTurnId,
+                    operation: "interrupt",
+                    cause: "SDK stop failed",
+                  })
+                : Effect.succeed(
+                    outcome === "confirmed"
+                      ? {
+                          status: "cancelled" as const,
+                          completedAt: now,
+                          result: "Stopped by Claude",
+                        }
+                      : undefined,
+                  ),
+            ),
+          );
+        },
+        threads: {
+          dispatch: (command) => {
+            assert.equal(command.type, "thread.background-work.settle");
+            if (command.type === "thread.background-work.settle") {
+              assert.equal(command.subagent?.id, "subagent");
+              assert.isDefined(command.subagent);
+              if (command.subagent === undefined || !("outcome" in command.subagent))
+                throw new Error("Confirmed native outcome proof is required");
+              assert.equal(command.subagent.nativeTaskId, "native-task");
+              assert.equal(command.subagent.providerSessionId, oldSessionId);
+              assert.deepEqual(command.subagent.outcome, {
+                status: "cancelled",
+                completedAt: now,
+                result: "Stopped by Claude",
+              });
+            }
+            return Ref.update(events, (current) => [...current, "settle-child"]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] }),
+            );
+          },
+        },
+      });
+      const execution = yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute({
+          ...restartEffect(now, { type: "detach" }),
+          request: {
+            type: "provider-turn.interrupt",
+            providerSessionId: oldSessionId,
+            providerThreadId,
+            providerTurnId,
+            subagent: { id: NodeId.make("subagent"), nativeTaskId: "native-task" },
+          },
+        });
+      }).pipe(Effect.provide(layer), Effect.exit);
+      assert.equal(Exit.isFailure(execution), outcome === "failed");
+      assert.deepEqual(
+        yield* Ref.get(events),
+        outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
+      );
+    }),
+);

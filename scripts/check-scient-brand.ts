@@ -40,9 +40,13 @@ const PRODUCT_SURFACE_FILES = new Set([
 const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
 // Captured mock-provider output is a replay fixture, never a product surface.
 const NON_PRODUCT_FILES = new Set(["apps/server/scripts/acp-mock-agent.ts"]);
-// The timeline recognizes persisted upstream error text as well as Scient text.
-// Only this exact compatibility recognizer is exempt; nearby public copy is checked.
+// Exact non-public compatibility identities survive upstream alignment.
+// Only these path/line pairs are exempt; nearby public copy is checked.
 const NON_PUBLIC_COMPATIBILITY_LINES = new Map([
+  [
+    "apps/server/src/provider/CodexProvider.ts",
+    new Set(['const CODEX_COMPATIBILITY_ORIGINATOR = "T3 Code";']),
+  ],
   [
     "apps/web/src/components/chat/MessagesTimeline.logic.ts",
     new Set(['const THREAD_READ_OBJECTS = [" a Scient thread", " a T3 thread"] as const;']),
@@ -53,6 +57,14 @@ const FORBIDDEN_PUBLIC_BRANDS =
   /\bT3 Code\b|\bT3 Tools\b|\bT3 threads?\b|\bT3 MCP\b|\bt3-code MCP\b|Tool\.make\(["']t3_|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next|github\.com\/(?:pingdotgg\/t3code|t3dotgg\/t3-code)\/releases\b/i;
 
 const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
+  [
+    "apps/server/src/provider/CodexProvider.ts",
+    [
+      'name: "t3code_desktop"',
+      'title: "Scient Desktop"',
+      "CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_COMPATIBILITY_ORIGINATOR",
+    ],
+  ],
   ["apps/desktop/package.json", ['"productName": "Scient"']],
   ["apps/web/index.html", ["<title>Scient</title>", 'alt="Scient"']],
   [

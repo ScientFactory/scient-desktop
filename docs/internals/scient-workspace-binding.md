@@ -132,8 +132,11 @@ Do not expose its model-supplied cwd as agent workspace authority.
 The upstream alignment through `5cc99e1c23` enables **No project** after owner approval.
 These conversations still have a real owning project: the server's internal scratch
 project at `<baseDir>/scratch` in production. The dev runner selects a separate
-persistent scratch root outside the checkout; advertisement and authority use the
-same configured location. Each thread records its own plain subfolder in
+persistent scratch root outside the checkout. The upstream managed-folder service owns
+advertisement, RPC/MCP creation and per-thread allocation against the same configured root.
+Without Git, only this host-owned root and its direct canonical children can use filesystem
+evidence. The complete canonical ancestry must be readable and free of `.git` entries,
+including dangling markers; arbitrary workspaces and other Git failures keep strict inspection. Each thread records its own plain subfolder in
 `worktreePath`; this does not reintroduce historical null-project Quick Chat threads.
 
 The shared resolver admits only a host-registered direct canonical child of this

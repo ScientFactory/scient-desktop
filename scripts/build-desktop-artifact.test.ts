@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { createPackageWithOptions, listPackage } from "@electron/asar";
+import { createPackageWithOptions, listPackage, uncache } from "@electron/asar";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { extractFile } from "@electron/asar";
@@ -26,6 +26,7 @@ import {
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
+  readWorkspaceConfig,
   createBuildConfig,
   DesktopBuildPackageVersionMismatchError,
   DESKTOP_ELECTRON_LANGUAGES,
@@ -48,6 +49,7 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   validatePackagedComputeBridges,
+  validatePackagedDesktopRuntimeResources,
   preflightLinuxDesktopBuild,
   preflightMacDesktopBuild,
   preflightWindowsDesktopBuild,
@@ -121,6 +123,23 @@ const stagePackageExtensions = {
   "@electron-webauthn/macos": { peerDependenciesMeta: { typescript: { optional: true } } },
 };
 
+/** The patch suffix belongs to pnpm's approval identity, not the tarball filename. */
+function workspaceAllowBuildTarballPath(key: string): string | undefined {
+  const identity = /(?:^|@)file:(.*)$/u.exec(key)?.[1];
+  if (identity === undefined) return undefined;
+  const patchStart = identity.indexOf("(patch_hash");
+  const tarball = patchStart < 0 ? identity : identity.slice(0, patchStart);
+  if (patchStart >= 0) {
+    assert.match(
+      identity.slice(patchStart),
+      /^\(patch_hash=[a-f0-9]{64}\)$/u,
+      `allowBuilds names a malformed patch identity: ${key}`,
+    );
+  }
+  assert.isNotEmpty(tarball, `allowBuilds names an empty tarball: ${key}`);
+  return tarball;
+}
+
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
   root: string,
@@ -184,7 +203,7 @@ function iconResizeSpawnerLayer(
 const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(function* (input: {
   readonly copyUnpackedNatives: boolean;
   readonly serverEntrySource?: string;
-  readonly wslRuntime?: "valid" | "forbidden" | "bad-digest";
+  readonly wslRuntime?: "valid" | "forbidden" | "source-map" | "bad-digest";
   readonly targetArch?: "x64" | "arm64";
   readonly ptyPrebuildArch?: "x64" | "arm64";
 }) {
@@ -272,6 +291,9 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
       );
       yield* fs.makeDirectory(windowsPrebuildDir, { recursive: true });
       yield* fs.writeFileString(path.join(windowsPrebuildDir, "pty.node"), "windows-pty");
+    }
+    if (input.wslRuntime === "source-map") {
+      yield* fs.writeFileString(path.join(wslSourceDir, "apps/server/dist/bin.mjs.map"), "{}");
     }
 
     const archivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
@@ -671,6 +693,54 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
+  // pnpm writes "set this to true or false" placeholders into allowBuilds when a
+  // tarball changes. pnpm ignores them, but the release build decode rejects them.
+  it("distinguishes file tarballs from exact pnpm patch approval suffixes", () => {
+    const hash = "a".repeat(64);
+    for (const key of [
+      "file:deps/native.tgz",
+      "native@file:deps/native.tgz",
+      "@scope/native@file:deps/native.tgz",
+      `native@file:deps/native.tgz(patch_hash=${hash})`,
+      `@scope/native@file:deps/native.tgz(patch_hash=${hash})`,
+    ]) {
+      assert.equal(workspaceAllowBuildTarballPath(key), "deps/native.tgz");
+    }
+    assert.equal(workspaceAllowBuildTarballPath("native@1.2.3"), undefined);
+    assert.equal(workspaceAllowBuildTarballPath("native"), undefined);
+    assert.equal(
+      workspaceAllowBuildTarballPath("file:deps/native(stable).tgz"),
+      "deps/native(stable).tgz",
+    );
+    for (const key of [
+      "native@file:",
+      "native@file:deps/native.tgz(patch_hash=)",
+      "native@file:deps/native.tgz(patch_hash=invalid)",
+      "native@file:deps/native.tgz(patch_hash",
+      `native@file:deps/native.tgz(patch_hash=${hash}`,
+      `native@file:deps/native.tgz(patch_hash=${hash})(peer@1.2.3)`,
+    ]) {
+      assert.throws(() => workspaceAllowBuildTarballPath(key));
+    }
+  });
+
+  it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { allowBuilds = {} } = yield* readWorkspaceConfig();
+      const repoRoot = path.join(import.meta.dirname, "..");
+      for (const key of Object.keys(allowBuilds)) {
+        const tarball = workspaceAllowBuildTarballPath(key);
+        if (tarball === undefined) continue;
+        assert.isTrue(
+          yield* fs.exists(path.join(repoRoot, tarball)),
+          `allowBuilds names a missing tarball: ${key}`,
+        );
+      }
+    }),
+  );
+
   it("stages pnpm 11 allowBuilds and patchedDependencies in the workspace yaml", () => {
     assert.deepStrictEqual(
       createStageWorkspaceConfig({
@@ -749,15 +819,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }
 
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
+      "!apps/desktop/resources/file-exchange",
+      "!apps/desktop/resources/file-exchange/**/*",
+      "!apps/desktop/prod-resources/file-exchange",
+      "!apps/desktop/prod-resources/file-exchange/**/*",
       "!**/node_modules/@cursor/sdk-*/**/*",
       "!apps/desktop/prod-resources/cursor-sdk",
       "!apps/desktop/prod-resources/cursor-sdk/**/*",
       "!apps/server/dist/file-exchange",
       "!apps/server/dist/file-exchange/**/*",
-      "!apps/desktop/resources/file-exchange",
-      "!apps/desktop/resources/file-exchange/**/*",
-      "!apps/desktop/prod-resources/file-exchange",
-      "!apps/desktop/prod-resources/file-exchange/**/*",
+      "!apps/desktop/prod-resources/resource-monitor",
+      "!apps/desktop/prod-resources/resource-monitor/**/*",
+      "!apps/desktop/prod-resources/whisper-runtime",
+      "!apps/desktop/prod-resources/whisper-runtime/**/*",
+      "!apps/desktop/prod-resources/synctex-runtime",
+      "!apps/desktop/prod-resources/synctex-runtime/**/*",
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
       "!**/*.map",
       "!**/*.d.cts",
@@ -836,7 +912,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(mac.extraResources, [...DESKTOP_EXTRA_RESOURCES]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
@@ -902,6 +978,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // Windows uses a custom OpenWith ProgID to preserve the user's default.
       assert.deepStrictEqual(win.fileAssociations, []);
 
+      const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
+      assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
       // Scient has not activated default-browser OS registration.
       assert.deepStrictEqual((mac.mac as Record<string, unknown>).protocols, [
         { name: "Scient", schemes: ["scient"] },
@@ -1014,8 +1092,166 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(LINUX_FILE_EXCLUSIONS, [
       ...MAC_FILE_EXCLUSIONS,
       "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+      "!apps/desktop/prod-resources/kde-capture",
+      "!apps/desktop/prod-resources/kde-capture/**/*",
+      "!apps/desktop/prod-resources/hyprland-capture",
+      "!apps/desktop/prod-resources/hyprland-capture/**/*",
     ]);
   });
+
+  it("excludes separately emitted Scient runtimes from every app asar", () => {
+    for (const resource of DESKTOP_EXTRA_RESOURCES) {
+      const sourceTreeResource = resource.from.replace(
+        "apps/desktop/prod-resources/",
+        "apps/desktop/resources/",
+      );
+      for (const stagingPath of [sourceTreeResource, resource.from]) {
+        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}`);
+        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}/**/*`);
+      }
+      assert.include(DESKTOP_FILE_EXCLUSIONS, `!${resource.from}`);
+      assert.include(DESKTOP_FILE_EXCLUSIONS, `!${resource.from}/**/*`);
+    }
+
+    assert.deepStrictEqual(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, [
+      "!apps/desktop/resources/file-exchange",
+      "!apps/desktop/resources/file-exchange/**/*",
+      "!apps/desktop/prod-resources/file-exchange",
+      "!apps/desktop/prod-resources/file-exchange/**/*",
+      "!apps/desktop/resources/resource-monitor",
+      "!apps/desktop/resources/resource-monitor/**/*",
+      "!apps/desktop/resources/whisper-runtime",
+      "!apps/desktop/resources/whisper-runtime/**/*",
+      "!apps/desktop/resources/synctex-runtime",
+      "!apps/desktop/resources/synctex-runtime/**/*",
+      "!apps/desktop/prod-resources/resource-monitor",
+      "!apps/desktop/prod-resources/resource-monitor/**/*",
+      "!apps/desktop/prod-resources/whisper-runtime",
+      "!apps/desktop/prod-resources/whisper-runtime/**/*",
+      "!apps/desktop/prod-resources/synctex-runtime",
+      "!apps/desktop/prod-resources/synctex-runtime/**/*",
+      "!apps/desktop/resources/cursor-sdk",
+      "!apps/desktop/resources/cursor-sdk/**/*",
+      "!apps/desktop/prod-resources/cursor-sdk",
+      "!apps/desktop/prod-resources/cursor-sdk/**/*",
+    ]);
+  });
+
+  it.effect.each(["mac", "linux"] as const)(
+    "inspects %s ASAR contents and retained external runtime files",
+    (platform) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-runtime-payload-" });
+          const source = path.join(root, "source");
+          const stageResourcesDir = path.join(source, "apps/desktop/prod-resources");
+          const resourcesDir = path.join(root, "resources");
+          const trees = [
+            "resource-monitor",
+            "whisper-runtime",
+            "synctex-runtime",
+            ...(platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
+          ];
+          const binaryNames: Record<string, string> = {
+            "resource-monitor": "t3-resource-monitor",
+            "whisper-runtime": "whisper-server",
+            "synctex-runtime": "synctex",
+            "kde-capture": "t3-kde-snap-shot",
+            "hyprland-capture": "t3-hyprland-snap-shot",
+          };
+          for (const tree of trees) {
+            const directory = path.join(stageResourcesDir, tree);
+            const binaryName = binaryNames[tree]!;
+            yield* fs.makeDirectory(directory, { recursive: true });
+            yield* fs.writeFileString(path.join(directory, binaryName), `${tree} executable`);
+            yield* fs.chmod(path.join(directory, binaryName), 0o755);
+            yield* fs.writeFileString(path.join(directory, "library.so"), `${tree} library`);
+            yield* fs.makeDirectory(path.join(resourcesDir, tree), { recursive: true });
+            yield* fs.copy(
+              path.join(directory, binaryName),
+              path.join(resourcesDir, tree, binaryName),
+            );
+            yield* fs.copy(
+              path.join(directory, "library.so"),
+              path.join(resourcesDir, tree, "library.so"),
+            );
+          }
+          yield* fs.writeFileString(path.join(stageResourcesDir, "icon.png"), "registration icon");
+          yield* fs.writeFileString(path.join(stageResourcesDir, "icon.icns"), "macOS branding");
+          const config = yield* createBuildConfig(
+            platform,
+            "dir",
+            "1.2.3",
+            false,
+            false,
+            undefined,
+            undefined,
+          );
+          const ignore = (config.files as string[]).map((entry) => entry.slice(1));
+          const asarPath = path.join(resourcesDir, "app.asar");
+          const pack = (ignored: string[]) =>
+            Effect.promise(async () => {
+              await createPackageWithOptions(source, asarPath, {
+                globOptions: { cwd: source, ignore: ignored },
+              });
+              uncache(asarPath);
+            });
+          const validate = () =>
+            validatePackagedDesktopRuntimeResources({ platform, resourcesDir, stageResourcesDir });
+          yield* pack(ignore);
+          yield* validate();
+          assert.equal(
+            extractFile(asarPath, "apps/desktop/prod-resources/icon.png").toString(),
+            "registration icon",
+          );
+          assert.equal(
+            extractFile(asarPath, "apps/desktop/prod-resources/icon.icns").toString(),
+            "macOS branding",
+          );
+          for (const tree of trees) {
+            // Repack with one exclusion missing: inspecting app.asar must catch it.
+            yield* pack(
+              ignore.filter((entry) => !entry.startsWith(`apps/desktop/prod-resources/${tree}`)),
+            );
+            assert.include(
+              (yield* validate().pipe(Effect.flip)).stderrTail,
+              `Duplicate runtime staging tree`,
+            );
+          }
+          yield* pack(ignore);
+          const library = path.join(resourcesDir, "whisper-runtime/library.so");
+          yield* fs.remove(library);
+          assert.include((yield* validate().pipe(Effect.flip)).stderrTail, "library.so");
+          yield* fs.writeFileString(library, "");
+          assert.include(
+            (yield* validate().pipe(Effect.flip)).stderrTail,
+            "empty external runtime",
+          );
+          yield* fs.writeFileString(library, "library");
+          if ((yield* HostProcess.Platform) !== "win32") {
+            const binary = path.join(resourcesDir, "synctex-runtime/synctex");
+            yield* fs.chmod(binary, 0o644);
+            assert.include(
+              (yield* validate().pipe(Effect.flip)).stderrTail,
+              "lost executable mode",
+            );
+            yield* fs.chmod(binary, 0o755);
+            // Bad staging permissions must not make a broken payload pass.
+            yield* fs.chmod(path.join(stageResourcesDir, "synctex-runtime/synctex"), 0o644);
+            yield* fs.chmod(binary, 0o644);
+            assert.include((yield* validate().pipe(Effect.flip)).stderrTail, "not executable");
+            yield* fs.chmod(binary, 0o755);
+          }
+          if (platform === "linux") {
+            yield* fs.remove(path.join(stageResourcesDir, "icon.png"));
+            yield* pack(ignore);
+            assert.instanceOf(yield* validate().pipe(Effect.flip), BuildCommandFailedError);
+          }
+        }),
+      ),
+  );
 
   it.effect("packs both Compute bridge scripts as files external interpreters can read", () =>
     Effect.gen(function* () {
@@ -1902,24 +2138,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("rejects forbidden native members in the emitted WSL archive", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeWindowsPayloadFixture({
-          copyUnpackedNatives: true,
-          wslRuntime: "forbidden",
-        });
-        const error = yield* validateWindowsPackagedPayload({
-          stageDistDir: fixture.stageDistDir,
-          appExecutableName: fixture.appExecutableName,
-          targetArch: "x64",
-          expectWslRuntime: true,
-        }).pipe(Effect.flip);
+  it.effect.each(["forbidden", "source-map"] as const)(
+    "rejects %s members in the emitted WSL archive",
+    (wslRuntime) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime,
+          });
+          const error = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch: "x64",
+            expectWslRuntime: true,
+          }).pipe(Effect.flip);
 
-        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
-        assert.equal(error.reason, "wsl-runtime-invalid");
-      }),
-    ),
+          assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+          assert.equal(error.reason, "wsl-runtime-invalid");
+        }),
+      ),
   );
 
   it.effect("rejects an emitted WSL archive whose sidecar digest does not match", () =>
@@ -1988,7 +2226,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           primaryProbe.args[4],
           path.join(
             fixture.packagedAppDir,
-            "resources/server.asar/node_modules/@ff-labs/fff-node/dist/src/index.js",
+            "resources/server.asar/node_modules/@ff-labs/fff-node/dist/index.js",
           ),
         );
         assert.equal(primaryProbe.options.cwd, fixture.packagedAppDir);
@@ -2819,6 +3057,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(buildWslRuntimeArchiveArgs(), [
       "-czf",
       "apps/desktop/prod-resources/wsl-runtime.tar.gz",
+      "--exclude=*.map",
       "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
       "--exclude=node_modules/.bin*",
       "--exclude=node_modules/.pnpm*",
@@ -2928,6 +3167,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* stageWslRuntimeTreeFixture(sourceDir, "export const serve = 1;\n");
 
         const members = [
+          "apps/server/dist/bin.mjs.map",
+          "apps/server/dist/web/assets/chunk.js.map",
+          "node_modules/example/index.js.map",
+          "node_modules/example/nested/deeper/module.cjs.map",
+          "node_modules/example/mapping.js",
+          "node_modules/example/index.d.ts",
+          "node_modules/example/LICENSE",
           "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
           "node_modules/node-pty/prebuilds/win32-x64/pty.node",
           "node_modules/node-pty/build/Release/pty.node",
@@ -2988,6 +3234,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(Number(yield* process.exitCode), 0);
 
         assert.include(listing, "apps/server/dist/bin.mjs");
+        assert.include(listing, "node_modules/example/mapping.js");
+        assert.include(listing, "node_modules/example/index.d.ts");
+        assert.include(listing, "node_modules/example/LICENSE");
+        assert.isFalse(
+          parseWslRuntimeArchiveMembers(listing).some((member) => member.endsWith(".map")),
+        );
+        // Filtering the archive must not delete maps from the debug/build tree.
+        assert.isTrue(yield* fs.exists(path.join(sourceDir, "apps/server/dist/bin.mjs.map")));
         assert.include(listing, "node_modules/node-pty/prebuilds/linux-x64/pty.node");
         assert.include(listing, "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so");
         assert.include(listing, "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so");

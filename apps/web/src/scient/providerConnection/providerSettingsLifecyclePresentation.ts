@@ -10,6 +10,26 @@ import {
 } from "./providerConnectionPresentation";
 import { hasExternalProviderUpdate } from "./providerLifecycleActions";
 
+export interface ProviderSettingsVersionAdvisory {
+  readonly title: string;
+  readonly detail: string;
+  readonly updateCommand: string | null;
+  readonly emphasis: "normal" | "strong";
+  readonly targetVersion: string | null;
+}
+
+/** Managed copies keep compatibility guidance, with their lifecycle owner supplying updates. */
+export function managedVersionAdvisory(
+  advisory: ProviderSettingsVersionAdvisory | null,
+  usesScientManagedRuntime: boolean,
+): ProviderSettingsVersionAdvisory | null {
+  return usesScientManagedRuntime
+    ? advisory
+      ? { ...advisory, updateCommand: null, targetVersion: null }
+      : null
+    : advisory;
+}
+
 export type ProviderSettingsLifecycleActionKind =
   | "runtime"
   | "external-update"

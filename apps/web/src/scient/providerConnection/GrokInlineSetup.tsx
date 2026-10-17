@@ -5,7 +5,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
-  CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
@@ -16,9 +15,9 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   AssistedSetupActions,
+  AssistedSetupDeviceCode,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
@@ -95,7 +94,6 @@ export function GrokInlineSetup(props: {
   const [showAuthorizationCode, setShowAuthorizationCode] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
-  const { copyToClipboard } = useCopyToClipboard();
 
   useEffect(() => {
     setPendingAction(null);
@@ -337,20 +335,7 @@ export function GrokInlineSetup(props: {
           title={verifying ? "Checking your account" : "Finish signing in"}
         />
         {deviceFlow && activeConnectionOperation?.userCode ? (
-          <div className="ms-8 flex items-center justify-between gap-3 rounded-md border bg-background/40 px-3 py-2 in-[[data-model-picker-content=true]]:mx-auto in-[[data-model-picker-content=true]]:ms-0 in-[[data-model-picker-content=true]]:w-full in-[[data-model-picker-content=true]]:max-w-64">
-            <code className="font-semibold tracking-wider text-foreground">
-              {activeConnectionOperation.userCode}
-            </code>
-            <Button
-              aria-label="Copy Grok device code"
-              onClick={() => copyToClipboard(activeConnectionOperation.userCode!, undefined)}
-              size="icon-sm"
-              type="button"
-              variant="ghost-muted"
-            >
-              <CopyIcon aria-hidden />
-            </Button>
-          </div>
+          <AssistedSetupDeviceCode code={activeConnectionOperation.userCode} providerName="Grok" />
         ) : null}
         {activeConnectionOperation?.acceptsAuthorizationCode ? (
           <ProviderAuthorizationCodeDisclosure

@@ -1,5 +1,6 @@
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { isValidManagedRuntimeSupersedes } from "./managedRuntimeVersion.ts";
+import { compareManagedMuseVersions } from "./museVersion.ts";
 
 import type { ManagedRuntimeTarget } from "./target.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
@@ -17,6 +18,7 @@ export const MANAGED_RUNTIME_CATALOG_PROVIDERS = [
   "pi",
   "omp",
   "scient",
+  "muse",
 ] as const;
 export type ManagedRuntimeCatalogProvider = (typeof MANAGED_RUNTIME_CATALOG_PROVIDERS)[number];
 export type ManagedRuntimeProvider = Exclude<ManagedRuntimeCatalogProvider, "antigravityAcp">;
@@ -55,19 +57,27 @@ export interface ManagedRuntimeArtifactPolicy {
   readonly maximumVersionExclusive?: string;
   /** Exact release URL prefix immediately before the version; fixes asset and tag identity. */
   readonly releaseUrlPrefix?: string;
+  /** App-compiled identity for vendors whose downloads use version and artifact query parameters. */
+  readonly releaseUrlTemplate?: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
   /** Reviewed archive-specific limits; omitted for small single-binary releases. */
   readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly executablePath: string;
   /** Additional reviewed payload files that must exist and be executable. */
   readonly auxiliaryExecutablePaths?: ReadonlyArray<string> | undefined;
+  /** Complete app-owned companion list when package contents vary by stable version. */
+  readonly auxiliaryExecutableRules?: ReadonlyArray<{
+    readonly path: string;
+    readonly minimumVersion?: string;
+    readonly maximumVersionExclusive?: string;
+  }>;
   /** Optional alternate smoke-test entry point inside the extracted payload. */
   readonly smokeExecutablePath?: string | undefined;
   /** Optional payload-relative working directory for the smoke test. */
   readonly smokeWorkingDirectory?: string | undefined;
   readonly smokeArgs: ReadonlyArray<string>;
   /** App-owned version parser; catalog metadata cannot change qualification. */
-  readonly smokeVersionFormat?: "cursor" | undefined;
+  readonly smokeVersionFormat?: "cursor" | "muse" | undefined;
   readonly smokeEnvironment?: Readonly<Record<string, string>>;
   readonly supportTier: ManagedRuntimeSupportTier;
   readonly supportMessage: string;
@@ -141,13 +151,23 @@ export function hydrateManagedRuntimeArtifact(
   receipt: ManagedRuntimeArtifactReceipt,
 ): ManagedRuntimeArtifact | undefined {
   if (
+    (policy.auxiliaryExecutableRules !== undefined &&
+      !isSupportedManagedRuntimeStableVersion(receipt.version, "0.0.0")) ||
     (policy.minimumVersion !== undefined &&
-      !isSupportedManagedRuntimeStableVersion(receipt.version, policy.minimumVersion)) ||
+      (policy.smokeVersionFormat === "muse"
+        ? (compareManagedMuseVersions(policy.minimumVersion, receipt.version) ?? -1) < 0
+        : !isSupportedManagedRuntimeStableVersion(receipt.version, policy.minimumVersion))) ||
     (policy.maximumVersionExclusive !== undefined &&
       compareSemverVersions(receipt.version, policy.maximumVersionExclusive) >= 0) ||
     (policy.releaseUrlPrefix !== undefined &&
       (receipt.artifactName !== policy.artifactName ||
         receipt.url !== `${policy.releaseUrlPrefix}${receipt.version}/${policy.artifactName}`)) ||
+    (policy.releaseUrlTemplate !== undefined &&
+      (receipt.artifactName !== policy.artifactName ||
+        receipt.url !==
+          policy.releaseUrlTemplate
+            .replace("{version}", encodeURIComponent(receipt.version))
+            .replace("{artifact}", encodeURIComponent(policy.artifactName)))) ||
     receipt.provider !== policy.provider ||
     managedRuntimeTargetKey(receipt.target) !== managedRuntimeTargetKey(policy.target) ||
     receipt.checksum.algorithm !== policy.checksum.algorithm ||
@@ -192,6 +212,19 @@ export function hydrateManagedRuntimeArtifact(
   }
   return {
     ...policy,
+    ...(policy.auxiliaryExecutableRules !== undefined
+      ? {
+          auxiliaryExecutablePaths: policy.auxiliaryExecutableRules
+            .filter(
+              (rule) =>
+                (rule.minimumVersion === undefined ||
+                  compareSemverVersions(receipt.version, rule.minimumVersion) >= 0) &&
+                (rule.maximumVersionExclusive === undefined ||
+                  compareSemverVersions(receipt.version, rule.maximumVersionExclusive) < 0),
+            )
+            .map((rule) => rule.path),
+        }
+      : {}),
     version: receipt.version,
     supersedes: isValidManagedRuntimeSupersedes(
       receipt.provider,

@@ -443,6 +443,7 @@ it.effect.each([
               },
             }),
             Layer.succeed(ThreadLaunch.ThreadLaunchService, {
+              prepareRun: () => Effect.die("Bootstrap fixture does not prepare delegated runs."),
               checkWorktreeBase: () =>
                 Effect.die("Bootstrap fixture does not preflight worktree bases."),
               retryPreparation: () =>
@@ -525,7 +526,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
           }),
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
-          Layer.succeed(Crypto.Crypto, { ...crypto, randomUUIDv4: Effect.fail(uuidError) }),
+          Layer.succeed(Crypto.Crypto, {
+            ...crypto,
+            randomUUIDv4: (() => Effect.fail(uuidError)) as Crypto.Crypto["randomUUIDv4"],
+          }),
           ServerSettings.layerTest(),
         ).pipe(Layer.provideMerge(bootstrapConfigLayer)),
       ),

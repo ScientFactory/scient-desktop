@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Durable intent, exact-object retention and bounded compensation under native ownership. */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -119,7 +120,8 @@ export interface RetainedMutationInput {
   readonly id: string;
   readonly mutationId?: string;
   readonly expectedRevision: string | null;
-  readonly bytes?: Uint8Array | null;
+  /** undefined on recovery; null means deletion. */
+  readonly bytes?: Uint8Array | null | undefined;
   readonly executable?: boolean;
   readonly expectedRootIdentity?: Identity;
   readonly visibleRetentionPath?: string;
@@ -471,6 +473,24 @@ export async function readRetainedRecord(directory: string) {
   return decodeRetainedRecord(
     await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
   );
+}
+
+/** Atomically swaps two paths with the native helper (renamex_np / renameat2). */
+export async function exchange(helper: string, left: string, right: string): Promise<void> {
+  if (!NodePath.isAbsolute(helper))
+    throw new Error("Exchange helper must be an absolute host path.");
+  const run = (args: string[]) =>
+    new Promise<string>((resolve, reject) =>
+      NodeChildProcess.execFile(
+        helper,
+        args,
+        { timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } },
+        (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
+      ),
+    );
+  if ((await run(["--version"])) !== "scient-file-exchange/1")
+    throw new Error("File exchange helper has an incompatible protocol.");
+  await run([left, right]);
 }
 
 export async function retainedMutationReceipt(

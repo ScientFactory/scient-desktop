@@ -4,10 +4,12 @@ import { Spinner } from "~/components/ui/spinner";
 
 import {
   AlertTriangleIcon,
+  CheckIcon,
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  LayersIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -43,6 +45,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { DraftInput } from "../ui/draft-input";
+import { SecretInput } from "./SecretInput";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -57,8 +60,11 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
 import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
 import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:START — managed-copy guidance retains its lifecycle owner.
+import { managedVersionAdvisory } from "~/scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:END
 import { withProviderInstanceEnabled } from "../../scient/providerConnection/providerEnablement";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { providerSettingsTabClassName } from "./providerSettingsTabs";
 
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
@@ -184,16 +190,21 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map((entry) => ({
-    slug: entry.slug,
-    name: entry.name,
-    isCustom: true,
-    capabilities:
-      entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
-    ...(liveCustomModelsBySlug.get(entry.slug)?.unavailableReason
-      ? { unavailableReason: liveCustomModelsBySlug.get(entry.slug)!.unavailableReason }
-      : {}),
-  }));
+  const serverSlugs = new Set(serverModels.map((model) => model.slug));
+  // A custom entry with a built-in slug only renames that built-in on the
+  // server, so the built-in row already shows it.
+  const customModels = input.customModels
+    .filter((entry) => !serverSlugs.has(entry.slug))
+    .map((entry) => ({
+      slug: entry.slug,
+      name: entry.name,
+      isCustom: true,
+      capabilities:
+        entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+      ...(liveCustomModelsBySlug.get(entry.slug)?.unavailableReason
+        ? { unavailableReason: liveCustomModelsBySlug.get(entry.slug)!.unavailableReason }
+        : {}),
+    }));
   return [...serverModels, ...customModels];
 }
 
@@ -279,9 +290,6 @@ function ProviderEnvironmentFieldRow(props: {
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
-  const placeholder = props.variable?.valueRedacted
-    ? "Stored secret - enter a new value to replace"
-    : props.field.placeholder;
 
   return (
     <SettingsRow
@@ -289,17 +297,29 @@ function ProviderEnvironmentFieldRow(props: {
       description={props.field.description}
       control={
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-          <DraftInput
-            id={inputId}
-            size="sm"
-            className="min-w-0 flex-1"
-            type={props.field.sensitive === false ? undefined : "password"}
-            autoComplete="off"
-            value={value}
-            onCommit={(next) => props.onCommit(props.field, next)}
-            placeholder={placeholder}
-            spellCheck={false}
-          />
+          {props.field.sensitive === false ? (
+            <DraftInput
+              id={inputId}
+              size="sm"
+              className="min-w-0 flex-1"
+              autoComplete="off"
+              value={value}
+              onCommit={(next) => props.onCommit(props.field, next)}
+              placeholder={props.field.placeholder}
+              spellCheck={false}
+            />
+          ) : (
+            <SecretInput
+              id={inputId}
+              size="sm"
+              className="min-w-0 flex-1"
+              value={value}
+              onCommit={(next) => props.onCommit(props.field, next)}
+              placeholder={props.field.placeholder}
+              configured={props.variable?.valueRedacted === true}
+              spellCheck={false}
+            />
+          )}
           {props.variable ? (
             <Button
               type="button"
@@ -426,20 +446,31 @@ export function ProviderEnvironmentSection(props: {
               <span className="hidden text-xs text-muted-foreground sm:inline" aria-hidden>
                 =
               </span>
-              <DraftInput
-                size="sm"
-                font="mono"
-                className="min-w-0 flex-1"
-                value={variable.valueRedacted ? "" : variable.value}
-                onCommit={(value) => updateVariable(variable.id, { value })}
-                type={variable.sensitive ? "password" : undefined}
-                autoComplete="off"
-                placeholder={
-                  variable.valueRedacted ? "Stored secret, enter a new value to replace" : "value"
-                }
-                spellCheck={false}
-                aria-label={`Environment variable value ${index + 1}`}
-              />
+              {variable.sensitive ? (
+                <SecretInput
+                  size="sm"
+                  font="mono"
+                  className="min-w-0 flex-1"
+                  value={variable.valueRedacted ? "" : variable.value}
+                  onCommit={(value) => updateVariable(variable.id, { value })}
+                  placeholder="value"
+                  configured={variable.valueRedacted === true}
+                  spellCheck={false}
+                  aria-label={`Environment variable value ${index + 1}`}
+                />
+              ) : (
+                <DraftInput
+                  size="sm"
+                  font="mono"
+                  className="min-w-0 flex-1"
+                  value={variable.valueRedacted ? "" : variable.value}
+                  onCommit={(value) => updateVariable(variable.id, { value })}
+                  autoComplete="off"
+                  placeholder="value"
+                  spellCheck={false}
+                  aria-label={`Environment variable value ${index + 1}`}
+                />
+              )}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -490,6 +521,93 @@ export function ProviderEnvironmentSection(props: {
   );
 }
 
+/**
+ * When a project is in scope, the enable control reads and writes that
+ * project's override instead of the environment's `instance.enabled`.
+ * `value` is the project's explicit override (`undefined` means it
+ * inherits the environment); `effectiveEnabled` is what the Switch shows.
+ */
+/**
+ * The project-scope counterpart of a settings row's inheritance indicator:
+ * hover for the summary, open for the project and device values side by side.
+ */
+function ProjectOverrideInheritance({
+  projectEnabled,
+  deviceEnabled,
+}: {
+  readonly projectEnabled: boolean;
+  readonly deviceEnabled: boolean;
+}) {
+  const layers = [
+    { key: "project", label: "Project", enabled: projectEnabled, effective: true },
+    { key: "device", label: "Device", enabled: deviceEnabled, effective: false },
+  ];
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  aria-label="Overridden for this project. Show where this value comes from"
+                />
+              }
+            />
+          }
+        >
+          <LayersIcon className="size-3 text-primary" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Overridden for this project</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup align="end" width="md" padding="none">
+        <ol role="list" className="px-3 py-2.5 text-sm">
+          {layers.map((layer) => (
+            <li
+              key={layer.key}
+              className={cn(
+                "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1",
+                layer.effective && "bg-foreground/[0.06]",
+              )}
+            >
+              <span
+                className={cn(
+                  "min-w-0 truncate",
+                  layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {layer.label}
+              </span>
+              <span
+                className={cn(
+                  "flex items-center gap-1.5",
+                  layer.effective ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {layer.enabled ? "On" : "Off"}
+                {layer.effective ? (
+                  <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
+                ) : (
+                  <span aria-hidden className="size-3.5 shrink-0" />
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+interface ProjectOverrideControl {
+  readonly value: boolean | undefined;
+  readonly effectiveEnabled: boolean;
+  readonly onChange: (next: boolean) => void;
+  readonly onReset: () => void;
+}
+
 interface ProviderInstanceCardProps {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
@@ -522,8 +640,12 @@ interface ProviderInstanceCardProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onHiddenModelsChange: (
+    next: ReadonlyArray<string>,
+    affectedModels?: ReadonlyArray<string>,
+  ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onToggleFavorite: (model: string) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
@@ -533,6 +655,8 @@ interface ProviderInstanceCardProps {
     | undefined;
   /** SCIENT-FORK:START — ACP registry URL-auth handoff and session management. */
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  /** Omit this prop entirely for environment-wide editing. */
+  readonly projectOverride?: ProjectOverrideControl | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -563,6 +687,9 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
  *     driver-specific `config.enabled` into the envelope on load and both
  *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
  *     false wins, then envelope, then config, then the driver default).
+ *     With `projectOverride` set, the Switch instead reads and writes
+ *     that project's override, leaving the environment's `instance.enabled`
+ *     untouched.
  */
 export function ProviderInstanceCard({
   environmentId,
@@ -585,6 +712,7 @@ export function ProviderInstanceCard({
   modelOrder,
   onHiddenModelsChange,
   onFavoriteModelsChange,
+  onToggleFavorite,
   onModelOrderChange,
   onRunUpdate,
   onInstallRecommended,
@@ -594,10 +722,11 @@ export function ProviderInstanceCard({
   onAcceptUrlAuth,
   acpProjects = EMPTY_ACP_PROJECTS,
   // SCIENT-FORK:END
+  projectOverride,
 }: ProviderInstanceCardProps) {
   const [activeTab, setActiveTab] = useState<"models" | "configuration">("models");
   const visibleTab = driverOption ? activeTab : "configuration";
-  const enabled = resolveProviderInstanceEnabled(instance);
+  const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -605,8 +734,9 @@ export function ProviderInstanceCard({
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
+  // `liveProvider.enabled` is machine-wide; a project override can turn it on.
   const summary = enabled
-    ? getProviderSummary(liveProvider)
+    ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })
     : { headline: "Disabled", detail: null };
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -641,13 +771,9 @@ export function ProviderInstanceCard({
     liveProvider?.compatibilityAdvisory,
     enabled,
   );
-  // Keep compatibility guidance visible for managed runtimes, but never offer
-  // package-manager commands or an external installer for Scient-owned copies.
-  const versionAdvisory = usesScientManagedRuntime
-    ? rawVersionAdvisory
-      ? { ...rawVersionAdvisory, updateCommand: null, targetVersion: null }
-      : null
-    : rawVersionAdvisory;
+  // SCIENT-FORK:START — managed copies use their own update lifecycle.
+  const versionAdvisory = managedVersionAdvisory(rawVersionAdvisory, usesScientManagedRuntime);
+  // SCIENT-FORK:END
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
   const onRunVersionAction =
@@ -707,6 +833,10 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
+    if (projectOverride) {
+      projectOverride.onChange(value);
+      return;
+    }
     onUpdate(withProviderInstanceEnabled(instance, value));
   };
 
@@ -1029,10 +1159,24 @@ export function ProviderInstanceCard({
             {/* SCIENT-FORK:END */}
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center">
+        <span className="flex h-5 shrink-0 items-center gap-1">
+          {projectOverride?.value !== undefined ? (
+            <span className="flex items-center">
+              <ProjectOverrideInheritance
+                projectEnabled={projectOverride.value}
+                deviceEnabled={resolveProviderInstanceEnabled(instance)}
+              />
+              <SettingResetButton
+                label={`${displayName} enablement`}
+                tooltip="Reset to the device setting"
+                disabled={readOnly || !canWriteSettings}
+                onClick={projectOverride.onReset}
+              />
+            </span>
+          ) : null}
           <Switch
             checked={enabled}
-            disabled={readOnly}
+            disabled={readOnly || (projectOverride !== undefined && !canWriteSettings)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />
@@ -1312,6 +1456,7 @@ export function ProviderInstanceCard({
                 onChange={updateCustomModels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}
+                onToggleFavorite={onToggleFavorite}
                 onModelOrderChange={onModelOrderChange}
               />
             </div>

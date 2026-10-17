@@ -17,9 +17,20 @@ Failed calls keep their tool icon with a muted red tint, so a failed command sti
 looks like a command. App logos and other multicolor icons keep their artwork and
 show a small muted red failure mark beside the row. Expand the call to inspect its
 output. Runtime errors and warnings keep their stronger styling.
-Preview browser actions use a globe icon. Other Scient tools keep the Scient mark.
+Preview browser actions use a pointer-in-a-square icon. Web searches and commands that fetch
+from the web, such as `curl` or `wget`, use a globe. Commands and tools that list files use a
+folder, image views an image icon, approvals a shield, and Scient skills a stack of layers.
+Other Scient tools keep the Scient mark.
 Group summaries count browser actions separately, such as "Used browser 18 times" or
-"Ran 4 commands and used browser 15 times". Browser-only groups also use a globe icon.
+"Ran 4 commands and used browser 15 times". Browser-only groups use the browser icon too.
+
+File paths in rows show their last two parts, such as `Layers/ProviderCommandReactor.ts`.
+Hover over a shortened path to see the full path.
+
+When a turn finishes, its final answer stays in view, and so do earlier messages that read as
+real answers: ones with a heading, a list, a table, code, display math or an image, or that are
+at least 400 characters long. Short progress notes and the tool activity fold behind
+"Worked for…"; select it to see them again.
 
 Command summaries show the program inside a shell wrapper, such as "Running vp" for
 `/bin/zsh -lc 'vp test run'`. Expanded rows keep the full command.

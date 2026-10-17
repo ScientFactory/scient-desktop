@@ -7,10 +7,13 @@ canonical chat Markdown.
 
 Scient owns `apps/web/src/scient/diagrams`: the lazy Mermaid runtime, inline
 card, expanded viewer, export helpers, styles, and tests. The inherited T3 host
-has one renderer seam in `ChatMarkdown.tsx`: a settled fence whose language is
-`mermaid` is passed to `MermaidDiagramCard`. Streaming and every other code
-fence continue through T3's existing code-block path. A static seam audit keeps
-that integration narrow during upstream refreshes. Because Markdown file
+has one renderer branch in `ChatMarkdown.tsx`, inside a marked `SCIENT-FORK`
+region of the `pre` renderer: a settled fence whose language is `mermaid` is
+passed through `scient/presentation/ScientRichFence.tsx` to
+`MermaidDiagramCard`. While the message streams, and for every other fence, the
+code goes through Scient's `MarkdownCodeBlock`
+(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block). A
+static seam audit keeps that integration narrow during upstream refreshes. Because Markdown file
 previews already share `ChatMarkdown`, they receive the same behavior without a
 second viewer integration.
 
@@ -255,6 +258,10 @@ targeted export pass. Do not rewrite authors' Mermaid source to conceal these
 representation-layer failures.
 
 When T3 changes `ChatMarkdown.tsx`, reapply only the import and settled-fence
-branch, then rerun the diagram seam test. When T3 adds equivalent rich Mermaid
-support, prefer retiring this seam and adapting Scient's export/accessibility
-UX around the upstream renderer rather than maintaining two renderers.
+branch, then rerun the diagram seam test. T3 has its own chat Mermaid renderer
+(`chat/MermaidDiagram.tsx`, #15067); Scient does not ship it, and the host
+routes every settled Mermaid fence to Scient's card. Scient's renderer is kept
+because it draws in the isolated no-network frame and adds export, syntax
+recovery and source repair, which T3's renderer does not have. Revisit the
+choice if T3's renderer gains an isolated frame and an export path that
+Scient's actions could build on.

@@ -6,7 +6,7 @@
   "onboardingDiffSignals": [
     "scient/onboarding",
     "ScientGettingStarted",
-    "getting-started",
+    "getting-started(?![\\w-])",
     "SCIENT_ONBOARDING",
     "SCIENT_PERSONALIZATION"
   ],

@@ -13,14 +13,14 @@ const ProjectHtmlPath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 const ProjectPdfPath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 /** The deliberately small public input for a project-owned HTML document build. */

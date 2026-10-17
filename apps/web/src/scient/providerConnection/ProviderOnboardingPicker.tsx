@@ -34,6 +34,8 @@ import {
   AssistedProviderSetupHost,
   supportsAssistedProviderSetupSurface,
 } from "./AssistedProviderSetupHost";
+import { ModelPickerOverlayContext, useModelPickerOverlay } from "./ModelPickerOverlayContext";
+import { OverlayScrollScope } from "../../components/ui/overlay-scroll-scope";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
@@ -127,6 +129,12 @@ export function ProviderOnboardingPicker(props: {
   readonly continueInNewChatDisabled?: boolean;
 }) {
   const navigate = useNavigate();
+  const {
+    context: overlay,
+    instanceRef,
+    pickerTriggerRef,
+    scrollScope,
+  } = useModelPickerOverlay(true);
   const reconnectEntry = props.reconnectEntry;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<ProviderDriverKind | null>(null);
@@ -135,6 +143,7 @@ export function ProviderOnboardingPicker(props: {
   const open = props.open ?? uncontrolledOpen;
   const setOpen = useCallback(
     (nextOpen: boolean) => {
+      if (!nextOpen && instanceRef.current !== null) return;
       if (nextOpen && reconnectEntry) {
         setSelectedDriver(reconnectEntry.driverKind);
         setQuery("");
@@ -142,14 +151,14 @@ export function ProviderOnboardingPicker(props: {
       props.onOpenChange?.(nextOpen);
       if (props.open === undefined) setUncontrolledOpen(nextOpen);
     },
-    [props.onOpenChange, props.open, reconnectEntry],
+    [props.onOpenChange, props.open, reconnectEntry, instanceRef],
   );
 
   useEffect(() => {
-    if (open) return;
+    if (open || overlay.instanceId !== null) return;
     setSelectedDriver(null);
     setQuery("");
-  }, [open]);
+  }, [open, overlay.instanceId]);
 
   const entriesByDriver = useMemo(() => {
     const entries = new Map<ProviderDriverKind, ProviderInstanceEntry>();
@@ -166,7 +175,12 @@ export function ProviderOnboardingPicker(props: {
   const selectedDefinition = DRIVER_OPTIONS.find(
     (definition) => definition.value === selectedDriver,
   );
-  const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
+  const selectedEntry =
+    overlay.instanceId !== null
+      ? props.instanceEntries.find((entry) => entry.instanceId === overlay.instanceId)
+      : selectedDriver
+        ? entriesByDriver.get(selectedDriver)
+        : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
   const reconnectDefinition = reconnectEntry
     ? DRIVER_OPTIONS.find((definition) => definition.value === reconnectEntry.driverKind)
@@ -190,6 +204,7 @@ export function ProviderOnboardingPicker(props: {
   );
   useEffect(() => {
     if (
+      overlay.instanceId !== null ||
       !open ||
       showHome ||
       !selectedEntry ||
@@ -212,6 +227,7 @@ export function ProviderOnboardingPicker(props: {
     }
     setOpen(false);
   }, [
+    overlay.instanceId,
     open,
     props.autoSelectReadyProvider,
     props.onInstanceModelChange,
@@ -231,181 +247,188 @@ export function ProviderOnboardingPicker(props: {
   };
 
   return (
-    <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          render={
-            <ComposerControl
-              aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
-              className={cn(
-                "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
-                props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
-              )}
-              data-provider-onboarding-trigger="true"
-            />
-          }
-        >
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <TriggerIcon aria-hidden className="size-4 shrink-0" />
-            <span className="truncate">{triggerLabel}</span>
-            {!open && !reconnectEntry ? (
-              <span aria-hidden className="ms-0.5 flex shrink-0 items-center -space-x-0.5">
-                {previewDefinitions.map((definition) => {
-                  const Icon = definition.icon;
-                  return (
-                    <span
-                      key={definition.value}
-                      className="flex size-4 items-center justify-center rounded-full bg-background/80"
-                    >
-                      <Icon className="size-3" />
-                    </span>
-                  );
-                })}
-              </span>
-            ) : null}
-          </span>
-          <ComposerControlChevron />
-        </PopoverTrigger>
-        <PopoverPopup
-          {...composerFloatingLayerProps}
-          align="start"
-          className="[--viewport-inline-padding:0]"
-          padding="none"
-          surface="bare"
-        >
-          <div
-            className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
-            data-model-picker-content="true"
-            data-provider-onboarding-picker="true"
-          >
-            <aside
-              aria-label="AI providers"
-              className="w-11 shrink-0 overflow-y-auto bg-muted/30 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            >
-              <RailButton
-                active={showHome}
-                icon={BlocksIcon}
-                label="Choose a provider"
-                onClick={() => {
-                  setSelectedDriver(null);
-                  setQuery("");
-                }}
+    <OverlayScrollScope value={scrollScope}>
+      <ModelPickerOverlayContext value={overlay}>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <ComposerControl
+                ref={pickerTriggerRef}
+                aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
+                className={cn(
+                  "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
+                  props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
+                )}
+                data-provider-onboarding-trigger="true"
               />
-              <div aria-hidden className="my-1 border-b border-border/70" />
-              <div className="flex flex-col gap-1">
-                {DRIVER_OPTIONS.map((definition) => (
-                  <RailButton
-                    key={definition.value}
-                    active={!showHome && definition.value === selectedDriver}
-                    icon={definition.icon}
-                    label={`${definition.label}, ${providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}`}
-                    onClick={() => {
-                      setSelectedDriver(definition.value);
-                      setQuery("");
+            }
+          >
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <TriggerIcon aria-hidden className="size-4 shrink-0" />
+              <span className="truncate">{triggerLabel}</span>
+              {!open && !reconnectEntry ? (
+                <span aria-hidden className="ms-0.5 flex shrink-0 items-center -space-x-0.5">
+                  {previewDefinitions.map((definition) => {
+                    const Icon = definition.icon;
+                    return (
+                      <span
+                        key={definition.value}
+                        className="flex size-4 items-center justify-center rounded-full bg-background/80"
+                      >
+                        <Icon className="size-3" />
+                      </span>
+                    );
+                  })}
+                </span>
+              ) : null}
+            </span>
+            <ComposerControlChevron />
+          </PopoverTrigger>
+          <PopoverPopup
+            {...composerFloatingLayerProps}
+            align="start"
+            className="[--viewport-inline-padding:0]"
+            padding="none"
+            surface="bare"
+            suspended={overlay.instanceId !== null}
+          >
+            <div
+              className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
+              data-model-picker-content="true"
+              data-provider-onboarding-picker="true"
+            >
+              <aside
+                aria-label="AI providers"
+                className="w-11 shrink-0 overflow-y-auto bg-muted/30 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                <RailButton
+                  active={showHome}
+                  icon={BlocksIcon}
+                  label="Choose a provider"
+                  onClick={() => {
+                    setSelectedDriver(null);
+                    setQuery("");
+                  }}
+                />
+                <div aria-hidden className="my-1 border-b border-border/70" />
+                <div className="flex flex-col gap-1">
+                  {DRIVER_OPTIONS.map((definition) => (
+                    <RailButton
+                      key={definition.value}
+                      active={!showHome && definition.value === selectedDriver}
+                      icon={definition.icon}
+                      label={`${definition.label}, ${providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}`}
+                      onClick={() => {
+                        setSelectedDriver(definition.value);
+                        setQuery("");
+                      }}
+                    />
+                  ))}
+                </div>
+              </aside>
+
+              <section className="flex min-w-0 flex-1 flex-col border-l border-border/70 bg-muted/40">
+                {showHome ? (
+                  <label className="flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-3">
+                    <SearchIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
+                    <span className="sr-only">Search providers</span>
+                    <input
+                      className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-placeholder"
+                      onChange={(event) => setQuery(event.currentTarget.value)}
+                      placeholder="Search providers…"
+                      type="search"
+                      value={query}
+                    />
+                  </label>
+                ) : null}
+
+                {showHome ? (
+                  normalizedQuery.length === 0 ? (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-7 pb-5 text-center">
+                      <BlocksIcon aria-hidden className="mb-3 size-7 text-icon-muted" />
+                      <h2 className="font-semibold text-lg">Choose your provider</h2>
+                      <p className="mt-1.5 max-w-52 text-balance text-muted-foreground text-sm leading-relaxed">
+                        Connect your existing subscription or account, then choose a model.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                      <p className="mb-2 px-2 font-medium text-muted-foreground text-xs">
+                        Providers
+                      </p>
+                      {visibleDefinitions.map((definition) => {
+                        const Icon = definition.icon;
+                        return (
+                          <button
+                            key={definition.value}
+                            className="group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() => {
+                              setSelectedDriver(definition.value);
+                              setQuery("");
+                            }}
+                            type="button"
+                          >
+                            <Icon aria-hidden className="size-5 shrink-0" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium">
+                                {definition.label}
+                              </span>
+                              <span className="block truncate text-muted-foreground text-xs">
+                                {definition.vendorLabel ? `${definition.vendorLabel} · ` : null}
+                                {providerOnboardingStatusLabel(
+                                  entriesByDriver.get(definition.value),
+                                )}
+                              </span>
+                            </span>
+                            <ChevronRightIcon
+                              aria-hidden
+                              className="size-4 shrink-0 text-icon-muted"
+                            />
+                          </button>
+                        );
+                      })}
+                      {visibleDefinitions.length === 0 ? (
+                        <p className="px-2 py-8 text-center text-muted-foreground text-sm">
+                          No providers match “{query}”.
+                        </p>
+                      ) : null}
+                    </div>
+                  )
+                ) : selectedDefinition && selectedEntry ? (
+                  <ProviderLifecycleSetupSurface
+                    entry={selectedEntry}
+                    environmentId={props.environmentId}
+                    onManageFallback={() => {
+                      if (canManageProviderLifecycle(selectedEntry.snapshot)) {
+                        setOpen(false);
+                        setDialogEntry(selectedEntry);
+                      } else {
+                        openSettings(selectedEntry.instanceId);
+                      }
                     }}
                   />
-                ))}
-              </div>
-            </aside>
-
-            <section className="flex min-w-0 flex-1 flex-col border-l border-border/70 bg-muted/40">
-              {showHome ? (
-                <label className="flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-3">
-                  <SearchIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
-                  <span className="sr-only">Search providers</span>
-                  <input
-                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-placeholder"
-                    onChange={(event) => setQuery(event.currentTarget.value)}
-                    placeholder="Search providers…"
-                    type="search"
-                    value={query}
-                  />
-                </label>
-              ) : null}
-
-              {showHome ? (
-                normalizedQuery.length === 0 ? (
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-7 pb-5 text-center">
-                    <BlocksIcon aria-hidden className="mb-3 size-7 text-icon-muted" />
-                    <h2 className="font-semibold text-lg">Choose your provider</h2>
-                    <p className="mt-1.5 max-w-52 text-balance text-muted-foreground text-sm leading-relaxed">
-                      Connect your existing subscription or account, then choose a model.
-                    </p>
-                  </div>
                 ) : (
-                  <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                    <p className="mb-2 px-2 font-medium text-muted-foreground text-xs">Providers</p>
-                    {visibleDefinitions.map((definition) => {
-                      const Icon = definition.icon;
-                      return (
-                        <button
-                          key={definition.value}
-                          className="group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          onClick={() => {
-                            setSelectedDriver(definition.value);
-                            setQuery("");
-                          }}
-                          type="button"
-                        >
-                          <Icon aria-hidden className="size-5 shrink-0" />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">
-                              {definition.label}
-                            </span>
-                            <span className="block truncate text-muted-foreground text-xs">
-                              {definition.vendorLabel ? `${definition.vendorLabel} · ` : null}
-                              {providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}
-                            </span>
-                          </span>
-                          <ChevronRightIcon
-                            aria-hidden
-                            className="size-4 shrink-0 text-icon-muted"
-                          />
-                        </button>
-                      );
-                    })}
-                    {visibleDefinitions.length === 0 ? (
-                      <p className="px-2 py-8 text-center text-muted-foreground text-sm">
-                        No providers match “{query}”.
-                      </p>
-                    ) : null}
-                  </div>
-                )
-              ) : selectedDefinition && selectedEntry ? (
-                <ProviderLifecycleSetupSurface
-                  entry={selectedEntry}
-                  environmentId={props.environmentId}
-                  onManageFallback={() => {
-                    if (canManageProviderLifecycle(selectedEntry.snapshot)) {
+                  <ProviderSetupDetail
+                    displayName={selectedDefinition?.label ?? "Provider"}
+                    status="Not configured"
+                    onManage={openSettings}
+                  />
+                )}
+                {props.onContinueInNewChat ? (
+                  <ModelPickerNewChatFooter
+                    disabled={props.continueInNewChatDisabled ?? false}
+                    onFork={() => {
+                      if (props.continueInNewChatDisabled) return;
                       setOpen(false);
-                      setDialogEntry(selectedEntry);
-                    } else {
-                      openSettings(selectedEntry.instanceId);
-                    }
-                  }}
-                />
-              ) : (
-                <ProviderSetupDetail
-                  displayName={selectedDefinition?.label ?? "Provider"}
-                  status="Not configured"
-                  onManage={openSettings}
-                />
-              )}
-              {props.onContinueInNewChat ? (
-                <ModelPickerNewChatFooter
-                  disabled={props.continueInNewChatDisabled ?? false}
-                  onFork={() => {
-                    if (props.continueInNewChatDisabled) return;
-                    setOpen(false);
-                    props.onContinueInNewChat?.();
-                  }}
-                />
-              ) : null}
-            </section>
-          </div>
-        </PopoverPopup>
-      </Popover>
-
+                      props.onContinueInNewChat?.();
+                    }}
+                  />
+                ) : null}
+              </section>
+            </div>
+          </PopoverPopup>
+        </Popover>
+      </ModelPickerOverlayContext>
       {dialogEntry ? (
         <ProviderConnectionDialog
           displayName={dialogEntry.displayName}
@@ -417,7 +440,7 @@ export function ProviderOnboardingPicker(props: {
           provider={dialogEntry.snapshot}
         />
       ) : null}
-    </>
+    </OverlayScrollScope>
   );
 }
 

@@ -441,7 +441,9 @@ describe("orchestration V2 merge-back provider replay", () => {
           nativeSourceThreadId(rawTranscript),
         );
         assert.lengthOf(source.contextHandoffs, 1);
-        assert.equal(source.contextHandoffs[0]?.summaryText, summary);
+        assert.isDefined(source.contextHandoffs[0]?.historySource);
+        assert.isBelow(source.contextHandoffs[0]!.summaryText.length, 4_000);
+        assert.isNotEmpty(source.contextHandoffs[0]!.delivery!.itemIds);
         assert.equal(source.contextHandoffs[0]?.strategy, "fork_delta_summary");
         const mergeTransfer = source.contextTransfers.find(
           (transfer) => transfer.type === "merge_back",
@@ -709,10 +711,12 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.notEqual(firstForkNativeId, secondForkNativeId);
         assert.notEqual(firstForkNativeId, source.providerThreads[0]?.nativeThreadRef?.nativeId);
         assert.notEqual(secondForkNativeId, source.providerThreads[0]?.nativeThreadRef?.nativeId);
-        assert.deepEqual(
-          source.contextHandoffs.map((handoff) => handoff.summaryText),
-          [firstSummary, secondSummary],
-        );
+        assert.lengthOf(source.contextHandoffs, 2);
+        for (const handoff of source.contextHandoffs) {
+          assert.isAbove(handoff.historySource!.itemCount, 0);
+          assert.isBelow(handoff.summaryText.length, 4_000);
+          assert.isNotEmpty(handoff.delivery!.itemIds);
+        }
         const mergeTransfers = source.contextTransfers.filter(
           (transfer) => transfer.type === "merge_back",
         );

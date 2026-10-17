@@ -316,7 +316,8 @@ it("round-trips the conflict field and reads its absence as unknown", async () =
   expect(await indexedDbMarkdownDrafts.replace("legacy-field", undefined, legacy)).toBe(true);
   expect(await indexedDbMarkdownDrafts.read("legacy-field")).not.toHaveProperty("conflict");
 });
-it("keeps opaque rename ownership, atomic CAS and quota refusal in the same physical journal", async () => {
+it("keeps opaque rename ownership, atomic CAS and quota refusal after its journal connection closes", async () => {
+  const transactions = vi.spyOn(IDBDatabase.prototype, "transaction");
   const { readMetadataRename, replaceMetadataRename } = indexedDbMarkdownDrafts;
   if (readMetadataRename === undefined || replaceMetadataRename === undefined)
     throw new Error("The actual IndexedDB journal must support source-free rename intents.");
@@ -340,6 +341,10 @@ it("keeps opaque rename ownership, atomic CAS and quota refusal in the same phys
   const text = { token: "text", baselineSource: "A", baselineRevision: "rA", draftSource: "B" };
   try {
     expect(await replaceMetadataRename(key, undefined, original)).toBe(true);
+    const connection = transactions.mock.contexts.at(-1);
+    if (!(connection instanceof IDBDatabase)) throw new Error("No journal transaction opened.");
+    connection.close();
+    expect(await readMetadataRename(key)).toEqual(original);
     const next = [
       { ...original, token: "first" },
       { ...original, token: "second" },
@@ -374,6 +379,7 @@ it("keeps opaque rename ownership, atomic CAS and quota refusal in the same phys
     );
     expect(await indexedDbMarkdownDrafts.read(textKey)).toMatchObject(text);
   } finally {
+    transactions.mockRestore();
     const metadata = await readMetadataRename(key);
     if (metadata !== undefined) await replaceMetadataRename(key, metadata.token, undefined);
     const textual = await indexedDbMarkdownDrafts.read(textKey);

@@ -1,3 +1,5 @@
+import { isContextHistoryItem } from "./scient-fork/ContextHistoryCandidates.ts";
+import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -53,6 +55,7 @@ import {
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
+  resolveProviderInstanceEnabled,
   type ProviderSessionId,
   type ProviderTurnId,
   RunId,
@@ -85,6 +88,7 @@ import {
   inheritedForkPrefixIsNative,
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
+import { pendingStartInterruptEffect } from "./scient-fork/PendingStartInterrupt.ts";
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import { isQueueUsageLimited } from "@t3tools/shared/scientQueuedRunSend";
 import {
@@ -130,8 +134,11 @@ import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.t
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
-import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
-import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { isRestartContinuationSource, runOutcome } from "./RestartBackgroundNote.ts";
+import {
+  isBufferedProviderNotification,
+  isUndeliveredMailboxSteer,
+} from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -189,8 +196,10 @@ import { makeScientTerminalQueueHold } from "../scient/orchestration/TerminalQue
 import {
   isWorkflowMemberNode,
   isWorkflowMemberOwnedBy,
+  isRichWorkflowMemberOwnedBy,
 } from "./scient-fork/NativeWorkflowOwnership.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ServerSettings from "../serverSettings.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -356,6 +365,16 @@ export interface OrchestratorV2Shape {
     childThreadId: ThreadId,
     taskId?: NodeId,
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
+  /**
+   * Whether a restart continuation of this cut run has not started yet, so the
+   * run's status is not its outcome. A failed read counts as not pending.
+   */
+  readonly restartContinuationPending: (run: OrchestrationV2Run) => Effect.Effect<boolean>;
+  /**
+   * Resolves once that continuation has run or was declined. A declined one
+   * records no thread event, so a waiter needs this to wake.
+   */
+  readonly awaitRestartContinuation: (run: OrchestrationV2Run) => Effect.Effect<void>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -802,7 +821,7 @@ function latestContextTransfer(
 
 function visibleDeltaRunOrdinals(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId">>,
 ): OrchestrationV2ContextHandoff["coveredRunOrdinals"] {
   const ordinals = items.flatMap((item) => {
     if (item.runId === null) {
@@ -888,6 +907,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const boundedContextSources = (yield* ContextHandoffPolicyOverride) !== "byte";
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -932,6 +952,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -1059,29 +1080,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
-  const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
-    projectionStore
-      .getThreadRecords(
-        threadId,
-        ["turnItems"],
-        runIds === undefined ? undefined : { turnItemRunIds: runIds },
-      )
-      .pipe(
-        Effect.map((records) => records.turnItems),
-        // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
-        Effect.flatMap((local) =>
-          runIds !== undefined && !runIds.includes(null)
-            ? Effect.succeed(local)
-            : projectionStore.getForkHistoryItems(threadId).pipe(
-                Effect.map((history) => {
-                  const inherited = new Set<string>(history.map((item) => item.id));
-                  return [...history, ...local.filter((item) => !inherited.has(item.id))];
-                }),
-              ),
-        ),
-        // SCIENT-FORK:END
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
+  const readHandoffItems = (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId | null>,
+    portable = false,
+  ) =>
+    Effect.gen(function* () {
+      const records = yield* projectionStore.getThreadRecords(threadId, ["contextTransfers"]);
+      if (boundedContextSources && (portable || hasScientContextHistory(records)))
+        return yield* projectionStore.getContextHistoryCandidates(threadId, runIds);
+      return yield* projectionStore
+        .getThreadRecords(
+          threadId,
+          ["turnItems"],
+          runIds === undefined ? undefined : { turnItemRunIds: runIds },
+        )
+        .pipe(
+          Effect.map((records) => records.turnItems),
+          // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
+          Effect.flatMap((local) =>
+            runIds !== undefined && !runIds.includes(null)
+              ? Effect.succeed(local)
+              : projectionStore.getForkHistoryItems(threadId).pipe(
+                  Effect.map((history) => {
+                    const inherited = new Set<string>(history.map((item) => item.id));
+                    return [...history, ...local.filter((item) => !inherited.has(item.id))];
+                  }),
+                ),
+          ),
+          // SCIENT-FORK:END
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        );
+    }).pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
 
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
@@ -1403,7 +1433,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
-  const startNextQueuedRun = (threadId: ThreadId) =>
+  const startNextQueuedRun = (threadId: ThreadId, options?: { readonly endedRunId?: RunId }) =>
     Effect.gen(function* () {
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
@@ -1437,6 +1467,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const queuedRun = nextQueuedRun(projection);
       if (queuedRun === undefined || queuedRun.queueHeld === true) {
+        return;
+      }
+      // Scient terminal holds retain accepted Resume/Send receipt boundaries.
+      // A missing prepared worktree must still never fall back to the checkout.
+      const failedRun = latestExecutedRun(projection.runs);
+      const worktreeMissing =
+        (options?.endedRunId === undefined || failedRun?.id === options.endedRunId) &&
+        failedRun?.workspacePreparation?.type === "worktree" &&
+        projection.thread.worktreePath === null;
+      // A project can turn a provider off while a message waits in the queue,
+      // including between a run ending and this check, or while the queue is
+      // held and someone clicks resume. Neither path may start that run. Only
+      // an explicit turn-off holds the queue: an instance with no settings
+      // entry was already admitted when the message was queued.
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      const projectOverride =
+        settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
+          queuedRun.providerInstanceId
+        ]?.enabled;
+      const machineInstance = Object.hasOwn(
+        settings.providerInstances,
+        queuedRun.providerInstanceId,
+      )
+        ? settings.providerInstances[queuedRun.providerInstanceId]
+        : undefined;
+      const instanceDisabledForProject =
+        projectOverride !== undefined
+          ? !projectOverride
+          : machineInstance !== undefined && !resolveProviderInstanceEnabled(machineInstance);
+      if (worktreeMissing || instanceDisabledForProject) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents(
+          projection.runs
+            .filter((run) => run.status === "queued")
+            .map((run) => ({
+              type: "run.updated" as const,
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, queueHeld: true },
+            })),
+        );
         return;
       }
       const rootNodeId = queuedRun.rootNodeId;
@@ -1650,9 +1723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -1936,7 +2007,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
               toModel: queuedRun.modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const checkpointEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
         checkpointScope !== storedCheckpointScope
@@ -3100,7 +3171,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
         });
       }
-      if (projection.runs.some((run) => run.status === "queued")) {
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* loadProjectionForCommand(command, ["messages"], {
+              messageIds: queuedRuns.map((run) => run.userMessageId),
+            })).messages;
+      // Automatic wakes are hidden from the user queue and must not block snooze.
+      // Snooze only changes visibility, so keep those deliveries intact.
+      const automaticMessageIds = new Set(
+        queuedMessages
+          .filter(
+            (message) =>
+              message.notification !== undefined || message.delegatedCompletion !== undefined,
+          )
+          .map((message) => message.id),
+      );
+      if (queuedRuns.some((run) => !automaticMessageIds.has(run.userMessageId))) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -3535,6 +3623,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (
+      command.type === "thread.pull-request-link.sync" ||
+      command.type === "thread.pull-request-watch.sync"
+    ) {
+      if (updatedThread === thread) return;
+      const link = threadPullRequestsOf(updatedThread).find((candidate) =>
+        threadPullRequestKeysEqual(candidate, normalizeThreadPullRequestKey(command)),
+      );
+      if (link === undefined) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.pull-request-link-updated",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: now,
+        payload: link,
+      });
+      return;
+    }
     const eventType = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -3567,9 +3676,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
-        case "thread.pull-request-link.sync":
         case "thread.pull-request.watch":
-        case "thread.pull-request-watch.sync":
         case "thread.pull-request.sync":
           return "thread.pull-request-synced" as const;
         case "thread.runtime-mode.set":
@@ -5043,8 +5150,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (
           !source ||
-          source.status !== "cancelled" ||
-          isRestartNoteSource(source, projection.providerTurns) ||
+          !isRestartContinuationSource(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
@@ -5367,9 +5473,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
       const activeRun = projection.runs.find(isBlockingRun);
+      // A message queued during worktree setup can arrive after that setup failed
+      // without a worktree. It waits, held, like the messages queued before the
+      // failure, instead of starting in the project checkout.
+      const latestRun = latestExecutedRun(projection.runs);
+      const worktreeMissingRun =
+        activeRun === undefined &&
+        dispatchMode.type === "queue_after_active" &&
+        (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+        latestRun.workspacePreparation?.type === "worktree" &&
+        projection.thread.worktreePath === null
+          ? latestRun
+          : undefined;
+      const queueBehindRun = activeRun ?? worktreeMissingRun;
       const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
       const shouldQueue =
-        activeRun !== undefined &&
+        queueBehindRun !== undefined &&
         (dispatchMode.type === "defer_start" ||
           dispatchMode.type === "start_immediately" ||
           dispatchMode.type === "queue_after_active");
@@ -5384,13 +5503,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const queueProviderThread =
           activeProviderThread ??
           projection.providerThreads.find(
-            (candidate) => candidate.id === activeRun.providerThreadId,
+            (candidate) => candidate.id === queueBehindRun.providerThreadId,
           );
         if (queueProviderThread === undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Active run ${activeRun.id} has no provider thread for queued dispatch.`,
+            cause: `Active run ${queueBehindRun.id} has no provider thread for queued dispatch.`,
           });
         }
         const now = yield* DateTime.now;
@@ -5444,7 +5563,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
         const checkpointScope =
-          activeRun.status === "preparing"
+          queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
             ? null
             : yield* runtimePolicy.resolve({ thread: executionThread, modelSelection }).pipe(
                 Effect.flatMap((resolvedRuntimePolicy) =>
@@ -5483,7 +5602,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           status: "queued",
           runtimeMode: executionThread.runtimeMode,
           interactionMode: executionThread.interactionMode,
-          ...(projection.runs.some(
+          ...(worktreeMissingRun !== undefined ||
+          projection.runs.some(
             (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
           )
             ? { queueHeld: true }
@@ -5756,9 +5876,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(command.threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -6374,16 +6492,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? yield* legacyImportItemsRead
           : !requiresPortableFork || sourceProjection === null || sourceRun === null
             ? []
-            : yield* readHandoffItems(sourceProjection.thread.id, [
-                ...sourceProjection.runs
-                  .filter((run) => run.ordinal <= sourceRun.ordinal)
-                  .map((run) => run.id),
-                ...(sourceProjection.thread.historyOrigin === "v1_import" ||
-                sourceProjection.thread.historyOrigin === "scient_fork" ||
-                sourceProjection.thread.historyOrigin === "conversation_import"
-                  ? [null]
-                  : []),
-              ]);
+            : yield* readHandoffItems(
+                sourceProjection.thread.id,
+                [
+                  ...sourceProjection.runs
+                    .filter((run) => run.ordinal <= sourceRun.ordinal)
+                    .map((run) => run.id),
+                  ...(sourceProjection.thread.historyOrigin === "v1_import" ||
+                  sourceProjection.thread.historyOrigin === "scient_fork" ||
+                  sourceProjection.thread.historyOrigin === "conversation_import"
+                    ? [null]
+                    : []),
+                ],
+                true,
+              );
       const portableForkHandoff =
         !requiresPortableFork ||
         pendingForkTransfer === undefined ||
@@ -6616,6 +6738,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               mergeBackSourceProjection.runs
                 .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
                 .map((run) => run.id),
+              true,
             );
       const mergeBackHandoff =
         pendingMergeBackTransfer === undefined ||
@@ -6860,7 +6983,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               fromModelSelections: handoffFromModelSelections,
               toModel: modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const nativeForkResolution: OrchestrationV2ContextTransferResolution | null =
         !canResolveForkNatively || providerThread.nativeThreadRef === null
@@ -7282,6 +7405,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
@@ -7399,7 +7523,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.task,
         attachments: [],
         modelSelection: command.modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode:
+          command.workspaceStrategy === undefined
+            ? { type: "start_immediately" }
+            : { type: "defer_start", workspaceStrategy: command.workspaceStrategy },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
       yield* dispatchMessage(childMessageCommand, events, effects);
 
@@ -9014,6 +9141,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "run.updated",
         payload: { ...state.run, status: "preparing", completedAt: null },
       });
+      // Messages held when this preparation failed follow the run again. A hold
+      // from a later run (a stop, say) is not this failure's to release.
+      const failureOwnsQueue = latestExecutedRun(projection.runs)?.id === state.run.id;
+      for (const run of projection.runs) {
+        if (!failureOwnsQueue || run.status !== "queued" || run.queueHeld !== true) continue;
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, queueHeld: false },
+        });
+      }
     });
 
   /**
@@ -9105,7 +9246,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             OrchestrationV2ThreadProjection,
             "nodes" | "subagents" | "turnItems"
           >;
-          readonly subagent: Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+          readonly subagent: Pick<
+            Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>,
+            "subagentId" | "origin" | "childThreadId" | "providerInstanceId"
+          >;
         }> = [{ projection: input.projection, subagent: item }];
         for (const { projection, subagent } of dying) {
           const ended = yield* endOrphanedNativeSubagent({
@@ -9149,6 +9293,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           yield* Ref.update(input.events, (events) => [...events, ...childEnded]);
           for (const nested of child.turnItems) {
             if (nested.type === "subagent") dying.push({ projection: child, subagent: nested });
+          }
+          // Workflow members have records and child roots without subagent turn items.
+          for (const nested of child.subagents) {
+            if (nested.origin === "provider_native" && nested.runId === null) {
+              dying.push({
+                projection: child,
+                subagent: {
+                  subagentId: nested.id,
+                  origin: nested.origin,
+                  childThreadId: nested.childThreadId,
+                  providerInstanceId: nested.providerInstanceId,
+                },
+              });
+            }
           }
         }
       }
@@ -9447,9 +9605,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * What Stop holds besides the run it interrupts: queued runs wait for the user, the
-   * thread's pull request watches end, and every wake its delegated tasks still owe is
-   * dropped, since Stop stops those tasks too. Nothing automatic starts the thread again.
+   * What Stop holds besides the run it interrupts: durable queued messages wait for the
+   * user, buffered provider wakes are cancelled, and the thread's pull request watches end.
+   * Every wake its delegated tasks still owe is dropped, since Stop stops those tasks too.
    * `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
    */
   const holdStoppedThread = (input: {
@@ -9465,16 +9623,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const emitEvent = emit(input.events, input.command);
       const { thread, runs, subagents } = input.projection;
+      const queuedRuns = runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* projectionStore
+              .getThreadRecords(thread.id, ["messages"], {
+                messageIds: queuedRuns.map((run) => run.userMessageId),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
+                ),
+              )).messages;
+      const bufferedMessageIds = new Set(
+        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      );
       for (const run of runs) {
         // A resumed queue can have a lower ordinal than a pending continuation source.
         // Stop must reach those sources even when interrupting the resumed run succeeds.
         if (
-          run.status === "cancelled" &&
+          // SCIENT-FORK:START — a settled turn the restart woke for lost awaited
+          // work has a pending continuation too, so Stop must reach it as well.
+          (run.status === "cancelled" || (run.restartCancelledBackgroundWork?.length ?? 0) > 0) &&
+          // SCIENT-FORK:END
           (yield* awaitsRestartContinuation(run).pipe(mapDispatchError(input.command)))
         ) {
           yield* markStoppedRun({ ...input, thread, run });
         }
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued") continue;
+        // Stop discards the provider's wake buffer, so its queued placeholders cannot resume.
+        if (bufferedMessageIds.has(run.userMessageId)) {
+          yield* dispatchQueuedRunCancel(
+            {
+              type: "queued-run.cancel",
+              commandId: input.command.commandId,
+              threadId: thread.id,
+              runId: run.id,
+            },
+            input.events,
+          );
+          continue;
+        }
+        if (run.queueHeld === true) continue;
         yield* emitEvent({
           type: "run.updated",
           threadId: thread.id,
@@ -9643,9 +9834,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           item.driver !== owner.driver ||
           item.providerInstanceId !== owner.providerInstanceId ||
           item.childThreadId !== task.childThreadId ||
-          Option.isSome(
-            yield* providerSessions.get(target.providerSessionId).pipe(mapDispatchError(command)),
-          )
+          ("outcome" in target &&
+            (!["pending", "running", "waiting"].includes(task.status) ||
+              (task.startedAt !== null &&
+                DateTime.toEpochMillis(task.startedAt) >
+                  DateTime.toEpochMillis(target.stoppedAt)))) ||
+          (!("outcome" in target) &&
+            Option.isSome(
+              yield* providerSessions.get(target.providerSessionId).pipe(mapDispatchError(command)),
+            ))
         ) {
           return;
         }
@@ -9655,6 +9852,65 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             commandId: command.commandId,
           });
+        if ("outcome" in target) {
+          const outcome = target.outcome;
+          const ended = yield* endOrphanedNativeSubagent({
+            projection,
+            subagentId: task.id,
+            result: outcome.result,
+            status: outcome.status,
+            completedAt: outcome.completedAt,
+            now,
+            emitted: yield* Ref.get(events),
+            allocateEventId,
+          }).pipe(mapDispatchError(command));
+          yield* Ref.update(events, (current) => [...current, ...ended]);
+          if (task.childThreadId !== null) {
+            const child = yield* projectionStore
+              .getThreadRecords(task.childThreadId, ["nodes", "turnItems"], {
+                turnItemRunIds: [null],
+                turnItemStatuses: ["pending", "running", "waiting"],
+              })
+              .pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+                mapDispatchError(command),
+              );
+            if (
+              child !== null &&
+              isProviderNativeSubagentThread(child.thread) &&
+              child.thread.lineage.parentThreadId === task.threadId &&
+              child.thread.providerInstanceId === task.providerInstanceId &&
+              child.thread.forkedFrom?.type === "node" &&
+              child.thread.forkedFrom.nodeId === task.id
+            ) {
+              const childRoots = child.nodes.filter(
+                (candidate) =>
+                  candidate.kind === "root_turn" &&
+                  candidate.runId === null &&
+                  candidate.parentNodeId === null &&
+                  candidate.threadId === child.thread.id &&
+                  candidate.rootNodeId === candidate.id &&
+                  candidate.nativeItemRef?.driver === task.driver &&
+                  candidate.nativeItemRef.strength === "strong" &&
+                  candidate.nativeItemRef.nativeId === target.nativeTaskId,
+              );
+              const childEnded = yield* endRunlessRootTurns({
+                threadId: child.thread.id,
+                providerInstanceId: task.providerInstanceId,
+                projection: { nodes: childRoots, turnItems: child.turnItems },
+                status: outcome.status,
+                completedAt: outcome.completedAt,
+                now,
+                emitted: yield* Ref.get(events),
+                allocateEventId,
+              }).pipe(mapDispatchError(command));
+              yield* Ref.update(events, (current) => [...current, ...childEnded]);
+            }
+          }
+          return;
+        }
         type NativeProjection = Pick<
           OrchestrationV2ThreadProjection,
           "nodes" | "subagents" | "turnItems"
@@ -9663,6 +9919,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly projection: NativeProjection;
           readonly task: OrchestrationV2Subagent;
           readonly node: OrchestrationV2ThreadProjection["nodes"][number];
+          readonly displayWorkflowMemberChild?: NativeProjection &
+            Pick<OrchestrationV2ThreadProjection, "thread">;
         }> = [{ projection, task, node }];
         const visitedTasks = new Set<NodeId>([task.id]);
         const nativeTurns = new Map<ProviderTurnId, typeof stopped>([[turn.id, stopped]]);
@@ -9704,6 +9962,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ) {
                 visitedTasks.add(nested.id);
                 dying.push({ projection: current, task: nested, node: nestedNode });
+                continue;
+              }
+              if (isRichWorkflowMemberOwnedBy(nested, nestedNode, coordinator, parent)) {
+                const displayChild = yield* projectionStore
+                  .getThreadRecords(nested.childThreadId!, ["nodes", "subagents", "turnItems"], {
+                    turnItemRunIds: [null],
+                    turnItemStatuses: ["pending", "running", "waiting"],
+                  })
+                  .pipe(
+                    Effect.catchTags({
+                      ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                    }),
+                    mapDispatchError(command),
+                  );
+                if (
+                  displayChild !== null &&
+                  isProviderNativeSubagentThread(displayChild.thread) &&
+                  displayChild.thread.lineage.parentThreadId === nested.threadId &&
+                  displayChild.thread.providerInstanceId === task.providerInstanceId &&
+                  displayChild.thread.forkedFrom?.type === "node" &&
+                  displayChild.thread.forkedFrom.nodeId === nested.id
+                ) {
+                  visitedTasks.add(nested.id);
+                  dying.push({
+                    projection: current,
+                    task: nested,
+                    node: nestedNode!,
+                    displayWorkflowMemberChild: displayChild,
+                  });
+                }
                 continue;
               }
               const nestedItem = current.turnItems.find(
@@ -9816,18 +10104,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             allocateEventId,
           }).pipe(mapDispatchError(command));
           yield* Ref.update(events, (existing) => [...existing, ...ended]);
-          yield* enqueueDescendants(current.projection, current.node, current.task);
+          if (current.displayWorkflowMemberChild === undefined)
+            yield* enqueueDescendants(current.projection, current.node, current.task);
           const childThreadId = current.task.childThreadId;
           if (childThreadId === null) continue;
-          const child = yield* projectionStore
-            .getThreadRecords(childThreadId, ["nodes", "subagents", "turnItems"], {
-              turnItemRunIds: [null],
-              turnItemStatuses: ["pending", "running", "waiting"],
-            })
-            .pipe(
-              Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-              mapDispatchError(command),
-            );
+          const child =
+            current.displayWorkflowMemberChild ??
+            (yield* projectionStore
+              .getThreadRecords(childThreadId, ["nodes", "subagents", "turnItems"], {
+                turnItemRunIds: [null],
+                turnItemStatuses: ["pending", "running", "waiting"],
+              })
+              .pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+                mapDispatchError(command),
+              ));
           if (
             child === null ||
             !isProviderNativeSubagentThread(child.thread) ||
@@ -9845,9 +10138,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               candidate.parentNodeId === null &&
               candidate.threadId === child.thread.id &&
               candidate.rootNodeId === candidate.id &&
-              candidate.nativeItemRef?.driver === task.driver &&
-              candidate.nativeItemRef.strength === "strong" &&
-              candidate.nativeItemRef.nativeId === current.task.nativeTaskRef?.nativeId,
+              (current.displayWorkflowMemberChild !== undefined
+                ? !candidate.countsForRun &&
+                  candidate.providerThreadId === null &&
+                  candidate.providerTurnId === null &&
+                  candidate.nativeItemRef === null &&
+                  candidate.runtimeRequestId === null &&
+                  candidate.checkpointScopeId === null
+                : candidate.nativeItemRef?.driver === task.driver &&
+                  candidate.nativeItemRef.strength === "strong" &&
+                  candidate.nativeItemRef.nativeId === current.task.nativeTaskRef?.nativeId),
           );
           const childEnded = yield* endRunlessRootTurns({
             threadId: child.thread.id,
@@ -9859,7 +10159,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             allocateEventId,
           }).pipe(mapDispatchError(command));
           yield* Ref.update(events, (existing) => [...existing, ...childEnded]);
-          if (childRoots.length === 0 || child.subagents.length === 0) continue;
+          // A display conversation confers no native descendant execution authority.
+          if (
+            current.displayWorkflowMemberChild !== undefined ||
+            childRoots.length === 0 ||
+            child.subagents.length === 0
+          )
+            continue;
           // Settled intermediate tasks can still own active descendants. Load
           // their compact native items too, never the child's full message history.
           const nativeItems = yield* projectionStore
@@ -9983,7 +10289,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerSessionId = providerThread.providerSessionId;
       const nativeTaskId = subagent.nativeTaskRef.nativeId;
       const now = yield* DateTime.now;
-      // Record the request with its effect; the provider notification supplies the outcome.
+      // The effect can repair stale projections only after the provider confirms an outcome.
       yield* emit(
         events,
         command,
@@ -10170,7 +10476,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message: command.reason ?? "Interrupt requested",
       };
 
+      // SCIENT-FORK:START — unoffered held input can settle without a new native receipt.
       const settledHeldOwner = heldBeforeStop !== undefined && providerTurn?.status !== "running";
+      // SCIENT-FORK:END
       // Background work can outlive a provider switch, such as a Codex dev
       // server left running when the thread moved to Claude. Stop also reaches
       // each other live provider thread that owns pending work; that
@@ -10230,8 +10538,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       if (
+        // SCIENT-FORK:START — a running start waits for ownership proof; absence of a receipt is not proof of non-admission.
         (providerTurn === undefined && (run.status === "preparing" || run.status === "starting")) ||
         settledHeldOwner
+        // SCIENT-FORK:END
       ) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10439,9 +10749,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      // Native acceptance can precede the ingestor's provider-turn receipt.
-      // Keep that run blocking and its start alive; the durable interrupt
-      // resolves the owned turn receipt before calling the adapter.
+      // SCIENT-FORK:START — resolve a pending receipt through Scient's exact-attempt control.
+      let pendingInterrupt: PendingOrchestrationEffectV2 | undefined;
       if (providerTurn === undefined) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10453,34 +10762,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Run ${command.runId} has no active attempt to interrupt.`,
           });
         }
-        yield* emitEvent({
-          type: "turn-item.updated",
+        pendingInterrupt = pendingStartInterruptEffect({
+          commandId: command.commandId,
           threadId: command.threadId,
           runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: interruptRequestItem,
+          expectedAttemptId: attempt.id,
+          providerSessionId,
+          providerThreadId: providerThread.id,
         });
-        if (command.holdQueue !== false) yield* holdQueuedRuns;
-        yield* stopRemainingWork();
-        yield* Ref.update(effects, (existing) => [
-          ...existing,
-          {
-            id: `effect:${command.commandId}:provider-run.interrupt:${attempt.id}`,
-            commandId: command.commandId,
-            threadId: command.threadId,
-            request: {
-              type: "provider-run.interrupt",
-              runId: run.id,
-              expectedAttemptId: attempt.id,
-              providerSessionId,
-              providerThreadId: providerThread.id,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
-        return cancelledHeldSteer;
       }
+      // SCIENT-FORK:END
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,
@@ -10492,6 +10783,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       if (command.holdQueue !== false) yield* holdQueuedRuns;
       yield* stopRemainingWork();
+      // SCIENT-FORK:START — keep the shared Stop plan; only its native control effect differs.
+      if (providerTurn === undefined) {
+        yield* Ref.update(effects, (existing) => [...existing, pendingInterrupt!]);
+        return cancelledHeldSteer;
+      }
+      // SCIENT-FORK:END
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -11109,7 +11406,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : undefined
           : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
-      const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
+      const outcome = runOutcome(childRun);
+      const terminalStatus = delegatedTaskTerminalStatus(outcome);
       if (terminalStatus === null) {
         return;
       }
@@ -11175,7 +11473,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
-      const result = subagentResultForRun(childProjection, childRun);
+      const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
       const parentRun =
         task.runId === null
           ? undefined
@@ -12429,7 +12727,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId,
           Effect.gen(function* () {
             yield* holdQueueAfterTerminal(stored);
-            yield* startNextQueuedRun(threadId);
+            yield* startNextQueuedRun(
+              threadId,
+              stored.event.type === "run.updated"
+                ? { endedRunId: stored.event.payload.id }
+                : undefined,
+            );
           }),
         )
         .pipe(
@@ -12626,6 +12929,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     recoverDelegatedTasks,
     recoverDelegatedTask,
     delegatedTaskResultPending,
+    restartContinuationPending: (run) =>
+      awaitsRestartContinuation(run).pipe(Effect.orElseSucceed(() => false)),
+    awaitRestartContinuation: (run) =>
+      effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore),
     dispatch: dispatchWithReceipt,
     searchThreadStream: (input) =>
       projectionStore
@@ -12757,6 +13064,7 @@ export const layer: Layer.Layer<
   | ProviderSwitchServiceV2
   | ProjectionStoreV2
   | RuntimePolicyV2
+  | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
@@ -12775,6 +13083,8 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     recoverDelegatedTasks: Effect.void,
     recoverDelegatedTask: () => Effect.void,
     delegatedTaskResultPending: () => Effect.succeed(false),
+    restartContinuationPending: () => Effect.succeed(false),
+    awaitRestartContinuation: () => Effect.void,
     dispatch: (command) =>
       Effect.fail(
         new OrchestratorDispatchError({

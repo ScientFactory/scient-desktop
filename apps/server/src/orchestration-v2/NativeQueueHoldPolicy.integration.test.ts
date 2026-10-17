@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -231,6 +232,7 @@ const withNativeQueue = <A, E, R>(
     >["layerServerConfig"];
     readonly runEffectWorker?: boolean;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly honorPreparedWorktree?: boolean;
     readonly holdFirstSend?: boolean;
     readonly holdSendOrdinal?: number;
     readonly refuseSend?: number;
@@ -604,9 +606,42 @@ const withNativeQueue = <A, E, R>(
           ...(options.runEffectWorker === undefined
             ? {}
             : { runEffectWorker: options.runEffectWorker }),
-          ...(options.runtimePolicyLayer === undefined
-            ? {}
-            : { runtimePolicyLayer: options.runtimePolicyLayer }),
+          ...(options.runtimePolicyLayer !== undefined
+            ? { runtimePolicyLayer: options.runtimePolicyLayer }
+            : options.honorPreparedWorktree
+              ? {
+                  // Use the production worktree/project resolver for relocation
+                  // witnesses instead of the fixture's fixed cwd override.
+                  runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    Layer.provide(
+                      Layer.mergeAll(
+                        Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                          getInstance: () => Effect.succeed(undefined),
+                        }),
+                        Layer.mock(ProjectStore.ProjectStoreV2)({
+                          get: (projectId) =>
+                            Effect.succeed(
+                              Option.some({
+                                projectId,
+                                title: name,
+                                workspaceRoot: cwd,
+                                defaultModelSelection: modelSelection,
+                                defaultThreadEnvMode: null,
+                                autoPull: false,
+                                faviconPath: null,
+                                projectIcon: null,
+                                scripts: [],
+                                createdAt: "2026-10-12T00:00:00.000Z",
+                                updatedAt: "2026-10-12T00:00:00.000Z",
+                                deletedAt: null,
+                              }),
+                            ),
+                        }),
+                      ),
+                    ),
+                  ),
+                }
+              : {}),
           ...(options.decorateProjectionStore === undefined
             ? {}
             : { decorateProjectionStore: options.decorateProjectionStore }),
@@ -4877,5 +4912,167 @@ it.live(
           ),
         );
       }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+);
+
+it.live.each(["failed", "interrupted"] as const)(
+  "Resume and queue-row Send retain a missing promised worktree after preparation %s",
+  (ending) =>
+    withNativeQueue(
+      `queue-missing-prepared-worktree-${ending}`,
+      ({ orchestrator, threadId, offers, takeOffer, waitFor }) =>
+        Effect.gen(function* () {
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:prepare`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:opening`),
+            text: "Opening message in a promised worktree",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: {
+              type: "defer_start",
+              workspaceStrategy: { type: "worktree", baseRef: "main" },
+            },
+          });
+          const preparing = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "preparing",
+          );
+          assert.ok(preparing);
+          yield* send(orchestrator, threadId, "queued during preparation", true);
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "queued",
+          );
+          assert.ok(queued);
+          if (ending === "failed") {
+            yield* orchestrator.dispatch({
+              type: "prepared-run.fail",
+              commandId: CommandId.make(`${threadId}:preparation-failed`),
+              threadId,
+              runId: preparing.id,
+              failure: makeProviderFailure({
+                cause: "Synthetic worktree provisioning failure",
+                message: "Worktree was not created",
+                class: "validation_error",
+                retryable: false,
+              }),
+            });
+          } else {
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make(`${threadId}:preparation-interrupted`),
+              threadId,
+              runId: preparing.id,
+            });
+          }
+          yield* waitFor((projection) =>
+            projection.runs.some((run) => run.id === queued.id && run.queueHeld === true),
+          );
+          for (const [action, runId] of [
+            ["resume", undefined],
+            ["send-row", queued.id],
+          ] as const) {
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              commandId: CommandId.make(`${threadId}:${action}`),
+              threadId,
+              ...(runId === undefined ? {} : { runId }),
+            });
+            // Production outbox/worker completion establishes that no accepted
+            // queue command has scheduled a hidden checkout provider start.
+            yield* worker.drain();
+            const held = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(held.thread.worktreePath, null);
+            assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
+            assert.equal(held.runs.find((run) => run.id === queued.id)?.queueHeld, true);
+            assert.deepEqual(offers, []);
+            assert.deepEqual(held.providerTurns, []);
+          }
+          if (ending === "failed") {
+            // Retry reuses the failed preparation's authority, then the same
+            // production release command starts in its actual prepared repo.
+            const preparedCwd = yield* checkpointWorkspace("queue-retried-worktree");
+            yield* orchestrator.dispatch({
+              type: "prepared-run.retry",
+              commandId: CommandId.make(`${threadId}:retry`),
+              threadId,
+              runId: preparing.id,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:worktree-ready`),
+              threadId,
+              worktreePath: preparedCwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "prepared-run.release",
+              commandId: CommandId.make(`${threadId}:prepared-release`),
+              threadId,
+              runId: preparing.id,
+            });
+            yield* worker.drain();
+            const retry = yield* takeOffer;
+            assert.equal(retry.input.runId, preparing.id);
+            assert.equal(retry.input.runtimePolicy.cwd, preparedCwd);
+            yield* retry.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.some((run) => run.id === preparing.id && run.status === "waiting"),
+            );
+            yield* worker.drain();
+            // The terminal listener commits queue promotion after checkpoint
+            // finalization. Wait for that persisted start before draining its
+            // newly published effect; this fixture has no background daemon.
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
+              ),
+            );
+            yield* worker.drain();
+            const next = yield* takeOffer;
+            assert.equal(next.input.runId, queued.id);
+            assert.equal(next.input.runtimePolicy.cwd, preparedCwd);
+          } else {
+            // An ordinary newly admitted user Send is a later release boundary.
+            // The older interrupted preparation must not rehold that new run.
+            yield* send(orchestrator, threadId, "explicit new checkout turn");
+            yield* worker.drain();
+            const direct = yield* takeOffer;
+            // Context handoff remains part of the production provider input.
+            // Decide the exact new user payload and identity beneath that context.
+            assert.match(direct.input.message.text, /^Context handoff \(/);
+            assert.isTrue(
+              direct.input.message.text.endsWith("User message:\nexplicit new checkout turn"),
+            );
+            assert.equal(
+              direct.input.message.messageId,
+              MessageId.make(`${threadId}:message:explicit new checkout turn`),
+            );
+            assert.notEqual(direct.input.runId, preparing.id);
+            yield* direct.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) => run.id === direct.input.runId && run.status === "waiting",
+              ),
+            );
+            yield* worker.drain();
+            // The terminal listener commits queue promotion after checkpoint
+            // finalization. Wait for that persisted start before draining its
+            // newly published effect; this fixture has no background daemon.
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
+              ),
+            );
+            yield* worker.drain();
+            const next = yield* takeOffer;
+            assert.equal(next.input.runId, queued.id);
+            assert.equal(next.input.runtimePolicy.cwd, direct.input.runtimePolicy.cwd);
+          }
+        }),
+      { runEffectWorker: false, honorPreparedWorktree: true },
     ),
 );

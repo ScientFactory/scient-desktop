@@ -125,6 +125,7 @@ export class ServerConfig extends Context.Service<
     readonly filePublicationRetentionRoot?: string | undefined;
     /** Explicit admission budget. Unresolved versions are never silently evicted. */
     readonly filePublicationRetentionLimitBytes?: number | null | undefined;
+    readonly fileExchangePath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;

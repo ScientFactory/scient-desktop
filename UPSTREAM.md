@@ -1,10 +1,19 @@
 # Upstream maintenance
 
-Scient owns desktop/web reader-position policy in `ChatView.tsx`,
-`MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
-maintains the live end during streaming, tool activity, completion, or queued
+Scient owns desktop/web reader-position policy. The owners are Scient-only files in
+`apps/web/src/components/chat/`: `readerScrollPolicy.ts` (the reading end),
+`readerScrolling.ts` (reader input, the one position writer, per-frame bookkeeping and
+idle end keeping, restore), `readingPositionStore.ts` (session storage),
+`responseFollow.ts` and `useBoundedAnswerFollow.ts` (the send follow), `liveFollowOffset.ts`
+(return to a follow), `useTimelineEndControl.ts` and `unreadTimelineMessages.ts` (Scroll to
+end and its count). They are mounted in marked regions of `ChatView.tsx`,
+`MessagesTimeline.tsx` and `timelineScrollAnchoring.ts`; ChatView's reader navigation
+(placement cancel, one-shot Scroll to end, gesture listeners, thread-switch reset) stays in
+marked regions there because it shares refs with upstream's anchor callbacks. The outer
+timeline never maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
-end, `MessagesTimeline` itself keeps that end in place through size changes of existing
+end, `useReadingBookkeepingFrame` (`chat/readerScrolling.ts`, mounted in MessagesTimeline)
+keeps that end in place through size changes of existing
 rows and viewport resizes (measured on screen, reacting only when content moves the
 text end), never for new rows or while the reader's own scrolling input is in motion,
 paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the latest answer's text
@@ -21,21 +30,27 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
 with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
+measurements hold; `chat/timelineEntranceMotion.ts`, and a played entrance never replays on
+row remount), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
 appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
 Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light looping continuously
 at one pace per label (`--live-activity-duration`) over text resting at 55%
-(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
+(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities; the
+sweep stays smooth (linear) over upstream #18191's `steps(30)`, an owner decision of 2026-10-13); the
 upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
-(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+(`chat/liveActivity.tsx`). A step still running after 10s shows its elapsed time
+(`LiveStepElapsed`, same file). While an
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal` in
+`scient/presentation/scient-streamed-reveal.css`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
 the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
 clipped to its revealed lines, so the follow scroll simply goes to the real end. The live
 "Thinking" row fades out (keeping its place) while the answer right above it is appearing
 (`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
 rows continue rather than replay; a caught-up reveal rests until the answer's content or width
-changes. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+changes. Stop shows everything that has arrived at once (`showStreamedAnswersNow`, from
+`scient/chat/useStopGeneration.ts`). Upstream's 600ms per-block streaming fade in `index.css`
+stays on underneath the reveal. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
@@ -51,10 +66,15 @@ follows the whole response's end, traces and tools included, at a calmer pace): 
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
 cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
+field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
 writes the scroll position (a write cancels the browser's smooth scroll in motion); it resumes
-from rest 250ms after their input stops. `onIsAtEndChange` reacts to
-transitions only. The existing Scroll to end button is a one-shot action with an
+from rest 250ms after their input stops. ChatView hands every end report to
+`useTimelineEndControl`, which reacts to transitions only and changes the follow modes there.
+The timeline never pins to its end, so a report of leaving it is never swallowed (upstream's
+handler swallows it because its list pins; restoring that hides Scroll to end while an answer
+grows below). The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
@@ -64,11 +84,61 @@ the screen; a later prompt (from another window) never moves it further. The fol
 on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
+The reading position has one writer, `useSaveReadingPosition` (`chat/readerScrolling.ts`);
+upstream's raw write in `handleScroll` is removed, so a placement in flight never replaces a
+record that names its message. When syncing T3 #17348 (a `liveFollowEnabled` parameter on
+`rememberTimelinePosition` storing `atEnd: liveFollowEnabled || position.atEnd`, a `paintOnly`
+prop, a save on follow opt-out): keep the one writer, and do not adopt
+`liveFollowEnabled || position.atEnd`; Scient has no live follow, so pass `false` or drop the
+parameter in a marked hunk. `paintOnly` duplicates Scient's `positionHistoryLoading` gate.
 Capture native scroll positions synchronously before Legend's deferred callbacks;
 debounce only session storage and flush captured positions on navigation/page exit.
 A remounted list must finish restoration before saving again. Reserved anchor padding
 is excluded from both end-control visibility and send eligibility.
 Nested tool-output scrolling and the shared mobile scroll policy are unchanged.
+
+Kept answers (Scient): once a turn settles, upstream folds everything but the turn's last
+assistant message behind "Worked for…". Scient keeps an earlier message visible in place when
+it reads as a real answer: structure (a heading, a list of two or more items, a table, fenced
+code, display math, an image) or at least 400 characters
+(`@scientfactory/conversation/answer-visibility`). Short progress notes still fold with the work.
+A kept answer gets the copy button, time and spacing of the final answer, but not its other
+roles: forking, the trailing tool footer, created-thread summaries, the unread count, fork
+baselines and export still use the last message. The one marked mount is in `deriveTurnFolds`
+(`MessagesTimeline.logic.ts`), so rows, find in thread and citations agree; the row flag
+`keptAnswer` is set beside `showAssistantMeta` and rendered by the marked checks in
+`MessagesTimeline.tsx`. Owner: `apps/web/src/scient/threadTimeline/keptAnswers.ts`. Keep the
+rule out of `deriveTerminalAssistantMessageIds`.
+
+Timeline rows (Scient): Scient bodies live outside `MessagesTimeline.logic.ts` and are called
+from marked regions: fork separators (`scient/fork/forkTimelineMarkers.ts`, row
+`ForkMarkerSeparator.tsx`), imported-turn folds (`scient/fork/historicalTimelineTurns.ts`),
+compact trace paths (`scient/presentation/compactPathLabel.ts`, `TracePathLabel.tsx`), the
+setup card kept after handoff (`scient/threadTimeline/postHandoffSetup.ts`) and subagent
+workflow grouping (`scient/presentation/subagentRowGroups.ts`). Scient's trace icons
+(`scient/presentation/traceIconSet.tsx`, overrides in `traceIcons.ts`) are consulted at one
+marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's text. A new
+upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
+change unless Scient wants its own drawing.
+
+Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
+(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
+`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
+`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
+hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
+(#14924) and the pressed wrap toggle (#13208) are ported. Returning the generic code block to
+`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Settled Mermaid, Vega-Lite and Plotly
+fences render through `scient/presentation/ScientRichFence.tsx` in place of T3's
+`chat/MermaidDiagram.tsx`. `ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
+names; every Scient edit there sits in a `SCIENT-FORK` region that names its owner. The Copy
+message rich flavour reads chat's Markdown through `scient/clipboard/chatMarkdownPipeline.ts`,
+which imports one marked export list from `ChatMarkdown.tsx`; math copy lives in
+`scient/clipboard/mathClipboard.ts`, called from marked hunks in `markdown-clipboard.ts`.
+`FileCitationHoverCard` lives in `scient/markdownEditor/`; `AssistantCitationChip.tsx` carries
+only marked mounts for file quotes. Chat tables open wrapped, ignore the word-wrap setting,
+never pin column widths and never truncate cells; the table scrolls instead (#393). Inline code
+that is an exact CSS colour shows a swatch (`scient/markdown/inlineCssColor.ts`). Chat videos
+have no Expand button, as upstream (#9253).
 
 Scient's local Preview discovery requires an explicit web URL before sending
 HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
@@ -102,6 +172,14 @@ this small marked exception without changing the downloader's event cadence.
 The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
+
+Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
+and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
+`SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
+committed Stop directly and releases its scope before declined-start finalization;
+native offering and adopted provider work retain their receipt-aware control.
+Preserve upstream's effect ordering and transaction/cancellation machinery.
+The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
 
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
@@ -296,6 +374,16 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
+Since that receipt, Muse lifecycle policy composes through
+`apps/server/src/provider/MuseDriverComposition.ts`. Preserve the optional runtime
+hook in `packages/provider-muse/src/server/driver.ts`, the generic package default
+and the sole upstream MSP implementation. Private runtime, catalog and native
+account policy belong in `scient/providerLifecycle`, not the protocol package.
+The SDK's optional shutdown notification lets native qualification remove its
+private home only after confirmed close, including initialization failure.
+The shared auth completion contract distinguishes unverified native credential
+writes from authentication. Muse stays disabled by default; see [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
+
 The previous locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
 is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
 ([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
@@ -318,7 +406,7 @@ application seams. No publication authority or general extraction-line waiver
 is added. The development candidate is held stopped until requested for app
 acceptance; hosted CI qualifies the pushed revision separately.
 
-The current locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
+The prior locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
 is recorded in [the 2026-10-11 receipt](docs/internals/t3-upstream-sync-20261011-74dfbb6972.md)
 ([Scient PR #513](https://github.com/ScientFactory/scient-desktop/pull/513)).
 It receives all 54 official first-parent commits after the previous boundary.
@@ -333,6 +421,75 @@ independent source review and final isolated desktop visual/interaction checks
 from hosted CI, optional platform/account skips and the user's approval.
 The isolated review candidate remains open for user acceptance; the layer
 requires separate merge approval and does not alter its parent PR's policy.
+
+The local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
+is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md)
+([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
+It retains all 72 ordinary official commits through literal merge
+`de8482724fa062fbea7daa4549cd70dc9e665b85`, whose exact second parent is the
+frozen official target. The initial owned-main catch-up retains `f8babe1313`;
+the later separate catch-up `43779ee83b358cb929e32cafa1a3e53f7eb147cd` retains
+landed owned main `887e363db1eae11ca7d1566a48bd5c6c71d17f8f`, including the
+reviewed model-account overlay repair. Neither catch-up changes the official boundary.
+Scient provider instances/defaults, scoped guidance, native ownership and queue
+holds, immutable migration identities, scientific surfaces and publication
+controls compose with the incoming host behavior. The receipt distinguishes the
+passing canonical local gate and physical native/platform checks from blocked
+mobile UI, account/platform exclusions, hosted CI and the user's acceptance.
+External PR #521 checks supplement qualification without importing its source
+or ancestry; no alignment-speed gain is asserted. The owner approved the bounded
+visual review and requested the installer-review candidate's shutdown; its owned
+service, processes and ports were confirmed stopped. Merge and auto-merge are
+owner-authorized through the required GitHub queue; release remains separate.
+
+The local alignment through
+`b03534fa7b847e8403322e416189c6293e6846e0` is recorded in
+[the 2026-10-13 receipt](docs/internals/t3-upstream-sync-20261013-b03534fa7b.md)
+([Scient PR #534](https://github.com/ScientFactory/scient-desktop/pull/534)).
+Literal merge `3846a7fd443e0fc53d8ba520e7a82748cffcc67d` retains the exact
+official target as second parent and all 99 ordinary donor commits. Separate
+owned-main catch-ups retain the preceding alignment, Stop/queue owners and
+landed early-check tooling, history/native-helper, provider lifecycle and
+fork reliability owners through `ad35cc25320e`; none changes the official merge.
+Narrow Scient owners preserve credential policy, native authority, provider
+instances, scientific readers, immutable migrations and publication holds.
+The complete local gate and subsequent affected qualification passed; the receipt
+separates native desktop interaction, automated mobile checks, the owner's
+desktop acceptance and deferred mobile visual review from exact-head hosted CI,
+merge-group checks and actual delivery. No full-suite or end-to-end speedup is
+asserted. The isolated development candidate was verified stopped; release
+remains separate authorization.
+
+The alignment through
+`85272eeeae53c5baa1cba1a36d84bbec81a3a0b5` is recorded in
+[the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-85272eeeae.md)
+([Scient PR #559](https://github.com/ScientFactory/scient-desktop/pull/559)).
+Literal merge `62d67b9db546917f452b5e1b67bfa9587260aa35` has exact owned base
+`f1f2c0a214314c0a4ae2506a9a43ce28b749cfaa` and the frozen official target as
+parents, retaining all 49 ordinary donor commits. Clean overlaps and untouched
+Scient consumers were included in independent review. Narrow owners preserve
+native Stop and queue authority, provider-instance identity and scoped guidance,
+immutable migrations/attachments, scientific readers and publication holds.
+Strict migration-ledger policy now has one marked Scient owner before execution;
+reader footer metrics and StrictMode cleanup use the existing reader scheduler.
+The receipt separates passing exact-head hosted qualification, local native Pi
+and macOS checks, representative iOS interaction and remaining platform/live-flow
+exclusions from the owner's pending visual acceptance and eventual delivery.
+Hosted CI replaces duplicate covered local checks only under the owner's explicit
+instruction for this pass; general qualification policy is unchanged. No cold
+full-suite or end-to-end alignment speedup is asserted. Release remains separate.
+
+The current alignment through
+`7ac952c630ef8a60d14ca8f6a0c7adce33db4bae` (`v0.0.46-nightly.20261014.3118`) is
+recorded in [the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-7ac952c630.md)
+([Scient PR #572](https://github.com/ScientFactory/scient-desktop/pull/572)).
+Literal merge `d1db50fa986e888fc14cfbd18b86550eb403cfd7` has exact owned base
+`9fad4fb8903e284d324169ab366a26e7f9f292c0` and the frozen official target as
+parents, retaining all 89 ordinary donor commits. Scient keeps full SQLite
+durability around upstream's reader and checkpoint workers, checks Windows
+legacy database owners by process creation time, keeps archived and queued
+work out of storage cleanup, and routes text-generation fallback by provider
+instance. Release remains separate.
 
 ## Receiving T3 updates
 
@@ -819,17 +976,30 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
+Handoff retention and delivery are separate Scient responsibilities. Keep frozen source
+membership, copy-before-rewrite versions, user context presets, inert import/fork eligibility and
+native delivery proof. Replace eager transcript copies and repeated body-bearing status records
+with `scient-fork/ContextHistorySource.ts` and its bounded readers; preserve the independent
+Scient migration ledger and old source bodies. Generic budget accounting, formatting and item
+priority remain in provider-core. Source identity is private execution metadata. The decisive
+behavior and resource contract is maintained in
+[context handoffs](docs/internals/context-handoffs.md), with actual default-composition,
+legacy/rebuild, receiving-model and reservation-recovery witnesses beside the production owners.
+
 Scient layers two sidebar divergences beside T3's thread list: user-defined
 sections with a Sections view, and a labelled New thread row below search that
 replaces the header's New thread icon. Section membership is an optional
 `sectionId` written by the Scient `thread.section.set` command (advertised by the
 `threadSections` capability); like `thread.active.reorder`, it emits
 `thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
-activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
-built-in General group's position and the opt-in empty-section cleanup live in the
-primary environment's server settings; catalog writes carry the catalog they were
-based on, and `updateSettings` applies them only while it still matches, so
-concurrent clients never overwrite each other. Scient code lives under
+activity. Migration 058 adds `projection_threads.section_id`. Each environment's
+server settings hold the catalog of its own sections, the built-in General group's
+position and the opt-in empty-section cleanup; a thread's `sectionId` resolves only
+against its own environment's catalog, so no client needs a primary environment to
+show sections. Catalog writes carry the catalog they were based on, and
+`updateSettings` applies them only while it still matches, so concurrent clients
+never overwrite each other. Environment-local resolution lives entirely in
+`apps/web/src/scient/sections` and added no upstream seams. Scient code lives under
 `apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
 `apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
 mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
@@ -912,10 +1082,12 @@ server's scratch project, with verified non-Git evidence. It rejects the shared
 parent, nested descendants, and symlink escapes, while retaining ordinary Git
 worktree lineage and existing authority-generation/publication checks.
 
-The server still withholds `ServerConfig.scratchWorkspaceRoot` and
-`projects.ensureScratch` when the selected scratch root's parent is inside a Git
-checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
-entry points. The dev runner selects persistent scratch storage outside the
+The upstream managed-folder service owns scratch advertisement, project creation and thread
+allocation for RPC, MCP and launch. It withholds the capability when the configured root has
+Git ancestry or inspection fails. Missing Git alone does not disable scratch: both unavailable-
+executable and spawn-NotFound errors use canonical filesystem evidence limited to host-owned
+scratch folders. Other Git failures remain closed, and failed admission is retried on the next
+request. Clients gate on the advertised root, including remote/mobile entry points. The dev runner selects persistent scratch storage outside the
 checkout without moving its existing profile; that selected parent must also be
 outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and
@@ -1087,14 +1259,18 @@ outside those roots. The inherited-host seams are limited to one lazy editor
 mount and eye switch in `FilePreviewPanel.tsx`, one create button in
 `FileBrowserPanel.tsx`, a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
-typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts, the
-shared `MarkdownCodeBlock` (including its title, actions, and highlighter)
-imported by `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
+typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
+Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
+`scient/presentation`; upstream fixes must be ported by hand) mounted in
+`ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
-`MediaActions.tsx`, and an additive trailing block plus two tokens in
-`index.css`. Source projection, the save queue, command policy, nested-node
-behavior, and Markdown transport must remain outside inherited T3 components;
-`index.css` inherited rule bodies stay byte-identical. See
+`MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown
+code-block tokens beside `--code-background`, plus marked
+in-place changes to inherited chat-Markdown rules: the reading-size token block,
+four `font-size` values (footnotes, footnote reference, inline code, table), the
+heading sizes and the collapsed-table truncation (#393). Each is inside a
+`SCIENT-FORK` region. Source projection, the save queue, command policy, nested-node
+behavior, and Markdown transport must remain outside inherited T3 components. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
 
 LaTeX Source saving shares the Scient-owned document session and
@@ -1162,10 +1338,15 @@ canonical Scient bundle ID and protocol while retaining the established
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
 
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
-retained mutation implementation in `apps/server/src/scient/workspace`. Its two
-additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
-retain that shared ownership with editor saves. No Overleaf routes or UI are
-mounted yet. See [Overleaf engine](docs/internals/scient-overleaf-engine.md).
+retained mutation implementation in `apps/server/src/scient/workspace`. Its
+`WorkspaceFileSystem` methods share physical-file publication ownership with
+editor saves. Desktop resources carry `scient-file-publication` for retained
+publication; macOS also carries the protocol-1 `scient-file-exchange` helper for
+Overleaf volume probes. Staging either helper must preserve the other's files.
+Keep both outside ASAR and resolve them only from the server host. Preserve
+journaled recovery across app updates, including review of ambiguous publication
+boundaries. No Overleaf routes or UI are mounted yet. See
+[Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels
 

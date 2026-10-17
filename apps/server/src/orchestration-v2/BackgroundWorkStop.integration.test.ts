@@ -49,10 +49,12 @@ const stopEarlierBackgroundWork = ({
   nativeStop,
   nativeResume = false,
   nativeTerminalParent = false,
+  workflowMember = false,
 }: {
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
+  readonly workflowMember?: boolean;
   readonly stalledRun?:
     | "missing-session"
     | "missing-session-terminal"
@@ -279,6 +281,20 @@ const stopEarlierBackgroundWork = ({
           const siblingId = NodeId.make("node:released-native-sibling");
           const childRootId = NodeId.make("node:released-native-child-root");
           const siblingRootId = NodeId.make("node:released-native-sibling-root");
+          const richRoster = [
+            {
+              index: 1,
+              label: "Rich worker",
+              state: "running" as const,
+              childThreadId: ThreadId.make("thread:rich-workflow-member"),
+            },
+            {
+              index: 2,
+              label: "Settled rich worker",
+              state: "completed" as const,
+              childThreadId: ThreadId.make("thread:settled-rich-workflow-member"),
+            },
+          ];
           const task: OrchestrationV2Subagent = {
             id: taskId,
             threadId,
@@ -300,6 +316,7 @@ const stopEarlierBackgroundWork = ({
             completedAt: null,
             updatedAt: now,
             presentation: { kind: "workflow" },
+            workflow: { phases: [], agents: richRoster },
           };
           const fixtureEvents: OrchestrationV2DomainEvent[] = [];
           if (nativeResume) {
@@ -674,6 +691,143 @@ const stopEarlierBackgroundWork = ({
               },
             );
           }
+          const richFixtures = [];
+          const richExecutionFixtures = [];
+          for (const variant of [
+            "owned",
+            "settled",
+            "wrong-roster",
+            "frozen",
+            "user-run",
+            "wrong-child-lineage",
+          ] as const) {
+            const index =
+              variant === "settled"
+                ? 2
+                : variant === "frozen"
+                  ? 3
+                  : variant === "user-run"
+                    ? 4
+                    : variant === "wrong-child-lineage"
+                      ? 5
+                      : 1;
+            const childId = ThreadId.make(
+              variant === "owned"
+                ? "thread:rich-workflow-member"
+                : variant === "settled"
+                  ? "thread:settled-rich-workflow-member"
+                  : `thread:rich-workflow-${variant}`,
+            );
+            const richTask: OrchestrationV2Subagent = {
+              ...task,
+              id: NodeId.make(`node:rich-workflow-${variant}`),
+              threadId: mainFixture.childThread.id,
+              runId: variant === "user-run" ? run.id : null,
+              parentNodeId: mainFixture.childRoot.id,
+              childThreadId: childId,
+              nativeTaskRef: null,
+              providerThreadId: null,
+              status: variant === "settled" ? "completed" : "running",
+              completedAt: variant === "settled" ? now : null,
+              presentation: {
+                kind: "workflow_agent",
+                workflowId: task.id,
+                agentIndex: variant === "wrong-roster" ? 99 : index,
+              },
+            };
+            // Wrong/frozen fixtures are explicitly roster-bound so the deciding
+            // refusal is their execution row or child lineage, not a name miss.
+            if (
+              variant === "frozen" ||
+              variant === "user-run" ||
+              variant === "wrong-child-lineage"
+            ) {
+              richRoster.push({ index, label: variant, state: "running", childThreadId: childId });
+            }
+            const fixture = appendNativeFixture(
+              richTask,
+              NodeId.make(`root:rich-workflow-${variant}`),
+              mainFixture.childThread,
+              mainFixture.childRoot,
+              null,
+            );
+            for (let eventIndex = fixtureEvents.length - 1; eventIndex >= 0; eventIndex--) {
+              const event = fixtureEvents[eventIndex]!;
+              if (
+                event.type === "turn-item.updated" &&
+                event.payload.type === "subagent" &&
+                event.payload.subagentId === richTask.id
+              )
+                fixtureEvents.splice(eventIndex, 1);
+            }
+            for (const [eventIndex, event] of fixtureEvents.entries()) {
+              if (event.type === "node.updated" && event.payload.id === richTask.id)
+                fixtureEvents[eventIndex] = {
+                  ...event,
+                  payload: {
+                    ...event.payload,
+                    runtimeRequestId: null,
+                    checkpointScopeId: null,
+                    ...(variant === "frozen" ? { runId: run.id } : {}),
+                  },
+                };
+              if (
+                event.type === "thread.created" &&
+                event.payload.id === childId &&
+                variant === "wrong-child-lineage"
+              )
+                fixtureEvents[eventIndex] = {
+                  ...event,
+                  payload: { ...event.payload, forkedFrom: { type: "node", nodeId: siblingId } },
+                };
+              if (event.type === "node.updated" && event.payload.id === fixture.childRoot.id)
+                fixtureEvents[eventIndex] = {
+                  ...event,
+                  payload: {
+                    ...event.payload,
+                    status: "running",
+                    completedAt: null,
+                    runtimeRequestId: null,
+                    checkpointScopeId: null,
+                  },
+                };
+              if (
+                event.type === "turn-item.updated" &&
+                event.payload.nodeId === fixture.childRoot.id
+              )
+                fixtureEvents[eventIndex] = {
+                  ...event,
+                  payload: { ...event.payload, status: "running", completedAt: null },
+                };
+            }
+            richFixtures.push({ fixture, variant });
+            if (variant === "owned") {
+              // A display member's parent linkage cannot authorize native work
+              // beneath it, even when that nested row carries a strong ref.
+              richExecutionFixtures.push(
+                appendNativeFixture(
+                  {
+                    ...task,
+                    id: NodeId.make("node:display-linked-native-work"),
+                    threadId: richTask.threadId,
+                    runId: null,
+                    parentNodeId: richTask.id,
+                    childThreadId: ThreadId.make("thread:display-linked-native-work"),
+                    nativeTaskRef: {
+                      driver,
+                      nativeId: "display-linked-native-work",
+                      strength: "strong",
+                    },
+                    presentation: { kind: "subagent" },
+                  },
+                  NodeId.make("root:display-linked-native-work"),
+                  mainFixture.childThread,
+                  fixture.nativeNode,
+                  null,
+                ),
+              );
+            }
+          }
           const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
           if (nativeStop === "released") {
             yield* sessions.release({
@@ -724,7 +878,15 @@ const stopEarlierBackgroundWork = ({
           const original = yield* orchestrator.getThreadProjection(threadId);
           const childOriginal = yield* orchestrator.getThreadProjection(childThreadId);
           const siblingOriginal = yield* orchestrator.getThreadProjection(siblingThreadId);
-          const protectedFixtures = [weakFixture, userFixture];
+          const richOriginal = yield* Effect.all(
+            richFixtures.map(({ fixture }) =>
+              orchestrator.getThreadProjection(fixture.childThread.id),
+            ),
+          );
+          const richRowsOriginal = yield* orchestrator.getThreadProjection(
+            mainFixture.childThread.id,
+          );
+          const protectedFixtures = [weakFixture, userFixture, ...richExecutionFixtures];
           const protectedChildren = yield* Effect.all(
             protectedFixtures.map((fixture) =>
               orchestrator.getThreadProjection(fixture.childThread.id),
@@ -901,6 +1063,37 @@ const stopEarlierBackgroundWork = ({
               stopped.nodes.find((entry) => entry.id === member.id),
               original.nodes.find((entry) => entry.id === member.id),
             );
+          }
+          const richRowsStopped = yield* orchestrator.getThreadProjection(
+            mainFixture.childThread.id,
+          );
+          for (const [index, { fixture, variant }] of richFixtures.entries()) {
+            const richStopped = yield* orchestrator.getThreadProjection(fixture.childThread.id);
+            const owned = variant === "owned" || variant === "settled";
+            if (nativeStop === "released" && owned) {
+              assert.equal(
+                richRowsStopped.subagents.find((row) => row.id === fixture.task.id)!.status,
+                variant === "settled" ? "completed" : "interrupted",
+              );
+              assert.equal(
+                richStopped.nodes.find((row) => row.id === fixture.childRoot.id)!.status,
+                "interrupted",
+              );
+              assert.equal(
+                richStopped.turnItems.find((row) => row.nodeId === fixture.childRoot.id)!.status,
+                "interrupted",
+              );
+            } else {
+              assert.deepEqual(richStopped, richOriginal[index]);
+              assert.deepEqual(
+                richRowsStopped.subagents.find((row) => row.id === fixture.task.id),
+                richRowsOriginal.subagents.find((row) => row.id === fixture.task.id),
+              );
+              assert.deepEqual(
+                richRowsStopped.nodes.find((row) => row.id === fixture.task.id),
+                richRowsOriginal.nodes.find((row) => row.id === fixture.task.id),
+              );
+            }
           }
           assert.deepEqual(stopped.runs, original.runs);
           assert.deepEqual(childStopped.runs, childOriginal.runs);
@@ -1286,23 +1479,27 @@ const stopEarlierBackgroundWork = ({
           events: [
             // A subagent the reviewer started, which the provider records on the
             // reviewer's own thread.
-            {
-              id: EventId.make("nested-subagent-item"),
-              type: "turn-item.updated",
-              threadId: reviewerThreadId,
-              occurredAt: now,
-              payload: {
-                ...nested,
-                id: nestedItemId,
-                nodeId: nestedSubagentId,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                type: "subagent",
-                subagentId: nestedSubagentId,
-              },
-            },
+            ...(workflowMember
+              ? []
+              : [
+                  {
+                    id: EventId.make("nested-subagent-item"),
+                    type: "turn-item.updated",
+                    threadId: reviewerThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...nested,
+                      id: nestedItemId,
+                      nodeId: nestedSubagentId,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      type: "subagent",
+                      subagentId: nestedSubagentId,
+                    },
+                  } as const,
+                ]),
             {
               id: EventId.make("nested-subagent"),
               type: "subagent.updated",
@@ -1313,12 +1510,36 @@ const stopEarlierBackgroundWork = ({
                 id: nestedSubagentId,
                 parentNodeId: reviewerRootId,
                 createdBy: "agent",
-                nativeTaskRef: null,
+                nativeTaskRef: workflowMember
+                  ? { driver, nativeId: "workflow:member", strength: "strong" }
+                  : null,
                 model: null,
               },
             },
           ],
         });
+        if (workflowMember) {
+          // Workflow members have execution nodes and child roots, but no subagent turn item.
+          const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("workflow-member-node"),
+                type: "node.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  ...memberRoot,
+                  id: nestedSubagentId,
+                  threadId: reviewerThreadId,
+                  parentNodeId: reviewerRootId,
+                  rootNodeId: reviewerRootId,
+                  kind: "subagent",
+                },
+              },
+            ],
+          });
+        }
         // A settled run with its root node, attempt, provider turn and,
         // optionally, a command or native subagent it left running.
         const settledRun = (input: {
@@ -1696,10 +1917,18 @@ const stopEarlierBackgroundWork = ({
         const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
         assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
         assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
-        assert.equal(
-          reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
-          "interrupted",
-        );
+        if (workflowMember) {
+          assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
+          assert.equal(
+            reviewerThread.nodes.find((node) => node.id === nestedSubagentId)?.status,
+            "interrupted",
+          );
+        } else {
+          assert.equal(
+            reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
+            "interrupted",
+          );
+        }
         const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
         assert.equal(testerThread.nodes[0]?.status, "interrupted");
       }).pipe(
@@ -1742,6 +1971,10 @@ const stopEarlierBackgroundWork = ({
 
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   stopEarlierBackgroundWork({}),
+);
+
+it.effect("Stop settles workflow members without subagent turn items", () =>
+  stopEarlierBackgroundWork({ workflowMember: true }),
 );
 
 it.effect(

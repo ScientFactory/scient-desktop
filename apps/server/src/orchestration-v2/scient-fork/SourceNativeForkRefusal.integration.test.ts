@@ -20,13 +20,14 @@ import {
   CodexOrchestratorReplayHarness,
   layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { CODEX_THREAD_CONFIG } from "../Adapters/CodexAdapterV2.ts";
 import { EventSinkV2 } from "../EventSink.ts";
+import { historicalMessage } from "../ScientHistoricalContext.ts";
 import {
   handoffCoverage,
-  historicalMessage,
   historyResponseItems,
   selectHistory,
-} from "../ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -290,7 +291,7 @@ it.live(
               frame: {
                 id: 5,
                 method: "thread/start",
-                params: { config: { "tools.update_plan.enabled": true } },
+                params: { config: CODEX_THREAD_CONFIG },
               },
             },
             { type: "emit_inbound", label: "thread/start/fallback", frame: freshResult },
@@ -341,8 +342,14 @@ it.live(
           );
           assert.lengthOf(target.contextHandoffs, 1);
           assert.equal(target.contextHandoffs[0]?.delivery?.status, "injected");
+          const retained = yield* (yield* ProjectionStoreV2).resolveContextHistory({
+            handoffs: [target.contextHandoffs[0]!],
+            coverage: target.contextHandoffs[0]!.history!.coverage,
+            budget: 64_000,
+            alreadyDeliveredItemIds: new Set(),
+          });
           assert.deepEqual(
-            target.contextHandoffs[0]?.history?.messages.map((message) => message.text),
+            retained.messages.map((message) => message.text),
             [THREAD_FORK_NATIVE_SOURCE_PROMPT, "source fork seed ok"],
           );
           assert.include(target.messages.at(-1)?.text ?? "", "fork native ok");

@@ -1,6 +1,14 @@
 import "../../index.css";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
-import { MessageId, type ScientThreadQueueItem } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ThreadProjection,
+  type ScientThreadQueueItem,
+} from "@t3tools/contracts";
+import { DateTime } from "effect";
+import { useMemo } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -8,6 +16,7 @@ import { userEvent } from "vitest/browser";
 import { STATUS_MIN_VISIBLE_MS } from "@t3tools/client-runtime/delayed-status";
 import { QUEUE_ADMISSION_STATUS_DELAY_MS, ThreadQueueStrip } from "./ThreadQueueStrip";
 import {
+  deriveQueueAcknowledgedUserMessages,
   pendingQueueAdmissionPreviews,
   optimisticTimelineMessages,
   settleQueueAdmissionPreview,
@@ -23,6 +32,7 @@ afterEach(() => {
   root = undefined;
   host = undefined;
   onEdit.mockClear();
+  onAcknowledged.mockClear();
 });
 const message: OptimisticUserMessage = {
   id: MessageId.make("pending"),
@@ -61,10 +71,26 @@ const item: ScientThreadQueueItem = {
   updatedAt: message.updatedAt,
 };
 const onEdit = vi.fn();
+const onAcknowledged =
+  vi.fn<(messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "id">>) => void>();
+const serverMessage: OrchestrationV2ConversationMessage = {
+  createdBy: "user",
+  creationSource: "web",
+  id: message.id,
+  threadId: ThreadId.make("thread"),
+  runId: null,
+  nodeId: null,
+  role: "user",
+  text: message.text,
+  attachments: [],
+  streaming: false,
+  createdAt: DateTime.makeUnsafe(message.createdAt),
+  updatedAt: DateTime.makeUnsafe(message.updatedAt),
+};
 function render(
   messages: OptimisticUserMessage[],
   items: ScientThreadQueueItem[] = [],
-  serverMessages: OptimisticUserMessage[] = [],
+  serverProjection: Pick<OrchestrationV2ThreadProjection, "messages"> | null = null,
   threadKey = "host:thread",
   attachmentUrls?: ReadonlyMap<string, string>,
 ) {
@@ -74,48 +100,79 @@ function render(
     document.body.append(host);
     root = createRoot(host);
   }
-  const pending = pendingQueueAdmissionPreviews(messages, threadKey, items, serverMessages);
   flushSync(() =>
     root!.render(
-      <>
-        <div data-testid="timeline">
-          {serverMessages.map((entry) => (
-            <div key={entry.id}>{entry.text}</div>
-          ))}
-          {deriveTimelineEntriesFromVisibleTurnItems({
-            visibleTurnItems: [],
-            optimisticMessages: optimisticTimelineMessages(messages).filter(
-              (entry) => !serverMessages.some((server) => server.id === entry.id),
-            ),
-          }).map((entry) =>
-            entry.kind === "message" ? <div key={entry.id}>{entry.message.text}</div> : null,
-          )}
-        </div>
-        <ThreadQueueStrip
-          items={items}
-          pendingMessages={pending.map((entry) => ({
-            id: entry.id,
-            text: entry.text,
-            attachmentCount: entry.attachments?.length ?? 0,
-            imageCount: entry.attachments?.filter((file) => file.type === "image").length ?? 0,
-            accepted: entry.queueAdmission?.accepted === true,
-          }))}
-          {...(attachmentUrls === undefined ? {} : { attachmentUrls })}
-          error={null}
-          threadBusy
-          supportsExplicitSend
-          awaitingCompletion={false}
-          paused={false}
-          dispatchingItemId={null}
-          retryable={false}
-          onSend={() => {}}
-          onSteer={() => {}}
-          onEdit={onEdit}
-          onDelete={() => {}}
-          onReorder={() => {}}
-        />
-      </>,
+      <PreviewWitness
+        messages={messages}
+        items={items}
+        serverProjection={serverProjection}
+        threadKey={threadKey}
+        attachmentUrls={attachmentUrls}
+      />,
     ),
+  );
+}
+
+// Compose the owner's projection selector with the mounted queue strip and the host memo boundary.
+function PreviewWitness({
+  messages,
+  items,
+  serverProjection,
+  threadKey,
+  attachmentUrls,
+}: {
+  messages: OptimisticUserMessage[];
+  items: ScientThreadQueueItem[];
+  serverProjection: Pick<OrchestrationV2ThreadProjection, "messages"> | null;
+  threadKey: string;
+  attachmentUrls: ReadonlyMap<string, string> | undefined;
+}) {
+  const acknowledged = useMemo(
+    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
+    [serverProjection],
+  );
+  onAcknowledged(acknowledged);
+  const serverMessages = serverProjection?.messages ?? [];
+  const pending = pendingQueueAdmissionPreviews(messages, threadKey, items, acknowledged);
+  return (
+    <>
+      <div data-testid="timeline">
+        {serverMessages.map((entry) => (
+          <div key={entry.id}>{entry.text}</div>
+        ))}
+        {deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [],
+          optimisticMessages: optimisticTimelineMessages(messages).filter(
+            (entry) => !serverMessages.some((server) => server.id === entry.id),
+          ),
+        }).map((entry) =>
+          entry.kind === "message" ? <div key={entry.id}>{entry.message.text}</div> : null,
+        )}
+      </div>
+      <ThreadQueueStrip
+        items={items}
+        pendingMessages={pending.map((entry) => ({
+          id: entry.id,
+          text: entry.text,
+          attachmentCount: entry.attachments?.length ?? 0,
+          imageCount: entry.attachments?.filter((file) => file.type === "image").length ?? 0,
+          accepted: entry.queueAdmission?.accepted === true,
+        }))}
+        {...(attachmentUrls === undefined ? {} : { attachmentUrls })}
+        error={null}
+        threadBusy
+        supportsExplicitSend
+        awaitingCompletion={false}
+        paused={false}
+        dispatchingItemId={null}
+        retryable={false}
+        onSend={() => {}}
+        onSteer={() => {}}
+        onEdit={onEdit}
+        onDelete={() => {}}
+        onReorder={() => {}}
+      />
+    </>
   );
 }
 
@@ -140,7 +197,7 @@ it("keeps pending and accepted follow-ups beside the composer until the queue sn
   await userEvent.click(host!.querySelector('[aria-label="Edit queued message"]')!);
   expect(onEdit).toHaveBeenCalledWith(item);
   // Delivery can beat the next queue poll; the stale preview must not duplicate it.
-  render(accepted, [], [message]);
+  render(accepted, [], { messages: [serverMessage] });
   expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
   expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
 });
@@ -153,7 +210,7 @@ it("moves the preview to the timeline only if the server confirms an immediate s
 });
 
 it("does not leak a pending row to another thread or leave a row after rejection", () => {
-  render([message], [], [], "other-host:thread");
+  render([message], [], null, "other-host:thread");
   expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
   render([]);
   expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
@@ -216,7 +273,7 @@ it("keeps the row's text and controls in place when the queued row replaces it",
   const textOf = (row: string) => `${row} span[dir="auto"]`;
 
   const accepted = settleQueueAdmissionPreview([settled], settled.id, true);
-  render(accepted, [second], [], "host:thread", unresolved);
+  render(accepted, [second], null, "host:thread", unresolved);
   const pendingRow = '[data-testid="thread-queue-pending-pending"]';
   const before = {
     existing: box(textOf('[data-testid="thread-queue-row-qitem_existing"]')),
@@ -229,11 +286,49 @@ it("keeps the row's text and controls in place when the queued row replaces it",
   // The queued row arrives before its image URL resolves, then the URL resolves.
   const queuedRow = '[data-testid="thread-queue-row-qitem_server"]';
   for (const urls of [unresolved, resolved]) {
-    render(accepted, [second, queued], [], "host:thread", urls);
+    render(accepted, [second, queued], null, "host:thread", urls);
     expect(host!.querySelector(pendingRow)).toBeNull();
     expect(box(textOf('[data-testid="thread-queue-row-qitem_existing"]'))).toEqual(before.existing);
     expect(box(queuedRow)).toEqual(before.row);
     expect(box(textOf(queuedRow))).toEqual(before.text);
   }
   expect(host!.querySelectorAll(`${queuedRow} img`)).toHaveLength(1);
+});
+
+it("reacts to projection replacement, excludes non-user acknowledgements, and retains the memo on an unchanged projection", () => {
+  const pendingRow = () => host!.querySelector('[data-testid="thread-queue-pending-pending"]');
+  const lastAcknowledged = () => onAcknowledged.mock.lastCall![0];
+  render([message]);
+  expect(pendingRow()).not.toBeNull();
+  const absent = lastAcknowledged();
+  render(settleQueueAdmissionPreview([message], message.id, true));
+  expect(lastAcknowledged()).toBe(absent);
+  expect(pendingRow()).not.toBeNull();
+
+  const assistantProjection = { messages: [{ ...serverMessage, role: "assistant" as const }] };
+  render([message], [], assistantProjection);
+  expect(pendingRow()).not.toBeNull();
+  const assistantAcknowledged = lastAcknowledged();
+  render(settleQueueAdmissionPreview([message], message.id, true), [], assistantProjection);
+  expect(lastAcknowledged()).toBe(assistantAcknowledged);
+  expect(pendingRow()).not.toBeNull();
+
+  // The user message arrives before either the receipt or the queue poll.
+  const delivered = { messages: [serverMessage] };
+  render([message], [], delivered);
+  expect(pendingRow()).toBeNull();
+  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
+  const userAcknowledged = lastAcknowledged();
+  render(settleQueueAdmissionPreview([message], message.id, true), [], delivered);
+  expect(lastAcknowledged()).toBe(userAcknowledged);
+  expect(pendingRow()).toBeNull();
+
+  // Replacing the projection without changing its messages keeps the same visible result.
+  render([message], [], { ...delivered });
+  expect(pendingRow()).toBeNull();
+  render([message], [], assistantProjection);
+  expect(pendingRow()).not.toBeNull();
+  render([message]);
+  expect(pendingRow()).not.toBeNull();
 });

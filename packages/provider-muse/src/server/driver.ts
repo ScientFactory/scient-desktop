@@ -41,6 +41,11 @@ import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIden
 // SCIENT-FORK:START — type the optional host prompt-composition callback.
 import type { RuntimeInstructionsInput } from "@t3tools/provider-core/server/runtimeInstructions";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — type the optional host runtime-composition hook.
+import type { ServerProvider } from "@t3tools/contracts";
+import type * as Scope from "effect/Scope";
+import type { ProviderDriverCreateInput } from "@t3tools/provider-core/server/driver";
+// SCIENT-FORK:END
 
 const DRIVER_KIND = ProviderDriverKind.make("muse");
 const decodeMuseSettings = Schema.decodeSync(MuseSettings);
@@ -56,24 +61,61 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-// SCIENT-FORK:START — give the host an optional runtime-copy seam without changing the driver SPI.
-export interface MuseDriverOptions {
+// SCIENT-FORK:START — give the host optional runtime-copy and runtime-composition seams
+// without changing the driver SPI or the package's single MSP implementation.
+/** Host-owned runtime selection and instance composition for one Muse instance. */
+export interface MuseRuntimeResolution<Requirements = never, Extension extends object = {}> {
+  /** The executable every status probe, session and generation of this instance launches. */
+  readonly binaryPath: string;
+  readonly decorateSnapshot: (snapshot: ServerProvider) => ServerProvider;
+  readonly composeInstance: (
+    instance: ProviderInstance,
+  ) => Effect.Effect<ProviderInstance & Extension, ProviderDriverError, Requirements | Scope.Scope>;
+}
+
+export interface MuseDriverOptions<Requirements = never, Extension extends object = {}> {
   /** Host-owned runtime text; absent means the package's generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  /** Host-owned runtime selection; receives the environment Muse is launched with. */
+  readonly resolveRuntime?: (
+    input: ProviderDriverCreateInput<MuseSettings> & {
+      readonly processEnvironment: NodeJS.ProcessEnv;
+    },
+  ) => Effect.Effect<
+    MuseRuntimeResolution<Requirements, Extension>,
+    ProviderDriverError,
+    Requirements | Scope.Scope
+  >;
+}
+
+export interface MuseDriverFactory<
+  Requirements = never,
+  Extension extends object = {},
+> extends ProviderDriver<MuseSettings, MuseDriverEnv | Requirements> {
+  readonly create: (
+    input: ProviderDriverCreateInput<MuseSettings>,
+  ) => Effect.Effect<
+    ProviderInstance & Extension,
+    ProviderDriverError,
+    MuseDriverEnv | Requirements | Scope.Scope
+  >;
 }
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START — expose an optional app-copy factory while retaining one generic driver.
-export const makeMuseDriver = (
-  options: MuseDriverOptions = {},
-): ProviderDriver<MuseSettings, MuseDriverEnv> => ({
+export const makeMuseDriver = <Requirements = never, Extension extends object = {}>(
+  options: MuseDriverOptions<Requirements, Extension> = {},
+): MuseDriverFactory<Requirements, Extension> => ({
   // SCIENT-FORK:END
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
   configSchema: MuseSettings,
   defaultConfig: () => decodeMuseSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  // SCIENT-FORK:START — the runtime hook receives the complete create input.
+  create: (input) =>
     Effect.gen(function* () {
+      const { instanceId, displayName, accentColor, environment, enabled, config } = input;
+      // SCIENT-FORK:END
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -89,22 +131,35 @@ export const makeMuseDriver = (
         environment,
         makeMuseEnvironment(hostEnvironment),
       );
+      // SCIENT-FORK:START — a host may select the executable this instance launches.
+      const runtime = options.resolveRuntime
+        ? yield* options.resolveRuntime({ ...input, processEnvironment })
+        : undefined;
+      // SCIENT-FORK:END
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+        binaryPath:
+          // SCIENT-FORK:START — host-selected executable.
+          runtime?.binaryPath ??
+          // SCIENT-FORK:END
+          expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       } satisfies MuseSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stampIdentity = withInstanceIdentity({
+      const identify = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
+      // SCIENT-FORK:START — host lifecycle presentation on every published snapshot.
+      const stampIdentity = (draft: Parameters<typeof identify>[0]) =>
+        runtime ? runtime.decorateSnapshot(identify(draft)) : identify(draft);
+      // SCIENT-FORK:END
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
@@ -188,7 +243,7 @@ export const makeMuseDriver = (
         environment: processEnvironment,
         modelCatalog,
       });
-      return {
+      const instance = {
         instanceId,
         driverKind: DRIVER_KIND,
         continuationIdentity,
@@ -199,6 +254,11 @@ export const makeMuseDriver = (
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
+      // SCIENT-FORK:START — host-owned instance composition.
+      return runtime
+        ? yield* runtime.composeInstance(instance)
+        : (instance as ProviderInstance & Extension);
+      // SCIENT-FORK:END
     }),
   // SCIENT-FORK:START — close the optional host-copy driver factory.
 });

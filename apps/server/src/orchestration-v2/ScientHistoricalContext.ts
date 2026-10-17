@@ -13,19 +13,6 @@ import {
   scientHistoricalItemText,
 } from "./scient-fork/context/historicalItems.ts";
 
-export {
-  DEFAULT_HANDOFF_TOKEN_CAP,
-  attachmentTokenAllowance,
-  contextUsageForHandoff,
-  handoffBudget,
-  handoffCoverage,
-  handoffTokenCapConfig,
-  historyCost,
-  historyResponseItems,
-  latestNativeContextUsage,
-  renderHistory,
-  selectHistory,
-} from "@t3tools/provider-core/server/handoffBudget";
 export { hasScientContextHistory };
 
 /**

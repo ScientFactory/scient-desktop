@@ -6,6 +6,10 @@
  * and a bounded total duration.
  */
 import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
+import {
+  investigationUnsupported,
+  type Operation,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import type { PiSettings } from "@t3tools/provider-pi/settings";
 import {
   getModelSelectionStringOptionValue,
@@ -61,11 +65,7 @@ export const makePiRunJson = (run: {
 }) => {
   const { settings, environment, makeRpcClient, options, spawner } = run;
   return <S extends Schema.Top>(input: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: Operation;
     cwd: string;
     prompt: string;
     outputSchema: S;
@@ -73,6 +73,8 @@ export const makePiRunJson = (run: {
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.scoped(
       Effect.gen(function* () {
+        if (input.operation === "generateReviewGuide")
+          return yield* investigationUnsupported(input.operation, "Pi");
         const selected =
           input.modelSelection.model === "default"
             ? undefined

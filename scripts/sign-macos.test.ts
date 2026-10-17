@@ -8,6 +8,8 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 import sign, {
   conversationPreviewSignOptions,
   verifySignedConversationPreview,
+  fileExchangeSignOptions,
+  verifySignedFileExchange,
 } from "./sign-macos.ts";
 
 vi.mock("@electron/osx-sign", () => ({ sign: vi.fn() }));
@@ -15,6 +17,58 @@ const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn(), execFileSync: vi.fn()
 vi.mock("node:child_process", () => subprocess);
 
 beforeEach(() => vi.clearAllMocks());
+
+it("signs the exchange helper without Electron entitlements and verifies its team", () => {
+  withPreviewApp((app) => {
+    const helper = NodePath.join(app, "Contents/Resources/file-exchange/scient-file-exchange");
+    NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
+    NodeFS.writeFileSync(helper, "native");
+    const options = fileExchangeSignOptions({
+      app,
+      optionsForFile: () => ({ entitlements: "/electron.plist" }),
+    });
+    expect(options.binaries).toContain(helper);
+    expect(options.optionsForFile?.(helper, { platform: "darwin" })).toEqual({
+      entitlements: NodePath.resolve(
+        import.meta.dirname,
+        "../native/file-exchange/entitlements.mac.plist",
+      ),
+      hardenedRuntime: true,
+    });
+    expect(options.optionsForFile?.("/other", { platform: "darwin" })).toEqual({
+      entitlements: "/electron.plist",
+    });
+    subprocess.spawnSync.mockImplementation((_command: string, args: string[]) => ({
+      status: 0,
+      stdout: args[0] === "-dv" ? "TeamIdentifier=TESTTEAM\n" : "",
+      stderr: "",
+    }));
+    verifySignedFileExchange(app);
+    subprocess.spawnSync.mockImplementation((_command: string, args: string[]) => ({
+      status: 0,
+      stdout:
+        args[0] === "-dv"
+          ? `TeamIdentifier=${args.at(-1) === helper ? "OTHER" : "TESTTEAM"}\n`
+          : "",
+      stderr: "",
+    }));
+    expect(() => verifySignedFileExchange(app)).toThrow("signature does not match");
+  });
+});
+
+it("refuses omission of a helper required by the packaging pipeline", () => {
+  const previous = process.env.SCIENT_FILE_EXCHANGE_EXPECTED;
+  process.env.SCIENT_FILE_EXCHANGE_EXPECTED = "1";
+  try {
+    expect(() => fileExchangeSignOptions({ app: "/missing/Scient.app" })).toThrow(
+      "Missing required",
+    );
+    expect(() => verifySignedFileExchange("/missing/Scient.app")).toThrow("Missing required");
+  } finally {
+    if (previous === undefined) delete process.env.SCIENT_FILE_EXCHANGE_EXPECTED;
+    else process.env.SCIENT_FILE_EXCHANGE_EXPECTED = previous;
+  }
+});
 
 function withPreviewApp(run: (app: string, extension: string, executable: string) => void): void {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scic-sign-preview-"));

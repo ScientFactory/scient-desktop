@@ -1,6 +1,20 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { type RefObject, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { endTransition } from "./readerScrollPolicy";
+import type { TimelineScrollMode } from "./timelineScrollAnchoring";
+
+/**
+ * The follow mode after the reader reaches or leaves the end, or null to keep
+ * the current one: a first send being placed owns the mode until its placement
+ * ends or the reader navigates (which cancels it).
+ */
+export function followModeAfterEndTransition(
+  mode: TimelineScrollMode,
+  transition: "reached" | "left",
+): "following-end" | "free-scrolling" | null {
+  if (mode === "anchoring-new-turn") return null;
+  return transition === "reached" ? "following-end" : "free-scrolling";
+}
 
 /** How long the reader must stay away from the end before the Scroll to end control shows. */
 export const END_CONTROL_SHOW_DELAY_MS = 150;
@@ -15,17 +29,25 @@ export const END_CONTROL_SHOW_DELAY_MS = 150;
 export function useTimelineEndControl({
   isAtEndRef,
   onReachedEnd,
+  onLeftEnd,
 }: {
   /** Whether the reader is at the end; shared with the timeline's other readers. */
   isAtEndRef: RefObject<boolean>;
   /** Runs once each time the reader arrives at the end. */
   onReachedEnd: () => void;
+  /**
+   * Runs once each time the reader leaves the end. The timeline never pins to
+   * its end, so leaving is always real, even while an answer grows below.
+   */
+  onLeftEnd?: () => void;
 }) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [unreadBelowCount, setUnreadBelowCount] = useState(0);
   const onReachedEndRef = useRef(onReachedEnd);
+  const onLeftEndRef = useRef(onLeftEnd);
   useLayoutEffect(() => {
     onReachedEndRef.current = onReachedEnd;
+    onLeftEndRef.current = onLeftEnd;
   });
   const showDebouncer = useRef<Debouncer<() => void> | null>(null);
   showDebouncer.current ??= new Debouncer(() => setShowScrollToBottom(true), {
@@ -43,6 +65,7 @@ export function useTimelineEndControl({
         setShowScrollToBottom(false);
         setUnreadBelowCount(0);
       } else {
+        onLeftEndRef.current?.();
         showDebouncer.current?.maybeExecute();
       }
     },

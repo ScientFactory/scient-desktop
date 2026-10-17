@@ -1,18 +1,16 @@
 import "../../index.css";
-import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef } from "react";
+import { StrictMode, createRef, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
-import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
+import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
-import {
-  readTimelinePosition,
-  rememberTimelinePosition,
-  withRealTimelineEnd,
-} from "./timelineScrollAnchoring";
+import { HandoffRow } from "./V2LifecycleRow";
+import { useTimelineEndControl } from "./useTimelineEndControl";
+import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -69,17 +67,20 @@ const frames = async (count = 4) => {
   for (let i = 0; i < count; i++)
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 };
-function render(
-  key: string,
-  entries: React.ComponentProps<typeof MessagesTimeline>["timelineEntries"],
-  extra: Partial<React.ComponentProps<typeof MessagesTimeline>> = {},
-) {
+function mountHost() {
   if (!host) {
     host = document.createElement("div");
     Object.assign(host.style, { width: "720px", height: "600px" });
     document.body.append(host);
     root = createRoot(host);
   }
+}
+function render(
+  key: string,
+  entries: React.ComponentProps<typeof MessagesTimeline>["timelineEntries"],
+  extra: Partial<React.ComponentProps<typeof MessagesTimeline>> = {},
+) {
+  mountHost();
   flushSync(() =>
     root!.render(
       <MessagesTimeline {...base} routeThreadKey={key} timelineEntries={entries} {...extra} />,
@@ -190,6 +191,30 @@ it("flushes the latest captured position on pagehide before the storage debounce
   expect(receipt.scrollOffset).toBe(node.scrollTop);
   expect(saved.rowId).toBe(receipt.rowId);
   expect(saved.offsetWithinRow).toBe(receipt.offsetWithinRow);
+});
+
+it("keeps a held thread's exact reading and follow receipt through scroll, pagehide and unmount", async () => {
+  const key = "geometry:held-follow-receipt";
+  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  await frames();
+  const captured = readTimelinePosition(key)!;
+  const saved = { ...captured, atEnd: false, followingPromptId: "message-19" };
+  rememberTimelinePosition(key, saved);
+
+  render(key, entries, { paintOnly: true });
+  const node = listRef.current!.getScrollableNode()!;
+  node.scrollTop += 35;
+  node.dispatchEvent(new Event("scroll"));
+  await frames();
+  expect(readTimelinePosition(key)).toEqual(saved);
+  window.dispatchEvent(new Event("pagehide"));
+  expect(readTimelinePosition(key)).toEqual(saved);
+  root?.unmount();
+  root = undefined;
+  expect(readTimelinePosition(key)).toEqual(saved);
 });
 
 it("does not offer a jump into reserved blank space but reports a hidden answer", async () => {
@@ -360,6 +385,28 @@ it("manual navigation cancels restoration while history is still loading", async
     ),
   ).toBeLessThanOrEqual(1);
   await expect.poll(() => readTimelinePosition("geometry:cancel")?.messageId).not.toBe("message-1");
+});
+
+it("keeps the saved reading position while a send is being placed", async () => {
+  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
+  render("geometry:single-writer", entries);
+  await expect.poll(() => readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
+  await frames();
+  const saved = readTimelinePosition("geometry:single-writer")!;
+  // While the placement is in flight, scrolling saves nothing: the record that
+  // names its message stays (no raw record without one replaces it).
+  render("geometry:single-writer", entries, { timelinePositioningPending: true });
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
+  await frames(6);
+  expect(readTimelinePosition("geometry:single-writer")).toEqual(saved);
+  // Once it is done, the reader's place is saved again, by message.
+  render("geometry:single-writer", entries, { timelinePositioningPending: false });
+  listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
+  await expect
+    .poll(() => readTimelinePosition("geometry:single-writer")?.offsetWithinRow)
+    .not.toBe(saved.offsetWithinRow);
+  expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
 });
 
 it("keeps existing first-message framing and short-answer space through completion", async () => {
@@ -669,4 +716,189 @@ it("allows three of the answer's lines hidden, but not more, at different text s
       ).toBe(hiddenLines <= 3);
     }
   }
+});
+
+it("remeasures pending handoff footer layout and clears end navigation through the reader owner", async () => {
+  const key = "geometry:pending-handoff-end";
+  const answer = {
+    ...entry(13),
+    message: {
+      ...entry(13).message,
+      role: "assistant" as const,
+      text:
+        "## Completed answer\n\n" +
+        "A readable scientific paragraph. ".repeat(80) +
+        "\n\n| Sample | Value |\n| --- | --- |\n| A | 1 |\n| B | 4 |\n\nThe final answer ends here.",
+    },
+  };
+  const entries = [...Array.from({ length: 13 }, (_, index) => entry(index)), answer];
+  const providers: React.ComponentProps<typeof HandoffRow>["providers"] = [];
+  const endpoints = {
+    from: [{ instanceId: ProviderInstanceId.make("pi"), model: "same-model" }],
+    to: { instanceId: ProviderInstanceId.make("pi_visual"), model: "same-model" },
+  };
+  let resizeFooter: (height: number) => void = () => {
+    throw new Error("The pending footer has not mounted.");
+  };
+  let positionedThreadKey: string | null = null;
+  const reports: Array<{
+    atEnd: boolean;
+    measuredGap: number | null;
+    predicate: boolean | undefined;
+    scrollTop: number;
+    virtualScroll: number;
+    virtualViewport: number;
+    positionedThreadKey: string | null;
+  }> = [];
+  function PendingFooter() {
+    const [height, setHeight] = useState(32);
+    useLayoutEffect(() => {
+      resizeFooter = setHeight;
+    }, []);
+    return (
+      <div
+        className="chat-content-lane"
+        data-pending-handoff-appendix
+        style={{ minHeight: height }}
+      >
+        <HandoffRow endpoints={endpoints} providers={providers} pending />
+      </div>
+    );
+  }
+  function Reader({ pending }: { pending: boolean }) {
+    const isAtEndRef = useRef(true);
+    const control = useTimelineEndControl({ isAtEndRef, onReachedEnd: () => {} });
+    const report = useCallback(
+      (atEnd: boolean) => {
+        const list = listRef.current;
+        const viewport = list?.getScrollableNode();
+        const state = list?.getState();
+        if (state && viewport)
+          reports.push({
+            atEnd,
+            measuredGap: readingEndGapOnScreen(state, viewport, base.contentInsetEndAdjustment),
+            predicate: readerAtReadingEnd(state, base.contentInsetEndAdjustment),
+            scrollTop: viewport.scrollTop,
+            virtualScroll: state.scroll,
+            virtualViewport: state.scrollLength,
+            positionedThreadKey,
+          });
+        control.onIsAtEndChange(atEnd);
+      },
+      [control.onIsAtEndChange],
+    );
+    return (
+      <div style={{ position: "relative", height: "100%" }}>
+        <MessagesTimeline
+          {...base}
+          routeThreadKey={key}
+          timelineEntries={entries}
+          footer={pending ? <PendingFooter /> : null}
+          onIsAtEndChange={report}
+          onPositionedThreadKeyChange={(nextKey) => {
+            positionedThreadKey = nextKey;
+          }}
+        />
+        {control.showScrollToBottom ? (
+          <button
+            type="button"
+            data-reader-end-control
+            onPointerDown={(event) => event.preventDefault()}
+            style={{ position: "absolute", bottom: base.contentInsetEndAdjustment + 4 }}
+            onClick={async () => {
+              await listRef.current?.scrollToEnd({ animated: false });
+              listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+            }}
+          >
+            Scroll to end
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+  const renderControlled = (pending: boolean) => {
+    mountHost();
+    flushSync(() =>
+      root!.render(
+        <StrictMode>
+          <Reader pending={pending} />
+        </StrictMode>,
+      ),
+    );
+  };
+  renderControlled(false);
+  await expect.poll(() => positionedThreadKey).toBe(key);
+  // Production's StrictMode replays effect cleanup/setup before the first RAF.
+  // A cancelled frame must not leave the only bookkeeping owner permanently busy.
+  await expect
+    .poll(() => reports.length, {
+      message: "Reader bookkeeping must resume after StrictMode effect replay.",
+    })
+    .toBeGreaterThan(0);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await frames();
+  const list = listRef.current!;
+  const viewport = list.getScrollableNode()!;
+  await list.scrollToOffset({ offset: 300, animated: false });
+  await expect.poll(() => host!.querySelector("[data-reader-end-control]")).not.toBeNull();
+  const scrollBefore = viewport.scrollTop;
+  const state = list.getState();
+  const anchor = state.elementAtIndex(state.start)!;
+  expect(anchor?.isConnected).toBe(true);
+  const anchorBefore = anchor.getBoundingClientRect().top;
+  for (const pending of [true, false, true]) {
+    renderControlled(pending);
+    await frames(8);
+    expect(viewport.scrollTop).toBeCloseTo(scrollBefore, 0);
+    expect(anchor.getBoundingClientRect().top).toBe(anchorBefore);
+  }
+
+  // A child-only appendix reflow changes no rows, viewport, or Reader props and
+  // sends no scroll event. It still must produce fresh end/position bookkeeping.
+  const reportCount = reports.length;
+  flushSync(() => resizeFooter(160));
+  await expect
+    .poll(() => reports.length, {
+      message: JSON.stringify({ phase: "footer-only-reflow", reportCount, last: reports.at(-1) }),
+    })
+    .toBeGreaterThan(reportCount);
+  expect(viewport.scrollTop).toBeCloseTo(scrollBefore, 0);
+  expect(reports.at(-1)?.atEnd, JSON.stringify(reports.at(-1))).toBe(false);
+
+  const endControl = host!.querySelector<HTMLButtonElement>("[data-reader-end-control]")!;
+  endControl.click();
+  await expect
+    .poll(() => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop)
+    .toBeLessThanOrEqual(1);
+  await expect.poll(() => host!.querySelector("[data-reader-end-control]")).toBeNull();
+  const reached = reports.at(-1)!;
+  expect(reached.measuredGap, JSON.stringify(reached)).not.toBeNull();
+  expect(reached.measuredGap, JSON.stringify(reached)).toBeLessThanOrEqual(40);
+  expect(reached.predicate, JSON.stringify(reached)).toBe(true);
+  expect(reached.atEnd).toBe(true);
+  await expect.poll(() => readTimelinePosition(key)?.atEnd).toBe(true);
+
+  // Metadata may grow below the answer without becoming unread answer content
+  // or moving the reader. The already-visible answer still owns being at end.
+  const endScroll = viewport.scrollTop;
+  const answerEnd = viewport
+    .querySelector<HTMLElement>("[data-reading-end]")!
+    .getBoundingClientRect().bottom;
+  const endReportCount = reports.length;
+  flushSync(() => resizeFooter(240));
+  await expect
+    .poll(() => reports.length, {
+      message: JSON.stringify({
+        phase: "footer-growth-at-end",
+        endReportCount,
+        last: reports.at(-1),
+      }),
+    })
+    .toBeGreaterThan(endReportCount);
+  expect(viewport.scrollTop).toBeCloseTo(endScroll, 0);
+  expect(
+    viewport.querySelector<HTMLElement>("[data-reading-end]")!.getBoundingClientRect().bottom,
+  ).toBe(answerEnd);
+  expect(reports.at(-1)?.predicate, JSON.stringify(reports.at(-1))).toBe(true);
+  expect(host!.querySelector("[data-reader-end-control]")).toBeNull();
 });

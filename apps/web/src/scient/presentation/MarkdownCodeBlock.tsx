@@ -76,7 +76,11 @@ export function MarkdownCodeBlock({
         resetKeys={[code, language, themeName, isStreaming]}
         fallback={plainSource}
       >
-        <Suspense fallback={plainSource}>
+        {/* As upstream (#11062): the plain code holds the block's size while the
+            highlighter loads, unseen, so it never flashes uncoloured. Not
+            aria-hidden: it is the only copy of the code until then, for screen
+            readers and for Copy message. */}
+        <Suspense fallback={<div className="invisible">{plainSource}</div>}>
           <HighlightedCode
             code={code}
             language={language}

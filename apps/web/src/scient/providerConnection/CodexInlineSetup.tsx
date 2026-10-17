@@ -1,7 +1,6 @@
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
-  CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
@@ -12,9 +11,9 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   AssistedSetupActions,
+  AssistedSetupDeviceCode,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
@@ -88,7 +87,6 @@ export function CodexInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const { copyToClipboard } = useCopyToClipboard();
 
   useEffect(() => {
     setPendingAction(null);
@@ -365,20 +363,7 @@ export function CodexInlineSetup(props: {
           title={verifying ? "Checking your account" : "Finish signing in"}
         />
         {usingDeviceCode && activeConnectionOperation?.userCode ? (
-          <div className="ms-8 flex items-center justify-between gap-3 rounded-md border bg-background/40 px-3 py-2">
-            <code className="font-semibold tracking-wider text-foreground">
-              {activeConnectionOperation.userCode}
-            </code>
-            <Button
-              aria-label="Copy Codex device code"
-              onClick={() => copyToClipboard(activeConnectionOperation.userCode!, undefined)}
-              size="icon-sm"
-              type="button"
-              variant="ghost-muted"
-            >
-              <CopyIcon aria-hidden />
-            </Button>
-          </div>
+          <AssistedSetupDeviceCode code={activeConnectionOperation.userCode} providerName="Codex" />
         ) : null}
         {!verifying && activeConnectionOperation?.authorizationUrl ? (
           <AssistedSetupActions>

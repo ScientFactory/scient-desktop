@@ -15,7 +15,9 @@ import { math } from "micromark-extension-math";
 
 /**
  * Chat's dialect: CommonMark with GFM and `$$` math. Single-dollar math is off
- * in the tokenizer, as in chat's remark stack, so `$5 and $6` stays text.
+ * in the tokenizer, so `$5 and $6` stays text. Chat itself renders guarded
+ * `$…$` spans (`remarkScientSingleDollarMath` in apps/web); the export
+ * deliberately does not parse them and keeps such spans as text.
  */
 export function parseMarkdown(source: string, options?: { readonly frontMatter?: boolean }): Root {
   const withFrontMatter = options?.frontMatter === true;

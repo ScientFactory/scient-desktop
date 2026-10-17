@@ -1,10 +1,9 @@
 /**
- * How a conversation's work log is grouped around its messages, and chat's
- * per-message line-break decision. Chat's
- * timeline (`MessagesTimeline.logic.ts`) and the server's conversation export
- * both call these functions, so an export groups a turn's work exactly as chat
- * does. Pure and framework-free: entries are described structurally, so chat's
- * `TimelineEntry` and the export's projection both fit without conversion.
+ * How the conversation export groups a turn's work log around its messages, and
+ * chat's per-message line-break decision. This is the export's own, turn-keyed
+ * grouping: it approximates chat's timeline folds (`MessagesTimeline.logic.ts`,
+ * keyed by run), but chat does not call it and the two can differ. Pure and
+ * framework-free: entries are described structurally.
  */
 import type { TurnId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";

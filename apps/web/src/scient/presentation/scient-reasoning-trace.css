@@ -2,3 +2,10 @@
 [data-scient-reasoning-trace] .chat-markdown :is(b, strong, h1, h2, h3, h4, h5, h6) {
   font-weight: inherit;
 }
+
+/* Expanded thoughts read as quietly as their collapsed row: the trace's secondary label colour,
+   not an answer's (upstream draws them text-foreground). Code and links keep their own colours. */
+[data-scient-reasoning-trace] .chat-markdown,
+[data-scient-reasoning-trace] .chat-markdown :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-secondary-label);
+}

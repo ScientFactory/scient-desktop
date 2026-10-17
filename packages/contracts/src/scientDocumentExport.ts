@@ -226,7 +226,7 @@ const WorkspacePath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(4_096),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 /**
@@ -295,7 +295,7 @@ const ProjectDocumentPath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 /** Agent export of a project document to an explicit project output. */

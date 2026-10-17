@@ -35,11 +35,13 @@ import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAp
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
 import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { PullRequestGuideRunCoordinator } from "../components/pullRequest/guide/PullRequestGuideRunCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -74,6 +76,7 @@ import {
   isTransientBootstrapError,
 } from "../environments/primary/auth";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
@@ -152,6 +155,9 @@ function RootRouteView() {
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
   const returningFromWelcomeRef = useRef(pathname === "/welcome");
+  const hostedPromptLinkLanding = useHostedPromptLinkLanding(
+    authGateState.status === "hosted-static",
+  );
 
   useEffect(() => {
     if (pathname === "/welcome") {
@@ -173,6 +179,17 @@ function RootRouteView() {
       <>
         <DocumentTitleSync />
         <Outlet />
+      </>
+    );
+  }
+
+  // Ahead of first-run onboarding, which would otherwise send a new visitor to the welcome
+  // wizard and lose the link.
+  if (hostedPromptLinkLanding !== null) {
+    return (
+      <>
+        <DocumentTitleSync />
+        {hostedPromptLinkLanding}
       </>
     );
   }
@@ -249,11 +266,13 @@ function RootRouteView() {
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           <ProjectCloneToastCoordinator />
+          <PullRequestGuideRunCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
           ) : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+          {isElectron ? <DesktopUpdateLaunchNotice /> : null}
           {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
           {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

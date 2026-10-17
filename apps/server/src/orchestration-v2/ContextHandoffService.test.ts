@@ -15,8 +15,69 @@ import * as Layer from "effect/Layer";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
+import { contextHistoryCandidate } from "./scient-fork/ContextHistoryCandidates.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+
+it.layer(layerTest)("ContextHandoffService resource contract", (it) => {
+  it.effect("rejects a source-only candidate when the requested preparation requires bodies", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const error = yield* service
+        .prepareProviderHandoff({
+          threadId: ThreadId.make("thread:legacy-context"),
+          targetRunId: RunId.make("run:next"),
+          transferId: null,
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("provider-thread:next"),
+          fromProviderInstanceId: ProviderInstanceId.make("codex"),
+          toProviderInstanceId: ProviderInstanceId.make("codex"),
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "full_thread_summary",
+          items: [
+            contextHistoryCandidate(
+              importedItem({ role: "user", id: "metadata", text: "Retained", ordinal: 0 }),
+            ),
+          ],
+          createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ContextHandoffPrepareError");
+    }),
+  );
+  it.effect(
+    "stores immutable source references instead of a transcript on the default Scient path",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+        const text = "historical output ".repeat(60_000);
+        const handoff = yield* service.prepareProviderHandoff({
+          threadId: ThreadId.make("thread:legacy-context"),
+          targetRunId: RunId.make("run:next"),
+          transferId: null,
+          purpose: "scient_fork",
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("provider-thread:next"),
+          fromProviderInstanceId: ProviderInstanceId.make("codex"),
+          toProviderInstanceId: ProviderInstanceId.make("codex"),
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "full_thread_summary",
+          items: Array.from({ length: 12 }, (_, ordinal) =>
+            importedItem({
+              role: ordinal === 0 ? "user" : "assistant",
+              id: `large:${ordinal}`,
+              text,
+              ordinal,
+            }),
+          ),
+          createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+        });
+        assert.isBelow(JSON.stringify(handoff).length, 16_000);
+        assert.notInclude(handoff.summaryText, text);
+        assert.deepEqual(handoff.history?.messages ?? [], []);
+      }),
+  );
+});
 
 function importedItem(
   input:
@@ -154,9 +215,9 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
 
       assert.deepEqual(handoff.history?.omittedItemIds, []);
       assert.equal(handoff.budgetPolicy, "scient");
-      assert.equal(
-        handoff.history?.messages.at(-1)?.text,
-        `${"🧪".repeat(20_000)}LATEST_SINGLE_TOKEN`,
+      assert.deepEqual(
+        handoff.historySource?.entries?.map((entry) => entry.itemId),
+        [TurnItemId.make("turn-item:older"), TurnItemId.make("turn-item:long-single-token")],
       );
       assert.isAtMost(handoff.summaryText.length, 32_000);
       assert.include(handoff.summaryText, "User:\n... ");
@@ -191,7 +252,10 @@ it.layer(layerTest)("ContextHandoffService preparation policy", (it) => {
       for (const purpose of ["scient_fork", "scient_history", "session_recovery"] as const) {
         const retained = yield* service.prepareProviderHandoff({ ...input, purpose });
         assert.equal(retained.budgetPolicy, "scient");
-        assert.equal(retained.history?.messages[0]?.text, text);
+        assert.deepEqual(
+          retained.historySource?.entries?.map((entry) => entry.itemId),
+          [TurnItemId.make("turn-item:large")],
+        );
         assert.deepEqual(retained.history?.omittedItemIds, []);
       }
     }),

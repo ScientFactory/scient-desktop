@@ -1,10 +1,13 @@
 # Chat scrolling and motion
 
 How the chat timeline scrolls and moves, in every situation, as it behaves
-today on the PR #462 branch (on T3 Orchestration V2). Use it to decide what to change: each section
+on main. Use it to decide what to change: each section
 states the rule in plain words, then the numbers and the code that owns it.
-Paths are under `apps/web/src/components/` unless they start with
-`packages/`. Open questions and candidates for change are collected at the end.
+Paths are under `apps/web/src/components/` unless they start with `scient/`
+(under `apps/web/src/`), `apps/` or `packages/`. The scrolling and motion
+modules named `chat/…` are Scient-only files inside upstream's
+`components/chat/` directory. Open questions and candidates for change are
+collected at the end.
 
 ## The few ideas everything rests on
 
@@ -38,7 +41,10 @@ The Scroll to end button jumps to the true bottom of the list, not to this end.
 
 ## Opening a thread and coming back to one
 
-Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
+Owner: `useReadingRestoreTarget` and `useReadingPositionRestore` in
+`chat/readerScrolling.ts` (mounted in `chat/MessagesTimeline.tsx`); saving in
+`useSaveReadingPosition` (same file); session storage in
+`chat/readingPositionStore.ts`, called from upstream's in-memory map in
 `chat/timelineScrollAnchoring.ts`; return position in `chat/liveFollowOffset.ts`.
 
 - **First open (nothing saved):** the view goes to the true bottom and holds
@@ -47,6 +53,9 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
   saved spot is the row at the top of the view plus your offset into it. If
   that row is gone, it falls back to the same turn, then to nearby messages,
   after loading up to 2 pages of older history.
+- **Coming back after resting at the end** (not following): you land on the
+  same row and offset, not at the new end. If new content arrived below, the
+  Scroll to end control shows.
 - **Coming back to a thread you left while the follow was still going** (saved
   as the followed prompt's id; resting at the end alone is not following): you
   land where the follow would be now, not where you left.
@@ -63,7 +72,9 @@ Owner: the restore effect in `chat/MessagesTimeline.tsx`; storage in
   - **Never** past the bottom. While that prompt's run still works, the follow carries on from there.
 - **Any scroll, key, touch or click** during a restore cancels it and leaves
   you where you are.
-- **When positions are saved:**
+- **When positions are saved** (one writer, `useSaveReadingPosition`; it
+  skips while a placement, citation jump or restore is in progress, so a
+  saved record always names its message):
   - on every scroll, synchronously;
   - in each bookkeeping frame;
   - when you switch threads;
@@ -122,6 +133,9 @@ Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
     position, and picks up from rest 250ms after your input stops. It used
     to fight your scroll and feel hesitant.
   - **Scrolling up** by any means cancels the follow for good.
+  - **Keys count only when they scroll the timeline:** focus in it or
+    nowhere, no modifier, not typing in a field. Arrow keys in a menu or a
+    shortcut such as ⌘↑ leave the follow be.
   - **Clicks and text selection** never cancel it.
 - **Far behind** (more than a screen to go): it skips all but the last screen
   at once, then glides.
@@ -152,6 +166,9 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
   - **The resting text:** while a row sweeps, its own text rests at 55%, so the
     light (full color) is clearly seen.
   - **Pausing:** it pauses off screen and in hidden tabs.
+- **A running step that has run 10s** shows how long it has been running
+  ("Running vp · 12s"), ticking every second (`LiveStepElapsed` in
+  `chat/liveActivity.tsx`).
 - **"Working for…" header:** a small breathing dot (6px, fading between 40% and
   100% every 1.6s), then the label, then a separator line under it. The line
   simply appears and stays. The dot fades out with the header's exit.
@@ -179,10 +196,15 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
 
 ## How an answer appears
 
-`chat/useStreamingBlockEntrance.ts`, the `.streamed-reveal` rule in `index.css`.
+`chat/useStreamingBlockEntrance.ts`, the `.streamed-reveal` rule in
+`scient/presentation/scient-streamed-reveal.css`.
 
-Providers send an answer a paragraph at a time. It is shown as one continuous
-flow:
+Providers stream tokens; the server releases the answer in complete blocks
+(paragraphs, lists, code blocks), at most every 400ms, under Settings ▸
+Response streaming ("paragraph", the default;
+`apps/server/src/orchestration-v2/assistantStreaming.ts`). In "turn" mode the
+answer arrives finished and simply shows, with no reveal. In paragraph mode it
+is shown as one continuous flow:
 
 1. **The first lines wait 1s,** so the next paragraphs are usually in hand.
 2. **Lines then appear top to bottom at about 4 lines a second.** The newest
@@ -192,7 +214,9 @@ flow:
 3. **The blank space between paragraphs is crossed 5× faster,** so there's no
    pause at a paragraph break.
 4. **If more than 8 lines are waiting,** the pace rises gently to catch up.
-   When the answer finishes, the rest plays out; nothing is cut off.
+   When the answer finishes, the rest plays out; nothing is cut off. When
+   the reader presses Stop, everything that has arrived shows at once
+   (`showStreamedAnswersNow`, called by `scient/chat/useStopGeneration.ts`).
 5. **The answer is clipped to the lines shown so far.** It grows line by line,
    and whatever follows it stays right below the newest line.
 6. **No replays:**
@@ -203,7 +227,35 @@ flow:
    answer's text, width or images change.
 
 Only masking and clipping are used, so nothing slides. List bullets are not
-clipped.
+clipped. Upstream's 600ms per-block fade (`.chat-markdown[data-streaming] > *`
+in `index.css`) still runs underneath; on an answer the mask mostly hides it,
+and it is the only entrance effect on streaming reasoning.
+
+**Rich content** waits for what it needs:
+
+- Diagrams and charts (Mermaid, Vega-Lite, Plotly) stay highlighted source
+  while the answer streams and become cards once it settles.
+- Math typesets as soon as its closing delimiter arrives.
+- Inline workspace image cards wait for the settled answer.
+
+## When a turn settles
+
+Owners: `deriveTurnFolds` in `chat/MessagesTimeline.logic.ts` (upstream's
+rule), with one marked call to `scient/threadTimeline/keptAnswers.ts`; the
+rule itself is `isSubstantiveAnswer` in
+`packages/scient-conversation/src/answerVisibility.ts`.
+
+- **The work folds** behind one "Worked for…" row at the start of the turn:
+  tool steps, reasoning and short progress notes. The turn's last answer
+  stays visible.
+- **Earlier real answers stay visible too,** in place. A message counts as a
+  real answer when it has structure (a heading, a list of two or more items,
+  a table, fenced code, display math, an image) or at least 400 characters.
+- **A kept answer** gets the final answer's copy button, time and spacing.
+  The turn's other roles stay with its last message: forking, the trailing
+  tool footer, the unread count, fork baselines and export.
+- **Find in thread and citations** see the same rows, because the rule lives
+  in the fold itself.
 
 ## Keeping the end in view while idle
 
@@ -232,7 +284,10 @@ clipped.
 - **Showing and hiding:**
   - It shows 150ms after you leave the end, and repeated scroll events don't
     restart that delay. It hides at once when you reach the end.
-  - It reacts only to crossing the end, never to repeated events.
+  - It reacts only to crossing the end, never to repeated events. ChatView
+    hands every end report to it unfiltered: the timeline never pins itself
+    to the end, so content growing below you (for example after a follow has
+    stopped at the top margin) always brings the control back.
 - **Clicking it** jumps to the true bottom with an animation. It also releases
   any reserved room and restores a scroll-collapsed composer.
 - **The unread count** counts new final answers below the reading area.
@@ -276,7 +331,8 @@ clipped.
 
 ## The composer and scrolling
 
-`ChatComposer.tsx`, `chat/composerFooterLayout.ts`
+`chat/ChatComposer.tsx`, `chat/composerScrollGesture.ts` (thresholds in
+`chat/ChatComposer.tsx`), `composerFooterLayout.ts`
 
 - **Collapse on scroll** (setting "composerCollapseOnScroll", off by default;
   desktop, existing threads):
@@ -297,7 +353,8 @@ clipped.
 - **Top:** a 24px graded fade under the titlebar (the scrollbar lane stays
   solid). It is off while an error or provider-status banner shows at the top.
 - **Bottom:** no fade. The list ends with the composer's height plus 12px
-  (16px on wider windows).
+  (16px on wider windows). The follow aims for a fixed 16px gap; on narrow
+  windows its clamp to the scroll range absorbs the 4px difference.
 - **Nested tool lists:** up to 18rem tall, with 1.5rem fades at the edges
   once scrolled. They follow new calls only if already at their bottom.
 
@@ -307,21 +364,23 @@ clipped.
 | ----------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Top margin for placed messages            | 24px                                                                       | `chat/timelineScrollAnchoring.ts`                                       |
 | End allowance                             | 3 lines, at least 40px (40px for your own message)                         | `chat/readerScrollPolicy.ts`                                            |
-| Gap kept above the composer at the bottom | 16px (12px narrow)                                                         | `chat/useBoundedAnswerFollow.ts`, footer                                |
+| Gap kept above the composer at the bottom | follow: 16px (`END_GAP`); list footer: 12px narrow, 16px wide              | `chat/useBoundedAnswerFollow.ts`, `chat/MessagesTimeline.tsx` footer    |
 | Scroll to end show delay                  | 150ms (hide instant)                                                       | `chat/useTimelineEndControl.ts`                                         |
 | Follow top speed / acceleration           | 1px/ms / 0.004px/ms²                                                       | `chat/useBoundedAnswerFollow.ts`                                        |
 | Follow yields after your scroll           | 250ms                                                                      | `chat/useBoundedAnswerFollow.ts`                                        |
 | First lines shown of a message below      | 48px                                                                       | `chat/useBoundedAnswerFollow.ts`, `chat/liveFollowOffset.ts`            |
 | Answer reveal wait / pace / catch-up      | 1s / 4 lines a second / above 8 waiting lines                              | `chat/useStreamingBlockEntrance.ts`                                     |
-| Gap speed-up / newest-line strength       | 5× / 65%                                                                   | `chat/useStreamingBlockEntrance.ts`, `index.css`                        |
+| Gap speed-up / newest-line strength       | 5× / 65%                                                                   | `chat/useStreamingBlockEntrance.ts`, `scient-streamed-reveal.css`       |
 | Composer glide (first send)               | 260ms, cubic-bezier(0.2, 0, 0, 1)                                          | `chat/timelineEntranceMotion.ts`, `chat/draftHeroTransition.ts`         |
 | First message entrance                    | 300ms after 100ms                                                          | `chat/timelineEntranceMotion.ts`                                        |
 | Working header exit                       | 320ms, cubic-bezier(0.45, 0, 0.55, 1)                                      | `chat/workingRowExit.ts`                                                |
 | Thinking fade                             | 300ms                                                                      | `chat/ThinkingRowFade.tsx`                                              |
 | Live sweep / working dot                  | 7rem band (2.5rem core), 160px/s, continuous loop, text at 55% / 6px, 1.6s | `chat/liveActivity.tsx`, `scient/presentation/scient-live-activity.css` |
-| Interaction settle / disclosure settle    | 400ms / 2 frames                                                           | `chat/MessagesTimeline.tsx`                                             |
-| Position storage                          | 120ms debounce, 100 threads                                                | `chat/timelineScrollAnchoring.ts`                                       |
-| Restore history                           | up to 2 pages; citations up to 20                                          | `chat/MessagesTimeline.tsx`, citations                                  |
+| Interaction settle / disclosure settle    | 400ms / 2 frames                                                           | `chat/readerScrolling.ts` / `chat/MessagesTimeline.tsx`                 |
+| Position storage                          | 120ms debounce, 100 threads                                                | `chat/readingPositionStore.ts`                                          |
+| Restore history                           | up to 2 pages; citations up to 20                                          | `chat/readerScrolling.ts`, citations                                    |
+| Kept answer                               | structure, or at least 400 characters                                      | `packages/scient-conversation/src/answerVisibility.ts`                  |
+| Live step timer                           | after 10s, ticking every second                                            | `chat/liveActivity.tsx`                                                 |
 | Page keys                                 | screen − 36px in 150ms; hold ramps to 2× over 400ms                        | `chat/pageScrollController.ts`                                          |
 | Citation offset / pulse                   | min(120px, ⅓ view) / 3s                                                    | `chat/AssistantCitationSource.tsx`                                      |
 
@@ -329,19 +388,41 @@ clipped.
 
 Recorded in `UPSTREAM.md`:
 
-- **Later sends:** they follow the whole response (T3 only reveals the
-  answer's growth).
+- **How T3 scrolls:** it pins the list to the live end
+  (`maintainScrollAtEnd`, smooth while working) until the reader scrolls
+  away. While the reader follows, it also places each new run's prompt at
+  the top, including runs started from another window. Scroll to end
+  re-arms the pinning.
+- **How Scient scrolls:** pinning is off (`maintainScrollAtEnd={false}`).
+  Only sends from this window, and queued deliveries while you are at the
+  end, are followed, and only until the prompt reaches the top margin.
+  Scroll to end is one-shot.
+- **Other reading differences:**
+  - the reading-end rule for "at the end" (T3: a flat 40px band at the true
+    bottom);
+  - keeping the end in view while idle;
+  - reading positions by message identity, kept in session storage, with
+    history paging (T3: in memory, by row id and offset);
+  - coming back to the saved row even when it was saved at the end (T3 goes
+    to the end);
+  - the unread count on Scroll to end;
+  - no reserved room for later sends or for runs started elsewhere.
 - **The draft composer:** it always animates, instead of following the opt-in
   setting.
 - **Motion added by Scient:**
   - the first-message entrance;
-  - the working header's dot and exit, and the single live sweep;
+  - the working header's dot and exit, and the single live sweep, kept
+    smooth (linear) where T3 #18191 steps it (`steps(30)`);
+  - the live step timer;
   - the Thinking fade;
-  - the line-by-line answer reveal;
+  - the line-by-line answer reveal, which shows everything at once on Stop;
   - the working-row timing (waits for your message);
   - the return-to-following position.
-- **Unchanged from T3:** the first-message reserved room, and the shared
-  `resolveChatListAnchoredEndSpace`, which mobile also uses.
+- **Kept answers:** earlier real answers stay visible when a turn folds (T3
+  keeps only the last message).
+- **Kept from T3:** the reserved room, for the first message only; the shared
+  `resolveChatListAnchoredEndSpace`, which mobile also uses; upstream's
+  per-block streaming fade.
 
 ## Open questions and candidates for change
 
@@ -365,7 +446,13 @@ Known rough edges, found while mapping this:
 - **A restore in progress restarts** whenever new rows stream in.
 - **Long code blocks and tables** in a streaming answer are revealed by height
   like text. Each takes as long as its number of lines.
-- **`data-scroll-anchor-ignore`** markers in several rows have no effect any more.
+- **A streaming answer first seen mid-stream** (entering the thread, or
+  scrolling to a long answer that was never mounted) hides what is already
+  written for 1s, then reveals it from the top at the catch-up pace.
+- **The reveal sets the answer's height every frame** (`max-height` follows
+  the front), so a long reveal re-lays out its row each frame.
+- **`data-scroll-anchor-ignore`** markers in several rows are upstream's own
+  markup and have no effect; there is nothing for Scient to change.
 - **Tests:** ChatView itself has no browser harness. The follow is tested
   through its controller, wired as ChatView wires it
   (`chat/responseFollow.browser.test.tsx`), on a controlled motion clock.

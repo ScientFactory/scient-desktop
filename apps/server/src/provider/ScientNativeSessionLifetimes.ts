@@ -14,6 +14,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { TextGenerationError } from "@t3tools/contracts";
 
 /** A retired instance must never reach its old native transport again. */
 const guardSessionLifetime = (
@@ -85,8 +86,44 @@ export const ownNativeSessionLifetimes = (
   instanceScope: Scope.Scope,
 ): ProviderInstance => {
   const adapter = instance.orchestrationAdapter;
+  const generation = instance.textGeneration;
+  const ownGeneration = <A>(task: Effect.Effect<A, TextGenerationError>) =>
+    Effect.scoped(
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const callerScope = yield* Scope.Scope;
+          const retired = () =>
+            new TextGenerationError({
+              operation: "provider-instance",
+              detail: "The configured provider instance has been retired.",
+            });
+          if (instanceScope.state._tag === "Closed") return yield* retired();
+          const taskScope = yield* Scope.fork(instanceScope);
+          yield* Scope.addFinalizerExit(callerScope, (exit) => Scope.close(taskScope, exit));
+          if (taskScope.state._tag === "Closed") return yield* retired();
+          const fiber = yield* restore(task).pipe(
+            Effect.provideService(Scope.Scope, taskScope),
+            Effect.forkIn(taskScope),
+          );
+          return yield* restore(Fiber.join(fiber)).pipe(
+            Effect.catchCause((cause) =>
+              instanceScope.state._tag === "Closed"
+                ? Effect.fail(retired())
+                : Effect.failCause(cause),
+            ),
+          );
+        }),
+      ),
+    );
   return {
     ...instance,
+    textGeneration: {
+      generateCommitMessage: (input) => ownGeneration(generation.generateCommitMessage(input)),
+      generatePrContent: (input) => ownGeneration(generation.generatePrContent(input)),
+      generateBranchName: (input) => ownGeneration(generation.generateBranchName(input)),
+      generateThreadTitle: (input) => ownGeneration(generation.generateThreadTitle(input)),
+      generateReviewGuide: (input) => ownGeneration(generation.generateReviewGuide(input)),
+    },
     orchestrationAdapter: {
       ...adapter,
       openSession: (input) =>

@@ -5,11 +5,17 @@ import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { describe, expect, it } from "@effect/vitest";
-import { VcsProcessTimeoutError } from "@t3tools/contracts";
+import {
+  VcsProcessTimeoutError,
+  VcsProcessSpawnError,
+  VcsExecutableUnavailableError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as ServerConfig from "../../config.ts";
 
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -41,6 +47,94 @@ const liveLayer = workspaceBindingEvidenceLayer.pipe(
 const testLayer = Layer.merge(liveLayer, NodeServices.layer);
 
 describe("WorkspaceBindingEvidence", () => {
+  it.effect.each(["spawn", "unavailable"] as const)(
+    "admits only canonical host-owned Scratch folders without Git (%s)",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-no-git-authority-" });
+        const root = path.join(baseDir, "scratch");
+        const child = path.join(root, "conversation");
+        const nested = path.join(child, "nested");
+        const outside = path.join(baseDir, "outside");
+        yield* fs.makeDirectory(nested, { recursive: true });
+        yield* fs.makeDirectory(outside);
+        const missing =
+          kind === "spawn"
+            ? new VcsProcessSpawnError({
+                operation: "test",
+                cwd: root,
+                command: "git",
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  syscall: "spawn git",
+                }),
+              })
+            : new VcsExecutableUnavailableError({
+                operation: "test",
+                cwd: root,
+                command: "git",
+                kind: "git",
+              });
+        const fixture = workspaceBindingEvidenceLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              ServerConfig.layerTest(baseDir, baseDir).pipe(Layer.provide(NodeServices.layer)),
+              Layer.effect(
+                VcsDriverRegistry.VcsDriverRegistry,
+                VcsDriverRegistry.VcsDriverRegistry.pipe(
+                  Effect.map((registry) => ({
+                    ...registry,
+                    get: (kind) =>
+                      registry.get(kind).pipe(
+                        Effect.map((driver) => ({
+                          ...driver,
+                          execute: () => Effect.fail(missing),
+                        })),
+                      ),
+                  })),
+                ),
+              ).pipe(Layer.provide(vcsRegistryLayer)),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const evidence = yield* WorkspaceBindingEvidence;
+          for (const directory of [root, child]) {
+            const observed = yield* evidence.inspect(directory);
+            expect(observed.trustState).toBe("verified");
+            expect(observed.worktreeIdentity).toBeNull();
+            expect(observed.repositoryIdentity).toBeNull();
+          }
+          yield* fs.symlink(outside, path.join(root, "escape"));
+          for (const directory of [outside, nested, path.join(root, "escape")]) {
+            expect((yield* evidence.inspect(directory).pipe(Effect.flip)).kind).toBe(
+              "repository-inspection-failed",
+            );
+          }
+          yield* fs.writeFileString(path.join(child, ".git"), "gitdir: /missing");
+          expect((yield* evidence.inspect(child).pipe(Effect.flip)).kind).toBe(
+            "repository-inspection-failed",
+          );
+          yield* fs.remove(path.join(child, ".git"));
+          yield* fs.symlink(path.join(baseDir, "missing"), path.join(baseDir, ".git"));
+          expect((yield* evidence.inspect(child).pipe(Effect.flip)).kind).toBe(
+            "repository-inspection-failed",
+          );
+          yield* fs.remove(path.join(baseDir, ".git"));
+          yield* fs.rename(root, path.join(baseDir, "redirected"));
+          yield* fs.symlink(path.join(baseDir, "redirected"), root);
+          expect(
+            (yield* evidence.inspect(path.join(root, "conversation")).pipe(Effect.flip)).kind,
+          ).toBe("repository-inspection-failed");
+        }).pipe(Effect.provide(fixture));
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect.each(
     (["probe", "remotes", "canonical-path", "truncated", "invalid-utf8"] as const).map(
       (failure) => ({

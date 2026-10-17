@@ -82,6 +82,7 @@ export const harness = Effect.fnUntraced(function* (options?: {
             generatePrContent: unused,
             generateBranchName: unused,
             generateThreadTitle: unused,
+            generateReviewGuide: unused,
           },
           orchestrationAdapter: makeNativeSessionAdapterV2({
             instanceId,

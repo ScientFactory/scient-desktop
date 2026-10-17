@@ -23,8 +23,10 @@ import * as ServerConfig from "../../../config.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -60,6 +62,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -139,6 +142,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -206,7 +210,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
   }),
 );
 
-it.effect("starts a project from just a title when workspaceRoot is omitted", () =>
+it.effect("refuses name-only projects through the real service while the Scient gate is off", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");
     const createdProjectId = ProjectId.make("project:named");
@@ -222,7 +226,6 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       archivedAt: null,
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
-    const named: Array<string> = [];
     const registered: Array<string> = [];
     const createdProject = {
       id: createdProjectId,
@@ -244,6 +247,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -273,18 +277,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
             projectId === createdProjectId ? Option.some(createdProject) : Option.none(),
           ),
       }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        createNamedProject: (input) =>
-          Effect.sync(() => {
-            named.push(input.name);
-            return {
-              projectId: createdProjectId,
-              workspaceRoot: createdProject.workspaceRoot,
-              commitError: "Git has no name or email on this machine.",
-            };
-          }),
-      }),
+      Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(false) }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
@@ -293,21 +286,27 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     );
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(ManagedProjectFolders.layer),
+          Layer.provide(dependencies),
+        ),
       ),
     );
     const handle = (params: Parameters<typeof toolkit.handle<"scient_project_create">>[1]) =>
       toolkit
         .handle("scient_project_create", params)
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.provide(ManagedProjectFolders.layer.pipe(Layer.provideMerge(dependencies))),
+        );
 
     const result = yield* handle({ title: "Pinball Stats" });
     expect(result.at(-1)?.result).toMatchObject({
-      id: createdProjectId,
-      workspaceRoot: "/projects/pinball-stats",
-      commitError: "Git has no name or email on this machine.",
+      code: "orchestration_error",
+      message: "Starting a project from just a name is not available on this environment.",
     });
-    expect(named).toEqual(["Pinball Stats"]);
+    expect(registered).toEqual([]);
 
     // A path still registers that folder, and never makes a named project.
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });
@@ -321,7 +320,6 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       const rejected = yield* handle({ title: "Configured", ...extra });
       expect(rejected.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     }
-    expect(named).toEqual(["Pinball Stats"]);
   }),
 );
 
@@ -333,7 +331,10 @@ const projectLaunchHarness = (input: {
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus",
+  };
   const sourceThreadId = ThreadId.make("thread:project-launch-caller");
   const threadScope = {
     threadId: sourceThreadId,
@@ -347,6 +348,7 @@ const projectLaunchHarness = (input: {
     modelSelection,
   };
   const layerDependencies = Layer.mergeAll(
+    ServerSettings.layerTest(),
     NodeCrypto.layer,
     Layer.mock(ProviderSessionManagerV2)({
       resolveMcpInvocationPolicy: (requested) =>

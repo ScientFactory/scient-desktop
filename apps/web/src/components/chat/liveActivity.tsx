@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
@@ -112,4 +113,47 @@ export function observeLiveActivitySweep(element: HTMLElement | null) {
 /** The working header's steady cue: a small dot that gently breathes. */
 export function LiveActivityDot() {
   return <span aria-hidden ref={observeVisibleAnimation} className="live-activity-dot" />;
+}
+
+/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
+const LIVE_STEP_TIMER_AFTER_MS = 10_000;
+
+function liveStepElapsedSuffix(startedAt: string, formatElapsed: (startedAt: string) => string) {
+  const elapsedMs = Date.now() - Date.parse(startedAt);
+  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
+    ? ` · ${formatElapsed(startedAt)}`
+    : "";
+}
+
+/**
+ * How long a step that is still running has run ("· 12s"), once it has run
+ * long enough to wonder. Ticks through DOM writes, like the turn's own timer,
+ * whose format it takes (`formatElapsed`, the timeline's working-timer text).
+ */
+export function LiveStepElapsed({
+  startedAt,
+  formatElapsed,
+}: {
+  startedAt: string;
+  formatElapsed: (startedAt: string) => string;
+}) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = liveStepElapsedSuffix(startedAt, formatElapsed);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = liveStepElapsedSuffix(startedAt, formatElapsed);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [startedAt, formatElapsed]);
+
+  return (
+    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
+      {initialText}
+    </span>
+  );
 }

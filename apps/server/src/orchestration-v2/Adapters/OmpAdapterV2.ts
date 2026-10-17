@@ -280,7 +280,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           const extension = yield* writeOmpExtensionFiles({
             target,
             directory: root,
-            name: `scient-extension-${yield* options.crypto.randomUUIDv4}`,
+            name: `scient-extension-${yield* options.crypto.randomUUIDv4()}`,
             source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath),
             bootstrap: {
               endpoint: mcp?.endpoint ?? null,
@@ -305,7 +305,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     {
                       observedAt,
                       event: {
-                        id: yield* options.crypto.randomUUIDv4,
+                        id: yield* options.crypto.randomUUIDv4(),
                         kind: record.kind,
                         provider: target.driverKind,
                         providerInstanceId: options.instanceId,
@@ -743,7 +743,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             target,
             client,
             scope,
-            continuationIdPrefix: yield* options.crypto.randomUUIDv4,
+            continuationIdPrefix: yield* options.crypto.randomUUIDv4(),
             onUpdate: applyUpdate,
             ...(options.nativeEventLogger
               ? {
@@ -975,7 +975,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               if ("messageBytes" in delivery) {
                 const promptPath = path.join(
                   root,
-                  `scient-prompt-${yield* options.crypto.randomUUIDv4}.txt`,
+                  `scient-prompt-${yield* options.crypto.randomUUIDv4()}.txt`,
                 );
                 yield* fs.writeFileString(promptPath, text, { mode: 0o600 });
                 yield* Effect.addFinalizer(() => fs.remove(promptPath).pipe(Effect.ignore));

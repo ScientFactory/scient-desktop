@@ -59,11 +59,13 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
                 };

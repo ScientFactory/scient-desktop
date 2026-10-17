@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { LoaderIcon, LogOutIcon, PowerIcon, TriangleAlertIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -14,11 +14,13 @@ import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
+import { ModelPickerOverlayContext } from "./ModelPickerOverlayContext";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { OmpInlineSetup } from "./OmpInlineSetup";
 import { ScientAgentInlineSetup } from "./ScientAgentInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
+import { MuseInlineSetup } from "./MuseInlineSetup";
 import {
   isProviderAccountPresentedAsConnected,
   providerLifecycleFailureMessage,
@@ -42,6 +44,7 @@ export function supportsAssistedProviderSetupSurface(
     case "omp":
     case "scient":
     case "pi":
+    case "muse":
       return true;
     default:
       return false;
@@ -72,6 +75,7 @@ type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
  * construction and the management surface's shared account action.
  */
 export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
+  const overlay = useContext(ModelPickerOverlayContext);
   if (!supportsAssistedProviderSetupSurface(props.provider.driver, props.surface)) return null;
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
@@ -84,7 +88,7 @@ export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps)
       />
     );
   }
-  if (props.provider.probePending === true) {
+  if (props.provider.probePending === true && overlay?.instanceId !== props.provider.instanceId) {
     return <ProviderProbePendingSetup displayName={displayName} />;
   }
   return <SupportedAssistedProviderSetupHost {...props} />;
@@ -158,6 +162,17 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
 
   let setup: ReactNode;
   switch (props.provider.driver) {
+    case "muse":
+      setup = (
+        <MuseInlineSetup
+          {...managementProps}
+          controller={controller}
+          environmentId={props.environmentId}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
     case "omp":
       setup = (
         <OmpInlineSetup

@@ -102,6 +102,12 @@ operation. After a failure, **Manage** opens the existing error and recovery con
 an operation starts appear as notifications. The local computer independently verifies and tests the
 release before activation.
 
+For a runtime Scient manages or can install, Settings and the provider setup screens show a status
+line such as **Update 0.241.1 available · checked 5m ago** or **Up to date · checked 2h ago**. It
+says when Scient last checked its qualified-release catalog. If the latest check failed, the line
+says so with the reason and the time of the last successful check, and Scient keeps using the
+catalog it already has. When automatic update checks are off, the line says that instead.
+
 Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
 that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
 running, the button shows **Waiting**; your conversations continue on the next message. Cancel a

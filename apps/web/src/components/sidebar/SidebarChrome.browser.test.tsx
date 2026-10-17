@@ -1,29 +1,66 @@
 import "../../index.css";
 
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import { EnvironmentId, type DesktopUpdateState } from "@t3tools/contracts";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
+import { setUpdateEverythingRun } from "./updateEverythingRun";
+import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
   updateState: null as DesktopUpdateState | null,
+  /** Replaces the remote half of the update button when set. */
+  everything: null as ReturnType<typeof useUpdateEverything> | null,
   navigate: vi.fn(),
   preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
+  environments: [] as Array<{
+    environmentId: EnvironmentId;
+    label: string;
+    connection: { phase: "connected"; error: null; traceId: null };
+    entry: {
+      target: PrimaryConnectionTarget;
+      enabled: boolean;
+      profile: Option.Option<never>;
+    };
+    serverConfig: {
+      environment: {
+        environmentId: EnvironmentId;
+        label: string;
+        platform: { os: "linux"; arch: "x64" };
+        serverVersion: string;
+        capabilities: { repositoryIdentity: boolean; pullRequests: boolean };
+      };
+      settings: { continueThreadsAfterServerUpdate: boolean };
+      providers: readonly never[];
+    };
+  }>,
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/desktopUpdate", () => ({
   useDesktopUpdateState: () => fixture.updateState,
 }));
+vi.mock("./useUpdateEverything", async (original) => {
+  const actual = await original<typeof import("./useUpdateEverything")>();
+  return {
+    useUpdateEverything: (localUpdateVersion: string | null) => {
+      const real = actual.useUpdateEverything(localUpdateVersion);
+      return fixture.everything ?? real;
+    },
+  };
+});
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironments: () => ({
-    environments: [{ serverConfig: { environment: { capabilities: { pullRequests: true } } } }],
+    environments: fixture.environments,
   }),
   usePullRequestsSupported: () => true,
 }));
@@ -42,6 +79,8 @@ let root: Root | undefined;
 afterEach(() => {
   root?.unmount();
   host?.remove();
+  fixture.everything = null;
+  setUpdateEverythingRun(() => null);
   vi.clearAllMocks();
 });
 
@@ -66,18 +105,50 @@ const updateState: DesktopUpdateState = {
 
 async function mountFooter(width: number, state: DesktopUpdateState) {
   fixture.updateState = state;
+  const environmentId = EnvironmentId.make("sidebar-geometry-primary");
+  fixture.environments = [
+    {
+      environmentId,
+      label: "This app",
+      connection: { phase: "connected", error: null, traceId: null },
+      entry: {
+        target: new PrimaryConnectionTarget({
+          environmentId,
+          label: "This app",
+          httpBaseUrl: "http://localhost:5733",
+          wsBaseUrl: "ws://localhost:5733",
+        }),
+        enabled: true,
+        profile: Option.none(),
+      },
+      serverConfig: {
+        environment: {
+          environmentId,
+          label: "This app",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: state.currentVersion,
+          capabilities: { repositoryIdentity: true, pullRequests: true },
+        },
+        settings: { continueThreadsAfterServerUpdate: false },
+        providers: [],
+      },
+    },
+  ];
   host = document.createElement("div");
   Object.assign(host.style, { width: `${width}px`, margin: "20px", background: "white" });
   document.body.append(host);
   root = createRoot(host);
+  // The app root's registry carries the shared update-run state the pill reads.
   root.render(
-    <SidebarProvider className="min-h-0">
-      <TooltipProvider>
-        <SidebarFooter className="w-full">
-          <SidebarUtilityMenu />
-        </SidebarFooter>
-      </TooltipProvider>
-    </SidebarProvider>,
+    <AppAtomRegistryProvider>
+      <SidebarProvider className="min-h-0">
+        <TooltipProvider>
+          <SidebarFooter className="w-full">
+            <SidebarUtilityMenu />
+          </SidebarFooter>
+        </TooltipProvider>
+      </SidebarProvider>
+    </AppAtomRegistryProvider>,
   );
   await expect.poll(() => host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
@@ -136,6 +207,66 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
     if (status === "downloaded" && import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/restart-wide.png`,
+        element: host!,
+      });
+    }
+  },
+);
+
+it.each(["Update", "Updating"] as const)(
+  "fits the %s label for other machines and providers inside the minimum sidebar",
+  async (label) => {
+    fixture.everything = {
+      hasUpdates: true,
+      summary: "Update 1 server and 2 providers",
+      lines: ["alvin: server to 0.6.21, Codex, Claude"],
+      restarts: [],
+      skipped: [],
+      // The run stays in progress so the button keeps its running label, which
+      // the shared run state drives.
+      run: () => {
+        setUpdateEverythingRun(() => ({ localVersion: null, phase: "providers", machines: [] }));
+        return new Promise<void>(() => {});
+      },
+    };
+    await mountFooter(216, {
+      ...updateState,
+      status: "idle",
+      downloadedVersion: null,
+      availableVersion: null,
+    });
+    if (label === "Updating") {
+      await page.getByRole("button", { name: /^Update: / }).click();
+      await page.getByRole("button", { name: "Update", exact: true }).click();
+      await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+    }
+    const pill = page.getByRole("button", { name: new RegExp(`^${label}: `) });
+    await expect.element(pill).toBeVisible();
+
+    const button = pill.element() as HTMLButtonElement;
+    expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+    const rect = button.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(64);
+    const icon = button.querySelector("svg")!.getBoundingClientRect();
+    const text = button.querySelector("span.tabular-nums")!.getBoundingClientRect();
+    expect(icon.left - rect.left).toBeGreaterThanOrEqual(5);
+    expect(Math.abs(icon.left - rect.left - (rect.right - text.right))).toBeLessThanOrEqual(1);
+
+    const footer = host!
+      .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+      .getBoundingClientRect();
+    let previousRight = footer.left;
+    for (const visible of [...host!.querySelectorAll("button")].filter(
+      (candidate) => candidate.getClientRects().length,
+    )) {
+      const bounds = visible.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
+      expect(bounds.right).toBeLessThanOrEqual(footer.right);
+      previousRight = bounds.right;
+    }
+    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-${label.toLowerCase()}.png`,
         element: host!,
       });
     }

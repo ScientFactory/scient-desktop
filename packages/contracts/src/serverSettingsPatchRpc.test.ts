@@ -24,6 +24,32 @@ describe("server.updateSettings payload encoding", () => {
     ],
     ["ordinary setting", { responseStreamingMode: "turn" }],
     ["provider instances", { providerInstances: {} }],
+    [
+      "model visibility with curated seed",
+      {
+        setModelsHidden: [
+          {
+            provider: ProviderInstanceId.make("pi_remote"),
+            model: "synthetic",
+            hidden: true,
+            initialPreferences: {
+              hiddenModels: ["unsaved-hidden"],
+              modelOrder: ["first", "synthetic"],
+            },
+          },
+        ],
+      },
+    ],
+    [
+      "model order with explicitly empty seed",
+      {
+        setProviderModelOrder: {
+          provider: ProviderInstanceId.make("pi_remote"),
+          modelOrder: ["synthetic"],
+          initialPreferences: { hiddenModels: [], modelOrder: [] },
+        },
+      },
+    ],
   ] as const satisfies ReadonlyArray<readonly [string, ServerSettingsPatch]>;
 
   it.each(ordinaryPatches)("encodes %s without the legacy providers field", (_name, patch) => {

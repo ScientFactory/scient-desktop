@@ -161,4 +161,24 @@ describe("non-public compatibility boundaries", () => {
       findPublicBrandViolations([{ path: "apps/web/src/other.ts", contents: compatibility }]),
     ).toHaveLength(1);
   });
+  it("preserves only the exact opaque Codex originator and rejects adjacent public branding", () => {
+    const path = "apps/server/src/provider/CodexProvider.ts";
+    const compatibility = 'const CODEX_COMPATIBILITY_ORIGINATOR = "T3 Code";';
+    const publicCopy = 'const clientTitle = "T3 Code";';
+    expect(findPublicBrandViolations([{ path, contents: compatibility }])).toEqual([]);
+    expect(
+      findPublicBrandViolations([{ path, contents: compatibility + "\n" + publicCopy }]),
+    ).toEqual([{ path, line: 2, text: publicCopy }]);
+    expect(
+      findPublicBrandViolations([
+        {
+          path: "apps/server/src/provider/OtherProvider.ts",
+          contents: compatibility,
+        },
+      ]),
+    ).toHaveLength(1);
+    expect(
+      findPublicBrandViolations([{ path, contents: 'const CODEX_CLIENT_NAME = "T3 Code";' }]),
+    ).toHaveLength(1);
+  });
 });

@@ -841,7 +841,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               "A newer Antigravity runtime is already installed. Refresh the provider catalog before repairing it.",
             );
           }
-          const operationId = yield* crypto.randomUUIDv4;
+          const operationId = yield* crypto.randomUUIDv4();
           const next: ProviderInstallState = {
             driver: DRIVER,
             operationId,

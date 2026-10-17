@@ -1,7 +1,4 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2HistoricalMessage,
-} from "@t3tools/contracts";
+import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -46,6 +43,10 @@ import type {
   ProviderSelectionTransitionInput,
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
+// SCIENT-FORK:START — running-fork text snapshots live in a Scient module.
+import type { ScientTextSnapshotRuntime } from "./scientTextSnapshots.ts";
+export * from "./scientTextSnapshots.ts";
+// SCIENT-FORK:END
 
 export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
@@ -166,67 +167,6 @@ export const ProviderAdapterV2Event = Schema.Union([
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
-
-/** Private native capture identity, never a serialized execution capability. */
-export interface ProviderTextSnapshotOwner {
-  readonly threadId: ThreadId;
-  readonly runId: RunId;
-  readonly activeAttemptId: RunAttemptId;
-  readonly rootNodeId: NodeId;
-  readonly runOrdinal: number;
-  readonly providerThreadId: ProviderThreadId;
-  readonly nativeThreadId: string;
-  readonly providerTurnId: ProviderTurnId;
-  readonly nativeTurnId: string;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly driver: ProviderDriverKind;
-}
-export type ProviderTextSnapshotConsumerOwner = Omit<
-  ProviderTextSnapshotOwner,
-  "nativeThreadId" | "providerTurnId" | "nativeTurnId"
->;
-export class ProviderTextSnapshotError extends Schema.TaggedError<ProviderTextSnapshotError>()(
-  "ProviderTextSnapshotError",
-  {
-    reason: Schema.Literals([
-      "unsupported",
-      "not-native-ready",
-      "busy",
-      "owner-lost",
-      "newer-delta",
-      "consumer-ended",
-      "capture-failed",
-      "timed-out",
-    ]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-export interface ProviderTextSnapshotProjection {
-  readonly workspaceRoot: string;
-  readonly projection: OrchestrationV2ThreadProjection;
-  readonly sourceSequence: number;
-}
-export interface CapturedProviderText extends ProviderTextSnapshotProjection {
-  readonly token: symbol;
-  readonly owner: ProviderTextSnapshotOwner;
-  readonly watermark: number;
-}
-export interface ProviderTextSnapshotBatch {
-  readonly type: "internal.text_snapshot";
-  readonly token: symbol;
-  readonly owner: ProviderTextSnapshotOwner;
-  readonly watermark: number;
-  readonly events: ReadonlyArray<ProviderAdapterV2Event>;
-}
-export type ProviderAdapterV2InternalEvent = ProviderAdapterV2Event | ProviderTextSnapshotBatch;
-export interface ProviderTextSnapshotConsumer {
-  readonly bind: (owner: ProviderTextSnapshotConsumerOwner) => Effect.Effect<void>;
-  readonly consume: <E, R>(
-    batch: ProviderTextSnapshotBatch,
-    write: Effect.Effect<ProviderTextSnapshotProjection, E, R>,
-  ) => Effect.Effect<void, never, R>;
-}
 
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",
@@ -563,10 +503,6 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }
 
-export interface ProviderTextSnapshotSubscription extends ProviderAdapterV2EventSubscription {
-  readonly snapshotEvents: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
-  readonly textSnapshotConsumer: ProviderTextSnapshotConsumer;
-}
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
@@ -622,24 +558,16 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
-export interface ProviderAdapterV2SessionRuntime {
-  readonly subscribeTextSnapshotEvents?: Effect.Effect<ProviderTextSnapshotSubscription>;
-  /** Uses the same native sequencer; the manager is its sole reader. */
-  readonly textSnapshots?: {
-    readonly events: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
-    readonly request: (
-      owner: ProviderTextSnapshotOwner,
-      token: symbol,
-    ) => Effect.Effect<void, ProviderTextSnapshotError>;
-    readonly ended: Effect.Effect<never, ProviderTextSnapshotError>;
-    readonly withCurrent: <A, E, R>(
-      token: symbol,
-      watermark: number | undefined,
-      commit: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | ProviderTextSnapshotError, R>;
-    readonly release: (token: symbol) => Effect.Effect<void>;
-  };
+/** A terminal task outcome observed by the provider, not inferred from a stop timeout. */
+export type ProviderAdapterV2SubagentOutcome = {
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
+  readonly result: OrchestrationV2Subagent["result"];
+};
 
+// SCIENT-FORK:START — running-fork text snapshot members come from ScientTextSnapshotRuntime.
+export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRuntime {
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — readiness is process-local; held intent remains canonical on the run.
   readonly configureDroidSteerOwner?: (input: {
     readonly attemptId: RunAttemptId;
@@ -711,6 +639,14 @@ export interface ProviderAdapterV2SessionRuntime {
   /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
   readonly modelContextWindowLaunchFingerprint?: string;
   /**
+   * Set when every background task this session lists on its provider threads
+   * runs inside the session's own process and ends when it closes. The session
+   * manager then clears those tasks when it releases the session (#15239).
+   * Leave unset when a task can outlive the session, for example on a shared
+   * server, so its thread keeps showing Waiting.
+   */
+  readonly backgroundTasksEndWithProcess?: true;
+  /**
    * Capacity for the requested model/options, independent of native thread usage.
    * `cwd` is the thread's working directory, for providers whose project config
    * can change a model's limits.
@@ -747,6 +683,12 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly stopTask?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly taskId: string;
+    /** The app captured this activation; progress may change, ownership may not. */
+    readonly expectedTask?: OrchestrationV2Subagent;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -754,7 +696,9 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly stopSubagent?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly nativeTaskId: string;
-  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+    /** A delayed Stop must not interrupt a task resumed after this request. */
+    readonly requestedAt?: NonNullable<OrchestrationV2Subagent["startedAt"]>;
+  }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
   /**
    * Lets a runtime shared by several app threads unload one provider thread's
    * native state (and its MCP servers) when that app thread detaches, while

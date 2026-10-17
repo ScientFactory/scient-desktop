@@ -3,6 +3,9 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+// SCIENT-FORK:START — native account writes that cannot verify sign-in.
+import { providerAuthPresentation } from "@t3tools/client-runtime/provider-auth-presentation";
+// SCIENT-FORK:END
 import type {
   EnvironmentId,
   ProviderAuthRespondInput,
@@ -63,6 +66,9 @@ export function ProviderAuthenticationSection({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && auth?.phase === "succeeded");
+  // SCIENT-FORK:START — native account writes that cannot verify sign-in.
+  const unverifiedAuth = providerAuthPresentation(provider, auth);
+  // SCIENT-FORK:END
   const isDiscovering =
     provider.driver === "acpRegistry" &&
     !active &&
@@ -91,6 +97,12 @@ export function ProviderAuthenticationSection({
         : needsExternalSetup
           ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
           : `Sign in on ${environmentLabel}.`;
+  // SCIENT-FORK:START — a native account write reports its own result.
+  const accountStatus =
+    !active && !signedIn && unverifiedAuth.unverifiedMessage
+      ? unverifiedAuth.unverifiedMessage
+      : accountDescription;
+  // SCIENT-FORK:END
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
@@ -176,7 +188,7 @@ export function ProviderAuthenticationSection({
             />
           </span>
         ) : (
-          <span role="status">{accountDescription}</span>
+          <span role="status">{accountStatus}</span>
         )
       }
       status={
@@ -298,7 +310,11 @@ export function ProviderAuthenticationSection({
                     : "Sign in"}
               </Button>
             ) : null}
-            {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+            {!active &&
+            // SCIENT-FORK:START — native accounts can sign out without a verified status.
+            (signedIn || unverifiedAuth.canClearCredentials) &&
+            // SCIENT-FORK:END
+            (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
                 variant="ghost"

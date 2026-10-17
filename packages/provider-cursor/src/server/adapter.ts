@@ -2276,7 +2276,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(mcpServers === undefined ? {} : { mcpServers }),
                 },
                 onDelta: (update) => {
                   if (context === null) {

@@ -17,7 +17,17 @@ import {
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
+  readonly readerWorker?: boolean;
+  readonly checkpointWorker?: boolean;
   readonly spanAttributes?: Record<string, unknown>;
+  // SCIENT-FORK:START — open options for the Overleaf state store's own SQLite file.
+  /**
+   * Applied while the Bun client opens the file. The Node client sets no busy
+   * timeout and no journal mode on open, so it needs neither.
+   */
+  readonly busyTimeout?: Duration.Input;
+  readonly disableWAL?: boolean;
+  // SCIENT-FORK:END
 };
 
 type Loader = {
@@ -36,6 +46,9 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   const clientModule = yield* Effect.promise<Loader>(loader);
   return clientModule.layer(config);
 }, Layer.unwrap);
+// SCIENT-FORK:START — the Overleaf state store opens its own SQLite file, without V2 setup.
+export { makeRuntimeSqliteLayer };
+// SCIENT-FORK:END
 
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
@@ -52,10 +65,18 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       yield* sql`PRAGMA busy_timeout = 5000;`;
       yield* sql`PRAGMA foreign_keys = ON;`;
       yield* sql`PRAGMA journal_mode = WAL;`;
+      // SCIENT-FORK:START — preserve committed scientific work across power loss.
+      yield* sql`PRAGMA synchronous = FULL;`;
+      // SCIENT-FORK:END
+      // macOS fsync() does not flush the drive cache. F_FULLFSYNC makes checkpoints
+      // reach disk; other platforms ignore it. Per-commit fullfsync stays off.
+      yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
       // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* runMigrations();
+      // Analyze missing or substantially changed index statistics under a bounded analysis limit.
+      yield* sql`PRAGMA optimize = 0x10012;`;
       // SCIENT-FORK:START
       yield* runScientMigrations(sql);
       // SCIENT-FORK:END
@@ -80,6 +101,10 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     }),
     makeRuntimeSqliteLayer({
       filename: dbPath,
+      readerWorker: true,
+      // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
+      // the event loop so a slow flush cannot stall clients.
+      checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

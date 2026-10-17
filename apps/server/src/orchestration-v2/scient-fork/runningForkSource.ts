@@ -1,6 +1,11 @@
 /** A running fork reads its source's streamed text while the source turn is live.
  * These checks decide whether that captured source still owns the run. */
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2StoredEvent,
+  OrchestrationV2ThreadProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,6 +25,7 @@ import type { ProviderEventIngestorV2Shape } from "../ProviderEventIngestor.ts";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type * as ProjectStore from "../ProjectStore.ts";
 import type { ProviderEventRoutingState } from "../RunExecutionService.ts";
+import type { makeCommitPublication } from "./CommitPublication.ts";
 
 /** The records that decide whether a captured owner still runs its thread. */
 const RUNNING_FORK_OWNER_FIELDS = [
@@ -222,3 +228,51 @@ export const makeRunningForkTextSnapshots = (input: {
     },
   };
 };
+
+/**
+ * Writes a running fork's captured native text into its source and reads the
+ * source at that frame, in one transaction; publishes after commit. The event
+ * sink supplies its own write steps.
+ */
+export const makeRunningForkTextCapture = <EOwner, EAppend, ESequence>(deps: {
+  readonly commitAndPublish: Effect.Success<ReturnType<typeof makeCommitPublication>>;
+  readonly readOwner: (owner: ProviderTextSnapshotOwner) => Effect.Effect<unknown, EOwner>;
+  /** Normalizes, appends and applies the events inside the transaction. */
+  readonly appendAndApply: (
+    events: ReadonlyArray<OrchestrationV2DomainEvent>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EAppend>;
+  readonly publish: (events: ReadonlyArray<OrchestrationV2StoredEvent>) => Effect.Effect<void>;
+  readonly latestSequence: (threadId: ThreadId) => Effect.Effect<number, ESequence>;
+  readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
+  readonly projectStore: ProjectStore.ProjectStoreV2["Service"];
+}) =>
+  Effect.fn("EventSink.captureRunningForkText")(function* (input: {
+    readonly owner: ProviderTextSnapshotOwner;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) {
+    const result = yield* deps.commitAndPublish(
+      Effect.gen(function* () {
+        yield* deps.readOwner(input.owner);
+        const storedEvents = yield* deps.appendAndApply(input.events);
+        yield* deps.readOwner(input.owner);
+        // The fork's one full read of its source, at the captured frame.
+        const projection = yield* deps.projectionStore.getThreadProjection(input.owner.threadId);
+        const sourceSequence = yield* deps.latestSequence(input.owner.threadId);
+        const project = yield* deps.projectStore.get(projection.thread.projectId);
+        if (Option.isNone(project))
+          return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+        return {
+          projection,
+          sourceSequence,
+          storedEvents,
+          workspaceRoot: project.value.workspaceRoot,
+        };
+      }),
+      (committed) => deps.publish(committed.storedEvents),
+    );
+    return {
+      projection: result.projection,
+      sourceSequence: result.sourceSequence,
+      workspaceRoot: result.workspaceRoot,
+    } satisfies ProviderTextSnapshotProjection;
+  });

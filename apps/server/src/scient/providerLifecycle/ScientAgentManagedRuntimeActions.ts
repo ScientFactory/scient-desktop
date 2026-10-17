@@ -8,6 +8,7 @@ import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
   detectManagedRuntimeTarget,
+  downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -216,7 +217,11 @@ export const makeQualifiedManagedScientAgentRuntime = Effect.fn(
     target: scientAgentTarget,
     gate,
     qualification,
-    dependencies: { ...input.dependencies, smoke },
+    dependencies: {
+      ...input.dependencies,
+      download: input.dependencies?.download ?? downloadManagedScientAgentRuntime,
+      smoke,
+    },
   });
 });
 
@@ -228,7 +233,7 @@ const probeConfiguredScientAgentRuntime =
       const resolvedBinary = yield* resolveCommandPath(binary, {
         env: environment,
         bypassCache: true,
-      }).pipe(Effect.orElseSucceed(() => binary));
+      }).pipe(Effect.map((resolved) => resolved ?? binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
       yield* gate.acquireProcess(identity, { target: scientAgentTarget, kind: "one-shot" });
       const resolved = yield* resolveSpawnCommand(

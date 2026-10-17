@@ -1,6 +1,8 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useContext } from "react";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -89,6 +91,7 @@ function DialogPopup({
   layer?: "default" | "above-popovers";
 }) {
   const isViewer = variant !== "default";
+  const scrollScope = useContext(OverlayScrollScope);
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -124,6 +127,8 @@ function DialogPopup({
             bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
             className,
           )}
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           data-slot="dialog-popup"
           data-layout={layout}
           {...props}

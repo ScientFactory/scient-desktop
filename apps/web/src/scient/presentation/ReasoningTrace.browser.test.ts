@@ -26,6 +26,28 @@ describe("expanded thought typography", () => {
     }
   });
 
+  it("draws an expanded thought in its collapsed row's colour, not an answer's", () => {
+    host = document.createElement("div");
+    host.dataset.scientReasoningTrace = "true";
+    const thought = document.createElement("div");
+    // As the timeline mounts it, with upstream's text-foreground.
+    thought.className = "chat-markdown text-foreground";
+    thought.innerHTML = "<h3>Clarifying user requirements</h3><p>I think we need to ask.</p>";
+    const label = document.createElement("span");
+    label.className = "text-secondary-label";
+    const answer = document.createElement("div");
+    answer.className = "chat-markdown text-foreground";
+    host.append(thought, label);
+    document.body.append(host, answer);
+    // Its headings too, which upstream colours on their own.
+    for (const element of thought.querySelectorAll("h3, p")) {
+      const colour = getComputedStyle(element).color;
+      expect(colour).toBe(getComputedStyle(label).color);
+      expect(colour).not.toBe(getComputedStyle(answer).color);
+    }
+    answer.remove();
+  });
+
   it("retains heading and bold styling in ordinary assistant replies", () => {
     const reply = document.createElement("div");
     host = reply;

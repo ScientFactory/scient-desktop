@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import {
   withDroid,
   waiting,
@@ -54,8 +55,14 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
           (handoff) => handoff.history !== undefined,
         )!;
         assert.ok(transfer);
+        const retained = yield* (yield* ProjectionStoreV2).resolveContextHistory({
+          handoffs: [transfer],
+          coverage: transfer.history!.coverage,
+          budget: 64_000,
+          alreadyDeliveredItemIds: new Set(),
+        });
         assert.deepEqual(
-          transfer.history!.messages.map((message) => message.text),
+          retained.messages.map((message) => message.text),
           [importedQuestion, importedAnswer],
         );
         yield* h.stop();

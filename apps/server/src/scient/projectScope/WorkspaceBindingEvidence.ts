@@ -9,6 +9,8 @@ import * as Path from "effect/Path";
 
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as ServerConfig from "../../config.ts";
+import { isGitMissing, isPlainHostScratchDirectory } from "./scratchWorkspace.ts";
 import {
   type ObservedWorkspaceEvidence,
   WorkspaceBindingResolutionError,
@@ -27,6 +29,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsDrivers = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
 
   const inspect: WorkspaceBindingEvidence["Service"]["inspect"] = Effect.fn(
     "WorkspaceBindingEvidence.inspect",
@@ -175,6 +178,20 @@ const make = Effect.gen(function* () {
           : null,
       };
     }).pipe(
+      Effect.catchIf(isGitMissing, (cause) =>
+        Effect.gen(function* () {
+          if (
+            Option.isSome(config) &&
+            (yield* isPlainHostScratchDirectory(config.value, canonicalRoot).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ))
+          ) {
+            return null;
+          }
+          return yield* Effect.fail(cause);
+        }),
+      ),
       Effect.mapError(
         (cause) =>
           new WorkspaceBindingResolutionError({

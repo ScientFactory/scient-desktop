@@ -14,6 +14,23 @@
 
 ## Role of this document
 
+### Muse native lifecycle boundary
+
+The Muse adapter reuses the shared managed-runtime transaction and native auth
+interaction controller. All six macOS/Windows/glibc-Linux target policies exist;
+musl remains unsupported. Muse is a regular bundled and scheduled catalog family. Native CLI
+help documents browser/device login, API-key stdin input and credential clearing.
+The current CLI and MSP schema do not expose an account-status verifier.
+
+Credential-save exit success is explicitly unverified in shared auth state.
+Model listing, session admission and a remembered setup interaction are not
+authentication witnesses. Native host credentials remain provider-owned and
+conservatively shared; an explicit instance environment key stays separate.
+Each catalog release is natively qualified on all six targets by the managed
+runtime workflow before publication. A non-interactive `muse login` prints an
+`auth.meta.com` device page and hyphenated code, which the adapter reads. Real
+account storage, denied/expired login and revocation remain unqualified.
+
 ### Antigravity evidence update — 2026-09-03 candidate
 
 The Antigravity rows in the 2026-08-25 evidence below describe the retained **legacy `agy`**

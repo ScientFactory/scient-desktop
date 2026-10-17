@@ -15,6 +15,7 @@ import {
   ServerSettings,
   ServerSettingsPatch,
   UsageAccountingSourceId,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
@@ -71,7 +72,7 @@ const makeServerSettingsLayer = (
     Layer.provideMerge(configLayer),
   );
 
-/** Like `layerServerSettings`, but also exposes the secret store for assertions. */
+/** Like `makeServerSettingsLayer`, but also exposes the secret store for assertions. */
 const layerServerSettingsWithSecrets = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
@@ -258,7 +259,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const secretFiles = (yield* fs.readDirectory(config.secretsDir)).filter((name) =>
           name.startsWith("usage-accounting-source-"),
         );
-        assert.lengthOf(secretFiles, 1);
+        // Shipped identity, independent of the current visitor implementation.
+        assert.deepEqual(secretFiles, ["usage-accounting-source-b3BlbnJvdXRlci1wcmltYXJ5.bin"]);
         yield* service.updateSettings({ usageAccountingSources: { [sourceId]: null } });
         assert.isUndefined((yield* service.getSettings).usageAccountingSources[sourceId]);
         assert.isFalse(yield* fs.exists(`${config.secretsDir}/${secretFiles[0]}`));
@@ -641,6 +643,88 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const provider = ProviderInstanceId.make("codex_work");
+      yield* Effect.all(
+        [
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "sol", favorite: true }],
+          }),
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "sol", favorite: true }],
+          }),
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "luna", favorite: true }],
+          }),
+          service.updateSettings({ setModelsHidden: [{ provider, model: "astra", hidden: true }] }),
+          service.updateSettings({ setModelsHidden: [{ provider, model: "luna", hidden: true }] }),
+          service.updateSettings({
+            setProviderModelOrder: { provider, modelOrder: ["luna", "sol"] },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.favorites?.map((entry) => entry.model).sort(), ["luna", "sol"]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.hiddenModels.toSorted(), [
+        "astra",
+        "luna",
+      ]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+  it.effect("persists and broadcasts model preferences to other connected clients", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const provider = ProviderInstanceId.make("codex_work");
+        const patch = {
+          favorites: [{ provider, model: "sol" }],
+          providerModelPreferences: {
+            [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
+          },
+        };
+        const changes = yield* service.subscribeChanges;
+        yield* service.updateSettings(patch);
+        const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.deepEqual(received.favorites, patch.favorites);
+        assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.favorites, patch.favorites);
+        assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
+        const hidden = yield* service.updateSettings({
+          setModelsHidden: [{ provider, model: "sol", hidden: true }],
+        });
+        assert.deepEqual(hidden.providerModelPreferences?.[provider], {
+          hiddenModels: ["astra", "sol"],
+          modelOrder: ["sol"],
+        });
+        const shown = yield* service.updateSettings({
+          setModelsHidden: [{ provider, model: "astra", hidden: false }],
+        });
+        assert.deepEqual(shown.providerModelPreferences?.[provider], {
+          hiddenModels: ["sol"],
+          modelOrder: ["sol"],
+        });
+        assert.deepEqual(
+          (yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath)))
+            .providerModelPreferences,
+          shown.providerModelPreferences,
+        );
+        yield* service.updateSettings({ favorites: [], providerModelPreferences: {} });
+        // An older device's delayed seed cannot undo a clear, even after persistence.
+        const migrated = yield* service.updateSettings({ migrateModelPreferences: patch });
+        assert.deepEqual(migrated.favorites, []);
+        assert.deepEqual(migrated.providerModelPreferences, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -1989,7 +2073,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               [ProviderInstanceId.make("claude_work")]: named("claudeAgent"),
             },
           }),
-          { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-4-5" },
+          { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-5-5" },
         );
       }),
     );
@@ -2008,7 +2092,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               [ProviderInstanceId.make("a_fork")]: named("someForkDriver"),
             },
           }),
-          { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-4-5" },
+          { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-5-5" },
         );
       }),
     );
@@ -2228,6 +2312,45 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.equal(next.textGenerationModelSelection.model, "claude-haiku-5-5");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  // A backend behind a custom model may refuse the built-in default (#12651).
+  it.effect("falls back to the thread default when it is a custom model on that instance", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const claude = ProviderInstanceId.make("claudeAgent");
+      const providerInstances = {
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+        [claude]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: ["z-ai/glm-5.3-flash"] },
+        },
+      };
+
+      const custom = yield* serverSettings.updateSettings({
+        providerInstances,
+        defaultModelSelection: {
+          instanceId: claude,
+          model: "z-ai/glm-5.3-flash",
+          options: [{ id: "thinking", value: false }],
+        },
+      });
+      assert.deepEqual(custom.textGenerationModelSelection, {
+        instanceId: claude,
+        model: "z-ai/glm-5.3-flash",
+        options: [{ id: "thinking", value: false }],
+      });
+
+      const builtIn = yield* serverSettings.updateSettings({
+        defaultModelSelection: { instanceId: claude, model: "claude-fable-5-1" },
+      });
+      assert.equal(builtIn.textGenerationModelSelection.model, "claude-haiku-5-5");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -2293,7 +2416,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
         assert.deepEqual(next.sourceControlWriterModelSelection, sourceControlWriterModelSelection);
         assert.deepEqual(
-          ServerSettingsModule.resolveSourceControlWriterModelSelection(next),
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(next, undefined, null),
           next.textGenerationModelSelection,
         );
         assert.deepEqual(
@@ -2317,7 +2440,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         });
         assert.deepEqual(
-          ServerSettingsModule.resolveSourceControlWriterModelSelection(restored),
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(restored, undefined, null),
           sourceControlWriterModelSelection,
         );
       }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -2669,7 +2792,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const raw = '{"addProjectBaseDirectory":42,"providers":{"codex":{"binaryPath":"/x"}}}';
+      const raw =
+        '{"addProjectBaseDirectory":42,"continueThreadsAfterServerUpdate":"false","providers":{"codex":{"binaryPath":"/x"}}}';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
 
       const settings = yield* serverSettings.getSettings;
@@ -2679,6 +2803,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         driver: ProviderDriverKind.make("codex"),
         config: { binaryPath: "/x" },
       });
+      // An unreadable file may hold an opt-out, so threads are not resumed on a guess.
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -2986,6 +3112,156 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           sensitiveLast ? "secret-last" : "",
         );
       }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "uses the same secret lifecycle for provider config, environment, host tokens, and quota keys",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const instanceId = ProviderInstanceId.make("antigravity_secrets");
+        const saved = yield* service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { apiKey: "config-secret" },
+              environment: [
+                { name: "API_TOKEN", value: "env-secret", sensitive: true },
+                { name: "BASE_URL", value: "https://example.test", sensitive: false },
+              ],
+            },
+          },
+          sourceControlHosts: {
+            github: { tokens: { "github.com": "github-secret" } },
+            bitbucket: { email: "me@example.test", accessToken: "bitbucket-secret" },
+            gitcafe: { token: "gitcafe-secret" },
+          },
+          usageLimitSources: {
+            [UsageLimitSourceId.make("hub")]: {
+              kind: "cliproxy",
+              url: "https://hub.example.test",
+              managementKey: "quota-secret",
+              enabled: true,
+            },
+          },
+        });
+        const values = [
+          "config-secret",
+          "env-secret",
+          "github-secret",
+          "bitbucket-secret",
+          "gitcafe-secret",
+          "quota-secret",
+        ];
+        const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+        const disk = yield* fs.readFileString(config.settingsPath);
+        for (const value of values) {
+          assert.include(JSON.stringify(saved), value);
+          assert.notInclude(JSON.stringify(client), value);
+          assert.notInclude(disk, value);
+        }
+        assert.include(JSON.stringify(client), "https://example.test");
+        assert.include(JSON.stringify(client), "me@example.test");
+        const echoed = yield* service.updateSettings({
+          providerInstances: client.providerInstances,
+          sourceControlHosts: client.sourceControlHosts,
+          usageLimitSources: client.usageLimitSources,
+        });
+        for (const value of values) assert.include(JSON.stringify(echoed), value);
+        const renamed = yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: { ...client.providerInstances[instanceId]!, displayName: "Renamed" },
+        });
+        assert.propertyVal(
+          renamed.providerInstances[instanceId]?.config,
+          "apiKey",
+          "config-secret",
+        );
+
+        for (const apiKey of ["replacement-secret", ""]) {
+          const changed = yield* service.updateProviderInstance({
+            operation: "upsert",
+            instanceId,
+            instance: { ...client.providerInstances[instanceId]!, config: { apiKey } },
+          });
+          assert.propertyVal(changed.providerInstances[instanceId]?.config, "apiKey", apiKey);
+          const redacted = ServerSettingsModule.redactServerSettingsForClient(changed);
+          assert.propertyVal(
+            redacted.providerInstances[instanceId]?.config,
+            "apiKey",
+            apiKey ? "••••••" : "",
+          );
+        }
+        // Restore the value so removing the instance below exercises deletion of both secrets.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: saved.providerInstances[instanceId]!,
+        });
+
+        const secretNames = [
+          "provider-config-YW50aWdyYXZpdHlfc2VjcmV0cw-YW50aWdyYXZpdHk-YXBpS2V5",
+          "provider-env-YW50aWdyYXZpdHlfc2VjcmV0cw-QVBJX1RPS0VO",
+          sourceControlHostSecretName({
+            kind: "github",
+            field: "tokens",
+            serverHost: "github.com",
+          }),
+          sourceControlHostSecretName({
+            kind: "bitbucket",
+            field: "accessToken",
+            serverHost: null,
+          }),
+          sourceControlHostSecretName({ kind: "gitcafe", field: "token", serverHost: null }),
+          "usage-limit-source-aHVi",
+        ];
+        for (const name of secretNames) {
+          assert.isTrue(Option.isSome(yield* store.get(name)), name);
+        }
+        yield* service.updateSettings({
+          providerInstances: {},
+          sourceControlHosts: {
+            github: { tokens: {} },
+            bitbucket: { accessToken: "" },
+            gitcafe: { token: "" },
+          },
+          usageLimitSources: { [UsageLimitSourceId.make("hub")]: null },
+        });
+        for (const name of secretNames) {
+          assert.isTrue(Option.isNone(yield* store.get(name)));
+        }
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("moves a saved Antigravity key to the secret store when settings load", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          providerInstances: {
+            antigravity: { driver: "antigravity", config: { apiKey: "legacy-api-key" } },
+          },
+        }),
+      );
+      const saved = yield* service.getSettings;
+      assert.propertyVal(
+        saved.providerInstances[ProviderInstanceId.make("antigravity")]?.config,
+        "apiKey",
+        "legacy-api-key",
+      );
+      assert.notInclude(yield* fs.readFileString(config.settingsPath), "legacy-api-key");
+      assert.notInclude(
+        JSON.stringify(ServerSettingsModule.redactServerSettingsForClient(saved)),
+        "legacy-api-key",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
@@ -3688,6 +3964,84 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+  it.effect(
+    "rolls back accounting credentials and preserves their shipped identity after a failed settings commit",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let failRename = false;
+        let settingsPath: string | undefined;
+        const failingFs = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            failRename && to === settingsPath
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "rename",
+                    description: "Accounting fixture settings commit failure",
+                  }),
+                )
+              : fs.rename(from, to),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          settingsPath = config.settingsPath;
+          const id = UsageAccountingSourceId.make("openrouter-primary");
+          yield* service.updateSettings({
+            usageAccountingSources: {
+              [id]: {
+                kind: "openrouter",
+                label: "Original",
+                enabled: true,
+                managementKey: "accounting-original",
+              },
+            },
+          });
+          const stored = yield* fileSystem.readFileString(config.settingsPath);
+          const secretPath = `${config.secretsDir}/usage-accounting-source-b3BlbnJvdXRlci1wcmltYXJ5.bin`;
+          failRename = true;
+          for (const next of [
+            {
+              kind: "openrouter" as const,
+              label: "Replacement",
+              enabled: true,
+              managementKey: "accounting-replacement",
+            },
+            null,
+          ]) {
+            const result = yield* service
+              .updateSettings({ usageAccountingSources: { [id]: next } })
+              .pipe(Effect.result);
+            assert.equal(result._tag, "Failure");
+            assert.equal(
+              (yield* service.getSettings).usageAccountingSources[id]?.managementKey,
+              "accounting-original",
+            );
+            assert.equal(
+              (yield* service.getSettings).usageAccountingSources[id]?.label,
+              "Original",
+            );
+            assert.equal(yield* fileSystem.readFileString(config.settingsPath), stored);
+            assert.equal(
+              new TextDecoder().decode(yield* fileSystem.readFile(secretPath)),
+              "accounting-original",
+            );
+            assert.notInclude(stored, "accounting-original");
+          }
+        }).pipe(
+          Effect.provide(
+            makeServerSettingsLayer().pipe(
+              Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFs)),
+            ),
+          ),
+        );
+      }),
+  );
+
   it.effect("rolls back provider secret changes when the settings file commit fails", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3706,7 +4060,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             ? Effect.fail(writeFailure)
             : fileSystem.rename(fromPath, toPath),
       });
-      const instanceId = ProviderInstanceId.make("codex_write_failure");
+      const instanceId = ProviderInstanceId.make("antigravity_write_failure");
       const layerSettings = makeServerSettingsLayer().pipe(
         Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
       );
@@ -3718,9 +4072,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           operation: "upsert",
           instanceId,
           instance: {
-            driver: ProviderDriverKind.make("codex"),
+            driver: ProviderDriverKind.make("antigravity"),
             environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
-            config: {},
+            config: { apiKey: "config-kept" },
           },
         });
 
@@ -3730,9 +4084,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             operation: "upsert",
             instanceId,
             instance: {
-              driver: ProviderDriverKind.make("codex"),
+              driver: ProviderDriverKind.make("antigravity"),
               environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
-              config: {},
+              config: { apiKey: "config-new" },
             },
           })
           .pipe(Effect.result);
@@ -3741,6 +4095,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
             ?.value,
           "sk-kept",
+        );
+        assert.propertyVal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.config,
+          "apiKey",
+          "config-kept",
         );
 
         const failed = yield* serverSettings
@@ -3751,6 +4110,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
             ?.value,
           "sk-kept",
+        );
+        assert.propertyVal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.config,
+          "apiKey",
+          "config-kept",
         );
       }).pipe(Effect.provide(layerSettings));
     }),
@@ -3833,9 +4197,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* serverSettings.updateSettings({
           providerInstances: {
             [instanceId]: {
-              driver: ProviderDriverKind.make("codex"),
+              driver: ProviderDriverKind.make("antigravity"),
               environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
-              config: {},
+              config: { apiKey: "config-kept" },
             },
           },
         });
@@ -3845,9 +4209,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           .updateSettings({
             providerInstances: {
               [instanceId]: {
-                driver: ProviderDriverKind.make("codex"),
+                driver: ProviderDriverKind.make("antigravity"),
                 environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
-                config: {},
+                config: { apiKey: "config-new" },
               },
             },
           })
@@ -3859,6 +4223,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
             ?.value,
           "sk-kept",
+        );
+        assert.propertyVal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.config,
+          "apiKey",
+          "config-kept",
         );
       }).pipe(Effect.provide(layerSettings));
     },
@@ -3964,9 +4333,63 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
+      assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.deepEqual(settings.projectSettingsOverrides, {});
       // The user's file is still there to repair; nothing was written over it.
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });
+
+it.effect(
+  "serializes concurrent first visibility and order edits without dropping curated defaults",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const provider = ProviderInstanceId.make("scient-personal");
+      const initialPreferences = {
+        hiddenModels: ["curated-hidden"],
+        modelOrder: ["default-first"],
+      };
+      yield* Effect.all(
+        [
+          service.updateSettings({
+            setModelsHidden: [{ provider, model: "first-added", hidden: true, initialPreferences }],
+          }),
+          service.updateSettings({
+            setModelsHidden: [
+              { provider, model: "second-added", hidden: true, initialPreferences },
+            ],
+          }),
+          service.updateSettings({
+            setProviderModelOrder: { provider, modelOrder: ["user-first"], initialPreferences },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.hiddenModels.toSorted(), [
+        "curated-hidden",
+        "first-added",
+        "second-added",
+      ]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["user-first"]);
+      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(
+        persisted.providerModelPreferences[provider],
+        settings.providerModelPreferences?.[provider],
+      );
+      yield* service.updateSettings({
+        providerModelPreferences: { [provider]: { hiddenModels: [], modelOrder: [] } },
+      });
+      const stale = yield* service.updateSettings({
+        setProviderModelOrder: { provider, modelOrder: [], initialPreferences },
+      });
+      assert.deepEqual(stale.providerModelPreferences?.[provider], {
+        hiddenModels: [],
+        modelOrder: [],
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer().pipe(Layer.provideMerge(NodeServices.layer)))),
+);

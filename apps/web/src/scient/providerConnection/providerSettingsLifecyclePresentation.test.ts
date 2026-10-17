@@ -6,7 +6,30 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
+import {
+  providerSettingsLifecyclePresentation,
+  managedVersionAdvisory,
+  type ProviderSettingsVersionAdvisory,
+} from "./providerSettingsLifecyclePresentation";
+
+describe("provider settings version action ownership", () => {
+  const advisory: ProviderSettingsVersionAdvisory = {
+    title: "Compatibility warning",
+    detail: "Use the supported version.",
+    updateCommand: "synthetic-provider update",
+    emphasis: "strong",
+    targetVersion: "2.0.0",
+  };
+
+  it("keeps managed-copy guidance while removing external installation authority", () => {
+    const managed = managedVersionAdvisory(advisory, true);
+    expect(managed).toEqual({ ...advisory, updateCommand: null, targetVersion: null });
+    expect(advisory.updateCommand).toBe("synthetic-provider update");
+    expect(managedVersionAdvisory(null, true)).toBeNull();
+    expect(managedVersionAdvisory(advisory, false)).toBe(advisory);
+    expect(managedVersionAdvisory(null, false)).toBeNull();
+  });
+});
 
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make("codex"),

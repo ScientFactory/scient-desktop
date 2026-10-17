@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeTest from "node:test";
-import { needsWindowsPackaging } from "./windows-packaging-ci-gate.mjs";
+import { needsLinuxPackaging, needsWindowsPackaging } from "./windows-packaging-ci-gate.mjs";
 
 const script = NodeURL.fileURLToPath(new URL("./windows-packaging-ci-gate.mjs", import.meta.url));
 
@@ -24,10 +24,61 @@ NodeTest.test(
       ".github/workflows/release.yml",
       ".github/workflows/ci.yml",
       ".github/workflows/remote-server-packaging.yml",
+      ".github/workflows/linux-packaging.yml",
       ".github/scripts/windows-packaging-ci-gate.test.mjs",
     ])
       NodeAssert.equal(needsWindowsPackaging([path]), true, path);
     NodeAssert.equal(needsWindowsPackaging(["docs/user/agents.md", "README.md"]), false);
+  },
+);
+
+NodeTest.test(
+  "Linux packaging selects assembly, native and dependency changes but skips ordinary renderer/server edits",
+  () => {
+    for (const path of [
+      "scripts/build-desktop-artifact.ts",
+      "scripts/stage-whisper-runtime.ts",
+      "scripts/lib/scient-synctex-build.ts",
+      "scripts/qualify-linux-packaged-runtime.mjs",
+      "apps/desktop/src/main.ts",
+      "native/kde-snap-shot/src/main.rs",
+      "apps/server/package.json",
+      "pnpm-lock.yaml",
+      ".github/workflows/linux-packaging.yml",
+      ".github/workflows/ci.yml",
+      ".github/scripts/windows-packaging-ci-gate.mjs",
+    ])
+      NodeAssert.equal(needsLinuxPackaging([path]), true, path);
+    NodeAssert.equal(
+      needsLinuxPackaging([
+        "apps/web/src/App.tsx",
+        "apps/server/src/ws.ts",
+        "docs/operations/release.md",
+      ]),
+      false,
+    );
+  },
+);
+
+NodeTest.test(
+  "Linux qualification failure or unknown/skipped execution blocks the required Test gate",
+  () => {
+    for (const native of ["failure", "cancelled", "skipped", ""]) {
+      const result = NodeChildProcess.spawnSync(process.execPath, [script, "check"], {
+        env: {
+          ...process.env,
+          WORKSPACE_RESULT: "success",
+          WINDOWS_DETECTION_RESULT: "success",
+          WINDOWS_CHANGED: "true",
+          WINDOWS_NATIVE_RESULT: "success",
+          REMOTE_SERVER_RESULT: "success",
+          LINUX_CHANGED: "true",
+          LINUX_NATIVE_RESULT: native,
+        },
+        encoding: "utf8",
+      });
+      NodeAssert.equal(result.status, 1, native);
+    }
   },
 );
 
@@ -47,7 +98,7 @@ NodeTest.test("unknown diff bounds run packaging instead of silently skipping it
       encoding: "utf8",
     });
     NodeAssert.equal(result.status, 0, result.stderr);
-    NodeAssert.equal(NodeFS.readFileSync(output, "utf8"), "changed=true\n");
+    NodeAssert.equal(NodeFS.readFileSync(output, "utf8"), "changed=true\nlinux_changed=true\n");
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
@@ -73,6 +124,8 @@ NodeTest.test(
           WINDOWS_CHANGED: changed,
           WINDOWS_NATIVE_RESULT: native,
           REMOTE_SERVER_RESULT: native,
+          LINUX_CHANGED: changed,
+          LINUX_NATIVE_RESULT: native,
         },
         encoding: "utf8",
       });
@@ -123,7 +176,10 @@ NodeTest.test(
           encoding: "utf8",
         });
         NodeAssert.equal(result.status, 0, result.stderr);
-        NodeAssert.equal(NodeFS.readFileSync(output, "utf8"), "changed=true\n");
+        NodeAssert.equal(
+          NodeFS.readFileSync(output, "utf8"),
+          "changed=true\nlinux_changed=false\n",
+        );
       }
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
@@ -141,6 +197,8 @@ NodeTest.test("remote qualification failure blocks otherwise green Windows packa
         WINDOWS_CHANGED: "true",
         WINDOWS_NATIVE_RESULT: "success",
         REMOTE_SERVER_RESULT: remote,
+        LINUX_CHANGED: "false",
+        LINUX_NATIVE_RESULT: "skipped",
       },
       encoding: "utf8",
     });

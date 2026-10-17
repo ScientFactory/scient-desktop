@@ -446,6 +446,47 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   expect(toEnd()).toBeGreaterThan(40);
 });
 
+it("ends only for keys that scroll the timeline, not for a menu's arrow keys or shortcuts", async () => {
+  const key = "follow:keys";
+  const { history, runs } = await answeredThread(key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  chat.sendAtEnd("message-10");
+  render(
+    key,
+    [...history, prompt, ...steps(1, "run-10")],
+    [...runs, run("run-10", "message-10", "running")],
+  );
+  await playUntil(() => toEnd() <= 1);
+  expect(chat.followPromptId).toBe("message-10");
+  // Arrow keys moving through a menu outside the timeline.
+  const menuItem = document.createElement("button");
+  menuItem.setAttribute("role", "menuitem");
+  document.body.append(menuItem);
+  for (const keyName of ["ArrowUp", "Home", "PageUp"]) {
+    menuItem.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true }));
+  }
+  menuItem.remove();
+  // Keys scrolling a nested region (tool output) inside the timeline.
+  const nested = document.createElement("div");
+  Object.assign(nested.style, { height: "60px", overflowY: "auto" });
+  nested.tabIndex = 0;
+  nested.append(Object.assign(document.createElement("div"), { style: "height: 400px" }));
+  viewport().append(nested);
+  nested.scrollTop = 100;
+  nested.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+  nested.remove();
+  // A shortcut with a modifier, pressed in the timeline.
+  viewport().dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowUp", metaKey: true, bubbles: true }),
+  );
+  await play(64);
+  expect(chat.followPromptId).toBe("message-10");
+  // The reader's own scroll key in the timeline still ends it.
+  viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+  await playUntil(() => chat.followPromptId === null);
+  expect(chat.followPromptId).toBeNull();
+});
+
 it("lets Scroll to end cancel a follow resumed after coming back to the thread", async () => {
   const key = "follow:resumed-cancel";
   const { history, runs } = await answeredThread(key);

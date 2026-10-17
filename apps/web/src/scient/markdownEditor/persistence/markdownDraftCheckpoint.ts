@@ -1,3 +1,4 @@
+import { createIndexedDbConnection } from "~/scient/storage/indexedDbConnection";
 import { randomUUID } from "~/lib/utils";
 import type {
   DocumentAuthorizedCurrentReview,
@@ -221,35 +222,12 @@ export interface MarkdownDraftCheckpointStore {
 
 const MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const MAX_CHECKPOINTS = 32;
-let database: Promise<IDBDatabase> | undefined;
-function openDatabase(): Promise<IDBDatabase> {
-  return (database ??= new Promise((resolve, reject) => {
-    let failed = false;
-    const request = indexedDB.open("scient-markdown-drafts", 1);
-    request.addEventListener("upgradeneeded", () => request.result.createObjectStore("drafts"));
-    request.addEventListener("error", () => {
-      database = undefined;
-      reject(request.error);
-    });
-    request.addEventListener("blocked", () => {
-      failed = true;
-      database = undefined;
-      reject(new Error("Markdown recovery storage is blocked."));
-    });
-    request.addEventListener("success", () => {
-      const db = request.result;
-      if (failed) {
-        db.close();
-        return;
-      }
-      db.addEventListener("versionchange", () => {
-        db.close();
-        database = undefined;
-      });
-      resolve(db);
-    });
-  }));
-}
+const drafts = createIndexedDbConnection({
+  name: "scient-markdown-drafts",
+  version: 1,
+  upgrade: (database) => database.createObjectStore("drafts"),
+  blockedMessage: "Markdown recovery storage is blocked.",
+});
 
 function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
   if (value === undefined) return undefined;
@@ -365,12 +343,16 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
 }
 
 async function readStoredCheckpoint(key: string): Promise<unknown> {
-  const db = await openDatabase();
-  return new Promise<unknown>((resolve, reject) => {
-    const request = db.transaction("drafts", "readonly").objectStore("drafts").get(key);
-    request.addEventListener("success", () => resolve(request.result));
-    request.addEventListener("error", () => reject(request.error));
-  });
+  return drafts.transaction(
+    "drafts",
+    "readonly",
+    (transaction) =>
+      new Promise<unknown>((resolve, reject) => {
+        const request = transaction.objectStore("drafts").get(key);
+        request.addEventListener("success", () => resolve(request.result));
+        request.addEventListener("error", () => reject(request.error));
+      }),
+  );
 }
 
 function replaceStoredCheckpoint<T extends { readonly token: string }>(
@@ -379,43 +361,8 @@ function replaceStoredCheckpoint<T extends { readonly token: string }>(
   next: T | undefined,
   decodeBefore: (value: unknown) => T | undefined,
 ): Promise<boolean> {
-  return openDatabase().then(
-    (db) =>
-      new Promise<boolean>((resolve, reject) => {
-        const transaction = db.transaction("drafts", "readwrite");
-        const store = transaction.objectStore("drafts");
-        let accepted = false;
-        transaction.addEventListener("complete", () => resolve(accepted));
-        transaction.addEventListener("abort", () =>
-          reject(transaction.error ?? new Error("Document recovery write was interrupted.")),
-        );
-        transaction.addEventListener("error", () => reject(transaction.error));
-        const request = store.get(key);
-        request.addEventListener("success", () => {
-          let before: T | undefined;
-          try {
-            before = decodeBefore(request.result);
-          } catch {
-            transaction.abort();
-            return;
-          }
-          if (before?.token !== expectedToken) return;
-          const write = () => {
-            if (next) store.put(next, key);
-            else store.delete(key);
-            accepted = true;
-          };
-          if (before || !next) {
-            write();
-            return;
-          }
-          const count = store.count();
-          count.addEventListener("success", () => {
-            if (count.result >= MAX_CHECKPOINTS) transaction.abort();
-            else write();
-          });
-        });
-      }),
+  return drafts.transaction("drafts", "readwrite", (transaction) =>
+    replaceDraft(transaction, key, expectedToken, next, decodeBefore),
   );
 }
 
@@ -449,6 +396,49 @@ export const indexedDbMarkdownDrafts: MarkdownDraftCheckpointStore = {
     return replaceStoredCheckpoint(key, expectedToken, next, decodeMetadataRename);
   },
 };
+
+function replaceDraft<T extends { readonly token: string }>(
+  transaction: IDBTransaction,
+  key: string,
+  expectedToken: string | undefined,
+  next: T | undefined,
+  decodeBefore: (value: unknown) => T | undefined,
+) {
+  return new Promise<boolean>((resolve, reject) => {
+    const store = transaction.objectStore("drafts");
+    let accepted = false;
+    transaction.addEventListener("complete", () => resolve(accepted));
+    transaction.addEventListener("abort", () =>
+      reject(transaction.error ?? new Error("Markdown recovery write was interrupted.")),
+    );
+    transaction.addEventListener("error", () => reject(transaction.error));
+    const request = store.get(key);
+    request.addEventListener("success", () => {
+      let before: T | undefined;
+      try {
+        before = decodeBefore(request.result);
+      } catch {
+        transaction.abort();
+        return;
+      }
+      if (before?.token !== expectedToken) return;
+      const write = () => {
+        if (next) store.put(next, key);
+        else store.delete(key);
+        accepted = true;
+      };
+      if (before || !next) {
+        write();
+        return;
+      }
+      const count = store.count();
+      count.addEventListener("success", () => {
+        if (count.result >= MAX_CHECKPOINTS) transaction.abort();
+        else write();
+      });
+    });
+  });
+}
 
 /** A coalesced recovery copy, never a second publisher of the Markdown file. */
 export class MarkdownDraftCheckpointWriter {

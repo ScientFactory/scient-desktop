@@ -10,6 +10,8 @@ const Attempt = Schema.Struct({
   handoffDone: Schema.Boolean,
   composerDraftFingerprint: Schema.optional(Schema.String),
   displayTitle: Schema.optional(Schema.String),
+  /** Where a local fork works when that differs from the original; shown again on retry. */
+  workspaceNotice: Schema.optional(Schema.String),
   attachmentIdMap: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type ForkAttempt = typeof Attempt.Type;

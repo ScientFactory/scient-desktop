@@ -349,3 +349,31 @@ it.each(["continue", "cancel", "unmount"] as const)(
     expect(toasts.add).not.toHaveBeenCalled();
   },
 );
+
+it("tells a fork in the current workspace where it works, until a new worktree is chosen", async () => {
+  const notice = "The original worktree was removed, so this fork works in the project folder.";
+  await act(async () =>
+    root.render(
+      <ScientForkWorkspaceModeDialog
+        open
+        disabled={false}
+        source="this-response"
+        proposedTitle="Fork"
+        titleOverrideSupported
+        worktreeAvailability={{ available: true }}
+        workspaceNotice={notice}
+        onOpenChange={() => {}}
+        onConfirm={() => {}}
+      />,
+    ),
+  );
+  expect(document.body.textContent).toContain(notice);
+  const toggle = document.body.querySelector<HTMLElement>(
+    '[role="switch"][aria-label="New worktree"]',
+  );
+  expect(toggle).not.toBeNull();
+  // The switch row is a label; a click on it toggles the switch once.
+  await act(async () => toggle!.closest("label")!.click());
+  expect(toggle!.getAttribute("aria-checked")).toBe("true");
+  expect(document.body.textContent).not.toContain(notice);
+});

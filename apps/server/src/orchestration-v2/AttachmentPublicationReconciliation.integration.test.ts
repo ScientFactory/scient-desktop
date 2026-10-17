@@ -342,7 +342,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { fs, config, services, upload } = yield* fixture;
+        const { fs, path, config, services, upload } = yield* fixture;
         let attachment: ChatAttachment | undefined;
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -356,10 +356,32 @@ it.live(
             });
             const reconciliation = yield* AttachmentReservationReconciliation;
             yield* reconciliation.reconcile([attachment!.id]);
-            const conflict = yield* upload("conflict", Buffer.from("different-byte-payload")).pipe(
-              Effect.result,
-            );
+            const filename = resolveAttachmentPath({
+              attachmentsDir: config.attachmentsDir,
+              attachment: attachment!,
+            })!;
+            // Byte-derived IDs distinguish edited uploads. Retry the original identity
+            // against different physical bytes to keep a real failed publication proof.
+            const tamperedBytes = Buffer.from(bytes);
+            tamperedBytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
+            yield* fs.writeFile(filename, tamperedBytes);
+            const conflict = yield* upload("conflict").pipe(Effect.result);
             expect(conflict._tag).toBe("Failure");
+            if (conflict._tag === "Failure") {
+              expect(conflict.failure._tag).toBe("PersistChatAttachmentsError");
+              expect(String(conflict.failure.cause)).toContain(
+                "conflicts with previously stored bytes",
+              );
+            }
+            expect(Buffer.from(yield* fs.readFile(filename))).toEqual(tamperedBytes);
+            const directory = reservationDirectory(config.stateDir, attachment!.id);
+            const failedTokens = yield* fs.readDirectory(directory);
+            expect(failedTokens).toHaveLength(1);
+            expect(yield* fs.readFileString(path.join(directory, failedTokens[0]!))).toBe(
+              "publication",
+            );
+            // Restore only the fixture's file; the unproven operation must keep its pin.
+            yield* fs.writeFile(filename, bytes);
             yield* reserveAttachment(attachment!);
             expect(
               yield* fs.readDirectory(reservationDirectory(config.stateDir, attachment!.id)),

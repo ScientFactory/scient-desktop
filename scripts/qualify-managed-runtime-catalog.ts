@@ -16,6 +16,7 @@ import {
   ManagedOmpRuntime,
   ManagedPiRuntime,
   ManagedScientAgentRuntime,
+  ManagedMuseRuntime,
   managedRuntimeSmokeEnvironment,
   smokeManagedRuntimeExecutable,
   detectManagedRuntimeTarget,
@@ -31,6 +32,7 @@ import {
   resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   resolveScientAgentArtifactPolicy,
+  resolveMuseArtifactPolicy,
   type ManagedProviderRuntime,
   type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeProvider,
@@ -205,28 +207,36 @@ async function terminateProcessTree(root: number): Promise<boolean> {
  * needs the server workspace dependencies installed.
  */
 async function verifyRpc(
-  provider: "omp" | "scient",
+  provider: "omp" | "scient" | "muse",
   binary: string,
   version: string,
   signal?: AbortSignal,
 ): Promise<void> {
   const script =
-    provider === "scient"
-      ? "apps/server/scripts/qualifyScientAgentManagedRuntime.ts"
-      : "apps/server/scripts/qualify-omp-rpc.ts";
+    provider === "muse"
+      ? "apps/server/scripts/qualify-muse-runtime.ts"
+      : provider === "scient"
+        ? "apps/server/scripts/qualifyScientAgentManagedRuntime.ts"
+        : "apps/server/scripts/qualify-omp-rpc.ts";
   const cancellation =
-    provider === "scient"
+    provider !== "omp"
       ? AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(90_000)])
       : undefined;
   cancellation?.throwIfAborted();
   // The parent owns the qualification's private home, so it is removed however
   // the child ends, including a forced termination that skips its own cleanup.
   const home =
-    provider === "scient"
-      ? await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-"))
+    provider !== "omp"
+      ? await NodeFSP.mkdtemp(
+          NodePath.join(
+            NodeOS.tmpdir(),
+            provider === "muse" ? "scient-muse-qualification-" : "scient-agent-rpc-qualification-",
+          ),
+        )
       : undefined;
   // Set when the tree had to be ended.
   let treeEnded: Promise<boolean> | undefined;
+  let museNativeClosed = false;
   try {
     await new Promise<void>((resolve, reject) => {
       const child = NodeChildProcess.spawn(
@@ -242,6 +252,16 @@ async function verifyRpc(
         },
       );
       let failure: unknown;
+      child.on("message", (message: unknown) => {
+        if (
+          provider === "muse" &&
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "muse-native-closed"
+        )
+          museNativeClosed = true;
+      });
       let forced: ReturnType<typeof setTimeout> | undefined;
       const cancel = () => {
         failure = cancellation?.reason;
@@ -276,7 +296,7 @@ async function verifyRpc(
   } finally {
     // Removed only once the tree is known to have exited; never under an agent
     // that may still be running.
-    const ended = (await treeEnded) ?? true;
+    const ended = (await treeEnded) ?? (provider !== "muse" || museNativeClosed);
     if (home && ended) await NodeFSP.rm(home, { recursive: true, force: true });
     else if (home) {
       process.stderr.write(
@@ -360,6 +380,10 @@ const providerFactories: Readonly<
         },
       }),
   },
+  muse: {
+    policy: resolveMuseArtifactPolicy,
+    runtime: (baseDir) => new ManagedMuseRuntime(baseDir),
+  },
 };
 
 const target = await Effect.runPromise(
@@ -413,14 +437,14 @@ let qualificationFailure: unknown;
 try {
   const runtime = factory.runtime(root);
   const qualification =
-    provider === "scient"
+    provider === "scient" || provider === "muse"
       ? {
           qualify: ({
             executablePath,
             artifact: installed,
             signal,
           }: ManagedProviderRuntimeQualificationInput) =>
-            verifyRpc("scient", executablePath, installed.version, signal),
+            verifyRpc(provider, executablePath, installed.version, signal),
         }
       : {};
   await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000), ...qualification });

@@ -3252,6 +3252,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             // background refresh on the rebuilt instance.
             yield* serverSettings.updateSettings({
               providerInstances: {
+                ...disabledDefaultProviderInstances,
                 [ProviderInstanceId.make("codex")]: {
                   driver: ProviderDriverKind.make("codex"),
                   enabled: true,

@@ -794,24 +794,35 @@ it.effect(
       });
       assert.ok(attachmentPath);
       assert.equal(yield* fs.readFileString(attachmentPath), "hi");
-      // A retry must never overwrite attachment bytes already referenced by V2.
-      const conflict = yield* Effect.exit(
-        persistChatAttachments({
-          threadId,
-          messageId: projection.messages.find((message) => message.text === "Image second")!.id,
-          attachments: [
-            {
-              type: "image",
-              name: "evidence.png",
-              mimeType: "image/png",
-              sizeBytes: 2,
-              dataUrl: "data:image/png;base64,aGE=",
-            },
-          ],
-        }),
-      );
-      assert.equal(conflict._tag, "Failure");
+      // Changed bytes have a new identity; the published V2 reference stays immutable.
+      const [replacement] = yield* persistChatAttachments({
+        threadId,
+        messageId: projection.messages.find((message) => message.text === "Image second")!.id,
+        attachments: [
+          {
+            type: "image",
+            name: "evidence.png",
+            mimeType: "image/png",
+            sizeBytes: 2,
+            dataUrl: "data:image/png;base64,aGE=",
+          },
+        ],
+      });
+      assert.ok(replacement);
+      assert.notEqual(replacement.id, attachment.id);
+      const replacementPath = resolveAttachmentPath({
+        attachmentsDir: config.attachmentsDir,
+        attachment: replacement,
+      });
+      assert.ok(replacementPath);
+      assert.equal(yield* fs.readFileString(replacementPath), "ha");
       assert.equal(yield* fs.readFileString(attachmentPath), "hi");
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+          (message) => message.text === "Image second",
+        )!.attachments[0]!.id,
+        attachment.id,
+      );
       assert.equal(yield* fs.readFileString(filename), source);
       assert.equal(yield* cutOverLegacyQueue(threadId), 0);
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);

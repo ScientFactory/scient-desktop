@@ -17,13 +17,21 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+// SCIENT-FORK:START — inert Scient history extends generic provider history.
+import { historicalMessage } from "./ScientHistoricalContext.ts";
+// SCIENT-FORK:END
 import {
   handoffCoverage,
-  historicalMessage,
   renderHistory,
   selectHistory,
-} from "./ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+// SCIENT-FORK:START — immutable membership replaces transcript staging.
+import {
+  makeContextHistorySource,
+  type ContextHandoffItem,
+} from "./scient-fork/ContextHistoryCandidates.ts";
+// SCIENT-FORK:END
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -43,13 +51,32 @@ export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandof
 export const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareError]);
 export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
 
+const requireHistoryBodies = (
+  items: ReadonlyArray<ContextHandoffItem>,
+  owner: Pick<
+    ContextHandoffPrepareError,
+    "threadId" | "targetRunId" | "fromProviderThreadIds" | "toProviderThreadId"
+  >,
+) =>
+  items.some((item) => "sourceOnly" in item)
+    ? Effect.fail(
+        new ContextHandoffPrepareError({
+          threadId: owner.threadId,
+          targetRunId: owner.targetRunId,
+          fromProviderThreadIds: owner.fromProviderThreadIds,
+          toProviderThreadId: owner.toProviderThreadId,
+          cause: new Error("Body-based preparation requires materialized history items."),
+        }),
+      )
+    : Effect.void;
+
 export interface ContextHandoffServiceV2Shape {
   readonly prepareLegacyImport: (input: {
     readonly threadId: ThreadId;
     readonly targetRunId: RunId;
     readonly toProviderThreadId: ProviderThreadId;
     readonly toProviderInstanceId: ProviderInstanceId;
-    readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly items: ReadonlyArray<ContextHandoffItem>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepare: (input: {
@@ -68,7 +95,7 @@ export interface ContextHandoffServiceV2Shape {
     readonly fromProviderInstanceId: ProviderInstanceId;
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-    readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly deltaItems: ReadonlyArray<ContextHandoffItem>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
@@ -86,7 +113,7 @@ export interface ContextHandoffServiceV2Shape {
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
-    readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly items: ReadonlyArray<ContextHandoffItem>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
 }
@@ -97,14 +124,18 @@ export class ContextHandoffServiceV2 extends Context.Service<
 >()("t3/orchestration-v2/ContextHandoffService/ContextHandoffServiceV2") {}
 
 function compactText(text: string, maxLength = 240): string {
-  const compacted = text.replace(/\s+/g, " ").trim();
+  const compacted = text
+    .slice(0, maxLength * 4)
+    .replace(/\s+/g, " ")
+    .trim();
   if (compacted.length <= maxLength) {
     return compacted;
   }
   return `${compacted.slice(0, maxLength - 3)}...`;
 }
 
-function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
+function summarizeDeltaItem(item: ContextHandoffItem): string | null {
+  if ("sourceOnly" in item) return null;
   switch (item.type) {
     case "user_message":
       return `- User: ${compactText(item.text)}`;
@@ -127,9 +158,9 @@ function makeForkDeltaSummary(input: {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
   readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-  readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly deltaItems: ReadonlyArray<ContextHandoffItem>;
 }): string {
-  const itemLines = input.deltaItems.flatMap((item) => {
+  const itemLines = input.deltaItems.slice(-100).flatMap((item) => {
     const line = summarizeDeltaItem(item);
     return line === null ? [] : [line];
   });
@@ -152,7 +183,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
       case "assistant_message":
         return [{ label: "Assistant", body: item.text }];
       case "user_input_request": {
-        const message = historicalMessage(item);
+        const message = "sourceOnly" in item ? null : historicalMessage(item);
         return message === null ? [] : [{ label: "User", body: message.text }];
       }
       default:
@@ -245,7 +276,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         readonly targetRunId: RunId;
         readonly toProviderThreadId: ProviderThreadId;
         readonly toProviderInstanceId: ProviderInstanceId;
-        readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly items: ReadonlyArray<ContextHandoffItem>;
         readonly createdAt: DateTime.Utc;
       }) {
         const handoffId = yield* idAllocator.allocate
@@ -267,16 +298,20 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
             ),
           );
         const coverage = handoffCoverage({ ...input, coveredRunOrdinals: { from: 1, to: 1 } });
-        // Keep the original whole items until delivery knows the selected model.
-        // Only this Scient path defers selection; generic switches remain capped.
-        const selected = selectHistory({
-          messages: input.items.flatMap((item) => {
-            const message = historicalMessage(item);
-            return message === null ? [] : [message];
-          }),
-          coverage,
-          budget: forceBytePolicy ? tokenCap : Number.POSITIVE_INFINITY,
-        });
+        if (forceBytePolicy)
+          yield* requireHistoryBodies(input.items, { ...input, fromProviderThreadIds: [] });
+        // SCIENT-FORK:START — defer Scient selection by immutable source membership.
+        const selected = !forceBytePolicy
+          ? { messages: [], omittedItems: 0, omittedItemIds: [], context: coverage }
+          : selectHistory({
+              messages: input.items.flatMap((item) => {
+                const message = "sourceOnly" in item ? null : historicalMessage(item);
+                return message === null ? [] : [message];
+              }),
+              coverage,
+              budget: tokenCap,
+            });
+        // SCIENT-FORK:END
         return {
           id: handoffId,
           transferId: null,
@@ -289,12 +324,23 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           budgetPolicy: "scient",
           status: "ready",
           summaryMessageId: null,
-          summaryText: makeLegacyImportSummary(input.items),
+          summaryText: input.items.some((item) => "sourceOnly" in item)
+            ? coverage
+            : makeLegacyImportSummary(
+                input.items.filter(
+                  (item): item is OrchestrationV2TurnItem => !("sourceOnly" in item),
+                ),
+              ),
+          ...(!forceBytePolicy
+            ? {
+                historySource: makeContextHistorySource(handoffId, input.items),
+              }
+            : {}),
           history: {
-            messages: selected.messages,
+            messages: forceBytePolicy ? selected.messages : [],
             coverage,
-            omittedItems: selected.omittedItems,
-            omittedItemIds: selected.omittedItemIds,
+            omittedItems: forceBytePolicy ? selected.omittedItems : 0,
+            omittedItemIds: forceBytePolicy ? selected.omittedItemIds : [],
           },
           createdByProviderInstanceId: null,
           createdAt: input.createdAt,
@@ -357,7 +403,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         readonly fromProviderInstanceId: ProviderInstanceId;
         readonly toProviderInstanceId: ProviderInstanceId;
         readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-        readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly deltaItems: ReadonlyArray<ContextHandoffItem>;
         readonly createdAt: DateTime.Utc;
       }) {
         const handoffId = yield* idAllocator.allocate
@@ -383,16 +429,23 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           coveredRunOrdinals: input.coveredRunOrdinals,
           items: input.deltaItems,
         });
-        // Keep the original whole items until delivery knows the selected model.
-        // Only this Scient path defers selection; generic switches remain capped.
-        const selected = selectHistory({
-          messages: input.deltaItems.flatMap((item) => {
-            const message = historicalMessage(item);
-            return message === null ? [] : [message];
-          }),
-          coverage,
-          budget: forceBytePolicy ? tokenCap : Number.POSITIVE_INFINITY,
-        });
+        if (forceBytePolicy)
+          yield* requireHistoryBodies(input.deltaItems, {
+            ...input,
+            threadId: input.targetThreadId,
+          });
+        // SCIENT-FORK:START — defer Scient selection by immutable source membership.
+        const selected = !forceBytePolicy
+          ? { messages: [], omittedItems: 0, omittedItemIds: [], context: coverage }
+          : selectHistory({
+              messages: input.deltaItems.flatMap((item) => {
+                const message = "sourceOnly" in item ? null : historicalMessage(item);
+                return message === null ? [] : [message];
+              }),
+              coverage,
+              budget: tokenCap,
+            });
+        // SCIENT-FORK:END
         return {
           id: handoffId,
           transferId: input.transferId,
@@ -405,12 +458,24 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           budgetPolicy: "scient",
           status: "ready",
           summaryMessageId: null,
-          summaryText: makeForkDeltaSummary(input),
+          summaryText: input.deltaItems.some((item) => "sourceOnly" in item)
+            ? coverage
+            : makeForkDeltaSummary({
+                ...input,
+                deltaItems: input.deltaItems.filter(
+                  (item): item is OrchestrationV2TurnItem => !("sourceOnly" in item),
+                ),
+              }),
+          ...(!forceBytePolicy
+            ? {
+                historySource: makeContextHistorySource(handoffId, input.deltaItems),
+              }
+            : {}),
           history: {
-            messages: selected.messages,
+            messages: forceBytePolicy ? selected.messages : [],
             coverage,
-            omittedItems: selected.omittedItems,
-            omittedItemIds: selected.omittedItemIds,
+            omittedItems: forceBytePolicy ? selected.omittedItems : 0,
+            omittedItemIds: forceBytePolicy ? selected.omittedItemIds : [],
           },
           createdByProviderInstanceId: null,
           createdAt: input.createdAt,
@@ -436,7 +501,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         OrchestrationV2ContextHandoff["strategy"],
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
-      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly items: ReadonlyArray<ContextHandoffItem>;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -459,22 +524,28 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
       const coverage = handoffCoverage(input);
-      const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
-        coverage,
-        budget:
-          input.purpose === undefined || forceBytePolicy ? tokenCap : Number.POSITIVE_INFINITY,
-      });
+      if (input.purpose === undefined || forceBytePolicy)
+        yield* requireHistoryBodies(input.items, input);
+      // SCIENT-FORK:START — defer Scient history bodies; retain finite generic preparation.
+      const selected =
+        input.purpose !== undefined && !forceBytePolicy
+          ? { messages: [], omittedItems: 0, omittedItemIds: [], context: coverage }
+          : selectHistory({
+              messages: input.items.flatMap((item) => {
+                const message = "sourceOnly" in item ? null : historicalMessage(item);
+                return message === null
+                  ? []
+                  : [
+                      {
+                        ...message,
+                        ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
+                      },
+                    ];
+              }),
+              coverage,
+              budget: tokenCap,
+            });
+      // SCIENT-FORK:END
       return {
         id: handoffId,
         transferId: input.transferId,
@@ -487,12 +558,21 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         ...(input.purpose === undefined ? {} : { budgetPolicy: "scient" as const }),
         status: "ready",
         summaryMessageId: null,
-        summaryText: renderHistory(selected.messages, selected.context),
+        summaryText:
+          input.purpose !== undefined && !forceBytePolicy
+            ? coverage
+            : renderHistory(selected.messages, selected.context),
+        ...(input.purpose !== undefined && !forceBytePolicy
+          ? {
+              historySource: makeContextHistorySource(handoffId, input.items, input.runs),
+            }
+          : {}),
         history: {
-          messages: selected.messages,
+          messages: input.purpose !== undefined && !forceBytePolicy ? [] : selected.messages,
           coverage,
-          omittedItems: selected.omittedItems,
-          omittedItemIds: selected.omittedItemIds,
+          omittedItems: input.purpose !== undefined && !forceBytePolicy ? 0 : selected.omittedItems,
+          omittedItemIds:
+            input.purpose !== undefined && !forceBytePolicy ? [] : selected.omittedItemIds,
         },
         createdByProviderInstanceId: null,
         createdAt: input.createdAt,

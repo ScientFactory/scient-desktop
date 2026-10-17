@@ -216,18 +216,45 @@ describe("Pi MCP tool results", () => {
 });
 
 describe("Pi MCP tool exposure", () => {
+  const discoveryContext = {
+    model: { api: "anthropic-messages" },
+    ui: { notify: () => undefined },
+  };
+
+  it.each(["session_start", "session_tree", "model_select", "before_agent_start"])(
+    "declares optional Scient tools for OpenAI-compatible gateways at %s",
+    async (hookName) => {
+      const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+      const hook = bridge.handlers.get(hookName);
+      assert.isDefined(hook);
+      await hook!(
+        { systemPrompt: "Pi system prompt" },
+        { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+      );
+      assert.deepEqual(
+        bridge.tools.map((tool) => [tool.name, tool.exposure]),
+        [
+          ["orchestrator_capabilities", "direct"],
+          ["delegate_task", "direct"],
+          ["task_status", "direct"],
+          ["preview_snapshot", "deferred"],
+        ],
+      );
+      assert.isTrue(bridge.tools.every((tool) => bridge.getActiveTools().includes(tool.name)));
+      const result = await bridge.tools
+        .find((tool) => tool.name === "preview_snapshot")!
+        .execute("gateway-call", {});
+      assert.equal(result.content[0]?.text, "browser snapshot");
+      assert.isTrue(bridge.tools.every((tool) => !tool.name.includes("mcp__t3")));
+    },
+  );
+
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
     const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
-    await bridge.handlers.get("session_start")!(
-      { systemPrompt: "" },
-      { ui: { notify: () => undefined } },
-    );
+    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
-    const prompt = await start!(
-      { systemPrompt: "Pi system prompt" },
-      { ui: { notify: () => undefined } },
-    );
+    const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
     assert.include(prompt.systemPrompt, "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 4);
@@ -251,6 +278,33 @@ describe("Pi MCP tool exposure", () => {
     assert.equal(bridge.requests.at(-1)?.method, "tools/call");
   });
 
+  it("restores gateway declarations after model switches and older tree loadouts without excluded tools", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      allowsTool: (name) => name !== "delegate_task",
+    });
+    const event = { systemPrompt: "" };
+    await bridge.handlers.get("session_start")!(event, discoveryContext);
+    const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+    await bridge.handlers.get("model_select")!(event, gatewayContext);
+    bridge.restoreActiveTools(["read", "task_status"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "task_status",
+      "tool_search",
+      "orchestrator_capabilities",
+      "preview_snapshot",
+    ]);
+    await bridge.handlers.get("model_select")!(event, discoveryContext);
+    assert.equal(
+      bridge.tools.find((tool) => tool.name === "preview_snapshot")?.exposure,
+      "deferred",
+    );
+    assert.include(bridge.getActiveTools(), "preview_snapshot");
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {
@@ -261,7 +315,7 @@ describe("Pi MCP tool exposure", () => {
       });
       if (mode !== "legacy Pi") {
         const start = bridge.handlers.get("session_start");
-        await start!({ systemPrompt: "Pi system prompt" }, { ui: { notify: () => undefined } });
+        await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
       }
       assert.equal(bridge.tools.filter((tool) => tool.exposure !== "hidden").length, 4);
       assert.isTrue(
@@ -296,8 +350,10 @@ describe("Pi MCP tool exposure", () => {
     });
     await bridge.handlers.get("session_start")!(
       { systemPrompt: "" },
-      { ui: { notify: () => undefined } },
+      { model: { api: "openai-completions" }, ui: { notify: () => undefined } },
     );
+    assert.include(bridge.getActiveTools(), "mcp__scient__preview_snapshot");
+    assert.notInclude(bridge.getActiveTools(), "preview_snapshot");
     const tool = bridge.tools.find((tool) => tool.name === "mcp__scient__preview_snapshot");
     assert.isDefined(tool);
     assert.equal((await tool!.execute("selected", {})).content[0]?.text, "browser snapshot");
@@ -317,10 +373,7 @@ describe("Pi MCP tool exposure", () => {
         allowsTool: (name) =>
           name !== "delegate_task" && (!excludeSearch || name !== "tool_search"),
       });
-      await bridge.handlers.get("session_start")!(
-        { systemPrompt: "" },
-        { ui: { notify: () => undefined } },
-      );
+      await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
       bridge.restoreActiveTools([
         "read",
         "mcp__t3-code__task_status",
@@ -328,7 +381,7 @@ describe("Pi MCP tool exposure", () => {
       ]);
       const tree = bridge.handlers.get("session_tree");
       assert.isDefined(tree);
-      await tree!({ systemPrompt: "" }, { ui: { notify: () => undefined } });
+      await tree!({ systemPrompt: "" }, discoveryContext);
       assert.deepEqual(bridge.getActiveTools(), [
         "read",
         "task_status",
@@ -343,6 +396,52 @@ describe("Pi MCP tool exposure", () => {
 });
 
 describe("Pi tool discovery permissions", () => {
+  it.each(["approval-required", "auto-accept-edits", "auto"])(
+    "allows annotated Scient reads in %s while gating mutations and replacements",
+    async (runtimeMode) => {
+      const bridge = await loadMcpBridge({ modern: true, runtimeMode });
+      const hook = bridge.handlers.get("tool_call") as unknown as (
+        event: { toolName: string; input: unknown },
+        ctx: { hasUI: boolean; ui: { confirm: (title: string) => Promise<boolean> } },
+      ) => Promise<{ block: true; reason: string } | undefined>;
+      const confirmations: string[] = [];
+      const ctx = {
+        hasUI: true,
+        ui: {
+          confirm: async (title: string) => {
+            confirmations.push(title);
+            return false;
+          },
+        },
+      };
+      for (const prefix of [""]) {
+        assert.isUndefined(
+          await hook({ toolName: prefix + "orchestrator_capabilities", input: {} }, ctx),
+        );
+        assert.equal(
+          (await hook({ toolName: prefix + "delegate_task", input: {} }, ctx))?.block,
+          true,
+        );
+        // task_status acknowledges result delivery, and is intentionally not read-only.
+        assert.equal(
+          (await hook({ toolName: prefix + "task_status", input: {} }, ctx))?.block,
+          true,
+        );
+      }
+      assert.equal(confirmations.length, 2);
+      bridge.setBridgeSourcePath("/user/extensions/replacement.ts");
+      assert.equal(
+        (await hook({ toolName: "orchestrator_capabilities", input: {} }, ctx))?.block,
+        true,
+      );
+      assert.equal(
+        (await hook({ toolName: "mcp__other__orchestrator_capabilities", input: {} }, ctx))?.block,
+        true,
+      );
+      assert.equal(confirmations.length, 4);
+    },
+  );
+
   it("allows discovery without confirmation and still gates the discovered tool", async () => {
     type ToolCallHook = (
       event: { toolName: string; input: unknown },

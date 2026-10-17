@@ -274,7 +274,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         Effect.gen(function* () {
           const mutationId =
-            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
           return yield* requestGuarded(WS_METHODS.projectsWriteFile, { ...input, mutationId });
         }).pipe(
           Effect.tap((result) =>
@@ -295,7 +295,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         Effect.gen(function* () {
           const mutationId =
-            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
           return yield* requestGuarded(WS_METHODS.projectsRenameFile, { ...input, mutationId });
         }).pipe(
           Effect.tap((result) =>
@@ -327,7 +327,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         Effect.gen(function* () {
           const mutationId =
-            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
           return yield* request(WS_METHODS.projectsDeleteFile, { ...input, mutationId });
         }),
       scheduler: fileScheduler,
