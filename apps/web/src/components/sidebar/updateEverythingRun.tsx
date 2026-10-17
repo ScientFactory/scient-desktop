@@ -89,7 +89,7 @@ export function useQualifiedUpdateRunServers(): ReadonlyArray<ServerUpdateTarget
   return useAtomValue(qualifiedUpdateRunServersAtom);
 }
 
-const WITHDRAWN_RETRY_FAILURE = "Not retried; it is no longer eligible for this update.";
+const WITHDRAWN_RETRY_FAILURE = "Not retried; it is not currently eligible for this update.";
 // SCIENT-FORK:END
 
 /** Retries each failed server update in the run. */

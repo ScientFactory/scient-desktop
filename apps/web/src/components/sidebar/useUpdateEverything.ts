@@ -97,14 +97,19 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const committedServersRef = useRef(servers);
   useLayoutEffect(() => {
     committedServersRef.current = servers;
-    // A failed server's Retry rechecks the same eligibility.
+    // A failed server's Retry rechecks the same eligibility. `servers` is rebuilt on
+    // every render; publishing an equal list notifies no one.
     publishQualifiedUpdateRunServers(servers);
-    return () => {
+  }, [servers]);
+  useLayoutEffect(
+    () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
+      // The ref never changes, so this runs only on unmount.
       committedServersRef.current = [];
       publishQualifiedUpdateRunServers([]);
-    };
-  }, [servers]);
+    },
+    [committedServersRef],
+  );
   const skipped: ReadonlyArray<SkippedMachine> = [
     ...unreachable,
     ...unsupportedBulkServerMachines(behindServers, servers),

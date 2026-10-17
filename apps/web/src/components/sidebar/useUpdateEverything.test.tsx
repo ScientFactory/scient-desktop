@@ -1,4 +1,4 @@
-import { act, useLayoutEffect } from "react";
+import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import {
   EnvironmentId,
@@ -33,6 +33,8 @@ const testState = vi.hoisted(() => ({
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
   updateProviders: vi.fn<() => Promise<ReadonlyArray<never>>>(),
+  // Atoms the run module writes with `set`, so a test can subscribe to them like a component.
+  publishedAtoms: new Set<Atom.Writable<unknown, unknown>>(),
   setRun: vi.fn<(typeof import("./updateEverythingRun"))["setUpdateEverythingRun"]>(),
   settleMachine:
     vi.fn<
@@ -70,7 +72,10 @@ vi.mock("~/rpc/atomRegistry", () => ({
     get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
     update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
       testState.registry!.update(atom, f),
-    set: <R, W>(atom: Atom.Writable<R, W>, value: W) => testState.registry!.set(atom, value),
+    set: <R, W>(atom: Atom.Writable<R, W>, value: W) => {
+      testState.publishedAtoms.add(atom as Atom.Writable<unknown, unknown>);
+      testState.registry!.set(atom, value);
+    },
   },
 }));
 vi.mock("~/state/server", () => ({
@@ -187,6 +192,7 @@ beforeEach(() => {
   testState.updateProviders.mockReset().mockResolvedValue([]);
   testState.settleMachine.mockReset();
   testState.setRun.mockReset();
+  testState.publishedAtoms.clear();
   testState.showResult.mockReset();
   testState.updateServer
     .mockReset()
@@ -446,10 +452,50 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
     expect(machines.find((machine) => machine.environmentId === "service")).toMatchObject({
       server: savedService,
       result: "failed",
-      failure: "Not retried; it is no longer eligible for this update.",
+      failure: "Not retried; it is not currently eligible for this update.",
     });
   },
 );
+
+// SCIENT-FORK:START — eligibility readers hear only real changes, not every owner render.
+it("does not notify eligibility readers when its owner re-renders unchanged", async () => {
+  await act(() => {
+    renderer = create(<Probe />);
+  });
+  expect(testState.publishedAtoms.size).toBe(1);
+  const [qualified] = testState.publishedAtoms;
+  let notifications = 0;
+  const unsubscribe = testState.registry!.subscribe(qualified!, () => {
+    notifications += 1;
+  });
+  const readerRendered = vi.fn();
+  function Reader() {
+    readerRendered();
+    useSyncExternalStore(
+      (onChange) => testState.registry!.subscribe(qualified!, onChange),
+      () => testState.registry!.get(qualified!),
+    );
+    return null;
+  }
+  let reader: ReactTestRenderer | undefined;
+  await act(() => {
+    reader = create(<Reader />);
+  });
+  const rendersBefore = readerRendered.mock.calls.length;
+  await act(() => renderer!.update(<Probe />));
+  await act(() => renderer!.update(<Probe />));
+  expect(notifications).toBe(0);
+  expect(readerRendered).toHaveBeenCalledTimes(rendersBefore);
+
+  // A real eligibility change still reaches readers once.
+  testState.environments = [testState.environments[1]!];
+  await act(() => renderer!.update(<Probe />));
+  expect(notifications).toBe(1);
+  expect(readerRendered).toHaveBeenCalledTimes(rendersBefore + 1);
+  unsubscribe();
+  await act(() => reader!.unmount());
+});
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — a withdrawn server keeps its confirmed target, so Retry returns once
 // that target is eligible again, and never sends a stale one.
@@ -505,6 +551,11 @@ describe("a server withdrawn when its step starts", () => {
       run.retryFailedUpdateRunServers(update);
     });
     expect(update).not.toHaveBeenCalled();
+    expect(run.useUpdateEverythingRun()?.machines[0]).toMatchObject({
+      result: "failed",
+      failure: "Not retried; it is not currently eligible for this update.",
+      server: { environmentId: "service", targetVersion: "0.6.2" },
+    });
     expect(capsuleAction(run)).toBe("dismiss");
 
     // Back online with a changed flag: Retry returns and takes the current flags.
