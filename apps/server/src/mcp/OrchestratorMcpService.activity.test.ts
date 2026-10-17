@@ -497,8 +497,10 @@ it("cross-project reads require a user attachment and writes retain caller autho
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: (caller) =>
           Effect.sync(() => {
-            expect(caller).toEqual(makeScope().thread);
-            return parentRuns.length > 0
+            expect(caller.threadId).toBe(parentThreadId);
+            // The native owner grants an active run, or a background subagent it started.
+            return parentRuns.length > 0 ||
+              OrchestratorMcpService.isLiveCallerShell(parentShell, caller.providerInstanceId)
               ? Option.some({
                   runtimeMode: "full-access" as const,
                   interactionMode: "default" as const,
@@ -693,27 +695,76 @@ it("cross-project reads require a user attachment and writes retain caller autho
     expect(staleDelete.code).toBe("parent_not_active");
     expect(sentInputs).toHaveLength(2);
 
-    // Upstream lets a background subagent keep writing after its parent's turn
-    // ends. Scient grants writes only to a run with a captured execution policy,
-    // so its parent's shell liveness alone still ends in the same refusal.
+    // A background item keeps only its owning instance live, even after a switch.
+    const backgroundTasks = [
+      {
+        taskId: "background-subagent",
+        kind: "subagent" as const,
+        providerInstanceId: parentInstanceId,
+      },
+    ];
     parentShell = {
       ...liveThreadShell(parentThreadId, { activeRunId: null }),
-      pendingBackgroundTasks: [
-        { taskId: "background-subagent", kind: "subagent", providerInstanceId: parentInstanceId },
-      ],
+      pendingBackgroundTasks: backgroundTasks,
     };
-    const backgroundSend = yield* service
-      .sendToThread(makeScope(), { threadId: childThreadId, message: "background" })
-      .pipe(Effect.flip);
-    expect(backgroundSend.code).toBe("parent_not_active");
-    const backgroundDelegate = yield* service
+    // Scient keeps sends inside the caller's project, so the local child stands in for upstream's target.
+    const backgroundSent = yield* service.sendToThread(makeScope(), {
+      threadId: childThreadId,
+      message: "background",
+    });
+    expect(backgroundSent.threadId).toBe(childThreadId);
+    expect(sentInputs).toHaveLength(3);
+    const delegate = yield* service
       .delegateTask(makeScope(), { task: "requires a run" })
       .pipe(Effect.flip);
-    expect(backgroundDelegate.code).toBe("parent_not_active");
-    const backgroundCreate = yield* service
+    expect(delegate.code).toBe("parent_not_active");
+    const create = yield* service
       .createThreads(makeScope(), { threads: [{ prompt: "requires a run" }] })
       .pipe(Effect.flip);
-    expect(backgroundCreate.code).toBe("parent_not_active");
-    expect(sentInputs).toHaveLength(2);
+    expect(create.code).toBe("parent_not_active");
+    const secret = yield* service
+      .requestSecret(makeScope(), { label: "Secret", reason: "requires a run" })
+      .pipe(Effect.flip);
+    expect(secret.code).toBe("parent_not_active");
+
+    parentShell = { ...parentShell, providerInstanceId: customCodexInstanceId };
+    const switchedScope = {
+      ...makeScope(),
+      thread: { ...makeScope().thread!, providerInstanceId: customCodexInstanceId },
+    };
+    const switched = yield* service
+      .sendToThread(switchedScope, { threadId: childThreadId, message: "wrong owner" })
+      .pipe(Effect.flip);
+    expect(switched.code).toBe("parent_not_active");
+    const mismatched = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "stale provider" })
+      .pipe(Effect.flip);
+    expect(mismatched.code).toBe("parent_not_active");
+
+    // A fresh active run wins over the earlier inactive projection and empty roster.
+    parentShell = liveThreadShell(parentThreadId);
+    const restarted = yield* service.sendToThread(makeScope(), {
+      threadId: childThreadId,
+      message: "new run",
+    });
+    expect(restarted.threadId).toBe(childThreadId);
+
+    parentShell = {
+      ...parentShell,
+      activeRunId: null,
+      pendingBackgroundTasks: backgroundTasks,
+      archivedAt: now,
+    };
+    const archived = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "archived" })
+      .pipe(Effect.flip);
+    expect(archived.code).toBe("parent_not_active");
+
+    parentShell = { ...parentShell, archivedAt: null, pendingBackgroundTasks: [] };
+    const stopped = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "after stop" })
+      .pipe(Effect.flip);
+    expect(stopped.code).toBe("parent_not_active");
+    expect(sentInputs).toHaveLength(4);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

@@ -502,8 +502,9 @@ literal merge `0ebeec9e509336fc22bb107148dbecf64d9e9163`, whose parents are the
 target, retaining all 176 further donor commits. Scient keeps its labels, product
 name and Stable/Beta channels, its publication workflows and CI structure, archived
 and queued work out of settled-worktree cleanup, mode authority across steering,
-captured-policy authority for subagent writes, and older clients' pull-request
-views by gating branch deletion until clients decode actions forward-compatibly.
+background-subagent writes bounded by the policy its starting run captured, and older
+clients' pull-request views by gating branch deletion until clients decode actions
+forward-compatibly.
 Release remains separate.
 
 ## Receiving T3 updates
