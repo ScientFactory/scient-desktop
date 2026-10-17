@@ -1,10 +1,12 @@
 import type {
   OrchestrationV2Run,
+  OrchestrationV2ThreadShell,
   ProviderInteractionMode,
   ProviderSessionId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -16,6 +18,8 @@ import type {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProjectionRecords } from "../ProjectionStore.ts";
 import type { McpThreadCaller } from "../../mcp/McpInvocationContext.ts";
+import { isLiveCallerShell } from "../../mcp/liveCallerShell.ts";
+import { exceededDispatchModeLimit, type DispatchModes } from "../DispatchModeLimit.ts";
 
 type AuthoritySessionEntry = {
   readonly runtime: ProviderAdapterV2SessionRuntime;
@@ -25,14 +29,14 @@ type AuthoritySessionEntry = {
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
 };
 
-type PolicyRecords = ProjectionRecords<"runs" | "attempts" | "providerThreads" | "subagents">;
+type PolicyRecords = ProjectionRecords<"runs" | "attempts" | "providerThreads">;
 type PolicyInvocation = Pick<McpThreadCaller, "threadId" | "providerInstanceId">;
 type PolicyRun = PolicyRecords["runs"][number] & {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
 };
 type PolicySource = {
-  readonly run: PolicyRun;
+  readonly modes: DispatchModes;
   readonly nativeThread: PolicyRecords["providerThreads"][number];
 };
 
@@ -79,91 +83,77 @@ function activeRunPolicy(
     nativeThread.providerInstanceId !== invocation.providerInstanceId
   )
     return undefined;
-  return { run, nativeThread };
+  return {
+    modes: { runtimeMode: run.runtimeMode, interactionMode: run.interactionMode },
+    nativeThread,
+  };
 }
+
+/** Each mode at the lower of the two ranks. */
+const narrowerModes = (left: DispatchModes, right: DispatchModes): DispatchModes => ({
+  runtimeMode:
+    exceededDispatchModeLimit(
+      { runtimeMode: right.runtimeMode, interactionMode: "plan" },
+      { runtimeMode: left.runtimeMode, interactionMode: "plan" },
+    ) === "runtime"
+      ? right.runtimeMode
+      : left.runtimeMode,
+  interactionMode:
+    exceededDispatchModeLimit(
+      { runtimeMode: "approval-required", interactionMode: right.interactionMode },
+      { runtimeMode: "approval-required", interactionMode: left.interactionMode },
+    ) === "interaction"
+      ? right.interactionMode
+      : left.interactionMode,
+});
 
 /**
  * A background subagent outlives the run that started it and calls tools with
- * its thread's credential. With no open run, each subagent the credential's own
- * provider thread still reports on the caller's instance must name exactly one
- * native subagent record, and that record's run must have started on this
- * provider thread with captured modes. Writes take those modes; subagents whose
- * starting runs disagree, or any subagent without that provenance, grant nothing.
+ * its thread's credential. With no open run, the thread shell must pass
+ * upstream's liveness rule for the caller's instance. Writes never exceed
+ * upstream's cap, the thread's current modes, nor the modes of the last run
+ * that actually started on the credential's own provider session.
  */
 function backgroundSubagentPolicy(
   projection: PolicyRecords,
   invocation: PolicyInvocation,
   ownedSessionIds: ReadonlySet<ProviderSessionId>,
+  shell: OrchestrationV2ThreadShell | null,
 ): PolicySource | undefined {
-  if (
-    projection.thread.providerInstanceId !== invocation.providerInstanceId ||
-    projection.runs.some((candidate) => OPEN_RUN_STATUSES.has(candidate.status))
-  )
-    return undefined;
-  const sources: Array<PolicySource> = [];
-  for (const nativeThread of projection.providerThreads) {
-    if (
-      nativeThread.providerSessionId === null ||
-      !ownedSessionIds.has(nativeThread.providerSessionId) ||
-      nativeThread.appThreadId !== invocation.threadId ||
-      nativeThread.providerInstanceId !== invocation.providerInstanceId
-    )
-      continue;
-    for (const task of nativeThread.pendingBackgroundTasks ?? []) {
-      if (
-        task.kind !== "subagent" ||
-        (task.providerInstanceId ?? nativeThread.providerInstanceId) !==
-          invocation.providerInstanceId
-      )
-        continue;
-      const run = startingRun(projection, invocation, nativeThread, task.taskId);
-      if (run === undefined) return undefined;
-      sources.push({ run, nativeThread });
-    }
-  }
-  const [first, ...rest] = sources;
-  return first === undefined ||
-    rest.some(
-      ({ run }) =>
-        run.runtimeMode !== first.run.runtimeMode ||
-        run.interactionMode !== first.run.interactionMode,
-    )
-    ? undefined
-    : first;
-}
-
-/** The run that started one native subagent, when its records name it unambiguously. */
-function startingRun(
-  projection: PolicyRecords,
-  invocation: PolicyInvocation,
-  nativeThread: PolicyRecords["providerThreads"][number],
-  nativeTaskId: string,
-): PolicyRun | undefined {
-  const records = projection.subagents.filter(
-    (subagent) =>
-      subagent.origin === "provider_native" &&
-      subagent.threadId === invocation.threadId &&
-      subagent.providerInstanceId === invocation.providerInstanceId &&
-      subagent.nativeTaskRef?.nativeId === nativeTaskId,
-  );
-  const runId = records.length === 1 ? records[0]!.runId : null;
-  const run =
-    runId === null ? undefined : projection.runs.find((candidate) => candidate.id === runId);
-  if (
-    run === undefined ||
-    run.status === "rolled_back" ||
-    run.providerInstanceId !== invocation.providerInstanceId ||
-    run.providerThreadId !== nativeThread.id ||
-    !hasCapturedModes(run) ||
-    !projection.attempts.some(
-      (attempt) =>
-        attempt.runId === run.id &&
-        attempt.providerThreadId === nativeThread.id &&
-        attempt.startedAt !== null,
-    )
-  )
-    return undefined;
-  return run;
+  if (shell === null || !isLiveCallerShell(shell, invocation.providerInstanceId)) return undefined;
+  const started = projection.runs.flatMap((run) => {
+    if (run.status === "rolled_back" || run.providerInstanceId !== invocation.providerInstanceId)
+      return [];
+    const nativeThread = projection.providerThreads.find(
+      (candidate) =>
+        candidate.id === run.providerThreadId &&
+        candidate.providerSessionId !== null &&
+        ownedSessionIds.has(candidate.providerSessionId) &&
+        candidate.appThreadId === invocation.threadId &&
+        candidate.providerInstanceId === invocation.providerInstanceId,
+    );
+    return nativeThread === undefined
+      ? []
+      : projection.attempts.flatMap((attempt) =>
+          attempt.runId === run.id &&
+          attempt.providerThreadId === nativeThread.id &&
+          attempt.startedAt !== null
+            ? [{ run, nativeThread, startedAt: DateTime.toEpochMillis(attempt.startedAt) }]
+            : [],
+        );
+  });
+  const lastStartedAt = Math.max(...started.map((entry) => entry.startedAt));
+  // Runs that started at the same instant both bound the caller.
+  const last = started.filter((entry) => entry.startedAt === lastStartedAt);
+  const lastRuns = last.map((entry) => entry.run).filter(hasCapturedModes);
+  if (last.length === 0 || lastRuns.length !== last.length) return undefined;
+  return {
+    modes: lastRuns.reduce<DispatchModes>(narrowerModes, {
+      runtimeMode: shell.runtimeMode,
+      interactionMode: shell.interactionMode,
+    }),
+    nativeThread: last[0]!.nativeThread,
+  };
 }
 
 /** Execution authority bound only to the exact live native owner. */
@@ -174,6 +164,9 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
   readonly readThreadRecords: (
     invocation: Pick<McpThreadCaller, "threadId" | "providerSessionId">,
   ) => Effect.Effect<PolicyRecords, E>;
+  readonly readThreadShell: (
+    invocation: Pick<McpThreadCaller, "threadId" | "providerSessionId">,
+  ) => Effect.Effect<OrchestrationV2ThreadShell | null, E>;
 }) => {
   const { sessions, sessionKey, releasingRuntimes } = input;
   return {
@@ -229,13 +222,16 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
           return Option.none();
         const policy =
           activeRunPolicy(projection, invocation) ??
-          backgroundSubagentPolicy(
-            projection,
-            invocation,
-            new Set(entries.map((entry) => entry.runtime.providerSessionId)),
-          );
+          (projection.runs.some((candidate) => OPEN_RUN_STATUSES.has(candidate.status))
+            ? undefined
+            : backgroundSubagentPolicy(
+                projection,
+                invocation,
+                new Set(entries.map((entry) => entry.runtime.providerSessionId)),
+                yield* input.readThreadShell(invocation),
+              ));
         if (policy === undefined) return Option.none();
-        const { run, nativeThread } = policy;
+        const { modes, nativeThread } = policy;
         const current = yield* Ref.get(sessions);
         const owner = entries.find(
           (entry) =>
@@ -249,9 +245,7 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
               .get(sessionKey(entry.runtime.providerSessionId))
               ?.mcpCredentialIdByThread.get(invocation.threadId) === invocation.providerSessionId,
         );
-        return owner === undefined
-          ? Option.none()
-          : Option.some({ runtimeMode: run.runtimeMode, interactionMode: run.interactionMode });
+        return owner === undefined ? Option.none() : Option.some(modes);
       },
     ),
   };

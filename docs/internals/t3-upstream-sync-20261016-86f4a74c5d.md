@@ -215,13 +215,13 @@ Meaningful compositions:
 - **Pairing (#20432).** Adopted by owner decision: pairing and issued sessions
   grant access and relay management by default. Relay remains switched off.
 - **Background subagents (#19751).** Adopted by owner decision: a background
-  subagent keeps its MCP tools after the parent's turn ends. Scient's write
-  authority still comes from the credential's live native session. With no open
-  run, every subagent its own provider thread reports on the caller's instance
-  must name exactly one native subagent record whose run started on that provider
-  thread with captured modes; writes use those runtime and interaction modes.
-  Missing or ambiguous provenance, or starting runs whose modes differ, grant
-  nothing.
+  subagent keeps its MCP tools after the parent's turn ends. Write authority
+  still requires the credential's live native session; with no open run, the
+  thread shell must pass upstream's liveness rule for the caller's instance.
+  Writes are never wider than upstream's thread-mode cap or the live provider
+  session's last started turn: each mode is the narrower of the thread's current
+  mode and the mode of the run whose attempt started last on that session. With
+  no started run, nothing is granted.
 - **Publication.** Scient publishes no npm package: upstream's npm launcher
   sources are not carried and `cli.ts publish` is not called by any Scient
   workflow. `release.yml` is unchanged from #574. Mobile workflows keep the
