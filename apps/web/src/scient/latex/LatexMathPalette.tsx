@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import {
   memo,
@@ -390,15 +391,13 @@ export function LatexMathPalette({
       { signal: listeners.signal },
     );
     const resize = () => move(position);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
-    observer?.observe(panel);
-    if (workspace) observer?.observe(workspace);
+    const stopResize = observeResize(workspace ? [panel, workspace] : panel, resize);
     window.addEventListener("resize", resize, { signal: listeners.signal });
     move(panelPosition.current);
     return () => {
       endDrag();
       listeners.abort();
-      observer?.disconnect();
+      stopResize();
       panel.style.removeProperty("translate");
     };
   }, [open, portalHost]);

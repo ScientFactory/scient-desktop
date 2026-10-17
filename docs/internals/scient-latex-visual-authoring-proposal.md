@@ -2,6 +2,228 @@
 
 **Status:** Contextual authoring controls are partly implemented in the working tree, updated 2026-10-06. Menu extensions are future work recorded in [Editing-command placement](../design/editing-commands-placement.md#functionality-to-add-placement-pending). The coverage below separates current controls from the remaining architectural roadmap. Current implementation details remain in [Source-derived writing canvas](scient-latex-visual.md).
 
+## Renderer regression repair plan — 2026-10-15
+
+Status: implementation has repaired the reproduced projection failures described
+below. Rendering completeness and fidelity must still qualify together with
+responsiveness; the preceding typing benchmark did not establish correctness.
+Automated suites were not run, following the workspace owner's instruction.
+
+### Implemented repairs and qualification
+
+- The supplied wrapped `tabularx` renders all 32 cells. Parsing, presentation and
+  editing now share the column description. Fixed-plus-flexible grids retain
+  fixed layout, and a local `arraystretch` declaration no longer makes later
+  blocks source-only. Literal local table declarations retain their source.
+- The 100-row truncation is removed. The stress fixture's register projects its
+  header and all 120 data rows; oversized inputs fall back as complete source
+  instead of silently returning a shortened table.
+- Literal underscore image paths, root `graphicspath` search directories,
+  width/height constraints, aspect preservation, optional subfigure alignment,
+  explicit gallery rows, and images inside ordinary prose/table cells render.
+  Source-owned zero-argument prose macros render without materializing their
+  definitions. Listing `flexible`/`fullflexible` columns are accepted.
+- Valid passive math markup is delivered independently of cache admission.
+  Worker startup, transport and timeout failures do not enter the terminal
+  fallback cache; mounted views attempt one bounded retry. Unsupported conversion
+  results retain their source fallback.
+- Detached page measurement preserves authored transformations and includes
+  inline math ink when choosing paragraph line boundaries.
+- The final repair also covers cropped galleries, landscape and titlepage
+  structures, explicit group setup and the credits paragraph. Template 29 now
+  projects without source-only blocks; the earlier intermediate count of eight
+  fallbacks no longer describes the candidate. Its isolated production-browser
+  comparison reaches 54 pages, matching the reference PDF, with all 69 photo
+  instances loaded. Page count and coverage do not establish pixel identity.
+- An isolated production browser build displayed the supplied table, loaded the
+  local photo galleries, and showed bold `n` in both inline and display math.
+  The assembled thesis projects 402 inline and 60 display formulas without raw
+  blocks. Its existing PDF was inspected as a visual reference; it predates the
+  current `today` date. The final comparison reaches 13 pages, matching that PDF,
+  with sampled title, heading, equation and proof placement inspected. Exact TeX
+  float placement and page-spanning frame borders remain approximate. Drawings
+  retain their explicit preview action and were not executed in this comparison.
+- Direct source-edit reproductions preserve the original table, macro calls,
+  image options and surrounding source while changing the requested cell/text.
+  Targeted regression cases were added but remain unrun. Browser layout checks
+  use an isolated fixture asset adapter, not live desktop/server verification.
+
+The remaining steps below are the broader qualification roadmap, not a claim
+that arbitrary TeX or all stress-fixture structures now render faithfully.
+
+### Evidence and unresolved causes
+
+- The owner supplied a four-column `tabularx`: `p{2.0cm}` plus three `X` columns,
+  `>{\raggedright\arraybackslash}`, trimmed outer spacing, booktabs rules,
+  a caption/label and `\scriptsize`. There are seven data rows plus a header.
+  The reproduced rejection was literal source line wrapping inside cells.
+  Recognition alone did not guarantee rendered widths, wrapping or visibility.
+- The identified stress document is
+  `ScientTrials/templates/29_long_photo_and_heavy_components.tex`. It contains
+  24 distinct local photographs, galleries, crop/rotation, landscape pages,
+  nested boxes/minipages, TikZ/PGFPlots, image cells, a 120-row longtable,
+  mathematical structures, listings and generated contents/float lists.
+- Before repair, `parseTablePreview` sliced ordinary preview rows to 100 and marked
+  larger tables uneditable. `parseLongTablePreview` calls that parser and rejects
+  a noneditable result. This is a concrete limit incompatible with the fixture's
+  120-row register. It is not proof that every missing part has this cause.
+- Passive math uses a worker, formatting transformations and shadow-root styles;
+  active math additionally installs editable formatting scopes. The reported
+  `\mathbf{n}` defect must be compared across both paths before assigning blame
+  to normalization, macros, fonts, geometry or clipping.
+- Before repair, cache admission could return `null` instead of valid generated
+  math markup, and a fallback could become terminal for the same node/context.
+  The repair separates display delivery from cache admission and retries bounded
+  transient failures; broader failure and eviction qualification remains open.
+- Templates 26 and 28 reached expected page counts in the preceding benchmark
+  but timed out on complete formula readiness. These are unresolved checks,
+  not passing evidence. A preserved source and correct page count can coexist
+  with missing or incorrectly displayed content.
+
+### 1. Establish reproducible failures and isolate the introducing changes
+
+Preserve the current working diff and compare the same fixtures against a known
+working renderer and current code in isolated snapshots. Keep dependencies,
+compiler, fonts, assets, viewport and zoom fixed. Separate parsing/projection,
+passive math, active math, measurement, paging, resource loading and cache reuse
+changes rather than reverting the whole selector or all performance work.
+
+Use the owner's exact table and minimal `\mathbf{n}` examples, then template 29
+with its real local assets and root preamble. The asset-less synthetic typing
+harness is not an adequate reproduction for this document. Reduce each failure
+to its smallest case while retaining the full document as a composition check.
+Compile comparison PDFs through the existing document build path; record asset
+and font readiness separately from document editability.
+
+### 2. Make missing content observable and recoverable
+
+Extend the existing projection/compatibility and preview state rather than
+adding another document authority. Every meaningful source-owned component
+must have a rendered representation, pending representation with reserved
+bounds, or a visible exact-source fallback. Opaque containers must retain their
+entire contents. Never count a partially displayed table as complete.
+
+Track display outcome separately from edit capability, fidelity approximation,
+resource readiness and terminal failure. Loading, unsupported input, timeout,
+missing asset and internal rendering failure are different outcomes. Retain a
+compatible previous rendering while replacement work is pending; visibly mark
+stale compiled content. Unsupported content must not vanish or be shown as an
+empty successful block. A timeout or cache eviction must not strand work forever.
+
+### 3. Repair tables through one shared source description
+
+Unify the table source/column interpretation used by parsing, presentation and
+editing. Preserve source ranges, modifiers, column kinds, local width context,
+font scope, spacing, rules and cell contents. Do not maintain three subtly
+different interpretations of the same column specification.
+
+For the supplied example, acceptance requires all 32 cells, the caption/label,
+the 2 cm paragraph column, three flexible columns sharing the remaining width,
+ragged-right wrapping, trimmed outer padding, and booktabs rules. The table body
+uses `\scriptsize`; the caption precedes that declaration and retains its scope.
+Resolve column widths after local text width, fixed content widths, intercolumn
+spacing and rules are known. Avoid independently sizing cells in ways that
+override that calculation.
+
+Remove silent truncation. Represent all 120 register rows with stable ownership
+and row identities; separate limits on editing operations from display coverage.
+Bound parsing/measurement work in chunks. If a genuine resource limit is reached,
+retain the entire source and report the limit instead of displaying a successful
+prefix. Preserve repeated head/foot bands and never split merged cells casually.
+
+Audit `p/m/b`, natural/flexible columns, column modifiers and repeated specs,
+spans, colors, local `\arraystretch`/`\tabcolsep`, math, multiline cells and
+image cells. Unsupported column syntax must remain explicit and complete.
+
+### 4. Make passive and active math agree
+
+Share the semantic normalization and document macro/color context, while keeping
+editing-only caret/selection wrappers out of the printed meaning. Preserve the
+authored command through edit, save, copy and undo. Compare passive appearance,
+active appearance and return-to-reading appearance for each case.
+
+Start with `\mathbf{n}`, unbraced arguments, subscripts/superscripts and nested
+font scopes; extend to `\mathrm`, `\mathit`, `\boldsymbol`, `\bm`, Greek,
+accents, colors, matrices/cases and text/language islands. Check actual loaded
+font faces, glyph bounds, baseline and clipping in prose, headings, cells, boxes
+and display math. A simple valid formula must not require focus to become correct.
+
+Separate cache writes from delivery: valid output can be displayed without being
+retained in the cache. Distinguish temporary worker/font/resource failures from
+unsupported syntax, and allow bounded retries on the relevant dependency change.
+Keep owner/revision fences so a late result cannot replace newer input.
+
+### 5. Repair measurement and pagination as one consistent pipeline
+
+Audit natural measurement against the live rendering for tables, inline math,
+images, transforms and nested containers. Carry local widths, inherited style,
+image aspect ratio and math baselines into measurement. Do not publish zero-size
+unloaded content or provisional font metrics as final geometry.
+
+Make the measured dependency versions explicit: document style/font metrics,
+container width, asset dimensions, math result and relevant predecessor layout.
+Invalidate only affected entries and reflow until page/column state converges.
+Reusing placement requires agreement on both source fragment ranges and layout;
+immutable node identity or an unchanged total height alone is insufficient.
+
+Account for inline atoms when finding line extents. Handle oversized indivisible
+objects explicitly; distinguish breakable frames and longtables from ordinary
+indivisible floats. Reserve image bounds before decode and reflow after decode,
+font completion or compiled-vector publication. Check crop/rotation bounds,
+subfigure/minipage widths, landscape orientation and nested padding in template 29.
+Preserve established selection, source navigation and reading anchors.
+
+### 6. Cover families and combinations, not only reported examples
+
+Build focused cases from the exact regressions, then bounded generated variants
+and selected combinations. Include 0/1/99/100/101/120/many rows; empty/long cells;
+fixed/flexible/relative widths; spans near page breaks; image and math cells;
+font/color scope nesting; RTL/LTR; delayed/missing assets and fonts; worker
+failure, eviction and retry; edits while work is pending; and undo/redo.
+
+Exercise first open, scroll away/back, zoom, narrow Split view, menu focus,
+passive-to-active math transitions, selection across environments, edit/save,
+reopen and source navigation. Require incremental layout to converge to the
+same result as a clean full layout of the same revision. Compare neighboring
+constructs and nesting depths so a correction is not specific to a filename.
+
+### 7. Qualify correctness before retaining a speed optimization
+
+Verification is part of the proposed implementation, not a test run performed
+by this planning pass. When test execution is explicitly requested, use:
+
+- Source/model assertions for complete rows, cells, images, formulas and opaque
+  blocks; no-op source equality; exact edit/undo/redo; stable range ownership.
+- Browser checks for visible content, loaded glyphs/assets, absence of clipping
+  or overlaps, continuation rules, selection, navigation and reading stability.
+- Compiled PDF comparisons for component dimensions, wrapping, font treatment,
+  page/column placement and representative screenshots. Page count alone is
+  insufficient; rendering differences must have explicit tolerances or reasons.
+- Full-template checks for 15, 26, 28 and 29, plus the small cases. A pending
+  formula, missing asset or timed-out initialization cannot be a passing result.
+- Sustained long-sentence typing, deletion, structural edits and memory checks
+  on the same qualified renderer. Keep an optimization only with equivalent
+  content/layout outcomes and acceptable input latency. Record unresolved gaps.
+
+### Implementation order and completion criteria
+
+First establish the exact regressions and visible completeness contract. Next
+repair the table grammar/row limit and math parity independently. Then repair
+shared measurement, resource invalidation and composed paging. Finish with
+cross-component qualification and repeat the performance measurements.
+
+This work extends the existing Tiptap/MathLive, table adapters, preview worker,
+page planner and compiled drawing path. It does not introduce another renderer
+or promise arbitrary TeX execution in the browser. Existing TikZ/PGFPlots display
+must keep working through its current compiled path; new drawing authoring is
+still outside scope.
+
+Completion means the reported cases work visibly, template 29's content is
+accounted for, supported compositions retain their source and editing behavior,
+failure states remain recoverable, and correctness and speed are qualified
+together. Broader cases can still be unsupported; they must stay complete and
+explicit rather than silently appearing successful.
+
 ## Implemented authoring controls
 
 The existing menus and footer now expose these bounded workflows:

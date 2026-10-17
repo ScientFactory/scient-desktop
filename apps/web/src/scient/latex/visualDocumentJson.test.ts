@@ -8,6 +8,15 @@ const schema = new Schema({
 });
 
 describe("immutable visual document encoding", () => {
+  it("returns the same encoding for one immutable editor snapshot", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("Writing"))]);
+    expect(visualDocumentJson(doc)).toBe(visualDocumentJson(doc));
+    const changed = schema.node("doc", null, [
+      schema.node("paragraph", null, schema.text("Changed")),
+    ]);
+    expect(visualDocumentJson(changed)).not.toBe(visualDocumentJson(doc));
+    expect(JSON.parse(serializedVisualDocument(changed))).toEqual(changed.toJSON());
+  });
   it("preserves empty documents and document attributes", () => {
     const attributed = new Schema({
       nodes: {

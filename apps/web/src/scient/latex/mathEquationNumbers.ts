@@ -1,15 +1,42 @@
+import { observeResize } from "~/lib/observeResize";
 import { mathArrayCellSelector } from "./mathEditingGuides";
 
 /** Match outer equation rows to MathLive's rendered baselines without changing math. */
 export function positionEquationNumbers(root: HTMLElement, rowCount: number): () => void {
-  // The single-row position is already supplied by CSS. It never needs a
-  // resize/mutation observer or a layout read when preview glyphs arrive.
+  // Passive single equations expose their ascent/depth in the rendered struts.
+  // Use those metrics without observing every formula or reading layout.
   if (rowCount <= 1) {
-    for (const number of root.querySelectorAll<HTMLElement>("[data-latex-equation-row]")) {
-      if (number.style.top) number.style.removeProperty("top");
-      if (number.style.transform) number.style.removeProperty("transform");
-    }
-    return () => {};
+    let active: (() => void) | undefined;
+    const refresh = () => {
+      active?.();
+      active = undefined;
+      if (root.querySelector("math-field")) {
+        active = observeEquationNumbers(root, 1);
+        return;
+      }
+      const shadow = root.querySelector(".scient-latex-math-preview")?.shadowRoot;
+      const ascent = shadow?.querySelector<HTMLElement>(".ML__latex > .ML__strut");
+      const extent = shadow?.querySelector<HTMLElement>(".ML__latex > .ML__strut--bottom");
+      const height = parseFloat(ascent?.style.height ?? ""),
+        total = parseFloat(extent?.style.height ?? "");
+      for (const number of root.querySelectorAll<HTMLElement>("[data-latex-equation-row]")) {
+        if (Number.isFinite(height) && Number.isFinite(total)) {
+          number.style.top = `calc(50% + ${height - total / 2}em)`;
+          number.style.transform = "translateY(-.8em)";
+        } else {
+          number.style.removeProperty("top");
+          number.style.removeProperty("transform");
+        }
+      }
+    };
+    root.addEventListener("scient-latex-math-mounted", refresh);
+    root.addEventListener("scient-latex-math-preview", refresh);
+    refresh();
+    return () => {
+      active?.();
+      root.removeEventListener("scient-latex-math-mounted", refresh);
+      root.removeEventListener("scient-latex-math-preview", refresh);
+    };
   }
   let dispose: (() => void) | undefined;
   const refresh = () => {
@@ -49,10 +76,12 @@ function observeEquationNumbers(root: HTMLElement, rowCount: number): (() => voi
       : [];
     for (const [row, number] of numbers.entries()) {
       const strut =
-        cells.length === rowCount
-          ? cells[row]?.parentElement?.querySelector<HTMLElement>(":scope > .ML__pstrut")
-          : null;
-      if (rowCount > 1 && strut) {
+        rowCount === 1
+          ? shadow.querySelector<HTMLElement>(".ML__latex > .ML__strut,.ML__content > .ML__strut")
+          : cells.length === rowCount
+            ? cells[row]?.parentElement?.querySelector<HTMLElement>(":scope > .ML__pstrut")
+            : null;
+      if (strut) {
         const top = `${(strut.getBoundingClientRect().bottom - rect.top) / scale}px`;
         if (number.style.top !== top) number.style.top = top;
         if (number.style.transform !== "translateY(-0.8em)")
@@ -68,14 +97,12 @@ function observeEquationNumbers(root: HTMLElement, rowCount: number): (() => voi
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(update);
   };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(root);
-  if (math) resize.observe(math);
+  const stopResize = observeResize(math ? [root, math] : root, schedule);
   const mutation = new MutationObserver(schedule);
   mutation.observe(shadow, { childList: true, characterData: true, subtree: true });
   schedule();
   return () => {
-    resize.disconnect();
+    stopResize();
     mutation.disconnect();
     cancelAnimationFrame(frame);
   };

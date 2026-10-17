@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { LatexFigureArtwork as Artwork } from "./latexVisualDocument";
 
@@ -11,6 +12,12 @@ export function LatexFigureArtwork({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [rotatedHeight, setRotatedHeight] = useState<number | null>(null);
+  const publishedHeight = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (publishedHeight.current === rotatedHeight) return;
+    publishedHeight.current = rotatedHeight;
+    box.current?.dispatchEvent(new Event("scient-latex-content-resized", { bubbles: true }));
+  }, [rotatedHeight]);
   useLayoutEffect(() => {
     const element = box.current;
     if (!element || artwork.angle === 0) {
@@ -27,10 +34,9 @@ export function LatexFigureArtwork({
           previous !== null && Math.abs(previous - height) < 0.5 ? previous : height,
         );
     };
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
+    const stopResize = observeResize(element, measure);
     measure();
-    return () => observer.disconnect();
+    return stopResize;
   }, [artwork.angle]);
   return (
     <div

@@ -4,7 +4,11 @@ import { NodeSelection, Selection } from "@tiptap/pm/state";
 import { registerLatexSelection, runLatexSelectionCommand } from "./latexSelectionSession";
 import { latexContainerScope } from "./latexStructuredSelection";
 import { isLatexEditingMenuEvent } from "./latexContextEvents";
-import { captureLatexObjectDrag, latexObjectSelectionAtPointer } from "./latexObjectSelection";
+import {
+  captureLatexObjectDrag,
+  latexObjectSelectionAtPointer,
+  setLatexObjectDragSelection,
+} from "./latexObjectSelection";
 import { clearLatexEditingTarget } from "./latexEditingTarget";
 
 export interface LatexTableCell {
@@ -257,7 +261,8 @@ export function useLatexTableSelection(props: {
         const range = latexObjectSelectionAtPointer(editor.view, position, event, bounds);
         if (!range) return;
         storeRef.current(range instanceof NodeSelection ? wholeTable() : null);
-        editor.view.dispatch(editor.state.tr.setSelection(range));
+        setLatexObjectDragSelection(editor.view, range);
+        editor.view.dispatch(editor.state.tr.setSelection(range).setMeta("pointer", true));
         drag.active = true;
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -265,6 +270,7 @@ export function useLatexTableSelection(props: {
       }
       const returning = drag.outside;
       drag.outside = false;
+      setLatexObjectDragSelection(current.current.editor.view, null);
       if (!drag.active && cell.row === drag.anchor.row && cell.column === drag.anchor.column)
         return;
       if (

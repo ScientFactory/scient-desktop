@@ -233,6 +233,22 @@ export function latexDocumentBoundary(
 }
 
 export function latexPreambleEnd(source: string): number {
+  // Validate only the short prefix for ordinary documents. The full boundary
+  // scanner remains the authority for unusual or adversarial preambles.
+  let cursor = 0;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const at = source.indexOf("\\begin", cursor);
+    if (at < 0) return source.length;
+    const argument = latexSourceArgument(source, at + 6);
+    if (
+      argument?.value === "document" &&
+      latexSourceCommands(source.slice(0, argument.end)).some(
+        (command) => command.from === at && command.name === "begin" && command.depth === 0,
+      )
+    )
+      return at;
+    cursor = at + 6;
+  }
   return latexDocumentBoundary(source)?.from ?? source.length;
 }
 

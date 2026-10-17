@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import type { MathfieldElement } from "mathlive";
 import { afterEditorPaint } from "./afterEditorPaint";
 
@@ -112,9 +113,7 @@ export function installLatexMathViewport(math: MathfieldElement, viewport: HTMLE
     pointerDown = false;
     revealCaret();
   };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(viewport);
-  resize.observe(math);
+  const stopResize = observeResize([viewport, math], schedule);
   viewport.addEventListener("scroll", schedule);
   viewport.addEventListener("wheel", wheel, { passive: false, capture: true });
   math.addEventListener("pointerdown", pointerStarted, true);
@@ -126,7 +125,7 @@ export function installLatexMathViewport(math: MathfieldElement, viewport: HTMLE
     revealCaret,
     dispose: () => {
       cancelUpdate?.();
-      resize.disconnect();
+      stopResize();
       viewport.removeEventListener("scroll", schedule);
       viewport.removeEventListener("wheel", wheel, true);
       math.removeEventListener("pointerdown", pointerStarted, true);

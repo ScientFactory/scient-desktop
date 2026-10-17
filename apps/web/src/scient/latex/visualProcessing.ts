@@ -169,6 +169,7 @@ function pump() {
 export function processVisualDocument(
   input: VisualProcessingInput,
   complete: (output: VisualProcessingOutput | null) => void,
+  options: { readonly keepWorkerOnCancel?: boolean } = {},
 ) {
   const job: Job = { id: ++sequence, input, complete, delta: false };
   pending.set(job.id, job);
@@ -176,7 +177,7 @@ export function processVisualDocument(
   return () => {
     job.complete = undefined;
     pending.delete(job.id);
-    if (active === job) {
+    if (active === job && !options.keepWorkerOnCancel) {
       // Superseded work cannot publish an edit. Release its CPU and deadline
       // rather than holding the next document behind an abandoned parse.
       stop();

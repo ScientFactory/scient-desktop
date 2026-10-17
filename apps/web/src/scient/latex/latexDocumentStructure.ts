@@ -1,8 +1,9 @@
 /** Literal document controls. Ranges always refer to the original source. */
 export function latexDocumentCommand(source: string, from = 0) {
-  const match = /^\\(title|author|date|pagenumbering|appendix|bibliographystyle)\b/u.exec(
-    source.slice(from),
-  );
+  const match =
+    /^\\(title|author|date|pagenumbering|appendix|bibliographystyle|hypersetup|thispagestyle)\b/u.exec(
+      source.slice(from),
+    );
   if (!match) return null;
   const name = match[1]!;
   let end = from + match[0].length;
@@ -20,6 +21,9 @@ export function latexDocumentCommand(source: string, from = 0) {
     } else if (source[end] === "{") depth++;
     else if (source[end] === "}" && --depth === 0) {
       const value = source.slice(start, end);
+      if (name === "hypersetup" && !/^\s*pageanchor\s*=\s*(?:true|false)\s*$/u.test(value))
+        return null;
+      if (name === "thispagestyle" && !/^(?:empty|plain)$/u.test(value.trim())) return null;
       if (name === "pagenumbering" && !/^(?:arabic|roman|Roman|alph|Alph)$/u.test(value))
         return null;
       return { name, from: start, to: end, end: end + 1, value };

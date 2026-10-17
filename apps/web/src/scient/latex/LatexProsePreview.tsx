@@ -10,7 +10,9 @@ import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
 import { latexDirectionMark } from "./latexLanguage";
 import type { JSONContent } from "@tiptap/core";
-import { latexColorCss } from "./latexColorBoxes";
+import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
+import { latexDocumentMathSetup } from "./latexDocumentMacros";
+import { installMathReadingPreview, mathReadingPreview } from "./mathReadingPreview";
 
 /** Small read-only prose projections share the source parser and never inject HTML. */
 export function appendLatexProsePreview(
@@ -22,7 +24,7 @@ export function appendLatexProsePreview(
   const projection = projectLatexVisualDocument(source, 0, rootSource ?? source);
   const content = projection.content.content ?? [];
   const supported = (node: JSONContent): boolean =>
-    ["text", "hardBreak"].includes(String(node.type)) ||
+    ["text", "hardBreak", "latexInlineMath"].includes(String(node.type)) ||
     (!!editor &&
       node.type === "latexInlineCommand" &&
       ["ref", "eqref"].includes(String(node.attrs?.name))) ||
@@ -36,6 +38,10 @@ export function appendLatexProsePreview(
   }
   delete element.dataset.sourceFallback;
   const fragment = document.createDocumentFragment();
+  const cancel: (() => void)[] = [];
+  const setup = latexDocumentMathSetup(rootSource ?? source);
+  const colors = latexDocumentColors(rootSource ?? source);
+  let disposed = false;
   const append = (parent: globalThis.Node, node: JSONContent) => {
     if (node.type === "paragraph") {
       for (const child of node.content ?? []) append(parent, child);
@@ -57,6 +63,25 @@ export function appendLatexProsePreview(
       node.type === "hardBreak"
         ? document.createElement("br")
         : document.createTextNode(node.text ?? "");
+    if (node.type === "latexInlineMath") {
+      const formula = document.createElement("span");
+      formula.className = "scient-latex-math-preview";
+      const tex = String(node.attrs?.tex ?? "");
+      formula.setAttribute("aria-label", tex);
+      const content = installMathReadingPreview(formula).querySelector<HTMLElement>(
+        "[data-math-preview-content]",
+      )!;
+      cancel.push(
+        mathReadingPreview(tex, false, setup.macros, colors, (markup) => {
+          if (disposed) return;
+          if (markup === null) content.textContent = tex;
+          else content.innerHTML = markup;
+          content.dataset.mathPreviewReady = "true";
+          formula.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+        }),
+      );
+      child = formula;
+    }
     if (node.type === "latexInlineCommand" && editor) {
       const key = String(node.attrs?.argument ?? "");
       const target = latexEquationReferencesKey.getState(editor.state)?.labels.get(key);
@@ -97,6 +122,10 @@ export function appendLatexProsePreview(
   };
   for (const node of content) append(fragment, node);
   element.replaceChildren(fragment);
+  return () => {
+    disposed = true;
+    for (const stop of cancel) stop();
+  };
 }
 
 export function LatexProsePreview({
@@ -114,7 +143,8 @@ export function LatexProsePreview({
     selector: ({ editor: current }) => (current ? latexReferencePresentation(current.state) : null),
   });
   useLayoutEffect(() => {
-    if (element.current) appendLatexProsePreview(element.current, source, editor, rootSource);
+    if (element.current)
+      return appendLatexProsePreview(element.current, source, editor, rootSource);
   }, [source, editor, rootSource, references]);
   return <span ref={element} />;
 }

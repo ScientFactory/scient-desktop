@@ -45,6 +45,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("distinguishes a worker failure from unsupported input and permits a fresh conversion", async () => {
+  const { mathReadingPreview } = await import("./mathReadingPreview");
+  const failed = vi.fn();
+  const recovered = vi.fn();
+  const macros = {};
+  mathReadingPreview("n", false, macros, undefined, failed);
+  const first = PreviewWorker.instances[0]!;
+  first.dispatchEvent(new Event("error", { cancelable: true }));
+  expect(failed).toHaveBeenCalledExactlyOnceWith(null, false, true);
+  expect(first.terminated).toBe(true);
+  mathReadingPreview("n", false, macros, undefined, recovered);
+  const second = PreviewWorker.instances[1]!;
+  second.receive({ ready: true });
+  second.receive({ id: second.messages[0]!.id, markup: "rendered n" });
+  expect(recovered).toHaveBeenCalledExactlyOnceWith("rendered n");
+});
+
 it("resumes queued formulas immediately when the active formula loses its last subscriber", async () => {
   const { mathReadingPreview } = await import("./mathReadingPreview");
   const obsolete = vi.fn();

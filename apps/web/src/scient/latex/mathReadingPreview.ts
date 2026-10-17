@@ -78,7 +78,13 @@ type PreviewJob = {
   display: boolean;
   contextId: number;
   context: MathPreviewContext;
-  subscribers: Map<symbol, { complete: (markup: string | null) => void; priority: () => number }>;
+  subscribers: Map<
+    symbol,
+    {
+      complete: (markup: string | null, cached?: boolean, transient?: boolean) => void;
+      priority: () => number;
+    }
+  >;
 };
 const pending = new Map<number, PreviewJob>();
 const requests = new Map<string, PreviewJob>();
@@ -149,15 +155,14 @@ function stopWorker() {
 }
 
 function remember(key: string, markup: string | null, reading: boolean) {
-  const retained = markupCache.canRetain(key, (markup?.length ?? 0) * 2) ? markup : null;
+  if (!markupCache.canRetain(key, (markup?.length ?? 0) * 2)) return;
   markupCache.put(
     key,
-    retained,
-    (retained?.length ?? 0) * 2,
+    markup,
+    (markup?.length ?? 0) * 2,
     reading,
     reading ? "replace" : "available",
   );
-  return retained;
 }
 
 export function rememberMathReadingFallback(
@@ -182,12 +187,13 @@ export function retainMathReadingPreview(
   remember(JSON.stringify([context.id, display, source]), markup, true);
 }
 
-function deliver(job: PreviewJob, markup: string | null) {
+function deliver(job: PreviewJob, markup: string | null, transient = false) {
   requests.delete(job.key);
   for (const [id, subscriber] of job.subscribers) {
     job.subscribers.delete(id);
     try {
-      subscriber.complete(markup);
+      if (transient) subscriber.complete(markup, false, true);
+      else subscriber.complete(markup);
     } catch (error) {
       // A detached view must not strand every other formula in the queue.
       reportError(error);
@@ -195,19 +201,19 @@ function deliver(job: PreviewJob, markup: string | null) {
   }
 }
 
-function finish(markup: string | null) {
+function finish(markup: string | null, transient = false) {
   clearTimeout(deadline);
   const job = active;
   active = undefined;
   try {
     if (job) {
       if (markup !== null)
-        markup = remember(
+        remember(
           job.key,
           markup,
           [...job.subscribers.values()].some((subscriber) => subscriber.priority() >= 2),
         );
-      deliver(job, markup);
+      deliver(job, markup, transient);
     }
   } finally {
     pump();
@@ -246,8 +252,8 @@ function pump() {
         pending.clear();
         const current = active;
         active = undefined;
-        if (current) deliver(current, null);
-        for (const job of jobs) deliver(job, null);
+        if (current) deliver(current, null, true);
+        for (const job of jobs) deliver(job, null, true);
       };
       worker.addEventListener("error", (event) => {
         event.preventDefault();
@@ -255,9 +261,10 @@ function pump() {
       });
       deadline = setTimeout(unavailable, import.meta.env.DEV ? 60_000 : 15_000);
     } catch {
+      stopWorker();
       const jobs = [...pending.values()];
       pending.clear();
-      for (const job of jobs) deliver(job, null);
+      for (const job of jobs) deliver(job, null, true);
     }
     return;
   }
@@ -278,7 +285,7 @@ function pump() {
   // source. The remaining formulas resume in a fresh worker.
   deadline = setTimeout(() => {
     stopWorker();
-    finish(null);
+    finish(null, true);
   }, 3000);
   try {
     const resetContexts = sentContexts.size >= 16 && !sentContexts.has(active.contextId);
@@ -296,7 +303,8 @@ function pump() {
     if (resetContexts) sentContexts.clear();
     sentContexts.add(active.contextId);
   } catch {
-    finish(null);
+    stopWorker();
+    finish(null, true);
   }
 }
 
@@ -306,7 +314,7 @@ export function mathReadingPreview(
   display: boolean,
   macros: Readonly<Record<string, DocumentMathMacro>>,
   colors: Readonly<Record<string, string>> | undefined,
-  complete: (markup: string | null, cached?: boolean) => void,
+  complete: (markup: string | null, cached?: boolean, transient?: boolean) => void,
   priority: () => number = () => 0,
 ) {
   const context = contextFor(macros, colors);

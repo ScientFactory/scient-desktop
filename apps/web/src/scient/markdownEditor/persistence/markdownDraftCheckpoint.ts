@@ -222,11 +222,14 @@ export interface MarkdownDraftCheckpointStore {
 const MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const MAX_CHECKPOINTS = 32;
 let database: Promise<IDBDatabase> | undefined;
-function openDatabase(): Promise<IDBDatabase> {
+export function openDocumentRecoveryDatabase(): Promise<IDBDatabase> {
   return (database ??= new Promise((resolve, reject) => {
     let failed = false;
-    const request = indexedDB.open("scient-markdown-drafts", 1);
-    request.addEventListener("upgradeneeded", () => request.result.createObjectStore("drafts"));
+    const request = indexedDB.open("scient-markdown-drafts", 2);
+    request.addEventListener("upgradeneeded", () => {
+      for (const name of ["drafts", "document-input-owners", "document-input-blocks"])
+        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
+    });
     request.addEventListener("error", () => {
       database = undefined;
       reject(request.error);
@@ -365,7 +368,7 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
 }
 
 async function readStoredCheckpoint(key: string): Promise<unknown> {
-  const db = await openDatabase();
+  const db = await openDocumentRecoveryDatabase();
   return new Promise<unknown>((resolve, reject) => {
     const request = db.transaction("drafts", "readonly").objectStore("drafts").get(key);
     request.addEventListener("success", () => resolve(request.result));
@@ -379,7 +382,7 @@ function replaceStoredCheckpoint<T extends { readonly token: string }>(
   next: T | undefined,
   decodeBefore: (value: unknown) => T | undefined,
 ): Promise<boolean> {
-  return openDatabase().then(
+  return openDocumentRecoveryDatabase().then(
     (db) =>
       new Promise<boolean>((resolve, reject) => {
         const transaction = db.transaction("drafts", "readwrite");

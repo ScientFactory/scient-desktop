@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { afterEditorPaint } from "./afterEditorPaint";
 
 /** Fit responsive controls after paint, coalescing size and content notifications. */
@@ -18,8 +19,7 @@ export function observeLatexHeaderFit(row: HTMLElement, steps: readonly string[]
   const schedule = () => {
     if (!disposed && !cancelPending) cancelPending = afterEditorPaint(fit);
   };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(row);
+  const stopResize = observeResize(row, schedule);
   // Attribute changes include our own fitting output. Only document-owned
   // content changes (page/zoom/status and hosted controls) require refitting.
   const content = new MutationObserver(schedule);
@@ -28,7 +28,7 @@ export function observeLatexHeaderFit(row: HTMLElement, steps: readonly string[]
   return () => {
     disposed = true;
     cancelPending?.();
-    resize.disconnect();
+    stopResize();
     content.disconnect();
   };
 }

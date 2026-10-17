@@ -26,7 +26,12 @@ import {
   type LatexSourceEdit,
 } from "./latexSourceEditPlan";
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
-import { latexTableColumns, type LatexTableRule } from "./latexTableAuthoring";
+import {
+  latexTableColumns,
+  latexTableSourceShape,
+  type LatexTableRule,
+} from "./latexTableAuthoring";
+import { latexGraphicsOptions, latexGraphicsLength } from "./latexGraphics";
 import { isLatexTikz, latexTikzEnd } from "./latexTikz";
 import { parseLatexAlgorithm, algorithmLineSource } from "./latexAlgorithm";
 import {
@@ -485,6 +490,8 @@ export function updateLatexVisualLayoutSource(
 }
 
 const INLINE_ATOMS = new Set([
+  "includegraphics",
+  "proseMacro",
   "hfill",
   "columnbreak",
   "verb",
@@ -583,6 +590,7 @@ const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
   quad: "\u2003",
   qquad: "\u2003\u2003",
   enspace: "\u2002",
+  space: " ",
   ss: "\u00df",
   SS: "\u1e9e",
   ae: "\u00e6",
@@ -829,6 +837,29 @@ function inlinePiece(
   scoped = false,
 ): InlinePiece | null {
   const rest = source.slice(at);
+  const image = /^\\includegraphics\b/u.exec(rest);
+  if (image) {
+    const options = latexSourceArgument(source, at + image[0].length, "[", "]");
+    const path = latexSourceArgument(source, options?.end ?? at + image[0].length);
+    if (
+      !path ||
+      !graphicsPathCell(path.value, path.from) ||
+      !latexGraphicsOptions(options?.value ?? "")
+    )
+      return null;
+    return {
+      end: path.end,
+      node: {
+        type: "latexInlineCommand",
+        attrs: {
+          name: "includegraphics",
+          argument: path.value,
+          linkText: options?.value ?? "",
+          raw: source.slice(at, path.end),
+        },
+      },
+    };
+  }
   const stretch = /^\\hfill\b/u.exec(rest);
   if (stretch)
     return {
@@ -968,13 +999,14 @@ function parseInline(
   source: string,
   marks: readonly string[] = [],
   scoped = false,
+  setup?: LatexVisualSetup,
 ): JSONContent[] | null {
   const nodes: JSONContent[] = [];
   let currentMarks = marks;
   for (let at = 0; at < source.length;) {
     const colored = latexInlineColor(source, at);
     if (colored) {
-      const content = parseInline(colored.body.value, currentMarks, scoped);
+      const content = parseInline(colored.body.value, currentMarks, scoped, setup);
       if (!content) return null;
       nodes.push(
         ...content.map((node) => ({
@@ -991,7 +1023,29 @@ function parseInline(
       at = colored.body.end;
       continue;
     }
-    const piece = inlinePiece(source, at, currentMarks, scoped);
+    let piece = inlinePiece(source, at, currentMarks, scoped);
+    if (!piece && setup) {
+      const call = /^\\([A-Za-z]+)\b/u.exec(source.slice(at));
+      const macro = call && setup.math.macros[call[1]!];
+      const body = macro?.args === 0 && macro.def.length <= 16_384 ? parseInline(macro.def) : null;
+      if (
+        call &&
+        macro &&
+        body?.every(
+          (part) =>
+            ["text", "hardBreak", "latexInlineMath"].includes(String(part.type)) ||
+            (part.type === "latexInlineCommand" &&
+              ["ref", "eqref"].includes(String(part.attrs?.name))),
+        )
+      )
+        piece = {
+          end: at + call[0].length,
+          node: {
+            type: "latexInlineCommand",
+            attrs: { name: "proseMacro", argument: call[1], raw: call[0], linkText: macro.def },
+          },
+        };
+    }
     if (!piece) return null;
     if (piece.ignored) {
       at = piece.end;
@@ -1003,7 +1057,7 @@ function parseInline(
       continue;
     }
     const children = piece.group
-      ? parseInline(source.slice(piece.group.from, piece.group.to), piece.group.marks, true)
+      ? parseInline(source.slice(piece.group.from, piece.group.to), piece.group.marks, true, setup)
       : [piece.node!];
     if (!children) return null;
     for (const node of children) {
@@ -1421,6 +1475,8 @@ function nextBlockEnd(body: string, from: number, setup?: LatexVisualSetup): num
       )
         return index;
       if (
+        (body[index] === "\\" &&
+          Object.keys(latexContentDeclarations(body.slice(index)).style).length > 0) ||
         latexDocumentCommand(body, index) ||
         /^\\(?:listoffigures|listoftables|bibliography)\b/u.test(body.slice(index))
       )
@@ -1715,6 +1771,7 @@ export function projectLatexSourceEdit(
   edit: LatexSourceEdit,
   content: JSONContent,
   setupSource?: string,
+  previous?: LatexVisualDocument,
 ): LatexVisualDocumentChange | null {
   let source: string,
     setup = setupSource;
@@ -1727,6 +1784,14 @@ export function projectLatexSourceEdit(
   } catch {
     return null;
   }
+  const local =
+    previous &&
+    previous.source === edit.source &&
+    !edit.root?.patches.length &&
+    !edit.physical?.length
+      ? projectLocalSourceEdit(previous, source, content, edit.patches, setup ?? source)
+      : null;
+  if (local) return { source, edit, structural: true, projection: local };
   const projected = projectLatexVisualDocument(source, 0, setup ?? source);
   if (roundTripSignature(projected.content) !== roundTripSignature(content)) return null;
   return {
@@ -1738,6 +1803,18 @@ export function projectLatexSourceEdit(
 }
 
 function parseDocumentFrontMatter(source: string, documentSource: string): JSONContent | null {
+  const declaration = latexContentDeclarations(source);
+  if (declaration.from === source.trimEnd().length && Object.keys(declaration.style).length > 0)
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "documentCommand",
+        environment: "declaration",
+        raw: source,
+        body: "",
+        editable: true,
+      },
+    };
   const command = latexDocumentCommand(source.trim());
   if (command && command.end === source.trim().length) {
     return {
@@ -1746,7 +1823,7 @@ function parseDocumentFrontMatter(source: string, documentSource: string): JSONC
         kind: "documentCommand",
         raw: source,
         environment: command.name,
-        body: command.name === "pagenumbering" ? command.value : "",
+        body: ["pagenumbering", "thispagestyle"].includes(command.name) ? command.value : "",
         editable: true,
       },
     };
@@ -2039,80 +2116,29 @@ function requiredArgument(
 }
 
 function tabularBody(source: string): TabularBody | null {
-  const opening = /\\begin\{(tabularx|tabular|tabulary|longtable)\}/u.exec(source);
-  if (!opening) return null;
-  const name = opening[1]!;
-  let cursor = opening.index + opening[0].length;
-  let tableWidth: string | null = null;
-  if (name === "tabularx" || name === "tabulary") {
-    const width = requiredArgument(source, cursor);
-    if (!width) return null;
-    tableWidth = width.source;
-    cursor = width.next;
-  }
-  const columnSpec = requiredArgument(source, cursor);
-  if (!columnSpec) return null;
-  cursor = columnSpec.next;
-  const ending = `\\end{${name}}`;
-  const end = source.lastIndexOf(ending);
-  return end <= cursor
-    ? null
-    : {
-        source: source.slice(cursor, end),
-        from: cursor,
-        to: end,
-        environment: name,
-        openingFrom: opening.index,
-        openingTo: cursor,
-        endingFrom: end,
-        endingTo: end + ending.length,
-        columnSpec: columnSpec.source,
-        width: tableWidth,
-      };
+  const shape = latexTableSourceShape(source);
+  if (!shape) return null;
+  return {
+    source: source.slice(shape.from, shape.to),
+    from: shape.from,
+    to: shape.to,
+    environment: shape.environment,
+    openingFrom: shape.openingFrom,
+    openingTo: shape.from,
+    endingFrom: shape.to,
+    endingTo: shape.endingTo,
+    columnSpec: shape.spec.value,
+    width: shape.width,
+  };
+}
+
+/* Source parsing, presentation and editing use the same column grammar. */
+function tableAlignments(columnSpec: string, width: number): TableAlignment[] {
+  const columns = latexTableColumns(columnSpec);
+  return Array.from({ length: width }, (_, index) => columns?.[index]?.alignment ?? "left");
 }
 
 type TableAlignment = "left" | "center" | "right";
-const TABLE_PARAGRAPH_COLUMNS = new Set(["X", "p", "m", "b"]);
-const TABLE_MODIFIER_ALIGNMENTS: readonly (readonly [string, TableAlignment])[] = [
-  ["\\centering", "center"],
-  ["\\raggedleft", "right"],
-  ["\\raggedright", "left"],
-];
-
-function tableAlignments(columnSpec: string, width: number): TableAlignment[] {
-  const alignments: TableAlignment[] = [];
-  let pendingAlignment: TableAlignment | null = null;
-  let depth = 0;
-  for (let index = 0; index < columnSpec.length && alignments.length < width; index++) {
-    const character = columnSpec[index]!;
-    if (depth === 0 && character === ">" && columnSpec[index + 1] === "{") {
-      const close = closingBrace(columnSpec, index + 1);
-      if (close !== null) {
-        const modifier = columnSpec.slice(index + 2, close);
-        pendingAlignment =
-          TABLE_MODIFIER_ALIGNMENTS.find(([command]) => modifier.indexOf(command) >= 0)?.[1] ??
-          null;
-        index = close;
-      }
-    } else if (character === "{") depth++;
-    else if (character === "}") depth = Math.max(0, depth - 1);
-    else if (character === "\\") index++;
-    else if (depth === 0 && character === "l") {
-      alignments.push(pendingAlignment ?? "left");
-      pendingAlignment = null;
-    } else if (depth === 0 && character === "c") {
-      alignments.push(pendingAlignment ?? "center");
-      pendingAlignment = null;
-    } else if (depth === 0 && character === "r") {
-      alignments.push(pendingAlignment ?? "right");
-      pendingAlignment = null;
-    } else if (depth === 0 && TABLE_PARAGRAPH_COLUMNS.has(character)) {
-      alignments.push(pendingAlignment ?? "left");
-      pendingAlignment = null;
-    }
-  }
-  return Array.from({ length: width }, (_, index) => alignments[index] ?? "left");
-}
 
 /** Live caption edits take precedence over the preserved source snapshot. */
 export function latexVisualFloatHasCaption(node: JSONContent) {
@@ -2124,33 +2150,39 @@ export function latexVisualFloatHasCaption(node: JSONContent) {
 }
 
 /** Read presentation from the preserved table source; never serialize it as edits. */
-export function latexVisualTablePresentation(source: string) {
+export function latexVisualTablePresentation(source: string, rootSource = "") {
   const body = tabularBody(source);
   const prefix = body ? source.slice(0, body.openingFrom) : "";
-  const size =
-    [...prefix.matchAll(/\\(tiny|scriptsize|footnotesize|small|normalsize)\b/gu)].at(-1)?.[1] ??
-    "normalsize";
-  const columnWidths: (number | null)[] = [];
-  const columnKinds: ("natural" | "fixed" | "flexible")[] = [];
+  const declarations = latexWithoutComments(
+    rootSource.slice(0, latexPreambleEnd(rootSource)) + "\n" + prefix,
+  );
+  const arrayStretch = Number(
+    [
+      ...declarations.matchAll(/\\renewcommand\s*\{\s*\\arraystretch\s*\}\s*\{\s*([\d.]+)\s*\}/gu),
+    ].at(-1)?.[1] ?? "1",
+  );
+  const dimension = (name: string, fallback: string) => {
+    const pattern = new RegExp(
+      String.raw`\\setlength\s*\{\s*\\` + name + String.raw`\s*\}\s*\{\s*([^{}]+)\s*\}`,
+      "gu",
+    );
+    const value = [...declarations.matchAll(pattern)].at(-1)?.[1] ?? fallback;
+    const inches = latexLengthInches(value);
+    if (inches !== null && inches >= 0 && inches <= 1) return inches + "in";
+    return /^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:em|ex)$/u.test(value.trim()) ? value.trim() : fallback;
+  };
+  const declaredSize = [
+    ...prefix.matchAll(/\\(tiny|scriptsize|footnotesize|small|normalsize)\b/gu),
+  ].at(-1)?.[1];
+  const size = declaredSize ?? "normalsize";
   const spec = body?.columnSpec ?? "";
-  for (let index = 0; index < spec.length; index++) {
-    const character = spec[index]!;
-    // Skip modifier groups so the letters of \\raggedright are not columns.
-    if (character === "{") {
-      const close = closingBrace(spec, index);
-      if (close === null) break;
-      index = close;
-    } else if (character === "\\") index++;
-    else if ("pmb".includes(character)) {
-      const argument = requiredArgument(spec, index + 1);
-      columnWidths.push(argument ? latexLengthInches(argument.source) : null);
-      columnKinds.push("fixed");
-      if (argument) index = argument.next - 1;
-    } else if ("lcrX".includes(character)) {
-      columnWidths.push(null);
-      columnKinds.push(character === "X" ? "flexible" : "natural");
-    }
-  }
+  const columns = latexTableColumns(spec) ?? [];
+  const columnWidths = columns.map((column) =>
+    "pmb".includes(column.kind) ? latexLengthInches(column.width) : null,
+  );
+  const columnKinds = columns.map((column) =>
+    "pmb".includes(column.kind) ? "fixed" : column.kind === "X" ? "flexible" : "natural",
+  );
   const caption = commandArgumentRange(source, "caption");
   const relativeWidth =
     /^((?:\d+(?:\.\d*)?|\.\d+)?)\s*\\(?:textwidth|linewidth|columnwidth)$/u.exec(
@@ -2159,9 +2191,14 @@ export function latexVisualTablePresentation(source: string) {
   const absoluteWidth = body?.width ? latexLengthInches(body.width) : null;
   return {
     size,
+    explicitSize: declaredSize !== undefined,
+    arrayStretch:
+      Number.isFinite(arrayStretch) && arrayStretch > 0 && arrayStretch <= 10 ? arrayStretch : 1,
+    tabColSep: dimension("tabcolsep", "6pt"),
+    extraRowHeight: dimension("extrarowheight", "0pt"),
     columnWidths,
     columnKinds,
-    columnJustified: latexTableColumns(spec)?.map((column) => column.justified) ?? [],
+    columnJustified: columns.map((column) => column.justified),
     captionAfter: caption !== null && body !== null && caption.from > body.to,
     hasCaption: caption !== null,
     hasFloat: /\\begin\{table\*?\}/u.test(source),
@@ -2228,6 +2265,8 @@ function splitTable(source: string, delimiter: "row" | "cell"): TableSourceSlice
   const values: TableSourceSlice[] = [];
   let from = 0;
   let depth = 0;
+  let environments = 0;
+  let math: string | null = null;
   for (let index = 0; index < source.length; index++) {
     if (source[index] === "%") {
       const newline = source.indexOf("\n", index);
@@ -2235,13 +2274,26 @@ function splitTable(source: string, delimiter: "row" | "cell"): TableSourceSlice
       index = newline;
       continue;
     }
-    if (source[index] === "{") depth++;
+    if (source[index] === "$") {
+      math = math === "$" ? null : (math ?? "$");
+    } else if (source.startsWith("\\(", index) || source.startsWith("\\)", index)) {
+      math = source[index + 1] === "(" ? "paren" : null;
+      index++;
+    } else if (source[index] === "{") depth++;
     else if (source[index] === "}") depth = Math.max(0, depth - 1);
-    else if (depth === 0 && delimiter === "cell" && source[index] === "&") {
+    else if (
+      depth === 0 &&
+      environments === 0 &&
+      math === null &&
+      delimiter === "cell" &&
+      source[index] === "&"
+    ) {
       values.push({ source: source.slice(from, index), from, to: index });
       from = index + 1;
     } else if (
       depth === 0 &&
+      environments === 0 &&
+      math === null &&
       delimiter === "row" &&
       source[index] === "\\" &&
       source[index + 1] === "\\"
@@ -2249,7 +2301,12 @@ function splitTable(source: string, delimiter: "row" | "cell"): TableSourceSlice
       values.push({ source: source.slice(from, index), from, to: index });
       index++;
       from = index + 1;
-    } else if (source[index] === "\\") index++;
+    } else if (source[index] === "\\") {
+      const environment = /^\\(begin|end)\{/u.exec(source.slice(index));
+      if (environment && depth === 0)
+        environments = Math.max(0, environments + (environment[1] === "begin" ? 1 : -1));
+      index++;
+    }
   }
   values.push({ source: source.slice(from), from, to: source.length });
   return values;
@@ -2334,12 +2391,21 @@ function editableTableCell(
 
   const core = source.slice(from, to);
   const display = allowMath ? (latexTableInlineContent(core) ? core : null) : metadataText(core);
-  if (display === null || display.includes("\n")) return null;
+  if (display === null || (!allowMath && display.includes("\n"))) return null;
   return {
     display: display.replace(/\s+/gu, " ").trim(),
     from: offset + from,
     to: offset + to,
   };
+}
+
+/** File arguments are literal paths, not prose with math/underscore syntax. */
+function graphicsPathCell(source: string, offset: number): EditableTableCell | null {
+  const [from, to] = trimSourceRange(source, 0, source.length);
+  const display = source.slice(from, to);
+  return display && !/[\\{}%#$\r\n]/u.test(display)
+    ? { display, from: offset + from, to: offset + to }
+    : null;
 }
 
 export interface LatexTableCellLayout {
@@ -2399,7 +2465,10 @@ export function latexTableSelectionBounds(
 }
 
 /** Literal spans, colors and rules keep their source; only cell bodies are editable. */
-function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
+function parseSpannedTable(
+  body: NonNullable<ReturnType<typeof tabularBody>>,
+  documentColors: Record<string, string>,
+) {
   const columns = latexTableColumns(body.columnSpec);
   if (!columns || body.columnSpec.includes("||")) return null;
   const width = columns.length;
@@ -2414,7 +2483,7 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
         )
         .trim(),
   ).length;
-  if (!width || width > 20 || !count || count > 100) return null;
+  if (!width || width > 20 || !count || count * width > 20_000) return null;
   const layout: (LatexTableCellLayout | null)[][] = Array.from({ length: count }, () =>
     Array.from({ length: width }, () => null),
   );
@@ -2464,11 +2533,11 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
             ruleKinds[rowIndex]![column] = "cline";
           }
         } else if (command[1] === "arrayrulecolor") {
-          const color = latexColorCss(argument.source);
+          const color = latexColorCss(argument.source, documentColors);
           if (!color) return null;
           ruleColor = color;
         } else {
-          const color = latexColorCss(argument.source);
+          const color = latexColorCss(argument.source, documentColors);
           if (!color || rowIndex === count || colors[rowIndex]) return null;
           colors[rowIndex] = color;
         }
@@ -2547,12 +2616,14 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
         return null;
       let background =
         colors[rowIndex] ??
-        (columns[column]!.background ? latexColorCss(columns[column]!.background) : null);
+        (columns[column]!.background
+          ? latexColorCss(columns[column]!.background, documentColors)
+          : null);
       const cellColor = /^\s*\\cellcolor\b/u.exec(raw.slice(from, to));
       if (cellColor) {
         const color = requiredArgument(raw, from + cellColor[0].length);
-        if (!color || !latexColorCss(color.source)) return null;
-        background = latexColorCss(color.source);
+        if (!color || !latexColorCss(color.source, documentColors)) return null;
+        background = latexColorCss(color.source, documentColors);
         from = color.next;
       }
       const editable = editableTableCell(raw.slice(from, to), from, true);
@@ -2650,9 +2721,7 @@ function parseLongTablePreview(
     if (!range) return { rows: [], layout: [], rule: false, sizes: [] };
     const raw = expanded.virtual.slice(range.from, range.to);
     const sizes = splitTable(raw, "row").map(
-      (row) =>
-        /\\(tiny|scriptsize|footnotesize|small|normalsize)\b/u.exec(row.source)?.[1] ??
-        "normalsize",
+      (row) => /\\(tiny|scriptsize|footnotesize|small|normalsize)\b/u.exec(row.source)?.[1] ?? "",
     );
     const rendered = raw
       .replace(/\\thetable\s*(?:\{\})?/gu, "SCIENTTABLENUMBER")
@@ -2717,7 +2786,12 @@ function parseTablePreview(
   const outside = source.slice(0, body.openingFrom) + source.slice(body.endingTo);
   let remainder = latexWithoutComments(outside)
     .replace(/\\(?:begin|end)\{table\*?\}(?:\[[htbpH!]*\])?/gu, "")
-    .replace(/\\(?:centering|tiny|scriptsize|footnotesize|small|normalsize)\b/gu, "");
+    .replace(/\\(?:centering|tiny|scriptsize|footnotesize|small|normalsize)\b/gu, "")
+    .replace(/\\renewcommand\s*\{\s*\\arraystretch\s*\}\s*\{\s*(?:\d+(?:\.\d*)?|\.\d+)\s*\}/gu, "")
+    .replace(
+      /\\setlength\s*\{\s*\\(?:tabcolsep|extrarowheight)\s*\}\s*\{\s*(?:\d+(?:\.\d*)?|\.\d+)\s*(?:pt|mm|cm|in|em|ex)\s*\}/gu,
+      "",
+    );
   for (let count = 0; count < 8; count++) {
     const metadata = /\\(?:caption|label)\b/u.exec(remainder);
     if (!metadata) break;
@@ -2735,7 +2809,7 @@ function parseTablePreview(
   const needsSpans =
     /\\(?:multicolumn|multirow|rowcolor|cellcolor|cline|arrayrulecolor)\b/u.test(body.source) ||
     /\\columncolor\b/u.test(body.columnSpec);
-  const spanned = needsSpans ? parseSpannedTable(body) : null;
+  const spanned = needsSpans ? parseSpannedTable(body, setup.colors) : null;
   if (needsSpans && !spanned) return null;
   const parsedRows =
     spanned?.parsedRows ??
@@ -2766,11 +2840,10 @@ function parseTablePreview(
         };
       })
       .filter((row) => row.terminated || row.rows.some(Boolean));
-  const rows = parsedRows.slice(0, 100).map((row) => row.rows);
+  const rows = parsedRows.map((row) => row.rows);
   const width = Math.max(0, ...rows.map((row) => row.length));
-  if (rows.length === 0 || width === 0 || width > 20) return null;
+  if (rows.length === 0 || width === 0 || width > 20 || rows.length * width > 20_000) return null;
   const editable =
-    parsedRows.length <= 100 &&
     rows.every((row) => row.length === width) &&
     (spanned !== null || parsedRows.every((row) => row.ranges.every((cell) => cell !== null)));
   const captionArgument = commandArgumentRange(source, "caption");
@@ -2981,6 +3054,7 @@ function graphicsWidth(options: string): string {
 
 export interface LatexFigureArtwork {
   tikz?: boolean;
+  graphicsOptions?: string;
   frame: boolean;
   width: string | null;
   height: string | null;
@@ -2993,6 +3067,8 @@ export interface LatexFigureArtwork {
 export interface LatexFigurePanel extends LatexFigureArtwork {
   panelWidth: string | null;
   subfigure: boolean;
+  rowBreakBefore?: boolean;
+  alignment?: string;
   captionRange: { from: number; to: number; original: string } | null;
   labelRange: { from: number; to: number; original: string } | null;
 }
@@ -3090,22 +3166,17 @@ function parseFigureArtwork(
   if (command?.[1] === "includegraphics") {
     const option = optionalArgumentRange(source, from + command[0].length);
     const path = requiredArgument(source, option?.end ?? from + command[0].length);
-    const width = option ? /^\s*width\s*=\s*(.+)\s*$/u.exec(option.source)?.[1] : null;
-    if (
-      !path ||
-      path.next > to ||
-      source.slice(path.next, to).trim() ||
-      (option && (!width || !figureLength(width)))
-    )
-      return null;
-    const value = editableTableCell(path.source, path.from);
+    const graphics = latexGraphicsOptions(option?.source ?? "");
+    if (!path || path.next > to || source.slice(path.next, to).trim() || !graphics) return null;
+    const value = graphicsPathCell(path.source, path.from);
     if (!value) return null;
     return {
       frame: false,
-      width: width ? figureLength(width) : null,
+      width: graphics.width ? latexGraphicsLength(graphics.width) : null,
+      graphicsOptions: option?.source ?? "",
       height: null,
       vertical: "center",
-      angle: 0,
+      angle: graphics.angle,
       path: value.display,
       textRange: { from: value.from, to: value.to, original: value.display },
     };
@@ -3166,6 +3237,7 @@ function parseFigureLayout(source: string, setup: LatexVisualSetup): JSONContent
   if (end < opening[0].length || source.slice(end + ending.length).trim()) return null;
   const panels: LatexFigurePanel[] = [];
   let spreadPanels = false;
+  let pendingRowBreak = false;
   const items: { body: string; path: string; caption: string; label: string }[] = [];
   const outer: {
     captionRange: LatexFigurePanel["captionRange"];
@@ -3212,9 +3284,11 @@ function parseFigureLayout(source: string, setup: LatexVisualSetup): JSONContent
       ...artwork,
       panelWidth,
       subfigure,
+      rowBreakBefore: pendingRowBreak,
       captionRange: subfigure ? caption : null,
       labelRange: subfigure ? label : null,
     });
+    pendingRowBreak = false;
     items.push({
       body: artwork.path === null ? artwork.textRange.original : "",
       path: artwork.path ?? "",
@@ -3232,7 +3306,12 @@ function parseFigureLayout(source: string, setup: LatexVisualSetup): JSONContent
   if (source.startsWith("\\begin{subfigure}", cursor)) {
     while (source.startsWith("\\begin{subfigure}", cursor)) {
       if (panels.length >= 26) return null;
-      const width = requiredArgument(source, cursor + "\\begin{subfigure}".length);
+      const alignment = optionalArgumentRange(source, cursor + "\\begin{subfigure}".length);
+      if (alignment && !["t", "c", "b"].includes(alignment.source.trim())) return null;
+      const width = requiredArgument(
+        source,
+        alignment?.end ?? cursor + "\\begin{subfigure}".length,
+      );
       const closing = source.indexOf("\\end{subfigure}", width?.next ?? cursor);
       const cssWidth = width && figureLength(width.source);
       if (
@@ -3242,10 +3321,17 @@ function parseFigureLayout(source: string, setup: LatexVisualSetup): JSONContent
         !parsePanel(width.next, closing, cssWidth, true)
       )
         return null;
+      panels[panels.length - 1]!.alignment = alignment?.source.trim() ?? "c";
       cursor = closing + "\\end{subfigure}".length;
-      const separator = /^\s*(?:\\hfill\b\s*)?/u.exec(source.slice(cursor, end))![0];
+      const separator = /^(?:\s|\\(?:hfill|par|smallskip|medskip|bigskip)\b)*/u.exec(
+        source.slice(cursor, end),
+      )![0];
       spreadPanels ||= separator.includes("\\hfill");
       cursor += separator.length;
+      if (/\\par\b/u.test(separator) && source.startsWith("\\begin{subfigure}", cursor)) {
+        // The next parsePanel call appends here.
+        pendingRowBreak = true;
+      }
     }
     const tail = source.slice(cursor, end);
     const caption = commandFullRange(tail, "caption");
@@ -3306,12 +3392,26 @@ function serializeFigureLayout(node: JSONContent): string | null {
   )
     return null;
   const patches: { from: number; to: number; value: string }[] = [];
-  const patch = (range: LatexFigurePanel["captionRange"], value: unknown, label = false) => {
-    if (typeof value !== "string" || (label && safeLatexLabel(value) === null)) return false;
+  const patch = (
+    range: LatexFigurePanel["captionRange"],
+    value: unknown,
+    label = false,
+    path = false,
+  ) => {
+    if (
+      typeof value !== "string" ||
+      (label && safeLatexLabel(value) === null) ||
+      (path && !graphicsPathCell(value, 0))
+    )
+      return false;
     if (!range) return value === "";
     if (range.from < 0 || range.to < range.from || range.to > raw.length) return false;
     if (value !== range.original)
-      patches.push({ from: range.from, to: range.to, value: label ? value : escapeText(value) });
+      patches.push({
+        from: range.from,
+        to: range.to,
+        value: label || path ? value : escapeText(value),
+      });
     return true;
   };
   for (const [index, panel] of meta.panels.entries()) {
@@ -3324,7 +3424,12 @@ function serializeFigureLayout(node: JSONContent): string | null {
     }
     if (
       !item ||
-      !patch(panel.textRange, panel.path === null ? item.body : item.path) ||
+      !patch(
+        panel.textRange,
+        panel.path === null ? item.body : item.path,
+        false,
+        panel.path !== null,
+      ) ||
       !patch(panel.captionRange, item.caption) ||
       !patch(panel.labelRange, item.label, true)
     )
@@ -3358,12 +3463,13 @@ function parseFigurePreview(source: string): JSONContent | null {
   const pathOpening = include.index + include[0].lastIndexOf("{");
   const pathClose = closingBrace(source, pathOpening);
   if (pathClose === null || pathClose > endingFrom) return null;
-  const path = editableTableCell(source.slice(pathOpening + 1, pathClose), pathOpening + 1);
+  const path = graphicsPathCell(source.slice(pathOpening + 1, pathClose), pathOpening + 1);
   const captionRange = commandArgumentRange(source, "caption");
   const labelRange = commandArgumentRange(source, "label");
   const caption = captionRange ? editableTableCell(captionRange.source, captionRange.from) : null;
   const label = labelRange ? editableTableCell(labelRange.source, labelRange.from) : null;
   const options = include[1] ?? "";
+  if (!latexGraphicsOptions(options)) return null;
   const captionCommand = commandFullRange(source, "caption");
   const labelCommand = commandFullRange(source, "label");
   const known = [
@@ -3441,7 +3547,7 @@ function parseRichPreview(
   setup = visualSetup(documentSource),
 ): JSONContent | null {
   return (
-    parseDocumentFrontMatter(source, documentSource) ??
+    parseDocumentFrontMatter(source, setup.math.packages.preamble + "\n" + documentSource) ??
     parsePartPreview(source) ??
     parseSimpleLayout(source, setup.math.packages.preamble) ??
     parseBibliographyPreview(source) ??
@@ -4223,6 +4329,39 @@ function parseScientificStructure(
   };
 }
 
+/** Definitions inside a TeX environment/group do not change later source blocks. */
+function changesFollowingSyntax(source: string): boolean {
+  let environments = 0;
+  let global = false;
+  for (const command of latexSourceCommands(activeLatexSource(source))) {
+    if (["gdef", "xdef"].includes(command.name)) return true;
+    if (command.name === "global") {
+      global = true;
+      continue;
+    }
+    if (command.depth === 0) {
+      if (["begin", "begingroup"].includes(command.name)) environments++;
+      if (["end", "endgroup"].includes(command.name)) environments = Math.max(0, environments - 1);
+    }
+    if (
+      [
+        "catcode",
+        "def",
+        "edef",
+        "let",
+        "newcommand",
+        "renewcommand",
+        "newenvironment",
+        "renewenvironment",
+      ].includes(command.name) &&
+      (global || (command.depth === 0 && environments === 0))
+    )
+      return true;
+    global = false;
+  }
+  return false;
+}
+
 function classifyBlock(
   source: string,
   depth: number,
@@ -4273,7 +4412,12 @@ function classifyBlock(
     (() => {
       const trimmed = source.trim();
       const prefix = /^\\noindent\b\s*/u.exec(trimmed);
-      const content = parseInline(prefix ? trimmed.slice(prefix[0].length) : trimmed);
+      const content = parseInline(
+        prefix ? trimmed.slice(prefix[0].length) : trimmed,
+        [],
+        false,
+        setup,
+      );
       return content === null
         ? null
         : { type: "paragraph", ...(prefix ? { attrs: { latexNoIndent: true } } : {}), content };
@@ -4358,10 +4502,7 @@ export function projectLatexVisualDocument(
       continue;
     }
     const id = sourceId(blocks.length);
-    dynamicSyntax ||=
-      /\\(?:catcode|def|gdef|edef|xdef|let|newcommand|renewcommand|newenvironment|renewenvironment)\b/u.test(
-        withoutVisualComments(activeLatexSource(raw)),
-      );
+    dynamicSyntax ||= changesFollowingSyntax(raw);
     let classified = dynamicSyntax ? null : classifyBlock(raw, depth, setup);
     const supportedColors = (node: JSONContent): boolean =>
       (node.marks ?? []).every(
@@ -4637,6 +4778,7 @@ export function latexInlineCommandSource(
   linkText = "",
   raw = "",
 ): string {
+  if (["includegraphics", "proseMacro"].includes(name)) return raw;
   if (name === "hfill") return "\\hfill";
   const protection = /^(?:\\protect(?![A-Za-z])[\t\r\n ]*)+(?=\\[A-Za-z])/u.exec(raw);
   if (protection) {
@@ -6026,6 +6168,7 @@ export function adoptLatexVisualContent(
   parsed = projectLatexVisualDocument(source),
 ): LatexVisualDocument {
   const adopt = (value: JSONContent, native: JSONContent | undefined): JSONContent => {
+    if (value === native) return value;
     if (!native) return value;
     let children: JSONContent[] | undefined;
     value.content?.forEach((child, index) => {
@@ -6385,6 +6528,7 @@ function inlineSourceUnits(
   wrappers: readonly string[] = [],
   scoped = false,
   literalSpaces = false,
+  retainedAtoms: ReadonlyMap<string, JSONContent> = new Map(),
 ): InlineSourceUnit[] | null {
   const units: InlineSourceUnit[] = [];
   let currentMarks = marks;
@@ -6400,6 +6544,7 @@ function inlineSourceUnits(
         [...currentWrappers, source.slice(at, color.body.from)],
         scoped,
         literalSpaces,
+        retainedAtoms,
       );
       if (!children) return null;
       for (const child of children) {
@@ -6417,7 +6562,11 @@ function inlineSourceUnits(
       at = color.body.end;
       continue;
     }
-    const piece = inlinePiece(source, at, currentMarks, scoped);
+    const token = /^\\[A-Za-z]+\b/u.exec(source.slice(at))?.[0];
+    const retained = token ? retainedAtoms.get(token) : undefined;
+    const piece =
+      inlinePiece(source, at, currentMarks, scoped) ??
+      (retained ? { end: at + token!.length, node: retained } : null);
     if (!piece) return null;
     if (piece.ignored) {
       at = piece.end;
@@ -6441,6 +6590,7 @@ function inlineSourceUnits(
         [...currentWrappers, group.prefix],
         true,
         literalSpaces,
+        retainedAtoms,
       );
       if (!children) return null;
       units.push(...children);
@@ -6479,6 +6629,26 @@ function inlineSourceUnits(
     at = piece.end;
   }
   return units;
+}
+
+function blockInlineSourceUnits(
+  block: LatexVisualSourceBlock,
+  source = block.source,
+  offset = 0,
+  literalSpaces = false,
+) {
+  const retained = new Map<string, JSONContent>();
+  const collect = (node: JSONContent) => {
+    if (
+      node.type === "latexInlineCommand" &&
+      node.attrs?.name === "proseMacro" &&
+      typeof node.attrs.raw === "string"
+    )
+      retained.set(node.attrs.raw, node);
+    for (const child of node.content ?? []) collect(child);
+  };
+  collect(block.node);
+  return inlineSourceUnits(source, offset, [], [], false, literalSpaces, retained);
 }
 
 function inlineEditorUnits(nodes: readonly JSONContent[]): JSONContent[] {
@@ -6531,12 +6701,10 @@ export function latexVisualInlineSourceRange(
   let units: InlineSourceUnit[] | null = null;
   for (const [bodyFrom, bodyTo] of candidates) {
     for (const literalSpaces of [false, true]) {
-      const candidate = inlineSourceUnits(
+      const candidate = blockInlineSourceUnits(
+        block,
         block.source.slice(bodyFrom, bodyTo),
         bodyFrom,
-        [],
-        [],
-        false,
         literalSpaces,
       );
       if (matches(candidate)) {
@@ -6680,7 +6848,7 @@ function splitParagraphSource(
     next.some((node) => node.type !== "paragraph")
   )
     return null;
-  const units = inlineSourceUnits(block.source);
+  const units = blockInlineSourceUnits(block);
   if (!units) return null;
   let at = 0;
   const results: string[] = [];
@@ -6743,7 +6911,7 @@ function joinedListParagraphSource(
   if (!desired.length) return "\\par";
   const units = blocks.flatMap((block) =>
     block.node.type === "paragraph"
-      ? (inlineSourceUnits(block.source) ?? []).map((unit) => ({ ...unit, source: block.source }))
+      ? (blockInlineSourceUnits(block) ?? []).map((unit) => ({ ...unit, source: block.source }))
       : [],
   );
   const firstKey = latexVisualNodeSignature(desired[0]!);
@@ -6974,7 +7142,7 @@ function minimallyPatchedBlock(
   // A published typing snapshot can retain meaningful trailing spaces after
   // marked text. Trimming those spaces from the source mapper leaves them
   // behind on undo and can force whole-paragraph canonical serialization.
-  let completeUnits = plain === null && !heading ? inlineSourceUnits(block.source) : null;
+  let completeUnits = plain === null && !heading ? blockInlineSourceUnits(block) : null;
   const previousKeys = completeUnits
     ? inlineEditorUnits(block.node.content ?? []).map(latexVisualNodeSignature)
     : null;
@@ -6984,7 +7152,7 @@ function minimallyPatchedBlock(
     units.length === previousKeys.length &&
     units.every((unit, index) => unit.key === previousKeys[index]);
   if (completeUnits && !matchesPrevious(completeUnits))
-    completeUnits = inlineSourceUnits(block.source, 0, [], [], false, true);
+    completeUnits = blockInlineSourceUnits(block, block.source, 0, true);
   const completeMatches = matchesPrevious(completeUnits);
   const trimmed: readonly [number, number] =
     (plain !== null && block.source === escapeText(plain)) || completeMatches
@@ -7005,7 +7173,7 @@ function minimallyPatchedBlock(
     return block.source.slice(0, from) + escapeText(after) + block.source.slice(to);
   const oldUnits = completeMatches
     ? completeUnits
-    : inlineSourceUnits(block.source.slice(from, to), from);
+    : blockInlineSourceUnits(block, block.source.slice(from, to), from);
   if (!oldUnits) return null;
   const nextUnits = inlineEditorUnits(next.content ?? []);
   const keys = nextUnits.map(latexVisualNodeSignature);
@@ -7088,7 +7256,8 @@ function minimallyPatchedBlock(
       }
       if (valid) {
         candidate += block.source.slice(to);
-        const units = inlineSourceUnits(
+        const units = blockInlineSourceUnits(
+          block,
           candidate.slice(from, to + candidate.length - block.source.length),
           from,
         );
@@ -7137,19 +7306,18 @@ function minimallyPatchedBlock(
         // The block classifier trims boundary whitespace when reopening source.
         // Validate the edited inline argument itself so a still-typing trailing
         // space can stay in the guarded snapshot without rewriting its wrappers.
-        let candidateUnits = inlineSourceUnits(
+        let candidateUnits = blockInlineSourceUnits(
+          block,
           candidate.slice(from, to + candidate.length - block.source.length),
           from,
         );
         const matches = (units: readonly InlineSourceUnit[] | null) =>
           units?.length === keys.length && units.every((unit, index) => unit.key === keys[index]);
         if (!matches(candidateUnits))
-          candidateUnits = inlineSourceUnits(
+          candidateUnits = blockInlineSourceUnits(
+            block,
             candidate.slice(from, to + candidate.length - block.source.length),
             from,
-            [],
-            [],
-            false,
             true,
           );
         if (matches(candidateUnits)) return candidate;
@@ -7323,6 +7491,172 @@ function patchRichTextBlock(block: LatexVisualSourceBlock, next: JSONContent): s
     boundary = patch.from;
   }
   return changed;
+}
+
+/** Validate an owned edit with its adjacent source blocks, not the full thesis.
+ * The adjacent blocks prove separators did not merge or split untouched syntax.
+ * Setup changes, generators and context-dependent front matter retain full validation.
+ */
+function projectLocalSourceEdit(
+  previous: LatexVisualDocument,
+  source: string,
+  content: JSONContent,
+  patches: readonly DocumentSourcePatch[],
+  setupSource: string | LatexVisualSetup,
+): LatexVisualDocument | null {
+  if (previous.generated || !patches.length || !previous.blocks.length) return null;
+  if (patches.some((patch) => previous.source.slice(patch.start, patch.end) !== patch.expected))
+    return null;
+  const setup = typeof setupSource === "string" ? visualSetup(setupSource) : setupSource;
+  if (setup !== previous.setup) return null;
+  let start = Infinity,
+    end = -Infinity;
+  for (const patch of patches) {
+    start = Math.min(start, patch.start);
+    end = Math.max(end, patch.end);
+  }
+  const old = previous.blocks;
+  if (start < old[0]!.from || end > old.at(-1)!.to) return null;
+  let first = 0;
+  while (first < old.length - 1 && old[first]!.to < start) first++;
+  let last = first;
+  while (last < old.length - 1 && old[last + 1]!.from <= end) last++;
+  first = Math.max(0, first - 1);
+  last = Math.min(old.length - 1, last + 1);
+  const from = old[first]!.from;
+  const to = old[last]!.to;
+  const delta = patches.reduce(
+    (sum, patch) => sum + patch.replacement.length - (patch.end - patch.start),
+    0,
+  );
+  const nodes = content.content ?? [];
+  const count = nodes.length - old.length + last - first + 1;
+  if (count < 0) return null;
+  const before = old.slice(first, last + 1);
+  const after = nodes.slice(first, first + count);
+  // These depend on the complete document or establish state for following blocks.
+  const needsContext = (node: JSONContent) =>
+    ["title", "toc", "documentCommand", "part", "bibliography"].includes(
+      String(node.attrs?.kind),
+    ) ||
+    node.attrs?.layout?.kind === "sourceColumns" ||
+    protectedLatexSources([node]).length > 0;
+  if (before.some((block) => needsContext(block.node)) || after.some(needsContext)) return null;
+  for (let index = 0; index < first; index++)
+    if (
+      old[index]!.node !== nodes[index] &&
+      roundTripSignature(old[index]!.node) !== roundTripSignature(nodes[index]!)
+    )
+      return null;
+  for (let index = last + 1; index < old.length; index++) {
+    const next = nodes[index + count - before.length];
+    if (
+      !next ||
+      (old[index]!.node !== next &&
+        roundTripSignature(old[index]!.node) !== roundTripSignature(next))
+    )
+      return null;
+  }
+  const windowSource = source.slice(from, to + delta);
+  const parsed = projectLatexVisualDocument(windowSource, 0, setup);
+  if (
+    parsed.generated ||
+    parsed.blocks.length !== after.length ||
+    roundTripSignature(parsed.content) !== roundTripSignature({ type: "doc", content: after })
+  )
+    return null;
+  const ranges: { from: number; to: number; source: string }[] = [];
+  for (const [index, block] of parsed.blocks.entries()) {
+    let start = block.from,
+      end = block.to;
+    const live = after[index]!;
+    if (live.type === "paragraph") {
+      const edgeText = (node: JSONContent, last: boolean) => {
+        const child = last ? node.content?.at(-1) : node.content?.[0];
+        return child?.type === "text" ? (child.text ?? "") : "";
+      };
+      const leading = (text: string) => /^[\t ]*/u.exec(text)![0];
+      const trailing = (text: string) => /[\t ]*$/u.exec(text)![0];
+      const head =
+        leading(edgeText(live, false)).length - leading(edgeText(block.node, false)).length;
+      const tail =
+        trailing(edgeText(live, true)).length - trailing(edgeText(block.node, true)).length;
+      // The live paragraph owns newly authored boundary spaces too. Reopening
+      // trims them; leaving them outside its range would strand them on editing.
+      if (head > 0) {
+        if (
+          windowSource.slice(start - head, start) !== leading(edgeText(live, false)).slice(0, head)
+        )
+          return null;
+        start -= head;
+      }
+      if (tail > 0) {
+        if (windowSource.slice(end, end + tail) !== trailing(edgeText(live, true)).slice(-tail))
+          return null;
+        end += tail;
+      }
+    }
+    if (start < 0 || end > windowSource.length || start < (ranges.at(-1)?.to ?? 0)) return null;
+    ranges.push({ from: start, to: end, source: windowSource.slice(start, end) });
+  }
+  const occupiedIds = new Set(
+    [...old.slice(0, first), ...old.slice(last + 1)].map((block) => block.id),
+  );
+  const reboundNodes = nodes.slice();
+  const changed = parsed.blocks.map((block, index) => {
+    const prior = before[index];
+    const live = after[index]!;
+    let id =
+      typeof live.attrs?.sourceId === "string"
+        ? live.attrs.sourceId
+        : `${block.id}:edit:${from}:${index}`;
+    const retained =
+      prior &&
+      prior.source === block.source &&
+      roundTripSignature(prior.node) === roundTripSignature(live);
+    if (retained) id = prior.id;
+    const candidate = id;
+    for (let suffix = 1; occupiedIds.has(id); suffix++)
+      id = `${candidate}:edit:${from}:${index}:${suffix}`;
+    occupiedIds.add(id);
+    if (live.attrs?.sourceId !== id)
+      reboundNodes[first + index] = { ...live, attrs: { ...live.attrs, sourceId: id } };
+    return {
+      ...block,
+      id,
+      node: { ...block.node, attrs: { ...block.node.attrs, sourceId: id } },
+      from: from + ranges[index]!.from,
+      to: from + ranges[index]!.to,
+      source: ranges[index]!.source,
+    };
+  });
+  const blocks = [
+    ...old.slice(0, first),
+    ...changed,
+    ...old
+      .slice(last + 1)
+      .map((block) =>
+        delta ? { ...block, from: block.from + delta, to: block.to + delta } : block,
+      ),
+  ];
+  return adoptLatexVisualContent(
+    source,
+    { ...content, content: reboundNodes },
+    {
+      ...previous,
+      source,
+      content: { ...content, content: blocks.map((block) => block.node) },
+      blocks,
+      supportedBlocks:
+        previous.supportedBlocks -
+        before.filter((block) => block.editable).length +
+        parsed.supportedBlocks,
+      rawBlocks:
+        previous.rawBlocks -
+        protectedLatexSources(before.map((block) => block.node)).length +
+        parsed.rawBlocks,
+    },
+  );
 }
 
 export function applyLatexVisualDocumentChange(
@@ -7571,12 +7905,13 @@ export function applyLatexVisualDocumentChange(
         return patchRichTextBlock(previousBlock, node);
       if (node.type === "latexRichPreview" && node.attrs?.sourceMeta?.literal === true)
         return serializeLatexVisualBlock(node);
-      return (
-        minimal ??
-        joinedListParagraphSource(authoredParagraphs, node) ??
-        serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ??
-        null
-      );
+      const authored = minimal ?? joinedListParagraphSource(authoredParagraphs, node);
+      if (authored !== null) return authored;
+      const rendered = serializeLatexVisualBlock(node);
+      // A retained-source serializer already owns its unchanged whitespace.
+      // Normalizing the whole result can alter mixed LF/CRLF table headers.
+      const retained = typeof node.attrs?.raw === "string" && node.attrs.raw.length > 0;
+      return (retained ? rendered : rendered?.replace(/\r?\n/gu, eol)) ?? null;
     });
   if (serialized.some((value) => value === null)) return null;
   let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
@@ -7841,6 +8176,22 @@ export function applyLatexVisualDocumentChange(
     }
   }
   // Reject a transaction that the supported projection cannot round-trip.
+  if (!rootEdit && !preamblePatches.length) {
+    const local = projectLocalSourceEdit(
+      projection,
+      changedSource,
+      nextContent,
+      edit.patches,
+      setupSource ?? setup,
+    );
+    if (local)
+      return {
+        source: changedSource,
+        edit,
+        structural: oldChanged.length !== newChanged.length,
+        projection: local,
+      };
+  }
   const projected = projectLatexVisualDocument(changedSource, 0, setupSource ?? setup);
   if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) {
     const oldBlock = oldChanged[0];

@@ -22,11 +22,10 @@ export function latexVisualCompatibility(source: string, projection: LatexVisual
       );
     if (node.type === "latexRawBlock")
       add("source", String(node.attrs?.reason ?? "This content requires Source or PDF."), at);
-    // Visual is continuous paper: two-column pages need pages to fill.
     if (layout?.kind === "sourceColumns")
       add(
         "approximate",
-        "Two-column pages appear only in the compiled PDF. Visual shows the text in one column.",
+        "Column and page breaks use browser layout. The compiled PDF supplies final typesetting.",
         at,
       );
     if (layout?.kind === "fullWidthTitle")
@@ -51,9 +50,12 @@ export function latexVisualCompatibility(source: string, projection: LatexVisual
   };
   for (const block of projection.blocks) visit(block.node, block.from);
   const preamble = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
-  // Visual is continuous paper: it draws no running headers or footers.
   if (/\\(?:pagestyle\s*\{\s*fancy\s*\}|fancy(?:head|foot)\b|[lcr](?:head|foot)\b)/u.test(preamble))
-    add("approximate", "Running headers and footers appear only in the compiled PDF.", 0);
+    add(
+      "approximate",
+      "Running headers and footers use supported source declarations. Compare their placement with PDF.",
+      0,
+    );
   const classDeclaration = /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}/u.exec(preamble);
   if (
     classDeclaration &&

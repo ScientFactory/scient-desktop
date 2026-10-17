@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { CornerDownLeft } from "lucide-react";
 import {
   type ReactNode,
@@ -116,7 +117,7 @@ function usePage(anchor: RefObject<HTMLElement | null>): Page | null {
     if (!scope) return;
     let target: HTMLElement | null = null;
     let zoomFrame: HTMLElement | null = null;
-    const resize = new ResizeObserver(() => measure());
+    let stopResize: (() => void) | undefined;
     const measure = () => {
       if (!target) return setPage(null);
       if (target.matches(".scient-markdown-document-host")) {
@@ -138,12 +139,12 @@ function usePage(anchor: RefObject<HTMLElement | null>): Page | null {
     };
     const find = () => {
       if (target?.isConnected) return;
-      resize.disconnect();
+      stopResize?.();
       target = scope.querySelector<HTMLElement>(
         ".scient-latex-visual-paper, .scient-markdown-document-host",
       );
       zoomFrame = target?.closest<HTMLElement>(".scient-latex-page-zoom-frame") ?? null;
-      if (zoomFrame) resize.observe(zoomFrame);
+      if (zoomFrame) stopResize = observeResize(zoomFrame, measure);
       measure();
     };
     const mutations = new MutationObserver(find);
@@ -151,7 +152,7 @@ function usePage(anchor: RefObject<HTMLElement | null>): Page | null {
     find();
     return () => {
       mutations.disconnect();
-      resize.disconnect();
+      stopResize?.();
     };
   }, [anchor]);
   return page;
@@ -172,8 +173,7 @@ function useLive<T>(root: HTMLElement, read: () => T, same: (a: T, b: T) => bool
     };
     const mutations = new MutationObserver(update);
     mutations.observe(root, { childList: true, subtree: true, characterData: true });
-    const resize = new ResizeObserver(update);
-    resize.observe(root);
+    const stopResize = observeResize(root, update);
     root.addEventListener("input", update, true);
     document.addEventListener("focusin", update);
     document.addEventListener("focusout", update);
@@ -182,7 +182,7 @@ function useLive<T>(root: HTMLElement, read: () => T, same: (a: T, b: T) => bool
     return () => {
       cancelAnimationFrame(frame);
       mutations.disconnect();
-      resize.disconnect();
+      stopResize();
       root.removeEventListener("input", update, true);
       document.removeEventListener("focusin", update);
       document.removeEventListener("focusout", update);

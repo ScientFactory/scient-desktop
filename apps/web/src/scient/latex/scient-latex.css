@@ -441,7 +441,7 @@
   margin: 0;
   transform-origin: top left;
 }
-/* Visual is one continuous sheet; real pages exist only in the compiled PDF. */
+/* The live editor spans the presentation sheets; source content stays in one model. */
 .scient-latex-visual-paper {
   position: relative;
   width: 100%;
@@ -456,6 +456,128 @@
     0 4px 16px #00000008;
   color: #171717;
   color-scheme: light;
+}
+
+.scient-latex-visual-paper[data-paged] {
+  min-height: var(--scient-paged-height);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.scient-latex-page-sheets {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.scient-latex-page-sheet {
+  position: absolute;
+  width: 100%;
+  height: var(--scient-latex-paper-height);
+  box-sizing: border-box;
+  background: white;
+  border: 1px solid #d4d6da;
+  box-shadow:
+    0 1px 3px #00000012,
+    0 4px 16px #00000008;
+}
+.scient-latex-running-header,
+.scient-latex-running-footer {
+  position: absolute;
+  left: var(--scient-latex-margin-left);
+  right: var(--scient-latex-margin-right);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  font-size: var(--scient-latex-size-footnotesize);
+  font-family: var(--scient-latex-font-family);
+  line-height: 1.2;
+}
+.scient-latex-running-header {
+  top: calc(var(--scient-latex-margin-top) * 0.35);
+}
+.scient-latex-running-footer {
+  bottom: calc(var(--scient-latex-margin-bottom) * 0.35);
+}
+.scient-latex-running-header > :last-child,
+.scient-latex-running-footer > :last-child {
+  text-align: right;
+}
+.scient-latex-visual-paper[data-paged] .scient-latex-visual-document {
+  position: relative;
+  min-height: var(--scient-paged-height);
+}
+.scient-latex-visual-paper[data-paged]
+  .scient-latex-visual-document
+  > .react-renderer:has([data-layout="sourceColumns"]) {
+  content-visibility: visible;
+}
+/* Float skips belong to the outer block so adjacent floats share one skip. */
+.scient-latex-visual-paper[data-paged]
+  .react-renderer:has(> .scient-latex-rich-preview[data-kind="table"] figure[data-table-float]),
+.scient-latex-visual-paper[data-paged]
+  .react-renderer:has(> .scient-latex-content-layout[data-layout="contentFloat"]) {
+  margin-block: calc(12 * 96px / 72.27);
+}
+.scient-latex-visual-paper[data-paged]
+  .react-renderer
+  > .scient-latex-rich-preview[data-kind="table"]:has(figure[data-table-float]),
+.scient-latex-visual-paper[data-paged]
+  .react-renderer
+  > .scient-latex-content-layout[data-layout="contentFloat"] {
+  margin-block: 0;
+}
+.scient-latex-pagination-gap {
+  display: block;
+  width: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  user-select: none;
+  text-indent: 0;
+}
+.scient-latex-table-page-gap > td {
+  border: 0 !important;
+  padding: 0 !important;
+  line-height: 0;
+}
+.scient-latex-table-page-gap {
+  pointer-events: none;
+  user-select: none;
+}
+.scient-latex-longtable-measurements {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  overflow: hidden;
+}
+.scient-latex-content-layout[data-layout="sourceColumns"]
+  > .scient-latex-content-layout-body
+  > div {
+  position: relative;
+  height: var(--scient-paged-region-height, auto);
+  --scient-paged-column-width: calc((100% - var(--scient-latex-column-gap)) / 2);
+}
+.scient-latex-content-layout[data-layout="sourceColumns"]
+  > .scient-latex-content-layout-body
+  > div
+  > * {
+  width: var(--scient-paged-column-width);
+  box-sizing: border-box;
+  content-visibility: auto;
+}
+.scient-latex-content-layout[data-layout="sourceColumns"]
+  .scient-paged-part:is(.scient-paged-fragmented, :focus-within, [data-document-selected]) {
+  content-visibility: visible;
+}
+.scient-paged-part {
+  position: absolute;
+  top: var(--scient-paged-top);
+  left: var(--scient-paged-left);
+  margin-block: 0 !important;
+}
+.scient-latex-visual-paper[data-paged] .scient-latex-page-marker {
+  display: none;
 }
 
 /* Where a page of the last compiled PDF began. Markers take no space, so they
@@ -517,6 +639,21 @@
   width: 40%;
   border-top: calc(0.4 * 96px / 72.27) solid currentColor;
   content: "";
+}
+.scient-latex-footnotes[data-paged-footnote-band]::before {
+  display: none;
+}
+.scient-latex-footnotes[data-paged-footnote-band] {
+  content-visibility: visible;
+  contain: none;
+}
+.scient-latex-footnote[data-paged-note-rule]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  width: 40%;
+  border-top: 0.4pt solid currentColor;
 }
 .scient-latex-footnote {
   padding-inline-start: 1.8em;
@@ -738,7 +875,8 @@
   );
   display: flow-root;
   counter-reset: scient-section;
-  width: 100%;
+  width: var(--scient-latex-paper-width, 100%);
+  margin-inline: auto;
   min-height: var(--scient-latex-document-height, var(--scient-latex-paper-height, 1056px));
   box-sizing: border-box;
   padding: var(--scient-latex-margin-top, 1in) var(--scient-latex-margin-right, 1in)
@@ -809,7 +947,15 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-visual-document h1[data-latex-command] {
   counter-reset: scient-subsection;
-  margin: 1.8ex 0 1.2ex;
+  margin: var(
+      --scient-latex-section-before,
+      calc(3.5 * var(--scient-latex-normal-ex) + var(--scient-latex-par-gap, 0px))
+    )
+    0
+    var(
+      --scient-latex-section-after,
+      calc(2.3 * var(--scient-latex-normal-ex) + var(--scient-latex-par-gap, 0px))
+    );
   font-size: var(--scient-latex-section-size, 19.13px);
   font-weight: 700;
   line-height: 1.25;
@@ -823,10 +969,11 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-visual-document h2[data-latex-command] {
   counter-reset: scient-subsubsection;
-  margin: 2ex 0 1ex;
+  margin: calc(3.25 * var(--scient-latex-normal-ex)) 0
+    calc(1.5 * var(--scient-latex-normal-ex) + var(--scient-latex-par-gap, 0px));
   font-size: var(--scient-latex-subsection-size, 15.94px);
   font-weight: 700;
-  line-height: 1.3;
+  line-height: var(--scient-latex-baseline-large);
 }
 .scient-latex-visual-document h2[data-latex-command]:not([data-latex-unnumbered]) {
   counter-increment: scient-subsection;
@@ -987,7 +1134,7 @@ tr[data-latex-longtable-band] {
   font-style: italic;
 }
 .scient-latex-visual-document code {
-  font-family: "KaTeX_Typewriter", var(--font-mono);
+  font-family: var(--scient-latex-mono-font, "KaTeX_Typewriter"), var(--font-mono);
   font-size: 1em;
   line-height: 1.2;
   background: transparent;
@@ -1001,7 +1148,7 @@ tr[data-latex-longtable-band] {
   font-family: "KaTeX_Main", "Cambria", "Times New Roman", serif;
 }
 .scient-latex-visual-document [data-latex-text-style="sans"] {
-  font-family: "KaTeX_SansSerif", var(--font-sans);
+  font-family: var(--scient-latex-sans-font, "KaTeX_SansSerif"), var(--font-sans);
 }
 .scient-latex-visual-document [data-latex-text-style="slanted"] {
   font-style: oblique;
@@ -1063,9 +1210,21 @@ tr[data-latex-longtable-band] {
   border-radius: 4px;
   scroll-margin-block: 100px;
 }
+.node-latexDisplayMath {
+  /* The paragraph line box already reserves part of the preceding baseline skip. */
+  margin: calc(0.9em - 0.2lh) 0 0.9em;
+}
+.scient-latex-visual-document p:has(+ .node-latexDisplayMath),
+.scient-latex-visual-document p:has(+ .scient-latex-pagination-gap + .node-latexDisplayMath) {
+  margin-bottom: 0;
+}
+.node-latexDisplayMath[data-short-display] {
+  margin-block: 0 0.6em;
+}
 .scient-latex-visual-display-math {
+  display: flow-root;
   position: relative;
-  margin: 0.9em 0;
+  margin: 0;
   border-radius: 4px;
   padding: 0;
   text-align: center;
@@ -1097,6 +1256,7 @@ tr[data-latex-longtable-band] {
   ) {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 6em;
+  contain: layout style;
   overflow-clip-margin: 2em;
 }
 /* While blocks are still arriving, formulas and fields cannot be activated. */
@@ -1112,10 +1272,14 @@ tr[data-latex-longtable-band] {
    any depth (a list item, a theorem), so nothing clips them. */
 .scient-latex-visual-document
   > :has(
+    [data-scient-active-slot],
+    [data-scient-selection-held],
+    [data-latex-document-selection],
     .scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held]),
     .scient-latex-visual-command[data-footnote-editor],
     .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected])
   ),
+.scient-latex-visual-document > [data-latex-document-selection],
 .scient-latex-visual-document
   > .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
   content-visibility: visible;
@@ -1127,6 +1291,8 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-equation-numbers {
   position: absolute;
+  font-style: normal;
+  font-weight: normal;
   inset: 0 0 0 auto;
   min-width: 2.5em;
   pointer-events: none;
@@ -1199,6 +1365,9 @@ tr[data-latex-longtable-band] {
 .scient-latex-math-preview[hidden] {
   display: none;
 }
+.scient-latex-visual-display-math :is(.scient-latex-math-preview, math-field) {
+  vertical-align: top;
+}
 .scient-latex-visual-display-math .scient-latex-math-preview {
   width: max-content;
   max-width: none;
@@ -1232,6 +1401,7 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-display-math > .scient-latex-mathfield {
   /* The guide reaches up to 7 local pixels beyond the ink at every zoom. */
   --scient-math-guide-gutter: max(8px, 0.2em);
+  line-height: 0;
   display: block;
   max-width: calc(100% + 2 * var(--scient-math-guide-gutter));
   direction: ltr;
@@ -1504,7 +1674,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #285984;
+  color: var(--scient-latex-url-color, inherit);
   overflow-wrap: anywhere;
 }
 .scient-latex-visual-command[data-anchor] > button {
@@ -1529,12 +1699,11 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font: inherit;
   padding: 0;
   background: transparent;
-  color: inherit;
+  color: var(--scient-latex-link-color, inherit);
   cursor: pointer;
 }
 .scient-latex-equation-reference {
-  text-decoration: underline;
-  text-decoration-color: #8aafda;
+  text-decoration: none;
   text-underline-offset: 0.15em;
 }
 .scient-latex-visual-command[data-equation-reference] button:is(:hover, :focus-visible) {
@@ -1550,7 +1719,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 0;
   border-radius: 0;
   background: transparent;
-  color: #285984;
+  color: var(--scient-latex-citation-color, inherit);
   cursor: pointer;
 }
 .scient-latex-citation button:is(:hover, :focus-visible) {
@@ -1625,12 +1794,18 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font: 12px/1.6 var(--font-mono);
 }
 
+.scient-latex-content-layout[data-layout="titlepage"] {
+  margin: 0;
+  display: flow-root;
+  min-height: var(--scient-latex-text-height);
+}
 .scient-latex-title-preview {
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 1em;
-  margin: 2em 0;
+  gap: 0;
+  padding-top: 1lh;
+  margin: 2em 0 1.5em;
   text-align: center;
 }
 .scient-latex-visual-document
@@ -1654,10 +1829,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
 }
 .scient-latex-title-preview textarea[aria-label="Document title"] {
-  margin-bottom: 0.25em;
+  margin-bottom: calc(1.5 * var(--scient-latex-font-size));
   font-size: var(--scient-latex-title-size, 1.728em);
   font-weight: 400;
-  line-height: 1.2;
+  line-height: var(--scient-latex-baseline-LARGE);
 }
 /* While the title is written the caret starts at the left of the hint, as in
    any text box, and the field keeps the hint's width (2.11em of "Title") so the
@@ -1670,7 +1845,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-title-preview textarea[aria-label="Document author"],
 .scient-latex-title-preview textarea[aria-label="Document date"] {
   font-size: var(--scient-latex-author-size, 1.2em);
-  line-height: 1.25;
+  line-height: var(--scient-latex-baseline-large);
+}
+.scient-latex-title-preview textarea[aria-label="Document author"] {
+  margin-bottom: calc(var(--scient-latex-font-size) + var(--scient-latex-par-gap, 0px));
 }
 .scient-latex-title-preview textarea:focus {
   outline: none;
@@ -1697,9 +1875,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
 }
 .scient-latex-toc-preview h2 {
-  margin-bottom: 0.35em;
-  font-size: 1.44em;
+  margin-bottom: calc(2.3 * var(--scient-latex-normal-ex) + var(--scient-latex-par-gap, 0px));
+  font-size: var(--scient-latex-section-size, 1.44em);
   font-weight: 700;
+  line-height: 1.25;
   text-align: left;
 }
 .scient-latex-abstract-preview h2::before,
@@ -1784,7 +1963,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-inline-literal {
   display: inline-flex;
   vertical-align: baseline;
-  font-family: "KaTeX_Typewriter", var(--font-mono);
+  font-family: var(--scient-latex-mono-font, "KaTeX_Typewriter"), var(--font-mono);
   white-space: pre;
 }
 .scient-latex-inline-literal textarea {
@@ -1973,10 +2152,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 0;
   border: 0;
   background: transparent;
-  color: #285984;
+  color: var(--scient-latex-link-color, inherit);
   font: inherit;
   text-align: left;
-  line-height: 1.2;
+  line-height: inherit;
   cursor: pointer;
 }
 .scient-latex-toc-preview li[data-level="1"] > button {
@@ -2082,10 +2261,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin: 0 0.4em 0.25em;
 }
 .scient-latex-toc-preview li + li {
-  margin-top: 0;
+  margin-top: var(--scient-latex-par-gap, 0px);
 }
 .scient-latex-toc-preview[data-list-kind="contents"] li[data-level="1"] {
-  margin-top: 0.75em;
+  margin-top: calc(1em + var(--scient-latex-par-gap, 0px));
+}
+.scient-latex-toc-preview[data-list-kind="contents"] li:first-child {
+  margin-top: 0;
 }
 .scient-latex-toc-preview[data-list-kind="contents"]
   li[data-level="1"]
@@ -2339,7 +2521,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview th,
 .scient-latex-rich-preview td {
   min-width: 0;
-  padding: 0 calc(6 * 96px / 72.27);
+  padding: 0 var(--scient-latex-tabcolsep, calc(6 * 96px / 72.27));
   border: 0;
   text-align: start;
   vertical-align: top;
@@ -2675,7 +2857,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   box-sizing: border-box;
   max-width: 100%;
   border-style: solid;
-  margin: 1em 0;
+  margin: 0;
 }
 .scient-latex-basic-box p:first-child,
 .scient-latex-box-region p:first-child {
@@ -2722,6 +2904,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   outline: none;
 }
 .scient-latex-algorithm-body {
+  --scient-latex-par-gap: 0px;
   padding: 0.5em 0 0.5em 2em;
 }
 .scient-latex-algorithm-line {
@@ -4108,4 +4291,67 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-selection-overlay {
     display: none !important;
   }
+}
+
+.scient-latex-visual-paper[data-paged] .scient-latex-page-break {
+  display: none;
+}
+
+/* Table struts affect row minima without multiplying wrapped paragraph leading. */
+.scient-latex-rich-preview :is(td, th) .scient-latex-inline-field-content > p::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: calc(
+    1lh * var(--scient-latex-array-stretch, 1) + var(--scient-latex-extra-row-height, 0px)
+  );
+  vertical-align: calc(-0.3lh * var(--scient-latex-array-stretch, 1));
+  pointer-events: none;
+}
+
+/* Scoped declarations retain their source wrapper while children page independently. */
+.scient-latex-visual-document
+  > .react-renderer:has(> .scient-latex-content-layout[data-layout="contentGroup"]) {
+  content-visibility: visible;
+  contain: style;
+}
+.scient-latex-rich-preview:has(figure[data-table-kind="long"]) {
+  margin-block: var(--scient-latex-table-before, 0px) var(--scient-latex-table-after, 0px);
+}
+
+.scient-latex-visual-document
+  > .react-renderer:has(> .scient-latex-content-layout[data-layout="landscape"]) {
+  content-visibility: visible;
+  contain: style;
+}
+.scient-latex-content-layout[data-layout="landscape"] {
+  position: relative;
+  left: calc(
+    (var(--scient-latex-paper-width) -
+        var(--scient-latex-canvas-width, var(--scient-latex-paper-width))) /
+      2
+  );
+  width: var(--scient-latex-text-height);
+  max-width: none;
+  margin: 0;
+}
+.scient-latex-content-layout[data-layout="landscape"]
+  > .scient-latex-content-layout-body
+  > div
+  > :is(h1, h2, h3):first-child {
+  margin-top: 0;
+}
+
+.scient-latex-inline-command {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--scient-latex-link-color, inherit);
+  font: inherit;
+  cursor: pointer;
+}
+.scient-latex-inline-command:is(:hover, :focus-visible) {
+  text-decoration: underline;
 }

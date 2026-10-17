@@ -245,6 +245,12 @@ function typingEntry(draft: TypingDraft, snapshot: string): ParkedEntry {
   };
 }
 
+/** Move a transactional input checkpoint into the established recovery list. */
+export function parkVisualTypingSnapshot(key: string, snapshot: string): boolean {
+  const draft = parseTypingDraft(snapshot);
+  return draft !== null && park(key, typingEntry(draft, snapshot));
+}
+
 // Identities of work still in a live slot are prefixed, so they never collide with parked ones.
 const LIVE_SOURCE = "live-source:";
 const LIVE_TYPING = "live-typing:";

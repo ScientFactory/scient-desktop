@@ -86,11 +86,13 @@ export function latexTableSourceShape(source: string) {
     const env = arg(source, command.to);
     if (!env || !["tabular", "tabularx", "tabulary", "longtable"].includes(env.value)) continue;
     let at = env.end;
+    let tableWidth: string | null = null;
     const option = arg(source, at, "[", "]");
     if (option) at = option.end;
     if (["tabularx", "tabulary"].includes(env.value)) {
       const width = arg(source, at);
       if (!width) return null;
+      tableWidth = width.value;
       at = width.end;
     }
     const spec = arg(source, at);
@@ -104,6 +106,7 @@ export function latexTableSourceShape(source: string) {
       to: end,
       spec,
       columns,
+      width: tableWidth,
       openingFrom: command.from,
       endingTo: end + `\\end{${env.value}}`.length,
     };
@@ -116,14 +119,19 @@ function split(source: string, separator: "&" | "\\\\", offset: number) {
   let start = 0,
     depth = 0,
     env = 0;
+  let math: string | null = null;
   for (let at = 0; at < source.length; at++) {
     if (source[at] === "%") {
       const end = source.indexOf("\n", at);
       if (end < 0) break;
       at = end;
+    } else if (source[at] === "$") math = math === "$" ? null : (math ?? "$");
+    else if (source.startsWith("\\(", at) || source.startsWith("\\)", at)) {
+      math = source[at + 1] === "(" ? "paren" : null;
+      at++;
     } else if (source[at] === "{") depth++;
     else if (source[at] === "}") depth--;
-    else if (!depth && !env && source.startsWith(separator, at)) {
+    else if (!depth && !env && math === null && source.startsWith(separator, at)) {
       ranges.push({ from: start + offset, to: at + offset });
       at += separator.length - 1;
       start = at + 1;

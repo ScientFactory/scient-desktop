@@ -7,6 +7,7 @@ import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexV
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
 import { latexDocumentLanguage, type LatexWritingLanguage } from "./latexLanguage";
 import type { LatexDocumentSettingsUpdate } from "./latexDocumentSettingsSource";
+import { documentLayoutSettings, type DocumentLayoutSettings } from "./latexDocumentLayoutSettings";
 
 export type LatexDocumentSettingsSection = "page" | "style";
 
@@ -106,7 +107,7 @@ function Choice<T extends string>(props: {
             tabIndex={chosen ? 0 : -1}
             disabled={props.disabled}
             className={
-              "relative min-w-0 truncate rounded-[5px] px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring " +
+              "relative min-w-0 truncate rounded-[5px] px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring " +
               (chosen ? "text-accent-foreground" : "text-muted-foreground hover:text-foreground")
             }
             onClick={() => props.onChange(option.value)}
@@ -146,6 +147,19 @@ export function LatexDocumentSettings(props: {
   const [current] = useState(() => currentSettings(original));
   const { profile } = current;
   const [changes, setChanges] = useState<LatexDocumentSettingsUpdate>({});
+  const [extended] = useState(() => documentLayoutSettings(original));
+  const setLayout = <K extends keyof DocumentLayoutSettings>(
+    key: K,
+    value: DocumentLayoutSettings[K],
+  ) => {
+    setChanges((previous) => {
+      const next = { ...previous };
+      if (value === extended[key as keyof typeof extended]) delete next[key];
+      else Object.assign(next, { [key]: value });
+      return next;
+    });
+    setError(null);
+  };
   const [marginChoice, setMarginChoice] = useState<MarginChoice>(current.margin);
   const [error, setError] = useState<string | null>(null);
   const customClass = !["article", "report", "book"].includes(profile.documentClass);
@@ -367,6 +381,310 @@ export function LatexDocumentSettings(props: {
             </div>
           ) : null}
         </fieldset>
+        <details>
+          <summary className="cursor-pointer text-xs">Columns and spacing</summary>
+          <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
+            <Field label="Columns">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                aria-label="Document columns"
+                value={String(changes.columns ?? extended.columns)}
+                options={[
+                  { value: "1", label: "One" },
+                  { value: "2", label: "Two" },
+                ]}
+                onValueChange={(value) => setLayout("columns", Number(value) as 1 | 2)}
+              />
+            </Field>
+            <Field label="Line spacing">
+              <Input
+                size="compact"
+                type="number"
+                min="0.5"
+                max="3"
+                step="any"
+                aria-label="Line spacing"
+                value={changes.lineSpacing ?? extended.lineSpacing}
+                onChange={(event) => setLayout("lineSpacing", Number(event.target.value))}
+              />
+            </Field>
+            {(
+              [
+                ["columnGap", "Column gap"],
+                ["columnRule", "Column separator"],
+                ["paragraphIndent", "Paragraph indent"],
+                ["paragraphGap", "Paragraph spacing"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} label={label}>
+                <Input
+                  size="compact"
+                  aria-label={label}
+                  value={changes[key] ?? extended[key]}
+                  onChange={(event) => setLayout(key, event.target.value)}
+                />
+              </Field>
+            ))}
+            <Field label="Alignment">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                aria-label="Document alignment"
+                value={changes.alignment ?? extended.alignment}
+                options={[
+                  { value: "justify", label: "Justified" },
+                  { value: "left", label: "Left" },
+                ]}
+                onValueChange={(value) => setLayout("alignment", value as "justify" | "left")}
+              />
+            </Field>
+          </fieldset>
+        </details>
+        <details>
+          <summary className="cursor-pointer text-xs">Page dimensions and binding</summary>
+          <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
+            {(
+              [
+                ["paperWidth", "Paper width"],
+                ["paperHeight", "Paper height"],
+                ["gutter", "Binding gutter"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} label={label}>
+                <Input
+                  size="compact"
+                  aria-label={label}
+                  value={changes[key] ?? extended[key]}
+                  onChange={(event) => setLayout(key, event.target.value)}
+                />
+              </Field>
+            ))}
+            <Field label="Facing pages">
+              <Choice
+                label="Facing pages"
+                value={(changes.mirroredMargins ?? extended.mirroredMargins) ? "yes" : "no"}
+                disabled={locked}
+                options={[
+                  { value: "no", label: "Off" },
+                  { value: "yes", label: "On" },
+                ]}
+                onChange={(value) => setLayout("mirroredMargins", value === "yes")}
+              />
+            </Field>
+          </fieldset>
+        </details>
+        <details>
+          <summary className="cursor-pointer text-xs">Fonts and compiler</summary>
+          <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
+            <Field label="Compiler">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                aria-label="Document compiler"
+                value={changes.engine ?? extended.engine}
+                options={[
+                  { value: "pdflatex", label: "pdfLaTeX" },
+                  { value: "xelatex", label: "XeLaTeX" },
+                  { value: "lualatex", label: "LuaLaTeX" },
+                ]}
+                onValueChange={(value) =>
+                  setLayout("engine", value as DocumentLayoutSettings["engine"])
+                }
+              />
+            </Field>
+            {(
+              [
+                ["mainFont", "Main font"],
+                ["sansFont", "Sans font"],
+                ["monoFont", "Monospace font"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} label={label}>
+                <Input
+                  size="compact"
+                  aria-label={label}
+                  value={changes[key] ?? extended[key]}
+                  disabled={
+                    (changes.engine ?? extended.engine) === "pdflatex" ||
+                    (key === "mainFont" && /\\babelfont\b/u.test(original))
+                  }
+                  title={
+                    (changes.engine ?? extended.engine) === "pdflatex"
+                      ? "System fonts require XeLaTeX or LuaLaTeX."
+                      : key === "mainFont" && /\\babelfont\b/u.test(original)
+                        ? "Language-specific fonts are configured in Source."
+                        : undefined
+                  }
+                  onChange={(event) => setLayout(key, event.target.value)}
+                />
+              </Field>
+            ))}
+          </fieldset>
+        </details>
+        <details>
+          <summary className="cursor-pointer text-xs">Headings</summary>
+          <fieldset disabled={locked || customClass} className="mt-2 grid grid-cols-2 gap-2">
+            <Field label="Title size (pt)">
+              <Input
+                size="compact"
+                type="number"
+                aria-label="Title size"
+                min="6"
+                max="72"
+                step="any"
+                value={changes.titleSize ?? extended.titleSize}
+                onChange={(event) => setLayout("titleSize", Number(event.target.value))}
+              />
+            </Field>
+            <Field label="Section size (pt)">
+              <Input
+                size="compact"
+                type="number"
+                aria-label="Section size"
+                min="6"
+                max="72"
+                step="any"
+                value={changes.headingSize ?? extended.headingSize}
+                onChange={(event) => setLayout("headingSize", Number(event.target.value))}
+              />
+            </Field>
+            <Field label="Numbering depth">
+              <Input
+                size="compact"
+                type="number"
+                aria-label="Numbering depth"
+                min="-1"
+                max="3"
+                value={changes.numberingDepth ?? extended.numberingDepth}
+                onChange={(event) => setLayout("numberingDepth", Number(event.target.value))}
+              />
+            </Field>
+            {(
+              [
+                ["headingBefore", "Space before sections"],
+                ["headingAfter", "Space after sections"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} label={label}>
+                <Input
+                  size="compact"
+                  aria-label={label}
+                  value={changes[key] ?? extended[key]}
+                  onChange={(event) => setLayout(key, event.target.value)}
+                />
+              </Field>
+            ))}
+          </fieldset>
+        </details>
+        <details>
+          <summary className="cursor-pointer text-xs">Headers and footers</summary>
+          <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
+            {(
+              [
+                ["headerLeft", "Left header"],
+                ["headerCenter", "Center header"],
+                ["headerRight", "Right header"],
+                ["footerLeft", "Left footer"],
+                ["footerCenter", "Center footer"],
+                ["footerRight", "Right footer"],
+              ] as const
+            ).map(([key, label]) => {
+              const value = changes[key] ?? extended[key];
+              const custom = /[\\{}]/u.test(
+                extended[key]
+                  .replaceAll("\\thepage", "")
+                  .replaceAll("\\leftmark", "")
+                  .replaceAll("\\rightmark", ""),
+              );
+              return (
+                <Field key={key} label={label}>
+                  <Input
+                    size="compact"
+                    aria-label={label}
+                    disabled={custom}
+                    title={
+                      custom ? "This header or footer uses a custom format in Source." : undefined
+                    }
+                    value={
+                      custom
+                        ? "Custom format"
+                        : value
+                            .replaceAll("\\thepage", "Page number")
+                            .replaceAll("\\leftmark", "Chapter title")
+                            .replaceAll("\\rightmark", "Section title")
+                    }
+                    onChange={(event) =>
+                      setLayout(
+                        key,
+                        event.target.value
+                          .replaceAll("Page number", "\\thepage")
+                          .replaceAll("Chapter title", "\\leftmark")
+                          .replaceAll("Section title", "\\rightmark"),
+                      )
+                    }
+                  />
+                </Field>
+              );
+            })}
+            <Field label="Page numbering">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                aria-label="Page numbering"
+                value={changes.pageNumbering ?? extended.pageNumbering}
+                options={[
+                  { value: "arabic", label: "1, 2, 3" },
+                  { value: "roman", label: "i, ii, iii" },
+                  { value: "Roman", label: "I, II, III" },
+                  { value: "alph", label: "a, b, c" },
+                  { value: "Alph", label: "A, B, C" },
+                ]}
+                onValueChange={(value) =>
+                  setLayout("pageNumbering", value as DocumentLayoutSettings["pageNumbering"])
+                }
+              />
+            </Field>
+            <Field label="First page">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                aria-label="First page style"
+                value={changes.firstPageStyle ?? extended.firstPageStyle}
+                options={[
+                  { value: "default", label: "Document default" },
+                  { value: "same", label: "Same as other pages" },
+                  { value: "plain", label: "Page number only" },
+                  { value: "empty", label: "Empty" },
+                ]}
+                onValueChange={(value) =>
+                  setLayout("firstPageStyle", value as DocumentLayoutSettings["firstPageStyle"])
+                }
+              />
+            </Field>
+          </fieldset>
+          {(changes.mirroredMargins ?? extended.mirroredMargins) && (
+            <fieldset disabled={locked} className="mt-2 grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["evenHeaderLeft", "Even-page left header"],
+                  ["evenHeaderRight", "Even-page right header"],
+                  ["evenFooterLeft", "Even-page left footer"],
+                  ["evenFooterRight", "Even-page right footer"],
+                ] as const
+              ).map(([key, label]) => (
+                <Field key={key} label={label}>
+                  <Input
+                    size="compact"
+                    aria-label={label}
+                    value={changes[key] ?? extended[key]}
+                    onChange={(event) => setLayout(key, event.target.value)}
+                  />
+                </Field>
+              ))}
+            </fieldset>
+          )}
+        </details>
         {stale && (
           <p role="alert" className="text-xs">
             The document changed while settings were open. Close and reopen settings to use the

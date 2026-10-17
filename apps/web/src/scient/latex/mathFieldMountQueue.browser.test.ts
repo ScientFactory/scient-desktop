@@ -66,3 +66,15 @@ it("continues other previews after one scheduled view throws", async () => {
   await expect.poll(() => report.mock.calls.length).toBe(1);
   expect(report).toHaveBeenCalledWith(failure);
 });
+
+it("publishes visible previews when background tasks are starved by layout", async () => {
+  vi.stubGlobal("scheduler", {
+    postTask(callback: () => void, options: { priority: string }) {
+      if (options.priority === "background") return new Promise<void>(() => {});
+      return Promise.resolve().then(callback);
+    },
+  });
+  const completed: string[] = [];
+  job(() => completed.push("visible"), 2);
+  await expect.poll(() => completed, { timeout: 180, interval: 10 }).toEqual(["visible"]);
+});

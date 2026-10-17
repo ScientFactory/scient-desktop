@@ -87,10 +87,9 @@ Unsupported nested content remains visible as source;
 surrounding supported text stays editable. Custom heading macros, formatting
 groups, paragraph boxes, and supported float contents retain their original
 commands when edited. Columns and float placement use browser layout, so rebuild
-and inspect PDF for the final page and column breaks. Visual is continuous paper,
-so a standard `twocolumn` document is shown in one column; its two-column pages
-appear in the compiled PDF. `multicols` regions keep balanced columns. Browser
-line wrapping and TeX float placement can still differ.
+and inspect PDF for the final page and column breaks. Visual presents pages and fills both columns of standard `twocolumn` documents,
+with full-width titles above them. `multicols` regions keep their separate balanced
+layout. Browser line wrapping and TeX float placement can still differ.
 
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
@@ -471,7 +470,10 @@ The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
 Use **Document > Document settings** for the document type, text size, paper, language,
 orientation, margins (Narrow, Normal, Wide, or Custom for each side) and
-paragraph style. Each setting shows what the document uses now; **Apply** writes
+paragraph style. Expand the layout groups for columns, line/paragraph spacing,
+custom paper dimensions, binding and mirrored margins, supported fonts/engine,
+heading/title defaults and simple running headers/footers. Custom definitions
+remain source-owned. Each setting shows what the document uses now; **Apply** writes
 only the settings you changed, and **Cancel** discards the draft. Blank custom
 margin fields preserve the current source. Package and macro declarations are
 available in Source. Existing package options remain intact, and
@@ -490,15 +492,13 @@ controls when source changes rebuild the PDF.
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
 
-The writing surface is one continuous sheet of paper at the document's page
-width and margins; only the compiled PDF has pages. After a build of the same
-source, thin dashed lines with page numbers mark where the PDF's pages begin,
-and the header row shows the page you are reading and the page count. The marks
-follow your edits and turn fainter once the source has changed since that build;
-the next build places them again. Without a matching build the header shows no
-page controls. Clicking the zoom percentage fits the paper to the available
-workspace using the same zoom percentage as PDF for the same paper size, pane
-width and navigation state. The sidebar holds the document outline.
+The writing surface presents pages at the document's paper size and margins.
+Page controls navigate the current Visual layout before a PDF build. Explicit
+breaks, standard two-column flow, page footnotes and longtable continuation bands
+are presented without adding page markup to your source or undo history.
+PDF remains authoritative for final typography, float placement and page breaks.
+Clicking the zoom percentage fits the paper using the same zoom scale as PDF;
+the sidebar holds the document outline.
 Table tools appear in the existing footer; selecting a table does not add
 controls, labels, or empty caption fields to the paper.
 The canvas also reads common `\geometry{...}` overrides, landscape paper, and

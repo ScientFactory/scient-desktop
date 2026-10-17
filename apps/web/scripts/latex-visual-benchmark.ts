@@ -27,7 +27,9 @@ const flag = (name: string) => argv.includes(`--${name}`);
 const scenarios = new Set(
   (option("scenarios") ?? "open,scroll,typing,structure,memory").split(","),
 );
-const out = option("out") ?? NodePath.join(NodeOS.tmpdir(), "scient-latex-visual-benchmark");
+const out = NodePath.resolve(
+  option("out") ?? NodePath.join(NodeOS.tmpdir(), "scient-latex-visual-benchmark"),
+);
 const shots = option("shots");
 
 if (!flag("skip-build")) {
@@ -167,14 +169,14 @@ function instrument() {
  * the top-level blocks that intersect the viewport, found by binary search. */
 function visibleState() {
   const editor = (
-    window as unknown as { latexBenchmark: { editor(): any } }
+    window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
   ).latexBenchmark.editor();
   const scroll = editor?.view.dom.closest(".scient-latex-visual-scroll") as HTMLElement | null;
-  if (!editor || !scroll) return { exists: false, ready: false, editable: false };
+  if (!editor || !scroll) return { exists: false, ready: false, editable: false, paged: false };
   const box = scroll.getBoundingClientRect();
   const blocks = [...(editor.view.dom as HTMLElement).children] as HTMLElement[];
   let low = 0;
-  let high = blocks.length - 1;
+  let high = scroll.scrollTop === 0 ? 0 : blocks.length - 1;
   while (low < high) {
     const middle = (low + high) >> 1;
     if (blocks[middle]!.getBoundingClientRect().bottom <= box.top) low = middle + 1;
@@ -216,9 +218,15 @@ function visibleState() {
   const loading = editor.view.dom.dataset.latexLoading === "true";
   return {
     exists: true,
+    opening,
+    blocks: blocks.length,
     ready: text && !opening && closed + busy + hidden + math === 0,
+    paged: !!editor.view.dom.closest("[data-paged]"),
     editable: editor.view.editable && !loading && !opening,
     loading,
+    planSettled: (
+      window as unknown as { latexBenchmark: { settled(): boolean } }
+    ).latexBenchmark.settled(),
     closed,
     busy,
     hidden,
@@ -267,13 +275,22 @@ async function open(page: Page, source: string, key: string, settle = true) {
     },
     [source, key] as const,
   );
+  let lastProgress = 0;
+  const progress = (elapsed: number, state: unknown) => {
+    if (elapsed - lastProgress < 10000) return;
+    lastProgress = elapsed;
+    console.error("[opening]", Math.round(elapsed), JSON.stringify(state));
+  };
   let firstReadable = NaN;
   let editable = NaN;
+  let pagedReady = NaN;
   for (;;) {
     const state = await page.evaluate(visibleState);
     const now = await page.evaluate(() => performance.now());
+    progress(now - t0, state);
     if (state.ready && Number.isNaN(firstReadable)) firstReadable = now - t0;
-    if (state.ready && state.editable && Number.isNaN(editable)) editable = now - t0;
+    if (state.editable && Number.isNaN(editable)) editable = now - t0;
+    if (state.paged && Number.isNaN(pagedReady)) pagedReady = now - t0;
     if (!Number.isNaN(editable) || now - t0 > 120_000) break;
     await page.waitForTimeout(50);
   }
@@ -289,8 +306,22 @@ async function open(page: Page, source: string, key: string, settle = true) {
         return { now: performance.now(), lastEnd: last ? last.start + last.duration : 0 };
       });
       const state = await page.evaluate(visibleState);
+      progress(quiet.now - t0, state);
+      if (state.ready && Number.isNaN(firstReadable)) firstReadable = quiet.now - t0;
+      if (state.editable && Number.isNaN(editable)) editable = quiet.now - t0;
+      if (state.paged && Number.isNaN(pagedReady)) pagedReady = quiet.now - t0;
       if (quiet.lastEnd > t0) settled = Math.max(settled, quiet.lastEnd - t0);
-      if (quiet.now - Math.max(quiet.lastEnd, t0 + editable) > 3000 && !state.loading) break;
+      if (
+        quiet.now - Math.max(quiet.lastEnd, t0 + editable) > 3000 &&
+        !state.loading &&
+        state.paged &&
+        state.ready &&
+        state.editable &&
+        state.planSettled
+      ) {
+        settled = quiet.now - t0;
+        break;
+      }
       if (quiet.now - t0 > 180_000) break;
       await page.waitForTimeout(200);
     }
@@ -316,16 +347,38 @@ async function open(page: Page, source: string, key: string, settle = true) {
     if (formulas.now - t0 > 120_000) break;
     await page.waitForTimeout(250);
   }
+  // Math completion can schedule another plan after the first page receipt.
+  if (settle)
+    for (;;) {
+      const state = await page.evaluate(visibleState);
+      const now = await page.evaluate(() => performance.now());
+      if (state.planSettled) {
+        settled = now - t0;
+        break;
+      }
+      if (now - t0 > 180_000) break;
+      await page.waitForTimeout(50);
+    }
   const published = await page.evaluate(
     () => (window as unknown as { latexBenchmark: { published: string } }).latexBenchmark.published,
   );
+  const finalState = await page.evaluate(visibleState);
   return {
     t0,
     firstReadableMs: Math.round(firstReadable),
     editableMs: Math.round(editable),
-    settledMs: Math.round(settled),
+    pagedReadyMs: Math.round(pagedReady),
+    readyForInteraction:
+      finalState.ready &&
+      finalState.editable &&
+      finalState.paged &&
+      finalState.planSettled &&
+      !Number.isNaN(formulasReady) &&
+      !finalState.loading,
+    settledMs: finalState.planSettled ? Math.round(settled) : NaN,
     formulasReadyMs: Math.round(formulasReady),
     sourceUnchanged: published === source,
+    readiness: finalState,
     ...(await frames(page, t0)),
   };
 }
@@ -337,7 +390,7 @@ async function jump(page: Page, fraction: number) {
   const result = await page.evaluate(async (target) => {
     const bench = (window as unknown as { __bench: { harness: boolean } }).__bench;
     const editor = (
-      window as unknown as { latexBenchmark: { editor(): any } }
+      window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
     ).latexBenchmark.editor();
     const view = editor.view;
     const scroll = view.dom.closest(".scient-latex-visual-scroll") as HTMLElement;
@@ -376,7 +429,7 @@ async function jump(page: Page, fraction: number) {
     const sample = await page.evaluate(
       ([anchor, top0]) => {
         const editor = (
-          window as unknown as { latexBenchmark: { editor(): any } }
+          window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
         ).latexBenchmark.editor();
         let top = NaN;
         try {
@@ -402,7 +455,7 @@ async function jump(page: Page, fraction: number) {
   const after = await page.evaluate(
     ([anchor, top0, from]) => {
       const editor = (
-        window as unknown as { latexBenchmark: { editor(): any } }
+        window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
       ).latexBenchmark.editor();
       const bench = (window as unknown as { __bench: { scrolls: { delta: number }[] } }).__bench;
       let top = NaN;
@@ -433,7 +486,7 @@ async function placeCaret(page: Page, fraction: number) {
     await page.waitForTimeout(500);
     const found = await page.evaluate(() => {
       const editor = (
-        window as unknown as { latexBenchmark: { editor(): any } }
+        window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
       ).latexBenchmark.editor();
       const view = editor.view;
       const scroll = view.dom.closest(".scient-latex-visual-scroll") as HTMLElement;
@@ -493,7 +546,7 @@ async function placeCaret(page: Page, fraction: number) {
 async function startStability(page: Page, target: { position: number; reference: number | null }) {
   await page.evaluate((input) => {
     const editor = (
-      window as unknown as { latexBenchmark: { editor(): any } }
+      window as unknown as { latexBenchmark: { editor(): any; settled(): boolean } }
     ).latexBenchmark.editor();
     const view = editor.view;
     const state = {
@@ -609,7 +662,7 @@ type ProfileNode = {
 async function profile(cdp: CDPSession, scenario: string) {
   if (option("profile") !== scenario) return async () => null;
   await cdp.send("Profiler.enable");
-  await cdp.send("Profiler.setSamplingInterval", { interval: 250 });
+  await cdp.send("Profiler.setSamplingInterval", { interval: scenario === "open" ? 1000 : 250 });
   await cdp.send("Profiler.start");
   return async () => {
     const { profile: result } = (await cdp.send("Profiler.stop")) as {
@@ -668,7 +721,11 @@ async function typing(page: Page) {
   };
 }
 
-async function structure(page: Page, original: string) {
+async function structure(page: Page) {
+  // Each scenario owns its starting revision; undo must preserve earlier typing.
+  const original = await page.evaluate(
+    () => (window as unknown as { latexBenchmark: { published: string } }).latexBenchmark.published,
+  );
   const target = await placeCaret(page, 0.45);
   if (!target) return { error: "no visible prose paragraph" };
   await page.waitForTimeout(800);
@@ -690,11 +747,29 @@ async function structure(page: Page, original: string) {
   await press("Enter");
   await press("Backspace");
   await page.waitForTimeout(1500);
-  for (let index = 0; index < 40; index++) await press("ControlOrMeta+z");
+  for (let index = 0; index < 40; index++) {
+    await press("ControlOrMeta+z");
+    const restored = await page.evaluate(
+      () =>
+        (window as unknown as { latexBenchmark: { published: string } }).latexBenchmark.published,
+    );
+    if (restored === original) break;
+  }
   await page.waitForTimeout(2500);
-  const undone = await page.evaluate(
-    () => (window as unknown as { latexBenchmark: { published: string } }).latexBenchmark.published,
-  );
+  const undoState = await page.evaluate(() => {
+    const benchmark = (
+      window as unknown as { latexBenchmark: { published: string; editor(): any } }
+    ).latexBenchmark;
+    const editor = benchmark.editor();
+    const plugin = editor.state.plugins.find((value: { key: string }) =>
+      value.key.startsWith("history$"),
+    );
+    return {
+      source: benchmark.published,
+      events: plugin?.getState(editor.state)?.done.eventCount ?? null,
+    };
+  });
+  const undone = undoState.source;
   await press("ControlOrMeta+Shift+z");
   await page.waitForTimeout(1500);
   const end = await now(page);
@@ -703,6 +778,15 @@ async function structure(page: Page, original: string) {
     frames: await frames(page, start, end),
     stability: await stopStability(page, start),
     undoRestoresSource: undone === original,
+    undoSourceLength: undone.length,
+    originalSourceLength: original.length,
+    firstUndoDifference: (() => {
+      let index = 0;
+      while (index < Math.min(original.length, undone.length) && original[index] === undone[index])
+        index++;
+      return undone === original ? -1 : index;
+    })(),
+    remainingUndoEvents: undoState.events,
   };
 }
 
@@ -872,11 +956,13 @@ const report: Record<string, unknown> = {
 const stopOpenProfile = await profile(cdp, "open");
 const opening = await open(page, source, "benchmark");
 report.open = { ...opening, profile: await stopOpenProfile() };
+if (!opening.readyForInteraction)
+  report.incomplete = "Initialization did not finish; interaction scenarios were skipped.";
 if (shots) {
   NodeFS.mkdirSync(shots, { recursive: true });
   await page.screenshot({ path: NodePath.join(shots, "open.png") });
 }
-if (scenarios.has("scroll")) {
+if (scenarios.has("scroll") && opening.readyForInteraction) {
   const jumps = [];
   for (const fraction of [0.25, 0.5, 0.75, 0.95, 0.1]) {
     jumps.push(await jump(page, fraction));
@@ -884,19 +970,19 @@ if (scenarios.has("scroll")) {
   }
   report.scroll = jumps;
 }
-if (scenarios.has("typing")) {
+if (scenarios.has("typing") && opening.readyForInteraction) {
   const stopTypingProfile = await profile(cdp, "typing");
   report.typing = { ...(await typing(page)), profile: await stopTypingProfile() };
   if (shots) await page.screenshot({ path: NodePath.join(shots, "typing.png") });
 }
-if (scenarios.has("structure")) {
+if (scenarios.has("structure") && opening.readyForInteraction) {
   // Reopen so Undo history covers only this scenario.
   await open(page, source, "benchmark-structure");
   const stopStructureProfile = await profile(cdp, "structure");
-  report.structure = { ...(await structure(page, source)), profile: await stopStructureProfile() };
+  report.structure = { ...(await structure(page)), profile: await stopStructureProfile() };
   if (shots) await page.screenshot({ path: NodePath.join(shots, "structure.png") });
 }
-if (scenarios.has("memory"))
+if (scenarios.has("memory") && opening.readyForInteraction)
   report.memory = await memory(page, cdp, await browser.newBrowserCDPSession(), source);
 
 await browser.close();

@@ -52,6 +52,7 @@ function band(notes: FootnoteBand["notes"]) {
     element.contentEditable = "false";
     element.setAttribute("role", "group");
     element.setAttribute("aria-label", "Footnotes");
+    Object.defineProperty(element, "scientFootnoteEnd", { get: getPos });
     // Returns to the marker of the note at `index` in this band's block.
     const returnTo = (index: number) => {
       const end = getPos();

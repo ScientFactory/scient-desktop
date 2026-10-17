@@ -4,6 +4,8 @@ import type { EditorView } from "@tiptap/pm/view";
 import { LATEX_VISUAL_LOADING } from "./latexProgressiveLoading";
 import { isSourceHistoryAnnotation } from "./visualTyping";
 import { observeResize } from "~/lib/observeResize";
+import { latexPagedKey, pagedLayoutProgress, pagedPositionAtPoint } from "./latexPagedGeometry";
+import { afterLatexInputQuiet, latexInputQuietDelay } from "./latexInputPriority";
 
 /** Whether a transaction may add, remove or replace top-level blocks. */
 function changesTopLevel(transaction: Transaction): boolean {
@@ -45,6 +47,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
     let pending: number | "append" | null = null;
     // A transaction added, removed or replaced top-level blocks.
     let structural = false;
+    let affectsAnchor = false;
     let scroller: () => HTMLElement | null = () => null;
     // The text at the top of the reading area: its document position (mapped
     // through edits) and, when it has none, its block. `offset` is its
@@ -62,6 +65,13 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             if (!transaction.docChanged) continue;
             structural ||= changesTopLevel(transaction);
             if (!anchor || anchor.position === null) continue;
+            let position = anchor.position;
+            for (const map of transaction.mapping.maps) {
+              map.forEach((from) => {
+                if (from <= position) affectsAnchor = true;
+              });
+              position = map.map(position);
+            }
             const mapped = transaction.mapping.mapResult(anchor.position);
             anchor.position = mapped.deleted ? null : mapped.pos;
           }
@@ -91,11 +101,59 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             const box = scroll.getBoundingClientRect();
             const paper = view.dom.getBoundingClientRect();
             if (paper.top >= box.top) return; // nothing above can move the reading position
-            const hit = view.dom.ownerDocument.elementFromPoint(
-              paper.left + paper.width / 2,
-              box.top + 1,
-            );
-            if (!hit || hit === view.dom || !view.dom.contains(hit)) return;
+            let left = paper.left + paper.width / 2;
+            let y = box.top + 1;
+            // The planner already knows the visible line origins. Page margins
+            // and column gutters must not make hit testing reveal dozens of
+            // otherwise skipped blocks while searching for the first line.
+            const geometry = latexPagedKey.getState(view.state)?.geometry;
+            const zoom = paper.width / (view.dom.offsetWidth || 1);
+            if (geometry?.length) {
+              const top = (y - paper.top) / zoom;
+              const bottom = (box.bottom - paper.top) / zoom;
+              let first: (typeof geometry)[number] | undefined;
+              for (const part of geometry)
+                if (part.top >= top && part.top < bottom && (!first || part.top < first.top))
+                  first = part;
+              if (first) {
+                try {
+                  const line = view.coordsAtPos(first.from);
+                  if (line.bottom > box.top && line.top < box.bottom) {
+                    left = (line.left + line.right) / 2;
+                    y = Math.max(box.top + 1, (line.top + line.bottom) / 2);
+                  }
+                } catch {
+                  // Replaced atom views retain the ordinary hit-test fallback.
+                }
+              }
+            }
+            let hit = view.dom.ownerDocument.elementFromPoint(left, y);
+            const usable = (element: Element | null) =>
+              element &&
+              element !== view.dom &&
+              view.dom.contains(element) &&
+              (!element.closest('[data-layout="sourceColumns"]') || element.closest(ANCHOR_BLOCK));
+            // A page margin or column gutter has no text at the viewport edge.
+            // Anchor the first visible content below it rather than dropping the anchor.
+            if (!usable(hit)) {
+              hit = null;
+              search: for (let top = y; top < box.bottom; top += 12) {
+                for (const x of [
+                  left,
+                  paper.left + paper.width / 4,
+                  paper.left + (paper.width * 3) / 4,
+                ]) {
+                  const candidate = view.dom.ownerDocument.elementFromPoint(x, top);
+                  if (usable(candidate)) {
+                    hit = candidate;
+                    left = x;
+                    y = top;
+                    break search;
+                  }
+                }
+              }
+            }
+            if (!hit) return;
             // A block the browser has not rendered yet is hit as a whole.
             let block: Element = hit;
             while (block.parentElement !== view.dom) block = block.parentElement!;
@@ -104,13 +162,22 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             // The line itself: within a long paragraph, content above it can
             // grow while the paragraph's top stays put.
             let position: number | null = null;
-            try {
-              position =
-                view.posAtCoords({ left: paper.left + paper.width / 2, top: box.top + 1 })?.pos ??
-                null;
-            } catch {
-              position = null;
-            }
+            if (
+              !element.matches(
+                ".node-latexDisplayMath,.node-latexRichPreview,.node-latexRawBlock,.scient-latex-footnotes",
+              )
+            )
+              try {
+                position = pagedPositionAtPoint(view, left, y);
+                if (position !== null) {
+                  const line = view.coordsAtPos(position);
+                  const tolerance = Math.max(4, (line.bottom - line.top) / 2);
+                  // A page margin/gap can hit-test to distant text; that text is not the reading line.
+                  if (y < line.top - tolerance || y > line.bottom + tolerance) position = null;
+                }
+              } catch {
+                position = null;
+              }
             anchor = { position, element, offset: 0, scale: scale() };
             const top = anchorTop();
             if (top === null) anchor = null;
@@ -145,6 +212,30 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             scroll.scrollTop += delta;
             own = scroll.scrollTop;
           };
+          let correctionQueued = false;
+          const resized = (entries: readonly ResizeObserverEntry[]) => {
+            if (!anchor) return;
+            if (
+              anchor.element.isConnected &&
+              entries.every(
+                ({ target }) =>
+                  !target.contains(anchor!.element) &&
+                  !!(
+                    target.compareDocumentPosition(anchor!.element) &
+                    Node.DOCUMENT_POSITION_PRECEDING
+                  ),
+              )
+            )
+              return; // Growing content below the reading line cannot move it.
+            if (correctionQueued) return;
+            correctionQueued = true;
+            // All resized blocks share one correction after the observer's
+            // delivery, before paint, rather than forcing layout per block.
+            queueMicrotask(() => {
+              correctionQueued = false;
+              if (!disposed) correct();
+            });
+          };
           const scrolled = () => {
             const scroll = scroller();
             if (own !== null && scroll && Math.abs(scroll.scrollTop - own) < 1) {
@@ -167,6 +258,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
           let animation = 0;
           let idleRequest: number | ReturnType<typeof setTimeout> | null = null;
           let disposed = false;
+          let cancelQuiet: (() => void) | undefined;
           /** Follows the top-level blocks; only structural changes alter them. */
           const sync = () => {
             for (const [element, stop] of observed)
@@ -177,10 +269,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               }
             for (const element of view.dom.children)
               if (!observed.has(element)) {
-                observed.set(
-                  element,
-                  observeResize(element, () => correct()),
-                );
+                observed.set(element, observeResize(element, resized));
                 unmeasured.add(element);
               }
           };
@@ -216,6 +305,16 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             idleRequest = null;
             if (disposed) return;
             unmark();
+            // The page planner measures natural copies and supplies intrinsic heights.
+            // Revealing every live block as well repeats that work and invalidates layout.
+            if (pagedLayoutProgress.has(view)) return;
+            if (latexInputQuietDelay(view.dom) > 0) {
+              cancelQuiet = afterLatexInputQuiet(() => {
+                cancelQuiet = undefined;
+                scheduleMeasure();
+              }, view.dom);
+              return;
+            }
             if (view.dom.hasAttribute("data-latex-loading")) {
               scheduleMeasure();
               return;
@@ -236,7 +335,14 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             scheduleMeasure();
           };
           const scheduleMeasure = () => {
-            if (disposed || animation || idleRequest !== null) return;
+            if (
+              disposed ||
+              animation ||
+              idleRequest !== null ||
+              cancelQuiet ||
+              pagedLayoutProgress.has(view)
+            )
+              return;
             animation = requestAnimationFrame(() => {
               animation = 0;
               if (disposed) return;
@@ -258,6 +364,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
           };
           view.dom.addEventListener("scient-latex-math-preview", contentChanged);
           view.dom.addEventListener("load", contentChanged, true);
+          view.dom.addEventListener("scient-latex-layout", correct);
           attach();
           sync();
           scheduleMeasure();
@@ -273,14 +380,20 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               if (view.state.doc === previous.doc) return;
               const before = pending;
               pending = null;
+              const changedAbove = affectsAnchor;
+              affectsAnchor = false;
               if (before === "append") return;
               const scroll = scroller();
               // ProseMirror scrolled the caret into view: that is the new position.
               if (scroll && before !== null && scroll.scrollTop !== before) capture();
-              else correct();
+              // A mapped reading line is unaffected by prose edited below it.
+              // Wrapping, page glue and asynchronous sizes are corrected by
+              // layout/resize delivery, without a forced layout in this input.
+              else if (changedAbove || anchor?.position === null) correct();
             },
             destroy() {
               disposed = true;
+              cancelQuiet?.();
               cancelAnimationFrame(animation);
               if (idleRequest !== null) {
                 if (typeof cancelIdleCallback === "function" && typeof idleRequest === "number")
@@ -292,6 +405,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               marked = [];
               view.dom.removeEventListener("scient-latex-math-preview", contentChanged);
               view.dom.removeEventListener("load", contentChanged, true);
+              view.dom.removeEventListener("scient-latex-layout", correct);
               cancelAnimationFrame(frame);
               for (const stop of observed.values()) stop();
               observed.clear();
