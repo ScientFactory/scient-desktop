@@ -39,7 +39,7 @@ const subagent = (
 
 const settledRun = (overrides: Partial<OrchestrationV2Run> = {}) =>
   ({
-    id: RunId.make("run:spawning"),
+    id: spawningRunId,
     ordinal: 1,
     status: "completed",
     providerInstanceId: instanceId,
@@ -49,9 +49,31 @@ const settledRun = (overrides: Partial<OrchestrationV2Run> = {}) =>
     ...overrides,
   }) as OrchestrationV2Run;
 
+const spawningRunId = RunId.make("run:spawning");
+
+/** The native subagent record that names the run which started it. */
+const subagentRecord = (runId: RunId = spawningRunId) => ({
+  origin: "provider_native",
+  threadId,
+  runId,
+  providerInstanceId: instanceId,
+  nativeTaskRef: { driver: "codex", nativeId: "task:subagent", strength: "strong" },
+});
+
+/** An attempt that actually started the run on the provider thread. */
+const startedAttempt = (runId: RunId = spawningRunId) => ({
+  runId,
+  providerThreadId,
+  startedAt: "2026-10-17T00:00:00.000Z",
+});
+
+type Records = ProjectionRecords<"runs" | "attempts" | "providerThreads" | "subagents">;
+
 const records = (input: {
   readonly runs?: ReadonlyArray<OrchestrationV2Run>;
   readonly tasks?: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
+  readonly subagents?: ReadonlyArray<ReturnType<typeof subagentRecord>>;
+  readonly attempts?: ReadonlyArray<ReturnType<typeof startedAttempt>>;
   readonly archived?: boolean;
 }) =>
   ({
@@ -62,7 +84,8 @@ const records = (input: {
       deletedAt: null,
     },
     runs: input.runs ?? [settledRun()],
-    attempts: [],
+    attempts: input.attempts ?? [startedAttempt()],
+    subagents: input.subagents ?? [subagentRecord()],
     providerThreads: [
       {
         id: providerThreadId,
@@ -72,9 +95,9 @@ const records = (input: {
         pendingBackgroundTasks: input.tasks ?? [subagent()],
       },
     ],
-  }) as unknown as ProjectionRecords<"runs" | "attempts" | "providerThreads">;
+  }) as unknown as Records;
 
-const resolvePolicy = (projection: ProjectionRecords<"runs" | "attempts" | "providerThreads">) =>
+const resolvePolicy = (projection: Records) =>
   Effect.gen(function* () {
     const sessions = yield* Ref.make(
       new Map([
@@ -113,7 +136,51 @@ it.effect("a live background subagent keeps the modes of the run that started it
   }),
 );
 
+const laterRunId = RunId.make("run:later");
+const fullAccessRun = (overrides: Partial<OrchestrationV2Run> = {}) =>
+  settledRun({
+    id: laterRunId,
+    ordinal: 2,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    ...overrides,
+  });
+
 it.effect.each([
+  {
+    caseTitle: "a later full-access follow-up cancelled before it started",
+    projection: records({ runs: [settledRun(), fullAccessRun({ status: "cancelled" })] }),
+  },
+  {
+    caseTitle: "a held lower-ordinal run that started the subagent after a later run",
+    projection: records({
+      runs: [settledRun(), fullAccessRun()],
+      attempts: [startedAttempt(), startedAttempt(laterRunId)],
+    }),
+  },
+])("binds authority to the run that started the subagent: $caseTitle", ({ projection }) =>
+  Effect.gen(function* () {
+    assert.deepEqual(
+      yield* resolvePolicy(projection),
+      Option.some({ runtimeMode: "approval-required", interactionMode: "plan" }),
+    );
+  }),
+);
+
+it.effect.each([
+  {
+    caseTitle: "a subagent without a native record naming its run",
+    projection: records({ subagents: [] }),
+  },
+  {
+    caseTitle: "a subagent named by two native records",
+    projection: records({
+      runs: [settledRun(), fullAccessRun()],
+      attempts: [startedAttempt(), startedAttempt(laterRunId)],
+      subagents: [subagentRecord(), subagentRecord(laterRunId)],
+    }),
+  },
+  { caseTitle: "a spawning run that never started", projection: records({ attempts: [] }) },
   { caseTitle: "no pending subagent", projection: records({ tasks: [] }) },
   {
     caseTitle: "only a background command",

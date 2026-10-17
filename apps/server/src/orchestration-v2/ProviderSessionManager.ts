@@ -2480,7 +2480,12 @@ export const layerWithOptions = (
         releasingRuntimes,
         readThreadRecords: (invocation) =>
           projectionStore
-            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
+            .getThreadRecords(invocation.threadId, [
+              "runs",
+              "attempts",
+              "providerThreads",
+              "subagents",
+            ])
             .pipe(
               Effect.mapError(
                 (cause) =>
