@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
@@ -134,6 +135,19 @@ describe("shared SSH preparation", () => {
       yield* Fiber.join(joiner);
       assert.equal(prep.runs(), 2);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("releases a waiting caller when the manager closes before its job starts", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const preparations = makeSharedSshPreparation<string>(scope, () => "still preparing");
+      const caller = yield* Effect.forkChild(
+        preparations.await(KEY, Effect.sleep("1 minute"), FULL),
+      );
+      yield* Scope.close(scope, Exit.void);
+      const exit = yield* Fiber.await(caller);
+      assert.isTrue(Exit.hasInterrupts(exit));
+    }),
   );
 
   it.effect("keeps hosts independent", () =>

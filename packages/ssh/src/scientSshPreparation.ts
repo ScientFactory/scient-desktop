@@ -30,22 +30,23 @@ interface PreparationJob<E> {
 export const makeSharedSshPreparation = <E>(scope: Scope.Scope, stillPreparing: () => E) => {
   const jobs = new Map<string, PreparationJob<E>>();
 
-  // Claimed synchronously, and forked before an interruption can land, so one
-  // job per host exists and it always records its outcome.
-  const start = <R>(key: string, prepare: Effect.Effect<void, E, R>) =>
+  // The lookup and the claim happen in one synchronous step, so concurrent
+  // callers share one job per host. The outcome is published by observing the
+  // forked fiber, which also covers a job interrupted before it starts.
+  const claim = <R>(key: string, prepare: Effect.Effect<void, E, R>) =>
     Effect.uninterruptible(
       Effect.suspend(() => {
+        const existing = jobs.get(key);
+        if (existing !== undefined) return Effect.succeed(existing);
         const job: PreparationJob<E> = { done: Deferred.makeUnsafe<void, E>(), outcome: undefined };
         jobs.set(key, job);
-        const recorded = prepare.pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => {
-              job.outcome = exit;
-              Deferred.doneUnsafe(job.done, exit);
-            }),
-          ),
-        );
-        return Effect.as(Effect.forkIn(recorded, scope), job);
+        return Effect.map(Effect.forkIn(prepare, scope), (fiber) => {
+          fiber.addObserver((exit) => {
+            job.outcome = exit;
+            Deferred.doneUnsafe(job.done, exit);
+          });
+          return job;
+        });
       }),
     );
 
@@ -60,7 +61,7 @@ export const makeSharedSshPreparation = <E>(scope: Scope.Scope, stillPreparing: 
     prepare: Effect.Effect<void, E, R>,
     boundedWait: boolean,
   ): Effect.fn.Return<void, E, R> {
-    const job = jobs.get(key) ?? (yield* start(key, prepare));
+    const job = yield* claim(key, prepare);
     if (job.outcome !== undefined) return yield* receive(key, job, job.outcome);
     const settled = Effect.exit(Deferred.await(job.done));
     if (!boundedWait) return yield* receive(key, job, yield* settled);
