@@ -11,15 +11,14 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
-// SCIENT-FORK:START — new temporary branches use Scient's namespace; branches
-// created under T3's `t3` prefix stay recognized below.
+// SCIENT-FORK:START — new temporary branches use `scient` where the notes in
+// this file say `t3`; branches created under the `t3` prefix stay recognized.
 export const WORKTREE_BRANCH_PREFIX = "scient";
 const LEGACY_WORKTREE_BRANCH_PREFIX = "t3";
 // SCIENT-FORK:END
-// Canonical form is `scient/<8 hex>`. `scient-<8 hex>` is the fallback when a
-// plain `scient` branch blocks the namespace. The matcher also accepts every
-// legacy shape, so existing threads stay eligible for branch regeneration:
-// `t3/<8 hex>` and `t3-<8 hex>` from before Scient's prefix, `t3code/<8 hex>` and
+// Canonical form is `t3/<8 hex>`. `t3-<8 hex>` is the fallback when a plain `t3`
+// branch blocks the namespace. The matcher also accepts every legacy shape, so
+// existing threads stay eligible for branch regeneration: `t3code/<8 hex>` and
 // `t3code-<8 hex>` from before the prefix was shortened, and `t3code/<uuid>` from
 // older mobile builds that used Crypto.randomUUID() (always RFC 4122 v4, so version
 // nibble `4` and variant nibble `[89ab]`). Nothing looser than what was generated.
@@ -140,12 +139,11 @@ export function buildTemporaryWorktreeBranchName(
 }
 
 /**
- * Git stores refs as paths, so a plain `scient` branch makes every
- * `scient/<hex>` ref impossible. This moves a temporary name to the flat
- * `scient-<hex>` sibling.
+ * Git stores refs as paths, so a plain `t3` branch makes every `t3/<hex>`
+ * ref impossible. This moves a temporary name to the flat `t3-<hex>` sibling.
  */
 export function flattenTemporaryWorktreeBranchName(refName: string): string {
-  // Keep only the canonical 8-hex token so legacy `t3/`, `t3code/` and UUID names map cleanly.
+  // Keep only the canonical 8-hex token so legacy `t3code/` and UUID names map cleanly.
   const normalized = refName.trim().toLowerCase();
   const tokenStart = normalized.search(/[-/]/) + 1;
   const token = normalized.slice(tokenStart, tokenStart + 8);

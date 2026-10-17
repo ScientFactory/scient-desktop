@@ -573,7 +573,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
-  /** For webhook tasks: the public URL. Absent when this environment has none. */
+  /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
       "Public URL to give the sender. Absent when this environment has no public URL; a sender can then reach the webhook only through an address the user makes reachable, such as Tailscale or their own HTTPS proxy.",
