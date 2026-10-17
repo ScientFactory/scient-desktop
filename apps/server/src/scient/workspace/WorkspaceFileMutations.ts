@@ -580,6 +580,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             "Canonical publication parent changed.",
             "parent-binding",
           );
+        // A structural sync may leave an ordinary file where an old directory stood.
+        // Bind its containing directory so settled reads can prove the child absent.
+        if ((await NodeFSP.lstat(parent)).isFile() && parent !== root && within(root, parent)) {
+          parent = NodePath.dirname(parent);
+          continue;
+        }
         await directoryIdentity(parent);
         return bindNativeFilePublicationParent(helperFor(), root, NodePath.relative(root, parent));
       } catch (e) {

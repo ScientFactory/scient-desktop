@@ -6,6 +6,12 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { bytesRevision, fileIdentity } from "../workspace/RetainedFileMutation.ts";
 import { type WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { nativeFilePublicationCapabilities } from "../workspace/NativeFilePublication.ts";
+const helper = await filePublicationTestHelper();
+const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
+const qualifiedReplacement =
+  capabilities?.strictCurrentRoot === true && capabilities.atomicExchange;
 const bytes = (text: string) => Buffer.from(text);
 const tree = (files: Record<string, string>) =>
   new Map(Object.entries(files).map(([name, text]) => [name, bytesRevision(bytes(text))]));
@@ -30,18 +36,32 @@ async function put(cwd: string, files: Record<string, string>) {
 }
 describe("Overleaf publication admission", () => {
   it.live(
-    "refuses unqualified replacement without changing existing manuscript bytes or permissions",
+    "admits replacement only with qualified capture, preserving the original inode and permissions",
     () =>
       fixture(async (h) => {
         await put(h.cwd, { "main.tex": "A" });
         const target = NodePath.join(h.cwd, "main.tex");
         await NodeFSP.chmod(target, 0o600);
         const identity = await fileIdentity(target);
-        await expect(
-          h.apply("replace", plan({ "main.tex": "A" }, { "main.tex": "C" })),
-        ).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
-        expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
-        expect(await fileIdentity(target)).toEqual(identity);
+        const replacement = h.apply("replace", plan({ "main.tex": "A" }, { "main.tex": "C" }));
+        if (qualifiedReplacement) {
+          expect(await replacement).toMatchObject({ outcome: "complete", matchesTarget: true });
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+          expect(await fileIdentity(target)).not.toEqual(identity);
+          const history = await h.run(
+            h.files.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
+          );
+          const retained = history.versions.find(
+            (version) => version.revision === bytesRevision(bytes("A")),
+          );
+          expect(retained).toBeDefined();
+          expect(await NodeFSP.readFile(retained!.retainedPath, "utf8")).toBe("A");
+          expect(await fileIdentity(retained!.retainedPath)).toEqual(identity);
+        } else {
+          await expect(replacement).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
+          expect(await fileIdentity(target)).toEqual(identity);
+        }
         expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o600);
       }),
   );

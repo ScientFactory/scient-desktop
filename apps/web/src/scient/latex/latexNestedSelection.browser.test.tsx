@@ -140,12 +140,12 @@ it("includes the bracket base when selection crosses into its exponent", async (
   expect(math.getValue(math.selection, "latex-without-placeholders")).toBe("x");
 });
 
-it("Ctrl+A starts with bold text inside the underbrace label", async () => {
+it("Select All starts with bold text inside the underbrace label", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
 
-  await userEvent.keyboard("{Control>}a{/Control}");
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
   await frame();
 
   expect(math.getValue(math.selection.ranges[0]!, "latex-without-placeholders")).toContain("times");
@@ -155,7 +155,7 @@ it("Ctrl+A starts with bold text inside the underbrace label", async () => {
 });
 
 const selectScope = async () => {
-  await userEvent.keyboard("{Control>}a{/Control}");
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
   await frame();
 };
 const selected = (math: MathfieldElement) =>
@@ -322,7 +322,7 @@ it("command completion enters the empty nested argument with an insertion caret"
   expect(math.getValue("latex-without-placeholders")).toBe(String.raw`x\frac{h}{}`);
 });
 
-it("repeated Ctrl+A visits bold, label, underbrace, then equation", async () => {
+it("repeated Select All visits bold, label, underbrace, then equation", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   const source = math.getValue();
   math.position = offset(math, "m");
@@ -360,7 +360,7 @@ it("whole underbrace selection is connected and label/text selections stay local
   expect(boxes[3]!.width).toBeGreaterThan(boxes[2]!.width);
 });
 
-it("Ctrl+A can climb more than ten nested scopes", async () => {
+it("Select All can climb more than ten nested scopes", async () => {
   let source = "x";
   for (let i = 0; i < 6; i++) source = String.raw`\frac{${source}}{y}`;
   const math = await mount(source);
@@ -374,7 +374,7 @@ it("Ctrl+A can climb more than ten nested scopes", async () => {
   }
 });
 
-it("caret movement and typing restart the Ctrl+A ladder", async () => {
+it("caret movement and typing restart the Select All ladder", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
@@ -395,7 +395,7 @@ it("caret movement and typing restart the Ctrl+A ladder", async () => {
   expect(math.selection.ranges).toEqual([[...edited.range]]);
 });
 
-it("menu and submenu keep the selection and Ctrl+A ladder", async () => {
+it("menu and submenu keep the selection and Select All ladder", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
@@ -417,7 +417,7 @@ it("menu and submenu keep the selection and Ctrl+A ladder", async () => {
   expect(math.selection.ranges).toEqual([[...scopes[2]!.range]]);
 });
 
-it("Ctrl+A selects an empty matrix cell before its matrix", async () => {
+it("Select All selects an empty matrix cell before its matrix", async () => {
   const math = await mount(String.raw`\begin{pmatrix}x&\end{pmatrix}`);
   const empty = model(math).atoms.find(
     (atom) =>
@@ -464,7 +464,7 @@ it("pointer dragging across closing bracket and exponent selects the complete ba
   }
 });
 
-it("Escape from a menu restores focus without restarting the Ctrl+A ladder", async () => {
+it("Escape from a menu restores focus without restarting the Select All ladder", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
@@ -481,7 +481,7 @@ it("Escape from a menu restores focus without restarting the Ctrl+A ladder", asy
   expect(math.selection.ranges).toEqual([[...scopes[1]!.range]]);
 });
 
-it("Ctrl+A preserves distinct bracket, script and cell scopes even when their ranges match", async () => {
+it("Select All preserves distinct bracket, script and cell scopes even when their ranges match", async () => {
   const math = await mount(String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
   math.position = offset(math, "x");
   await frame();
@@ -500,7 +500,7 @@ it("Ctrl+A preserves distinct bracket, script and cell scopes even when their ra
   }
 });
 
-it("clicking back inside a nested scope restarts Ctrl+A", async () => {
+it("clicking back inside a nested scope restarts Select All", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();

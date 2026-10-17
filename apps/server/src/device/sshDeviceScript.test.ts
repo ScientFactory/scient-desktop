@@ -56,6 +56,12 @@ describe("remote helper lifecycle", () => {
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
         await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        await NodeFSP.writeFile(NodePath.join(bin, "xcrun"), "#!/bin/sh\nexit 1\n", {
+          mode: 0o755,
+        });
+        await NodeFSP.writeFile(NodePath.join(bin, "npm"), "#!/bin/sh\necho 10.0.0\n", {
+          mode: 0o755,
+        });
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
