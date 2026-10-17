@@ -36,21 +36,28 @@ import { restartContinuationRun } from "./RestartContinuation.ts";
 const layerTest = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
-const layerRecoveryTest = ProviderRuntimeRecovery.layer.pipe(
-  Layer.provideMerge(
-    EventSink.layer.pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          EventStore.layer,
-          ProjectionStore.layer,
-          EffectOutbox.layer,
-          IdAllocator.layer,
-        ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+const makeLayerRecoveryTest = (settings = ServerSettings.layerTest()) =>
+  ProviderRuntimeRecovery.layer.pipe(
+    Layer.provideMerge(
+      EventSink.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            EventStore.layer,
+            ProjectionStore.layer,
+            EffectOutbox.layer,
+            IdAllocator.layer,
+          ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+        ),
       ),
     ),
-  ),
-  Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(settings),
+  );
+const layerRecoveryTest = makeLayerRecoveryTest();
+// SCIENT-FORK:START — Scient ships restart continuation off; wake proofs opt in.
+const layerContinuationRecoveryTest = makeLayerRecoveryTest(
+  ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
 );
+// SCIENT-FORK:END
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };
 const driver = ProviderDriverKind.make("codex");
@@ -798,7 +805,7 @@ it.effect("wakes the run whose subagent lost its shell, past a wake cut before i
     assert.deepEqual(projection.runs[0]?.restartCancelledBackgroundWork, [
       { kind: "subagent", label: "sleep 150 (subagent agent)", id: "agent" },
     ]);
-  }).pipe(Effect.provide(layerRecoveryTest)),
+  }).pipe(Effect.provide(layerContinuationRecoveryTest)),
 );
 
 it.effect("wakes a settled run whose native subagent ran on its own provider thread", () =>
@@ -935,7 +942,7 @@ it.effect("wakes a settled run whose native subagent ran on its own provider thr
         id: TurnItemId.make(`item:${threadId}:subagent`),
       },
     ]);
-  }).pipe(Effect.provide(layerRecoveryTest)),
+  }).pipe(Effect.provide(layerContinuationRecoveryTest)),
 );
 
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
