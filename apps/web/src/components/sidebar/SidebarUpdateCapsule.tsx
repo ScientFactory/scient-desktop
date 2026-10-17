@@ -21,6 +21,10 @@ import {
   postponeUpdateRestart,
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
+// SCIENT-FORK:START — Retry follows each failed server's current eligibility.
+import { offerEligibleUpdateRetry } from "./updateEverything.logic";
+import { useQualifiedUpdateRunServers } from "./updateEverythingRun";
+// SCIENT-FORK:END
 
 /** The current time, rounded down to `intervalMs` so it changes once per
     interval. With null it is read only when something else renders. */
@@ -90,7 +94,14 @@ export function SidebarUpdateCapsule({
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
   const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
-  const view = describeUpdateCapsule(run, machines, local, now);
+  // SCIENT-FORK:START — Retry follows each failed server's current eligibility.
+  const qualifiedServers = useQualifiedUpdateRunServers();
+  const view = offerEligibleUpdateRetry(
+    describeUpdateCapsule(run, machines, local, now),
+    run.machines,
+    qualifiedServers,
+  );
+  // SCIENT-FORK:END
   const updateServer = useServerUpdate();
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;

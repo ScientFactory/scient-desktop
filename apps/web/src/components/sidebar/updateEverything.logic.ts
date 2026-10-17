@@ -393,6 +393,45 @@ export function describeUpdateCapsule(
   return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
 }
 
+// SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
+/**
+ * The failed servers a Retry would update now: each keeps its confirmed version and
+ * mechanism and takes its current flags. A failed server whose target is not eligible
+ * now is left out, and returns once it is eligible again.
+ */
+export function retryableUpdateRunServers(
+  machines: ReadonlyArray<UpdateRunMachine>,
+  qualified: ReadonlyArray<ServerUpdateTarget>,
+): ReadonlyArray<{ readonly target: ServerUpdateTarget; readonly providerFailure: string | null }> {
+  const failed = machines.flatMap((machine) =>
+    machine.result === "failed" && machine.server !== null
+      ? [{ server: machine.server, providerFailure: machine.providerFailure }]
+      : [],
+  );
+  const current = new Map(
+    currentConfirmedServerTargets(
+      failed.map(({ server }) => server),
+      qualified,
+    ).map((target) => [target.environmentId, target]),
+  );
+  return failed.flatMap(({ server, providerFailure }) => {
+    const target = current.get(server.environmentId);
+    return target === undefined ? [] : [{ target, providerFailure }];
+  });
+}
+
+/** Offers Retry only while a failed server is eligible to retry; otherwise Dismiss. */
+export function offerEligibleUpdateRetry(
+  view: UpdateCapsuleView,
+  machines: ReadonlyArray<UpdateRunMachine>,
+  qualified: ReadonlyArray<ServerUpdateTarget>,
+): UpdateCapsuleView {
+  return view.action === "retry" && retryableUpdateRunServers(machines, qualified).length === 0
+    ? { ...view, action: "dismiss" }
+    : view;
+}
+// SCIENT-FORK:END
+
 export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
   providers: "updating providers",
   waiting: "waiting",

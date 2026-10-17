@@ -21,7 +21,8 @@ import {
   type UpdateRunMachine,
 } from "./updateEverything.logic";
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
-import { currentConfirmedServerTargets } from "./updateEverything.logic";
+import * as Equal from "effect/Equal";
+import { retryableUpdateRunServers } from "./updateEverything.logic";
 // SCIENT-FORK:END
 
 /** The running "update everything" pass, or null. Outlives the sidebar button. */
@@ -72,14 +73,23 @@ export function settleUpdateRunMachine(
 }
 
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
-let qualifiedUpdateRunServers: ReadonlyArray<ServerUpdateTarget> = [];
+const qualifiedUpdateRunServersAtom = Atom.make<ReadonlyArray<ServerUpdateTarget>>([]).pipe(
+  Atom.withEquality(Equal.equals),
+  Atom.keepAlive,
+  Atom.withLabel("update-everything-qualified-servers"),
+);
 
 /** The servers "update everything" currently qualifies; empty once its sidebar owner leaves. */
 export function publishQualifiedUpdateRunServers(servers: ReadonlyArray<ServerUpdateTarget>): void {
-  qualifiedUpdateRunServers = servers;
+  appAtomRegistry.set(qualifiedUpdateRunServersAtom, servers);
 }
 
-const WITHDRAWN_RETRY_FAILURE = "Not retried; it is no longer eligible for this update.";
+/** The servers "update everything" currently qualifies, so Retry follows eligibility. */
+export function useQualifiedUpdateRunServers(): ReadonlyArray<ServerUpdateTarget> {
+  return useAtomValue(qualifiedUpdateRunServersAtom);
+}
+
+const WITHDRAWN_RETRY_FAILURE = "Not retried; it is not currently eligible for this update.";
 // SCIENT-FORK:END
 
 /** Retries each failed server update in the run. */
@@ -89,37 +99,29 @@ export function retryFailedUpdateRunServers(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ): void {
-  const confirmed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
-    (machine) =>
-      machine.result === "failed" && machine.server !== null
-        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
-        : [],
-  );
   // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
-  // flags, and never sends a target that is no longer qualified. A withdrawn target settles
-  // as failed without a server, so it is not offered for retry again.
-  const eligible = new Map(
-    currentConfirmedServerTargets(
-      confirmed.map(({ target }) => target),
-      qualifiedUpdateRunServers,
-    ).map((target) => [target.environmentId, target]),
+  // flags, and never sends a target that is not qualified now. A withdrawn target stays
+  // failed with its confirmed target, so Retry returns if it becomes eligible again.
+  const machines = appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? [];
+  const failed = retryableUpdateRunServers(
+    machines,
+    appAtomRegistry.get(qualifiedUpdateRunServersAtom),
   );
+  const eligible = new Set(failed.map(({ target }) => target.environmentId));
   const withdrawn = new Set(
-    confirmed.flatMap(({ target }) =>
-      eligible.has(target.environmentId) ? [] : [target.environmentId],
+    machines.flatMap((machine) =>
+      machine.result === "failed" && machine.server !== null && !eligible.has(machine.environmentId)
+        ? [machine.environmentId]
+        : [],
     ),
   );
   if (withdrawn.size > 0) {
     updateRunMachines((machine) =>
       withdrawn.has(machine.environmentId)
-        ? { ...machine, server: null, result: "failed", failure: WITHDRAWN_RETRY_FAILURE }
+        ? { ...machine, failure: WITHDRAWN_RETRY_FAILURE }
         : machine,
     );
   }
-  const failed = confirmed.flatMap(({ target, providerFailure }) => {
-    const current = eligible.get(target.environmentId);
-    return current === undefined ? [] : [{ target: current, providerFailure }];
-  });
   // SCIENT-FORK:END
   const targets = failed.map(({ target }) => target);
   const retried = new Set(targets.map((target) => target.environmentId));

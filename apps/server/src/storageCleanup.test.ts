@@ -282,7 +282,9 @@ const cleanupFixture = (
     let recreateOriginal = false;
     let isolatedPath: string | undefined;
     let openSessionCwd: string | null = null;
+    let openSessionStatus: OrchestrationV2ProviderSession["status"] = "ready";
     let sessionLive = true;
+    const sessionQueries: Array<string> = [];
     let fullStatusCalls = 0;
     let snapshotReads = 0;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -352,29 +354,42 @@ const cleanupFixture = (
       Effect.provideService(EffectOutbox.EffectOutboxV2, {
         subscribeCompletions: Effect.succeed(Stream.empty),
       } as unknown as EffectOutbox.EffectOutboxV2["Service"]),
-      Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
-        Effect.sync(() =>
-          strings.join("").includes("orchestration_v2_projection_runs")
-            ? queuedThreadIds.map((threadId) => ({ thread_id: threadId }))
-            : openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-              ? [
-                  {
-                    payload_json: JSON.stringify({
-                      id: "session-1",
-                      driver: "codex",
-                      providerInstanceId: "codex",
-                      status: "ready",
-                      cwd: openSessionCwd,
-                      model: null,
-                      capabilities: CodexProviderCapabilitiesV2,
-                      createdAt: "2026-06-01T12:00:00.000Z",
-                      updatedAt: "2026-06-01T12:00:00.000Z",
-                      lastError: null,
-                    }),
-                  },
-                ]
-              : [],
-        )) as unknown as SqlClient.SqlClient),
+      Effect.provideService(
+        SqlClient.SqlClient,
+        Object.assign(
+          (strings: TemplateStringsArray) =>
+            Effect.sync(() => {
+              if (strings.join("").includes("projection_provider_sessions"))
+                sessionQueries.push(strings.join(""));
+              return strings.join("").includes("orchestration_v2_projection_runs")
+                ? queuedThreadIds.map((threadId) => ({ thread_id: threadId }))
+                : openSessionCwd !== null &&
+                    strings.join("").includes("projection_provider_sessions") &&
+                    // Honors a recorded-status filter, as the real table would.
+                    !(openSessionStatus === "stopped" && strings.join("").includes("'stopped'"))
+                  ? [
+                      {
+                        provider_session_id: "session-1",
+                        status: openSessionStatus,
+                        payload_json: JSON.stringify({
+                          id: "session-1",
+                          driver: "codex",
+                          providerInstanceId: "codex",
+                          status: openSessionStatus,
+                          cwd: openSessionCwd,
+                          model: null,
+                          capabilities: CodexProviderCapabilitiesV2,
+                          createdAt: "2026-06-01T12:00:00.000Z",
+                          updatedAt: "2026-06-01T12:00:00.000Z",
+                          lastError: null,
+                        }),
+                      },
+                    ]
+                  : [];
+            }),
+          { in: (values: ReadonlyArray<string>) => values },
+        ) as unknown as SqlClient.SqlClient,
+      ),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
@@ -443,6 +458,10 @@ const cleanupFixture = (
       setOpenSessionCwd: (cwd: string | null) => {
         openSessionCwd = cwd;
       },
+      setOpenSessionStatus: (status: OrchestrationV2ProviderSession["status"]) => {
+        openSessionStatus = status;
+      },
+      sessionQueries: () => sessionQueries,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       /** Starts the hourly sweep and the subscription to `domainEvents`, which wait until now. */
@@ -729,6 +748,53 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded stopped
+  // after its physical close timed out still holds its worktree while its process runs.
+  it.live("keeps a worktree under a session recorded stopped whose process is still live", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setOpenSessionCwd(fixture.worktree);
+        fixture.setOpenSessionStatus("stopped");
+        const kept = yield* fixture.service.runNow;
+        expect(kept.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+        // Once its physical close ends, the stopped session no longer holds it, and
+        // no stored payload is read for a session that is not live.
+        fixture.setSessionLive(false);
+        const queriesBefore = fixture.sessionQueries().length;
+        const removed = yield* fixture.service.runNow;
+        expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
+        const queries = fixture.sessionQueries().slice(queriesBefore);
+        expect(queries.length).toBeGreaterThan(0);
+        expect(queries.filter((query) => query.includes("payload_json"))).toEqual([]);
+      }),
+    ),
+  );
+  it.live("keeps a worktree when a session recorded stopped opens on it during measurement", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setOpenSessionCwd(fixture.worktree);
+        fixture.setOpenSessionStatus("stopped");
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(cleanup);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END retiring-session-worktree-retention
   it.live("compares the checked-out branch without a full status", () =>
     runCleanupTest(
       Effect.gen(function* () {
