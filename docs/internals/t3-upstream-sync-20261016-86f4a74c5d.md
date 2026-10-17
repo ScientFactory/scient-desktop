@@ -1,4 +1,4 @@
-# T3 upstream alignment — 2026-10-16 (through 86f4a74c5d)
+# T3 upstream alignment — 2026-10-16 (through 86f4a74c5d, extended to a7025639c0)
 
 ## Boundaries and status
 
@@ -157,6 +157,153 @@ group could not connect to its browser in this worktree (it runs in the previous
 alignment's worktree); hosted CI qualifies it. Focused suites for every resolved
 area passed, including the restored cancel test, PortScanner, packaging
 externals, settings contracts and pull-request provider/service suites.
+
+## Extension through a7025639c0 — 2026-10-17
+
+The owner chose to extend this alignment in place rather than open a second one.
+
+Generated with `pnpm alignment:facts --merge 0ebeec9e50`:
+
+- Owned base: `e983657a24a7e75db5920dd1ce8950d1b028ec19`, the head of Scient PR #574.
+- Previous official boundary: `86f4a74c5d789f2b4973616775a6adf19525bf4d`.
+- Frozen official target: `a7025639c0e16aad3081106c935bf3025f601a1e`, no tag at the
+  target (nearest reachable: `v0.1.1-nightly.20261017.3238`).
+- Range: 176 official commits, 3323 incoming paths, 1074 same-path overlaps with
+  Scient, 420 initially unmerged paths.
+- Literal integration merge: `0ebeec9e509336fc22bb107148dbecf64d9e9163`, tree
+  `fdb087fc39a00dd5614925bd4e9ca884c212b83c`; parents are the owned base and the
+  frozen official target.
+- Owned-main catch-up: merge `a48eb408ffc3e5aa196ec9ac21c82cd12cb901d2` of owned
+  main `5c94afd2385c390346efdef2158dc01590c73293` (Scient PR #575, sidebar section
+  placement). It does not change the official merge.
+
+### Integrated behavior and composition
+
+The range brings upstream's React Compiler adoption across the web client, a
+comment prune across the repository (#19559), live command output (#15094),
+subagent fixes (resumed Claude subagents, renamed worktree branches, shared and
+orphaned worktree cleanup, restart wakes), background compaction and `t3 doctor`
+database reclaim, queued follow-ups during compaction, host-folder browsing in the
+file panel, Expo SDK updates, CI speedups, and upstream's npm launcher (#20148).
+
+Meaningful compositions:
+
+- **Comment prune.** 400 of the 420 conflicts came from #19559. Every hunk whose
+  upstream side differed from the base only in comments was resolved to Scient's
+  code, with upstream's deleted comment lines removed where they appeared verbatim;
+  the oxc parser confirmed the comment-free code equals Scient's side. 290 files
+  resolved fully this way and 54 partially.
+- **React Compiler policy.** Upstream's listed files must compile without bailouts
+  and without manual memoization. Scient code in those files (ChatView, the
+  timeline, composer, Tiptap editor, sidebar, command palette, queue control and
+  others) follows the same rules; `try/finally` became `settlePromise` and
+  render-time ref writes moved to layout effects. Two list entries name files
+  Scient had already replaced (`useDirectoryEntries.ts`, `useQueuedRunEdit.ts`)
+  and were removed with them. ChatView's timeline inputs moved into the compiled
+  `useThreadTimelineEntries` hook after review found an uncached derivation that
+  re-rendered without end.
+- **Reader and queue.** The timeline keeps Scient's single reading-position owner
+  on upstream's list-state snapshot. Queue keyboard decisions live in
+  `scient/threadQueue/queueShortcuts.ts`, mounted from ChatView's shortcut map.
+- **Server.** Live command output and the git driver for renamed subagent branches
+  are composed into Scient's session manager and event ingestor; resumed-subagent
+  adoption feeds Scient's workflow routing; storage cleanup's shared-worktree
+  recheck uses Scient's archived-thread snapshot. SQLite adopts incremental
+  auto-vacuum for new databases and keeps `synchronous = FULL`.
+- **Database reclaim.** The storage notice shows the command for this
+  installation (Scient's resolved CLI command); doctor errors name Scient.
+- **Pairing (#20432).** Adopted by owner decision: pairing and issued sessions
+  grant access and relay management by default. Relay remains switched off.
+- **Background subagents (#19751).** Upstream lets a background subagent keep its
+  MCP tools after the parent's turn ends. Scient's write tools still require a
+  captured execution policy from an active run, so those writes are refused with
+  the existing message; tests assert the refusal. Extending policy capture is an
+  open owner decision.
+- **Publication.** Scient publishes no npm package: upstream's npm launcher
+  sources are not carried and `cli.ts publish` is not called by any Scient
+  workflow. `release.yml` is unchanged from #574. Mobile workflows keep the
+  publication hold.
+- **CI.** Scient's job structure, names and GitHub-hosted runners are kept.
+  Adopted: the cached `setup-ci-deps` action, the vendored-binary sparse
+  exclusion and the server-shard Chromium cache. Upstream's per-change job gating
+  is not adopted; its clean-merged references assumed jobs Scient does not have.
+- **Dependencies.** Scient's Expo patches apply unchanged to `expo-modules-core`
+  58.0.22 and `expo-notifications` 58.1.5. The enriched-Markdown native patch is
+  ported to tarball t3.15; its control-character hunk is dropped because t3.15
+  decodes numeric character references itself. A marked override pins
+  `@types/hast` to 3.0.4: `@pierre/diffs` ships hast 3.0.4 declarations, and a
+  mixed resolution broke the web typecheck.
+- **Lint.** Upstream's `no-low-value-comments` rule now applies to Scient files;
+  their section dividers were removed. One explained disable covers a YAML format
+  example.
+- **Docs.** Pairing defaults, database reclaim and the release note are in
+  Scient's words; upstream's mobile app-store row and its T3 links are not adopted.
+
+Upstream-owned leftovers left as upstream has them: the sidebar change-request
+snapshot atom in `ThreadStatusIndicators.tsx` lost its consumer upstream (#20396);
+the files are identical to upstream.
+
+### Separation
+
+Measured with the protocol's host-line command and the divergence inventory
+(upstream `a7025639c0` for the candidate, `86f4a74c5d` for the base `e983657a24`):
+
+| Measure                            | Before              | After               |
+| ---------------------------------- | ------------------- | ------------------- |
+| Scient lines inside upstream files | 49,994 in 869 files | 50,010 in 880 files |
+| Marked regions                     | 1,364               | 1,548               |
+| Unmarked divergence (`new-debt`)   | 12,622              | 12,296              |
+
+New Scient-owned modules: `apps/server/scripts/scientServerAssets.ts`,
+`apps/web/src/scient/math/scientMathText.ts`,
+`apps/web/src/scient/threadQueue/rememberedComposerCursor.ts`,
+`apps/web/src/scient/threadQueue/queueShortcuts.ts`,
+`apps/web/src/scient/fileSurfaces/scientFilePanelProps.ts` and the server test
+helper `orchestration-v2/testkit/ProviderRuntimeTestServices.ts`. Dead Scient
+code removed: unused composer chip class names (the file now matches upstream)
+and a stale module header.
+
+### Review and qualification evidence
+
+Two independent Codex (gpt-6.1-sol, extra-high) reviews covered server/runtime and
+clients/CI/dependencies. Findings and responses:
+
+- ChatView's compiled timeline inputs re-rendered without end (P1): fixed in
+  `af81eac823` with a regression test that fails without memoization.
+- Two new upstream recovery tests assumed restart continuation, which Scient ships
+  off (P2): they opt in through a marked fixture (`ec8d77f19b`).
+- Dead upstream snapshot code (P3): left as upstream has it, see above.
+- The integrator found that the merge had deleted the only test for Scient's
+  queue shortcuts; restored with the logic as a Scient module (`18ff6fdff9`).
+
+A second Codex round on `a48eb408ff..af81eac823` found nothing blocking: the
+timeline inputs stay stable and invalidate on change, the queue shortcut module
+preserves the previous behavior, and the recovery opt-in leaves the product
+default unchanged.
+
+Local evidence on Windows 11, Node 24.21.0, pnpm 11.10.0:
+
+| Check                     | Result                                                                  |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `pnpm alignment:gates`    | fmt, lint, typecheck (160 s), build (174 s), smoke, brand, diffs passed |
+| Test aggregate            | Not run: not a supported Windows lane; hosted qualification pending     |
+| `knip:check`              | Passed                                                                  |
+| Seams                     | All five groups passed against `e983657a24` and `a7025639c0`            |
+| Boundary checks (`--run`) | Shared 107, web unit 294, Chromium reader layout 61: all passed         |
+| Boundary checks, server   | 635 of 665 passed; 30 failures are the Windows host failures below      |
+
+The server failures are the same Windows host classes recorded above: settings
+symlink creation (EPERM), queue-hold temporary directory names containing `:`, and
+two Stop timeouts whose fake process has no Windows SIGTERM handler. Lanes and
+reviewers also ran focused suites for every resolved area; their remaining failures
+are in the same classes or path-separator assertions that predate this range.
+The full gate ran on `af81eac823`; later commits change only this receipt,
+`UPSTREAM.md` and `upstream-state.json`.
+
+Process notes for the next alignment: concurrent `pnpm install`s in one worktree
+(started implicitly by `pnpm exec` while dependencies were stale) and a stalled
+in-place install cost about two hours; the fresh install took 26 minutes. Lanes
+now run tools from `node_modules/.bin` and wait for one integrator install.
 
 ## Publication boundary
 
