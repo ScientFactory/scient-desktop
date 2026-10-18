@@ -1047,3 +1047,55 @@ An ordinary paragraph.
   expect(getComputedStyle(paragraph).contentVisibility).toBe("visible");
   paragraph.removeAttribute("data-latex-measure");
 });
+
+it("undoes splitting and joining a paragraph that continues after a display", async () => {
+  const initial = String.raw`\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+Starting from the initial condition, iterate
+\begin{equation}
+x_{m+1}=a x_m+b,\qquad m\geq0.
+\label{eq:iterate}
+\end{equation}
+The matrices $X_m$ are prediction-error covariances
+conditioned on increasing finite output histories.
+They converge to
+$X_\infty$, and the limit is used below.
+\end{document}
+`;
+  const editor = await open("visual-stability-split-after-display", initial);
+  let caret = -1;
+  editor.state.doc.descendants((node, position) => {
+    if (caret < 0 && node.isText && node.text!.startsWith(" are prediction"))
+      caret = position + " are".length;
+    return caret < 0;
+  });
+  expect(caret).toBeGreaterThan(0);
+  editor.commands.setTextSelection(caret);
+  editor.view.focus();
+  // Real keys, so typing is held and converted as it is in use.
+  const press = async (key: string) => {
+    await userEvent.keyboard(key);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  };
+  await press("{Enter}");
+  for (const character of "A new paragraph.") await press(character);
+  for (let index = 0; index < 17; index++) await press("{Backspace}");
+  await press("{Enter}");
+  await press("{Backspace}");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const edited = published;
+  expect(edited).not.toBe(initial);
+  // However the keys were grouped, every recorded undo step applies.
+  const events = undoDepth(editor.state);
+  expect(events).toBeGreaterThan(0);
+  for (let event = events; event > 0; event--) {
+    const before = editor.state.doc;
+    expect(editor.commands.undo()).toBe(true);
+    expect(editor.state.doc).not.toBe(before);
+    expect(undoDepth(editor.state)).toBe(event - 1);
+  }
+  await expect.poll(() => published).toBe(initial);
+  for (let event = 0; event < events; event++) expect(editor.commands.redo()).toBe(true);
+  await expect.poll(() => published).toBe(edited);
+}, 60000);

@@ -11,6 +11,70 @@ import {
 const native = "  Alpha\r\n% Keep this comment\r\nBeta 😀\r\n";
 
 describe("owned native history composition", () => {
+  it("composes text typed inside text an earlier step inserted, as when undoing a split and join", () => {
+    const source = "Before.\n\nThe text after a display.\n";
+    const start = source.indexOf(" after");
+    const replaced: LatexSourceEdit = {
+      source,
+      patches: [
+        {
+          start,
+          end: start + " after".length,
+          expected: " after",
+          replacement: "\n\n after",
+        },
+      ],
+    };
+    const afterReplace = applyDocumentSourcePatches(source, replaced.patches);
+    const typed: LatexSourceEdit = {
+      source: afterReplace,
+      patches: [
+        {
+          start: start + 2,
+          end: start + 2,
+          expected: "",
+          replacement: "A ne",
+          insertionAffinity: "before",
+        },
+      ],
+    };
+    const afterTyped = applyDocumentSourcePatches(afterReplace, typed.patches);
+    const removed: LatexSourceEdit = {
+      source: afterTyped,
+      patches: [{ start: start + 2, end: start + 6, expected: "A ne", replacement: "" }],
+    };
+    const composed = composeLatexSourceEdits(source, [replaced, typed, removed])!;
+    expect(composed).not.toBeNull();
+    expect(applyDocumentSourcePatches(source, composed.patches)).toBe(
+      applyDocumentSourcePatches(afterTyped, removed.patches),
+    );
+    expect(composeLatexSourceEdits(source, [replaced, typed])!.patches).toEqual([
+      { start, end: start + " after".length, expected: " after", replacement: "\n\nA ne after" },
+    ]);
+    // Typing continues at the edge between two inserted pieces.
+    const continued: LatexSourceEdit = {
+      source: afterTyped,
+      patches: [
+        {
+          start: start + 6,
+          end: start + 6,
+          expected: "",
+          replacement: "w paragraph",
+          insertionAffinity: "before",
+        },
+      ],
+    };
+    const afterContinued = applyDocumentSourcePatches(afterTyped, continued.patches);
+    const cleared: LatexSourceEdit = {
+      source: afterContinued,
+      patches: [
+        { start: start + 2, end: start + 17, expected: "A new paragraph", replacement: "" },
+      ],
+    };
+    const chain = composeLatexSourceEdits(source, [replaced, typed, continued, cleared])!;
+    expect(chain).not.toBeNull();
+    expect(applyDocumentSourcePatches(source, chain.patches)).toBe(afterReplace);
+  });
   it("composes successive edits without claiming untouched trivia between them", () => {
     const first: LatexSourceEdit = {
       source: native,
