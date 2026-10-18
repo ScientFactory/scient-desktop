@@ -230,7 +230,8 @@ Body text.
   await page.getByRole("menuitemradio", { name: "Inline math", exact: true }).click();
   await expect.poll(() => container.querySelector("math-field")).toBeTruthy();
   await userEvent.keyboard("x+1");
-  await expect.poll(() => published).toContain("x+1");
+  // About 220 ms locally; slow CI runners take several times longer.
+  await expect.poll(() => published, { timeout: 5000 }).toContain("x+1");
   expect(published).toContain("\\section{New heading}");
   expect(published).toContain("Body text.");
 });
