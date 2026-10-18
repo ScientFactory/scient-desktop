@@ -2,8 +2,10 @@
 
 Use this with the [dev-app quickstart](./local-dev-app.md#contributor-quickstart)
 and [contributor guide](../../CONTRIBUTING.md#run-a-development-app).
-The current Windows path runs Electron and its development processes in a
-foreground terminal. It is not equivalent to the macOS managed background app.
+Candidates (uncommitted work in a feature worktree) run in a foreground
+terminal, as below. To review a pushed branch, pull request or commit, use the
+managed [Scient (Dev) Stable](./dev-app-review.md) instead: it runs in the
+background with no console windows and switches with `pnpm dev:app:review`.
 
 ## Prerequisites
 
@@ -65,10 +67,10 @@ shutdown that cannot be verified; do not start a replacement over it.
 
 ## Current limits
 
-`pnpm dev:app:start` and `pnpm dev:app:install` explicitly require macOS.
-The associated managed status/log/stop and stable-sync workflow is not a Windows
-supervisor. Use the foreground terminal procedure above, not those commands or
-an improvised background-service wrapper.
+`pnpm dev:app:start` and `pnpm dev:app:install` (candidates) explicitly require
+macOS. Use the foreground terminal procedure above for candidates, not those
+commands or an improvised background-service wrapper. The managed stable review
+app is the supported background path on Windows.
 
 This guide documents the Windows source launch path; it does not establish
 native Windows qualification of a particular revision. Managed Windows parity

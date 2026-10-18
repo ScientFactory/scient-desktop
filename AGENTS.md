@@ -65,8 +65,10 @@ Terminology: `docs/internals/glossary.md`.
   Preserve unrelated working-tree and staged changes. Commit only the changes
   intended for the requested commit.
 - Follow `docs/operations/local-dev-app.md` for desktop lifecycle operations.
-  Stable and feature candidates have separate identities and state; never
-  repoint the stable launcher to a feature checkout as a shortcut.
+  Stable and feature candidates have separate identities and state. Switch the
+  stable app only with `pnpm dev:app:review <ref>`
+  (`docs/operations/dev-app-review.md`); never edit its review checkout,
+  profiles or launchers by hand.
   The shared `.scient/skills/scient-dev-app/SKILL.md` routes agent-assisted
   lifecycle work to that guide and its Windows instructions. Read it when
   launching, verifying, restarting, or stopping a candidate; it does not grant
