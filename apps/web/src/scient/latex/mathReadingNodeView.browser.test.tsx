@@ -268,7 +268,10 @@ it("closes the document while a formula is being edited without a late write", a
   await mount("Before $x$ and $x$ after.");
   const [first, second] = readers();
   const errors: unknown[] = [];
-  const caught = (event: ErrorEvent) => errors.push(event.error ?? event.message);
+  // Chrome's benign resize-loop notice is not an error of this page.
+  const caught = (event: ErrorEvent) => {
+    if (!event.message.includes("ResizeObserver loop")) errors.push(event.error ?? event.message);
+  };
   const rejected = (event: PromiseRejectionEvent) => errors.push(event.reason);
   window.addEventListener("error", caught);
   window.addEventListener("unhandledrejection", rejected);
