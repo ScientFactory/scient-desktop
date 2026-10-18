@@ -166,6 +166,22 @@ sidebar and Settings. The notice and the shared install call live in
 carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment.
+The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
+and Scient-managed runtimes appear in a Scient-owned circle and card
+(`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
+`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
+that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
+servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
+are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
+the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+where a server is left for later while its machine still updates a provider or runtime, and is
+admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
+In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
+available" toasts to the circle; the browser client keeps them.
+Because a server waits while a provider update is queued, a marked seam in
+`apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
+one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
+the same gap, so this fix is worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
