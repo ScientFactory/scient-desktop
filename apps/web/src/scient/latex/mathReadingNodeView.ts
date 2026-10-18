@@ -272,6 +272,18 @@ export function mathReadingNodeView(
       if (event.type === "focusin" && event.target === props.view.dom) return;
       cancelAdmission?.();
     };
+    // When the formula was selected without a click (just inserted from a
+    // menu, or reached with the keyboard), what is typed while its editor is
+    // prepared is kept and typed into it, key by key, once it is ready. A
+    // click's own caret and selection belong to the relayed gesture, so after a
+    // click keys are not kept, as before. Cancelled admission discards them.
+    let typedWhileWaiting: string[] = [];
+    let keepTyping = true;
+    const typeKept = (math: MathfieldElement) => {
+      const kept = typedWhileWaiting;
+      typedWhileWaiting = [];
+      for (const key of kept) math.executeCommand(["typedText", key, { simulateKeystroke: true }]);
+    };
     const waitingKey = (event: KeyboardEvent) => {
       if (event.key === "Tab" || event.key === "Escape") {
         cancelAdmission?.();
@@ -284,6 +296,13 @@ export function mathReadingNodeView(
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // A composing key is not the text it will commit to.
+        if (event.isComposing || event.keyCode === 229 || !keepTyping) return;
+        // Backspace only removes the last kept character: nothing in the
+        // formula itself is deleted before its editor applies its own rules.
+        if (event.key.length === 1) typedWhileWaiting.push(event.key);
+        else if (event.key === "Backspace" && !event.shiftKey && !event.altKey)
+          typedWhileWaiting.pop();
       }
     };
     const waitingInput = (event: Event) => {
@@ -390,6 +409,7 @@ export function mathReadingNodeView(
         wrapper.remove();
         full.selectNode?.();
         cancelFocus = focusAdmittedMathField(math, props.view.dom);
+        typeKept(math);
         dom.dispatchEvent(new CustomEvent("scient-latex-math-ready", { bubbles: true }));
         return;
       }
@@ -418,6 +438,7 @@ export function mathReadingNodeView(
     if (!event) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    keepTyping = false;
     let released: PointerEvent | undefined;
     let movement: PointerEvent | undefined;
     const moved = (next: PointerEvent) => {
