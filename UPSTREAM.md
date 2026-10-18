@@ -172,7 +172,9 @@ and Scient-managed runtimes appear in a Scient-owned circle and card
 `SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation, which
 remains for a pass that downloads this app. Upstream's `SidebarUpdateCapsule` is retained unmounted
 (a knip entry) so its changes still merge; the pass's restart countdown is a Scient tooltip above
-the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`.
+the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+where each server also waits for its machine's running provider and runtime updates before it
+restarts. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
 available" toasts to the circle; the browser client keeps them.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead

@@ -56,21 +56,25 @@ updater is unavailable, download the current installer from the
 
 Updates for connected machines and providers have their own control: a small
 light-blue circle with an up arrow, beside the update control. It covers
-servers and desktop apps on connected machines, provider CLIs, and
-Scient-managed provider runtimes. Hover, focus, or click it to open its card;
-a click keeps the card open.
+servers and desktop apps on connected machines, provider CLIs Scient can update
+in one step, and Scient-managed provider runtimes. Updates Scient can't run
+itself are listed in Settings instead. Hover, focus, or click the circle to open
+its card; a click keeps the card open.
 
 Each row names the item, its machine when that is not this one, and the version
 change. Choose **Update** on a row, or **Update all**. Neither restarts this
-app, so there is no confirmation. While updates run, the circle shows a spinning
-ring and each row shows a download percentage or its current step. A
-Scient-managed runtime that waits for running turns shows **waiting for idle**
-and switches on its own. A failure turns the circle red; its row shows the
-reason and **Retry**, which updates a server again to the version it tried
-while it is still eligible for it. A row marked **manual** is updated outside
-Scient, for example from **Settings → Connections** or the provider's own
-installer. Finished rows show **done** until you next open the card, and the
-circle shows a brief check before it disappears.
+app, so they start right away. When a server update would stop threads running
+on that machine, the card first shows how many, such as **Stops 2 running
+threads**; choose **Update** again to go ahead. A server waits for provider
+updates still running on its machine before it restarts. While updates run, the
+circle shows a spinning ring and each row shows a download percentage or its
+current step. A Scient-managed runtime that waits for running turns shows
+**waiting for idle** and switches on its own. A failure turns the circle red;
+its row shows the reason and **Retry**, which updates a server again to the
+version it tried while it is still eligible for it. Finished rows show **done**
+until you next open the card, and the circle shows a brief check before it
+disappears. Progress and result notifications appear as for updates started
+elsewhere.
 
 An SSH machine that Scient starts from this app's own package is not listed; it
 moves to the new version the next time it connects after this app updates.
