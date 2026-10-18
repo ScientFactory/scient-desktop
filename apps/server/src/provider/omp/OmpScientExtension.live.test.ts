@@ -679,14 +679,18 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           let echoCallId: string | undefined;
           let yieldCallId: string | undefined;
           const nativeChildReceipts: Array<typeof OmpSubagentLifecyclePayload.Type> = [];
-          // The parent delegates once; the subagent, recognizable by OMP's
-          // `yield` tool, calls the Scient tool and yields; both then answer.
+          // The parent delegates once; the subagent, recognizable by its
+          // assignment, calls the Scient tool and reports the result: through
+          // `yield` where OMP offers it, and as its final answer since 18.10,
+          // which has no `yield` for subagents. Both then answer.
+          const assignment = "Call the Scient echo tool, then report its result.";
           const requests: Array<ChatRequest & { readonly subagent: boolean }> = [];
           const stub = NodeHttp.createServer((request, response) => {
             void readBody(request).then((raw) => {
               const body = JSON.parse(raw) as ChatRequest;
               const names = body.tools?.map((tool) => tool.function?.name) ?? [];
-              const subagent = names.includes("yield");
+              const firstUser = (body.messages ?? []).find((message) => message.role === "user");
+              const subagent = textOf(firstUser?.content).includes(assignment);
               requests.push({ ...body, subagent });
               const results = (body.messages ?? [])
                 .filter((message) => message.role === "tool")
@@ -729,7 +733,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                 call("task", {
                   i: "delegate",
                   context: "Scient live qualification.",
-                  tasks: [{ agent: "task", task: "Call the Scient echo tool, then yield." }],
+                  tasks: [{ agent: "task", task: assignment }],
                 });
               else if (subagent && results.length === 0 && names.includes(SCIENT_TOOL))
                 call(SCIENT_TOOL, { text: "subagent" });
@@ -741,18 +745,21 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                     yieldCallId !== undefined &&
                     message.tool_call_id === yieldCallId,
                 )
-              )
-                call("yield", {
-                  data: {
-                    echoed: textOf(
-                      (body.messages ?? []).find(
-                        (message) => message.role === "tool" && message.tool_call_id === echoCallId,
-                      )?.content,
-                    ),
-                    sourceToolCallId: echoCallId,
-                  },
-                });
-              else {
+              ) {
+                const result = {
+                  echoed: textOf(
+                    (body.messages ?? []).find(
+                      (message) => message.role === "tool" && message.tool_call_id === echoCallId,
+                    )?.content,
+                  ),
+                  sourceToolCallId: echoCallId,
+                };
+                if (names.includes("yield")) call("yield", { data: result });
+                else {
+                  response.write(chunk({ content: JSON.stringify(result) }));
+                  response.write(chunk({}, "stop"));
+                }
+              } else {
                 response.write(
                   chunk({
                     // Async task results arrive as native user notices, after the spawn receipt.
@@ -870,7 +877,12 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
               expect(terminal.subagents).toHaveLength(1);
               expect(echoCallId).toBeDefined();
               expect(taskCallId).toBeDefined();
-              expect(yieldCallId).toBeDefined();
+              const subagentOffersYield = requests.some(
+                (request) =>
+                  request.subagent &&
+                  (request.tools ?? []).some((tool) => tool.function?.name === "yield"),
+              );
+              expect(yieldCallId !== undefined).toBe(subagentOffersYield);
               const roleToolContains = (
                 subagent: boolean,
                 callId: string | undefined,
