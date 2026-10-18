@@ -243,7 +243,6 @@ it("routes only enrolled workflow members after the root turn ends", () => {
     withDescendant,
   );
   assert.isTrue(terminalAccepted);
-  // A child the root launched before it ended stays with this run.
   assert.isTrue(ended.ownedThreadIds.has(earlyChild));
   const [lateAccepted, afterLate] = RunExecutionService.routeProviderEvent(
     childCreated(lateChild),
@@ -780,7 +779,6 @@ it("does not carry interrupted or still-running child ownership into later attem
   assert.isFalse(RunExecutionService.canRouteRelatedSubagent("failed"));
   assert.isFalse(RunExecutionService.canRouteRelatedSubagent("cancelled"));
   assert.isTrue(RunExecutionService.canRouteRelatedSubagent("completed"));
-  // The launching run still ingests a running subagent's child thread.
   assert.isFalse(RunExecutionService.canRouteRelatedSubagent("running"));
 
   const threadId = ThreadId.make("thread:related-child:next-attempt");
@@ -1331,7 +1329,6 @@ it.effect.each(
         } as OrchestrationV2RunAttempt,
         attemptId,
         providerTurnOrdinal: 1,
-        // A declined start is a normal exit, not a preparation failure.
         ...(scenario === "start-guard"
           ? { shouldStartProviderTurn: () => Effect.succeed(false) }
           : {}),
@@ -1403,8 +1400,6 @@ it.effect.each(
     );
     assert.isDefined(errorItem);
     if (errorItem?.type === "turn-item.updated" && errorItem.payload.type === "error") {
-      // The persisted item carries a bounded curated message; the exact
-      // underlying text stays in the logged cause.
       assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
     }
   }),
@@ -2299,8 +2294,6 @@ it.effect(
           providerSessionId: ProviderSessionId.make(`session:${key}`),
           session: {
             events: Stream.empty,
-            // Session-wide stays true forever; the root must consult the
-            // thread-scoped probe instead of being pinned by siblings.
             hasPendingBackgroundWork: Effect.succeed(true),
             hasPendingBackgroundWorkForThread: (providerThread: OrchestrationV2ProviderThread) =>
               Effect.gen(function* () {
@@ -2414,7 +2407,6 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
     const providerInstanceId = ProviderInstanceId.make("codex");
     const now = yield* DateTime.now;
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
-    // Probe stays true forever so only ownership-loss can release the stream.
     const ingestionDone = yield* Deferred.make<void>();
     const ingestCalls = yield* Ref.make<
       ReadonlyArray<{
@@ -2459,8 +2451,6 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
                     ? (event.providerThread.pendingBackgroundTasks?.length ?? 0)
                     : null;
                 const ownerGate = input.writeIfProviderThreadOwner;
-                // Simulate the EventSink reject after a same-run replacement
-                // changes activeAttemptId without advancing lastRunOrdinal.
                 const rejectAsStaleOwner =
                   ownerGate !== undefined && ownerGate.activeAttemptId !== replacementAttemptId;
                 yield* Ref.update(ingestCalls, (current) => [
@@ -2535,8 +2525,6 @@ it.effect("drops late root provider-thread writes from a superseded attempt", ()
                 },
               } as ProviderAdapter.ProviderAdapterV2Event,
               rootTerminalEvent(ids, "completed"),
-              // Late snapshot after a replacement attempt claimed the same
-              // run ordinal. Without attempt gating this would clobber it.
               {
                 type: "provider_thread.updated",
                 driver,
@@ -2629,8 +2617,6 @@ it.effect(
       const providerInstanceId = ProviderInstanceId.make("codex");
       const now = yield* DateTime.now;
       const observed = yield* Ref.make<ReadonlyArray<string>>([]);
-      // Probe stays true forever; open background items must pin the stream
-      // past ownership-loss so late turn_item completions still land.
       const ingestionDone = yield* Deferred.make<void>();
       const testLayer = RunExecutionService.layer.pipe(
         Layer.provide(threadCommandExecutorLayer),
@@ -2718,7 +2704,6 @@ it.effect(
               events: Stream.fromIterable([
                 backgroundTurnItemEvent(ids, "command_execution", "running", 1),
                 rootTerminalEvent(ids, "completed"),
-                // Ownership reject after a newer run claimed lastRunOrdinal.
                 {
                   type: "provider_thread.updated",
                   driver,
@@ -2732,8 +2717,6 @@ it.effect(
                     updatedAt: now,
                   },
                 } as ProviderAdapter.ProviderAdapterV2Event,
-                // Late completion still writable (turn_item writes are not
-                // ownership-gated); stream must stay open for it.
                 backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
               ]),
               close: Deferred.succeed(ingestionDone, undefined),
@@ -2874,21 +2857,15 @@ it.effect(
           providerSessionId: ProviderSessionId.make(`session:${key}`),
           session: {
             events: Stream.empty,
-            // Session-wide stays true (sibling has work). Stop must use only
-            // the scoped probe for this root's provider thread.
             hasPendingBackgroundWork: Effect.succeed(true),
             hasPendingBackgroundWorkForThread: (providerThread: OrchestrationV2ProviderThread) =>
               Effect.gen(function* () {
                 yield* Ref.update(scopedProbeArgs, (current) => [...current, providerThread.id]);
-                // Own thread has no roster; sibling would report true if probed.
                 return providerThread.id !== ids.providerThreadId;
               }),
             subscribeEvents: Effect.succeed({
               events: Stream.fromIterable([
                 rootTerminalEvent(ids, "completed"),
-                // Sibling thread update after terminal. Own-thread scoped
-                // pending is false, so this root must release without waiting
-                // for sibling-driven session-wide pending work.
                 {
                   type: "provider_thread.updated",
                   driver,
@@ -2953,8 +2930,6 @@ it.effect(
 
       const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
       assert.isTrue(Option.isSome(closed), "event subscription did not release");
-      // Critical: release while session-wide hasPendingBackgroundWork stays true
-      // and the scoped probe reports false for this root's provider thread.
       const observedEvents = [...(yield* Ref.get(observed))];
       assert.includeMembers(observedEvents, ["terminal", "root-finalized"]);
       const probedIds = yield* Ref.get(scopedProbeArgs);
@@ -3140,7 +3115,6 @@ it.effect(
                 { type: "node.updated", driver, node: foreignChildNode },
                 { type: "turn_item.updated", driver, turnItem: foreignChildTurnItem },
                 rootTerminalEvent(ids, "interrupted"),
-                // Late provider completion after interrupt must not be ingested.
                 {
                   type: "subagent.updated",
                   driver,
@@ -3511,8 +3485,6 @@ it.effect(
                   driver,
                   turnItem: runningTurnItem,
                 },
-                // Subagent + turn-item settle before root interrupt; linkage
-                // must still prove the open child-thread node is cascadeable.
                 {
                   type: "subagent.updated",
                   driver,
@@ -3835,8 +3807,6 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
       assert.equal(terminalItem.payload.progress, "partial progress");
       assert.equal(terminalItem.payload.result, "partial result");
 
-      // Shared cascade path: after subagent/turn-item rows are gone, only the
-      // preserved linkage may prove an open child-thread node is cascadeable.
       const afterTerminalLinkEvents =
         yield* RunExecutionService.cascadeTerminalizeRunOwnedSubagents({
           run: {
@@ -3997,7 +3967,6 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
           rootTerminalEvent(ids, "cancelled"),
         ]),
     });
-    // Only the root terminal settles the run and refreshes pull requests.
     assert.deepEqual(observed, ["run:cancelled", "pull-requests-refreshed"]);
   }),
 );

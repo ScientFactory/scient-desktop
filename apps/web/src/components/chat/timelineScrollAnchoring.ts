@@ -6,7 +6,6 @@ export interface TimelineRunObservation {
   readonly runId: RunId | null;
 }
 
-/** Opening a thread establishes a baseline; only later runs get new-turn framing. */
 export function observeTimelineRun(
   previous: TimelineRunObservation | null,
   input: TimelineRunObservation & {
@@ -78,10 +77,9 @@ export function getRowBottom(state: TimelineListMeasurementState, index: number)
 }
 
 /**
- * Whether the timeline's real rows extend past the viewport left above the
- * composer. The list's own content length includes the composer inset
- * spacer, so this measures from the last row instead. Unknown row geometry
- * or an unmeasured viewport counts as fitting.
+ * The list's own content length includes the composer inset spacer, so this
+ * measures from the last row instead. Unknown row geometry or an unmeasured
+ * viewport counts as fitting.
  */
 export function timelineContentOverflowsViewport(
   state: TimelineListMeasurementState | undefined,
@@ -171,7 +169,6 @@ export interface RememberedTimelinePosition {
   };
 }
 
-// Scoped thread keys keep separate environments independent. Bound the session cache.
 const rememberedTimelinePositions = new Map<string, RememberedTimelinePosition>();
 
 export function readTimelinePosition(threadKey: string) {

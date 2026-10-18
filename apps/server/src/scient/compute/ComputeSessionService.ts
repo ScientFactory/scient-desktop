@@ -842,10 +842,6 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // -------------------------------------------------------------------------
-  // Publishing and persistence
-  // -------------------------------------------------------------------------
-
   const notificationOwner = (projectId: string, workspace?: ComputeSessionRecord["workspace"]) =>
     workspace
       ? JSON.stringify([projectId, workspace.bindingId, workspace.authorityGeneration])
@@ -996,9 +992,7 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => fallback),
     );
 
-  // -------------------------------------------------------------------------
   // State transitions, all taken with the session lease held
-  // -------------------------------------------------------------------------
 
   const setSessionStatus = (
     operation: ComputeOperation,
@@ -1149,10 +1143,6 @@ const make = Effect.gen(function* () {
       const ready = yield* Ref.getAndSet(live.readyRef, null);
       if (ready !== null) yield* Deferred.fail(ready, error);
     });
-
-  // -------------------------------------------------------------------------
-  // Output
-  // -------------------------------------------------------------------------
 
   const appendOutputs = (
     live: LiveComputeSession,
@@ -1606,10 +1596,6 @@ const make = Effect.gen(function* () {
       yield* publishExecution(live, { request: existing.request, result });
     });
 
-  // -------------------------------------------------------------------------
-  // Queue
-  // -------------------------------------------------------------------------
-
   /** Moves the queue forward under the session lease and says what to send. */
   const takeNextDispatch = (operation: ComputeOperation, live: LiveComputeSession) =>
     Effect.gen(function* () {
@@ -1790,10 +1776,6 @@ const make = Effect.gen(function* () {
       }
     });
 
-  // -------------------------------------------------------------------------
-  // Loss and retirement
-  // -------------------------------------------------------------------------
-
   /**
    * Closes the book on a session, exactly once.
    *
@@ -1920,10 +1902,6 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
-
-  // -------------------------------------------------------------------------
-  // The event drain
-  // -------------------------------------------------------------------------
 
   const applyEvent = (
     live: LiveComputeSession,
@@ -2105,10 +2083,6 @@ const make = Effect.gen(function* () {
       Effect.ensuring(retireLiveSession(live).pipe(Effect.orDie)),
     );
 
-  // -------------------------------------------------------------------------
-  // Recovery
-  // -------------------------------------------------------------------------
-
   const loadStoredSession = (
     operation: ComputeOperation,
     projectId: ComputeProjectId,
@@ -2248,10 +2222,6 @@ const make = Effect.gen(function* () {
         }),
       );
     });
-
-  // -------------------------------------------------------------------------
-  // Commands
-  // -------------------------------------------------------------------------
 
   const requireLiveSession = (
     operation: ComputeOperation,
@@ -3155,10 +3125,6 @@ const make = Effect.gen(function* () {
       );
     }).pipe(Effect.uninterruptible);
 
-  // -------------------------------------------------------------------------
-  // Reads
-  // -------------------------------------------------------------------------
-
   /** One owned lifetime using the ordinary transport, transcript and stop path. */
   const runOnceSession = (
     live: LiveComputeSession,
@@ -3288,10 +3254,6 @@ const make = Effect.gen(function* () {
       }));
       return Stream.concat(Stream.fromIterable(snapshots), changes);
     });
-
-  // -------------------------------------------------------------------------
-  // Idle sweep and shutdown
-  // -------------------------------------------------------------------------
 
   const idleTimeoutMs = options.idleTimeoutMs;
 

@@ -41,8 +41,6 @@ it("keeps Scient cloud integration disabled unless explicitly opted in", () => {
   expect(ConnectHttp.isScientCloudIntegrationDisabled({})).toBe(true);
 });
 
-// The signed relay routes need no session, so a CloudLink that fails each
-// request shows how the transport answers that failure.
 const withHealthHandler = async <A>(
   answerHealthRequest: CloudLink.CloudLink["Service"]["answerHealthRequest"],
   body: (handler: (request: Request) => Promise<Response>) => Promise<A>,
@@ -54,7 +52,6 @@ const withHealthHandler = async <A>(
         answerHealthRequest,
       }),
     ),
-    // The session-gated routes are declared too; this request never reaches them.
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
     Layer.provide(Layer.mock(EnvironmentAuth.EnvironmentAuth)({})),
     Layer.provideMerge(

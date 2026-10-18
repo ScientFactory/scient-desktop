@@ -95,7 +95,6 @@ export interface ProviderEventRoutingState {
   // except a workflow member enrolled below: its coordinator keeps this run
   // open, so the member is this run's to follow.
   readonly rootTurnEnded: boolean;
-  /** Member thread id to the coordinator child thread that spawned it. */
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
@@ -137,10 +136,6 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
   return !isOrchestrationV2WorkActive(status);
 }
 
-// Turn item types whose lifecycle can outlive the root turn (background
-// commands, monitors/dynamic tools, subagent rows). Ingestion must not stop
-// while one of these is still non-terminal, or the late completion event is
-// dropped and the item spins forever in the projection.
 const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "command_execution",
   "dynamic_tool",
@@ -156,11 +151,8 @@ function isSettledRunEligibleForInheritedBackground(status: OrchestrationV2Run["
 }
 
 /**
- * Transfer delivery permission for exact live background items whose original
- * run no longer has a subscriber. Provider sessions are runtime containers and
- * can host multiple provider threads, so the durable provider-thread lineage is
- * the discriminator. Completed, rolled-back, and already-terminal items remain
- * excluded.
+ * Provider sessions are runtime containers and can host multiple provider threads, so the durable
+ * provider-thread lineage is the discriminator.
  */
 export function selectInheritedBackgroundTurnItems(input: {
   readonly threadId: ThreadId;
@@ -198,7 +190,6 @@ type OpenRunOwnedSubagentProjection = {
   readonly turnItems: ReadonlyMap<NodeId, SubagentTurnItem>;
   readonly childTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
-  /** Child threads once linked by a root-run subagent row; kept for cascade. */
   readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
   /** Accepted runless workflow rows remain linked until ownership transfers. */
   readonly linkedWorkflowMemberIds: ReadonlySet<NodeId>;
@@ -220,10 +211,8 @@ function isRunOwnedSubagentTerminalStatus(
 }
 
 /**
- * Whether a new run takes over a subagent's child thread, so a later message
- * can resume it there. A running subagent stays with the run that launched it,
- * which keeps ingesting until it ends; taking it over too would store its
- * events twice. An interrupted, failed or cancelled one is never resumed.
+ * A running subagent stays with the run that launched it, which keeps ingesting until it ends;
+ * taking it over too would store its events twice.
  */
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status === "completed";
@@ -427,8 +416,6 @@ export function routeProviderEvent(
       // Only the trusted session manager may mutate the instance auth overlay.
       return [false, state];
     case "provider_session.updated":
-      // The session manager persists process-wide status once for every
-      // attached app thread before broadcasting the adapter event.
       return [false, state];
     case "app_thread.created": {
       if (event.appThread.id === input.threadId) {
@@ -480,13 +467,31 @@ export function routeProviderEvent(
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
-    case "subagent.updated":
+    case "subagent.updated": {
+      const coordinator = event.subagent;
+      // A provider-native subagent's child thread follows the live run it is
+      // attributed to. A resume reattributes it to the resuming run, which
+      // never saw the child thread created when the subagent was not
+      // completed at its start (e.g. cancelled by a server restart).
+      const adopted =
+        ownsRun(coordinator.runId) &&
+        !state.rootTurnEnded &&
+        isOrchestrationV2WorkActive(coordinator.status) &&
+        coordinator.origin === "provider_native" &&
+        coordinator.childThreadId !== null &&
+        !ownsThread(coordinator.childThreadId)
+          ? {
+              ...state,
+              ownedThreadIds: new Set([...state.ownedThreadIds, coordinator.childThreadId]),
+            }
+          : state;
       // SCIENT-FORK:START — native workflow coordinators and their runless members.
-      return routeWorkflowSubagentEvent(event, input, state, {
-        ownsRun: ownsRun(event.subagent.runId),
-        ownsChildThread: ownsChildThread(event.subagent.threadId),
+      return routeWorkflowSubagentEvent(event, input, adopted, {
+        ownsRun: ownsRun(coordinator.runId),
+        ownsChildThread: ownsChildThread(coordinator.threadId),
       });
-    // SCIENT-FORK:END
+      // SCIENT-FORK:END
+    }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
@@ -494,8 +499,6 @@ export function routeProviderEvent(
         return [true, state];
       }
       const inheritedRunId = state.inheritedBackgroundTurnItems.get(event.turnItem.id);
-      // Preserve the item's original ownership while allowing the one live run
-      // to deliver an exact carryover identity selected from the projection.
       const isInheritedBackgroundItem =
         event.turnItem.threadId === input.threadId &&
         event.turnItem.runId !== null &&
@@ -520,6 +523,9 @@ export function routeProviderEvent(
             state.ownedProviderTurnIds.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "command_output.delta":
+      // The session manager hands live output to the command output hub; runs never see it.
+      return [false, state];
     case "turn.terminal":
       return event.providerTurnId === state.rootProviderTurnId
         ? [true, { ...state, rootTurnEnded: true }]
@@ -527,9 +533,6 @@ export function routeProviderEvent(
   }
 }
 
-/**
- * ERRORS
- */
 export class RunExecutionStartError extends Schema.TaggedError<RunExecutionStartError>()(
   "RunExecutionStartError",
   {
@@ -561,9 +564,6 @@ export const RunExecutionServiceV2Error = Schema.Union([
 ]);
 export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 
-/**
- * SERVICE DEFINITION
- */
 type RunTerminalOutcome =
   | ProviderTerminalEvent
   | {
@@ -619,9 +619,6 @@ export class RunExecutionServiceV2 extends Context.Service<
   RunExecutionServiceV2Shape
 >()("t3/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
 
-/**
- * IMPLEMENTATIONS
- */
 export const layer: Layer.Layer<
   RunExecutionServiceV2,
   never,
@@ -676,9 +673,6 @@ export const layer: Layer.Layer<
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
-          // Superseded attempt (steer / selection restart). Emit
-          // run_interrupt_result only when hard Stop left an unpaired request
-          // for this run; plain steers and already-paired stops emit nothing.
           if (input.terminal.status === "interrupted") {
             const hasUnpairedRequest =
               input.hasUnpairedRunInterruptRequest === undefined
@@ -798,8 +792,6 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]),
-            // Terminalize open run-owned subagent rows before the root run
-            // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
             ...(finalizedAttempt === null
               ? []
@@ -1034,8 +1026,6 @@ export const layer: Layer.Layer<
                   terminal: makeFailedTerminalEvent(
                     makeProviderFailure({
                       cause: Cause.squash(cause),
-                      // Keep exact underlying text in the logged cause only;
-                      // the persisted turn item gets a bounded curated message.
                       message: "Run preparation failed.",
                       class: "unknown",
                     }),
@@ -1244,11 +1234,9 @@ export const layer: Layer.Layer<
                     return next;
                   });
                 }
-                // Snapshot run-owned subagents for interrupt cascade.
-                // Preserve childThreadId linkage for the root-run lifetime even
-                // after the subagent row terminalizes, so open child-thread
-                // nodes can still be proven linked on a later root interrupt.
-                // A provider records nested native subagents on the child
+                // Preserve childThreadId linkage for the root-run lifetime even after the subagent
+                // row terminalizes, so open child-thread nodes can still be proven linked on a
+                // later root interrupt. A provider records nested native subagents on the child
                 // thread, runless; they die with this run too.
                 if (
                   belongsToRootRun ||
@@ -1367,7 +1355,6 @@ export const layer: Layer.Layer<
               ))
             )
               return false;
-            // Non-completed terminals drop background tracking immediately.
             if (terminal !== null && terminal.status !== "completed") {
               return true;
             }
@@ -1379,34 +1366,20 @@ export const layer: Layer.Layer<
             if (childSubagents.size > 0) {
               return false;
             }
-            // Keep ingesting past root settlement while background-capable
-            // items owned by this run (or an owned child thread) are still
-            // non-terminal, so their late completion events reach the
-            // projection (stuck-spinner fix). Only for completed runs:
-            // interrupted/failed turns intentionally drop background tracking
-            // rather than pinning the stream open. Newly owned items depend on
-            // adapters emitting a non-terminal event before the root terminal.
-            // Exact inherited items are seeded from their selected durable rows.
-            //
-            // Owner loss (a newer run claimed lastRunOrdinal) must not close
-            // this stream while these sets are non-empty: turn_item.updated
-            // writes are not ownership-gated, so late completions still land.
+            // Newly owned items depend on adapters emitting a non-terminal event before the root
+            // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
+            // while these sets are non-empty: turn_item.updated writes are not ownership-gated, so
+            // late completions still land.
             const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
             if (backgroundItems.size > 0) {
               return false;
             }
-            // Owner loss means do not hold the stream open solely for the
-            // roster probe; once background sets are empty, release.
             if (yield* Ref.get(providerThreadOwnerLost)) {
               return true;
             }
-            // Claude background Bash has no turn-item projection. Keep the
-            // stream open while this root's provider thread still reports
-            // pending roster work so late empty updates can clear Waiting.
-            // Use only the thread-scoped probe: session-wide pending work
-            // (siblings, wake buffers, session subagents) must not pin this
-            // root subscription. Session idle release still uses
-            // hasPendingBackgroundWork via ProviderSessionManager.
+            // Claude background Bash has no turn-item projection. Use only the
+            // thread-scoped probe: session-wide pending work (siblings, wake
+            // buffers, session subagents) must not pin this root subscription.
             const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
             if (input.session.hasPendingBackgroundWorkForThread !== undefined) {
               const hasPendingWork = yield* input.session
@@ -1469,11 +1442,6 @@ export const layer: Layer.Layer<
                 if (deliveredEvent) deliveredEvent = runningForkText.floor(deliveredEvent);
                 // SCIENT-FORK:END
                 if (deliveredEvent) {
-                  // Root provider_thread.updated always uses an ownership gate:
-                  // pre-terminal writeIfRunCurrent (attempt still running), or
-                  // post-terminal writeIfProviderThreadOwner so late roster
-                  // clears still land while this attempt owns the run and this
-                  // run owns lastRunOrdinal.
                   const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
@@ -1543,8 +1511,6 @@ export const layer: Layer.Layer<
                     rootTerminalAlreadySeen &&
                     storedEventCount === 0
                   ) {
-                    // Ownership lost (or thread row missing). Stop pinning the
-                    // stream on this run's background probe.
                     yield* Ref.set(providerThreadOwnerLost, true);
                   }
                 }
@@ -1702,8 +1668,6 @@ export const layer: Layer.Layer<
           // its already-issued MCP credential valid even when the agent goes
           // a long time between browser-tool calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
-          // A context read that fails costs the agent the apps' notes for
-          // this turn, not the turn itself.
           const appContext = (yield* mcpAppModelContext
             .forThread(input.run.threadId)
             .pipe(

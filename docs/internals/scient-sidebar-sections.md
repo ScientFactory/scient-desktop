@@ -217,6 +217,8 @@ section when un-settled or woken.
 - **Membership:** unpinned, unshelved threads use the existing status, unread-answer,
   and unread-Woke predicates. Working, Monitoring, Done, Approval, Input, Failed,
   and Woke have equal placement priority. No execution or read semantics change.
+  Unread is judged from the same visit as the sidebar rows: the server's when it
+  tracks visits, so a thread read on another client leaves the upper group.
 - **State:** `automaticPlacement.ts` reconciles complete synchronized section membership,
   independently of project filtering and collapse. Scoped environment/thread keys
   prevent collisions. An arrival appends below existing upper members; transitions

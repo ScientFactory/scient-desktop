@@ -103,7 +103,7 @@ selection mode. Unknown paths and shared contracts, client runtime, execution/pr
 cores, mobile surfaces, shared ChatComposer/ComposerPrimaryActions hosts, dependencies
 or test setup select all boundaries. Recognized chat reader owners select reader
 checks; other chat paths retain the unknown-path fallback. ChatView also selects settings;
-queuedRunShortcuts selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
+Scient `threadQueue/queueShortcuts` selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
 `docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
 instructions such as `AGENTS.md` are not. Review all exclusions for the actual range.
 

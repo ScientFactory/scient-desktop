@@ -14,6 +14,15 @@ describe("native Markdown source projection", () => {
     });
   });
 
+  it("renders a table under a line of text as a table and keeps its link sources", () => {
+    const table = "| File |\n|---|\n| [a](/repo/a.ts) |";
+    expect(nativeMarkdownProjection(`Files on record\n${table}`)).toEqual({
+      markdown: `Files on record\n\n${table}`,
+      recognizedLinkTextByUrl: {},
+      linkSources: [{ url: "/repo/a.ts", source: "[a](/repo/a.ts)" }],
+    });
+  });
+
   it.each([
     "*details*",
     "~~details~~",

@@ -11,7 +11,6 @@ import * as PlatformError from "effect/PlatformError";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
-  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -264,6 +263,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -965,6 +965,10 @@ const buildAppUnderTest = (options?: {
               streamChanges: Stream.make([]),
               refresh: Effect.void,
               ...options?.layers?.usageLimitSources,
+            }),
+            Layer.mock(DatabaseStorage.DatabaseStorage)({
+              reclaim: Effect.void,
+              status: Stream.make(null),
             }),
           ),
         ),
@@ -1835,7 +1839,7 @@ const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstra
 const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, body } = yield* exchangeAccessToken(credential, {
-      scope: AuthAdministrativeScopes.join(" "),
+      scope: AuthStandardClientScopes.join(" "),
     });
     if (!responseOk(response)) {
       return yield* new AuthenticationGetterError({
@@ -3301,9 +3305,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(ownerResponse.status, 200);
       assert.equal(ownerBody.publishAgentActivity, true);
 
+      // The default grant includes relay management; a narrower link must not.
       const credentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: { cookie: ownerCookie },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "relay:write"),
+        }),
       });
       const credential = (yield* credentialResponse.json) as { readonly credential: string };
       const pairedCookie = yield* getAuthenticatedSessionCookieHeader(credential.credential);
@@ -5073,7 +5080,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepInclude(listed, {
         label: "Synthetic phone",
         // Frozen legacy scope metadata and the full granular grant are distinct.
-        scopes: ["orchestration:read", "orchestration:operate", "terminal:operate", "relay:read"],
+        scopes: [
+          "orchestration:read",
+          "orchestration:operate",
+          "terminal:operate",
+          "relay:read",
+          "access:read",
+          "access:write",
+          "relay:write",
+        ],
         permissions: [...AuthStandardClientScopes],
       });
 
@@ -5218,11 +5233,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      // The default grant includes access management; a narrower link must not.
       const ownerResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "access:write"),
+        }),
       });
       const ownerBody = (yield* ownerResponse.json) as {
         readonly credential: string;

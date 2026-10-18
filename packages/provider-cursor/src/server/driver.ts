@@ -159,7 +159,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
     },
     configSchema: CursorSettings,
     defaultConfig: (): CursorSettings => decodeCursorSettings({}),
-    // One account source per environment: the host's Cursor CLI login.
     usage: {
       kind: "scan",
       provider: "cursor",

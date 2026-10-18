@@ -26,7 +26,6 @@ export interface PreviewMiniPlayerRect {
   readonly size: PreviewMiniPlayerSize;
 }
 
-/** What the floating player mirrors: a browser tab or a device stream. */
 export type PreviewMiniPlayerSource =
   | { readonly kind: "browser"; readonly tabId: string }
   | {
@@ -208,7 +207,6 @@ export function selectThreadPreviewMiniPlayer(
   return byThreadKey[scopedThreadKey(ref)] ?? null;
 }
 
-/** The floating browser tab, or null when nothing floats or a device does. */
 export function selectThreadPreviewMiniPlayerTabId(
   byThreadKey: Record<string, PreviewMiniPlayerState>,
   ref: ScopedThreadRef | null | undefined,

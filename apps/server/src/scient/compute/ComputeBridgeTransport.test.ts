@@ -35,9 +35,7 @@ import {
   type ComputeBridgeTransportOptions,
 } from "./ComputeBridgeTransport.ts";
 
-// ---------------------------------------------------------------------------
 // A bridge that never runs
-// ---------------------------------------------------------------------------
 
 const BRIDGE_PID = 4242;
 const KERNEL_PID = 4243;
@@ -310,10 +308,6 @@ function pngBytes(width: number, height: number, padding = 0): Uint8Array {
 
 const request = (id: string) => ComputeRequestId.make(id);
 
-// ---------------------------------------------------------------------------
-// Handshake
-// ---------------------------------------------------------------------------
-
 describe("jupyter bridge handshake", () => {
   it.effect("greets, starts a kernel by interpreter, and reports the runtime", () =>
     Effect.scoped(
@@ -549,10 +543,6 @@ describe("jupyter bridge handshake", () => {
     }),
   );
 });
-
-// ---------------------------------------------------------------------------
-// Output mapping
-// ---------------------------------------------------------------------------
 
 describe("jupyter bridge output mapping", () => {
   it.effect("maps a stream message to ordered output", () =>
@@ -882,10 +872,6 @@ describe("jupyter bridge output mapping", () => {
     ),
   );
 });
-
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
 
 describe("jupyter bridge commands", () => {
   it.effect("returns a generation-scoped variable snapshot", () =>
@@ -1222,10 +1208,6 @@ describe("jupyter bridge commands", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Loss and shutdown
-// ---------------------------------------------------------------------------
-
 describe("jupyter bridge loss", () => {
   it.effect("reports a fatal message as the reason the session was lost", () =>
     Effect.scoped(
@@ -1410,10 +1392,6 @@ describe("jupyter bridge loss", () => {
     }),
   );
 });
-
-// ---------------------------------------------------------------------------
-// Back-pressure
-// ---------------------------------------------------------------------------
 
 describe("jupyter bridge back-pressure", () => {
   it.effect("drops output rather than lifecycle events, and says so once", () =>
