@@ -881,6 +881,77 @@ Closing paragraph.
   },
 );
 
+it("keeps an open footnote editor above the next line set against a short display", async () => {
+  const note = "A note long enough to wrap over several lines in its editor. ".repeat(4);
+  const editor = await open(
+    "visual-stability-raised-footnote",
+    String.raw`\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+Short\footnote{${note}}.
+\[a=b\]
+Next.
+\[c=d\]
+Later.
+\[e=f\]
+After.
+\end{document}
+`,
+  );
+  await expect
+    .poll(() => editor.view.dom.querySelectorAll("[data-short-display]").length)
+    .toBeGreaterThan(1);
+  await page
+    .getByRole("button", { name: "Return to footnote 1 marker", exact: true })
+    .nth(0)
+    .click();
+  await page.getByRole("button", { name: "Edit text", exact: true }).click();
+  const field = await expect
+    .poll(() => editor.view.dom.querySelector<HTMLElement>('[aria-label="Footnote text"]'))
+    .toBeTruthy()
+    .then(() => editor.view.dom.querySelector<HTMLElement>('[aria-label="Footnote text"]')!);
+  await frames(2);
+  const box = field.getBoundingClientRect();
+  // Every point of the open editor belongs to it, including where it reaches
+  // over the lines and displays below its own paragraph.
+  for (const fraction of [0.25, 0.5, 0.75, 0.95]) {
+    const hit = document.elementFromPoint(
+      box.left + box.width / 2,
+      box.top + box.height * fraction,
+    );
+    expect(hit && field.contains(hit), `at ${fraction}`).toBe(true);
+  }
+}, 30000);
+
+it("raises a line holding a formula being edited above later lines set against short displays", async () => {
+  const editor = await open(
+    "visual-stability-raised-formula",
+    String.raw`\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+Short $x^2$.
+\[a=b\]
+Next.
+\[c=d\]
+After.
+\end{document}
+`,
+  );
+  const lines = () =>
+    [...editor.view.dom.children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLParagraphElement && getComputedStyle(child).position === "relative",
+    );
+  await expect.poll(() => lines().length).toBe(2);
+  const [first, next] = lines();
+  expect(getComputedStyle(first!).zIndex).toBe("1");
+  await userEvent.click(first!.querySelector<HTMLElement>(".scient-latex-mathfield")!);
+  await expect.poll(() => first!.querySelector("math-field")?.matches(":focus-within")).toBe(true);
+  // Its formula's editing surfaces must not be painted over by the next raised line.
+  expect(getComputedStyle(first!).zIndex).toBe("2");
+  expect(getComputedStyle(next!).zIndex).toBe("1");
+}, 30000);
+
 it("keeps a list uncontained while a footnote inside it is being edited", async () => {
   const filler = Array.from({ length: 30 }, (_, index) => `Filler paragraph ${index}.`).join(
     "\n\n",

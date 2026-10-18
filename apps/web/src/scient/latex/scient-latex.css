@@ -1218,6 +1218,21 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document p:has(+ .scient-latex-pagination-gap + .node-latexDisplayMath) {
   margin-bottom: 0;
 }
+/* A short display sits against the line above and reaches into it with its
+   guide gutter; that line keeps its own clicks. */
+.scient-latex-visual-document p:has(+ .node-latexDisplayMath[data-short-display]) {
+  position: relative;
+  z-index: 1;
+}
+/* A raised line holding an open editor stays above the next raised line, which
+   would otherwise paint over that editor. */
+.scient-latex-visual-document
+  p:has(+ .node-latexDisplayMath[data-short-display]):is(
+    :focus-within,
+    :has([data-scient-active-slot], .scient-latex-visual-command[data-footnote-editor])
+  ) {
+  z-index: 2;
+}
 .node-latexDisplayMath[data-short-display] {
   margin-block: 0 0.6em;
 }
