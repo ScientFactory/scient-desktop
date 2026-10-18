@@ -14,7 +14,7 @@ vi.mock("~/assets/assetUrls", () => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { latexPagedKey, pagedPositionAtPoint, pagedLayoutSettled } from "./latexPagedGeometry";
-import { measureNatural } from "./latexNaturalMeasurement";
+import { measureNatural, naturalTextLines } from "./latexNaturalMeasurement";
 import { clearVisualDraft } from "./visualDrafts";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
 import template15 from "./fixtures/paging-long-table.tex?raw";
@@ -334,3 +334,32 @@ The second page starts here.
   await frames();
   inOrder();
 }, 60000);
+
+it("finds the first letter of a line that follows a hyphenation break", async () => {
+  const block = document.createElement("div");
+  block.lang = "en";
+  block.style.cssText = "width:120px;font:16px serif;hyphens:auto;text-align:justify";
+  block.textContent = "Make differences from the compiled output easy to understand differences.";
+  document.body.append(block);
+  try {
+    await document.fonts.ready;
+    const text = block.firstChild as Text;
+    const range = document.createRange();
+    const top = (offset: number) => {
+      range.setStart(text, offset);
+      range.setEnd(text, offset + 1);
+      return [...range.getClientRects()].findLast((box) => box.width > 0)!.top;
+    };
+    const lines = naturalTextLines(text, document.createRange());
+    expect(lines.length).toBeGreaterThan(3);
+    // The specimen hyphenates at least one word at this width.
+    expect(lines.some(({ offset }) => /\p{L}/u.test(text.data[offset - 1] ?? ""))).toBe(true);
+    for (const line of lines) {
+      expect(top(line.offset), text.data.slice(line.offset)).toBeCloseTo(line.top, 0);
+      if (line.offset > 0 && /\S/u.test(text.data[line.offset - 1]!))
+        expect(top(line.offset - 1)).toBeLessThan(line.top - 0.5);
+    }
+  } finally {
+    block.remove();
+  }
+});
