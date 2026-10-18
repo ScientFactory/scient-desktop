@@ -24,6 +24,9 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 // SCIENT-FORK:START — plugin skills are projected without their other components.
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
+import { skipMissingAntigravitySkillTarget } from "../scient/skills/antigravityUserSkillLinks.ts";
+// SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
@@ -368,6 +371,9 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      // SCIENT-FORK:START — link only an existing directory; drop a dangling link instead.
+      if (yield* skipMissingAntigravitySkillTarget({ link, target })) return;
+      // SCIENT-FORK:END
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
