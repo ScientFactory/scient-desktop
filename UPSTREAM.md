@@ -1070,8 +1070,9 @@ The fourth stays inside `AntigravityAuth.ts`'s existing marked failure block, wh
 post-authentication message from `scient/providerLifecycle/antigravityAuthDiagnostics.ts` so the
 lifecycle bridge can mark the failure `failedAfterSignIn`; the same module records the failed
 ACP request in the local trace. Opening sign-in pages for the client that started them, and the
-Settings row's one-click sign-in, live entirely in Scient-owned web modules
-(`scient/providerConnection/providerSignInBrowser.ts`). See
+Settings row's one-click sign-in, live in Scient-owned web modules
+(`scient/providerConnection/providerSignInBrowser.ts`), with one marked mount of
+`ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`. See
 [provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared

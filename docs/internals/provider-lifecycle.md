@@ -108,11 +108,14 @@ closing the attempt scope cancels the owned flow. Pre-browser errors expose
 only fixed, allowlisted runtime-resolution, helper-preparation, runtime-startup,
 or link-capture messages; unknown causes remain generic. A failed current attempt
 records its authorization phase, known error type, and available numeric exit or
-allowlisted system error code. For a failed ACP request it also records, in the
-local server trace only, the method, JSON-RPC code, message and `data.details`,
-each bounded to 500 characters, without URL queries or fragments and with the
-user's home shown as `~`; users never see that text. Credentials and OAuth URLs
-are not retained, and logging does not determine the attempt's outcome. When
+allowlisted system error code. For a failed ACP request it also records the
+method, JSON-RPC code, message and `data.details`, each bounded to 500
+characters, without URL queries or fragments and with the user's home shown as
+`~`. These are attributes of a warning event in the server trace, so they follow
+the user's trace exporter configuration like every other trace event; Settings >
+Diagnostics lists only the event's fixed message, and the UI never shows the
+native text. Credentials and OAuth URLs are not retained, and logging does not
+determine the attempt's outcome. When
 Google accepted the sign-in but `session/new` failed, the failed operation carries
 `failedAfterSignIn` and the UI says the sign-in finished but Antigravity could not
 start; the manager sets the same flag when it cannot verify an account the provider
@@ -126,7 +129,9 @@ those directories to `~/.gemini` only when the target exists, removes a dangling
 link otherwise, and replaces an empty directory the agent created once the target
 appears; a directory with content is never touched
 (`scient/skills/antigravityUserSkillLinks.ts`). The browser-helper preflight runs
-once per helper executable per server process, and a timeout no longer waits for
+once per server process for each combination of helper executable and the
+`NODE_OPTIONS` and `ELECTRON_RUN_AS_NODE` values it launches with (held only as
+a digest), and a timeout no longer waits for
 the helper's teardown (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`).
 Verification cleanup also removes SQLite sidecars left without their database,
 which a failed `session/new` leaves behind.
@@ -140,22 +145,38 @@ rather than claiming a browser is open. Scient does not pre-start the agent.
 
 The client that starts a sign-in opens its page, once, whatever is mounted when
 the page becomes available (`apps/web/src/scient/providerConnection/providerSignInBrowser.ts`).
-The lifecycle controller's `startConnection` runs the start command through that
-module: when the response reports a new operation waiting on a `primary` URL,
-the page opens, and the outcome is kept per environment, provider instance and
-operation. Only the client that sent the command receives that response, so other
-clients and windows never open the page; their setup views offer to open it and
-do not claim it is open. A remounted view, a reconnect, or a second start joined
-to the same operation does not open it again. While a setup view for the instance
+Before sending a start, the lifecycle controller records a random sign-in request
+id there and sends it as `signInRequestId`; the connection manager stamps it on
+every state of the operation it creates. The page opens when the start reply or
+a streamed provider snapshot shows an operation carrying an id this client holds,
+waiting on a `primary` URL, so a reply lost to a brief disconnect does not lose
+the opening. `ProviderSignInPageCoordinator`, mounted once in the root route,
+watches the provider snapshots of the environments where this client holds an id.
+Other clients see the id but do not hold it, so they never open the page; their
+setup views offer to open it and do not claim it is open. A server can only run
+one connection operation per instance, so a second start from another client is
+rejected and releases its id; a second start from the same client joins the
+in-flight command, shares its operation, and releases its own id. An id is
+released when its page opens, when its operation ends, when the server rejects
+its start, or 15 minutes after it was made; held ids live in session storage, so
+a renderer reload during a slow start still opens the page, while a full quit
+leaves the card's open action. Against a server that does not stamp ids, the
+reply alone identifies a new operation. A remounted view or a reconnect does not
+open the page again. While a setup view for the instance
 is mounted it shows an opening failure; otherwise a notification offers to open the
 page. Providers that open their own browser publish `manual_fallback` URLs, which
-open only on request. Scient Agent's account sign-ins use the same module.
+open only on request. Scient Agent's account sign-ins use the same module. The
+generic connection dialog, for providers without assisted setup, keeps its own
+opening because no sign-in method uses it.
 
 The Settings and onboarding row starts sign-in directly when the provider has
 exactly one method that only needs a page Scient opens (`codex_browser`,
 `cursor_browser`, `antigravity_google`); a choice of methods, a device code, a
 pairing or configured credentials open the setup card. A started flow that turns out
-to wait on something other than that page also opens the card.
+to wait on something other than that page also opens the card, as does any
+one-click start for an environment whose server is not on this device: the
+provider's browser return goes to `127.0.0.1` on the browser's device, so the
+card's paste field for the return URL must be visible.
 
 ## Independent lifecycle state
 
