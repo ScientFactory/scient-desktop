@@ -550,7 +550,7 @@ export function stopsThreadsLabel(count: number): string {
 }
 
 /** A provider whose CLI or managed runtime update is starting or running there. */
-export function isProviderUpdating(provider: ServerProvider): boolean {
+function isProviderUpdating(provider: ServerProvider): boolean {
   const runtimeUpdate = activeRuntimeUpdate(provider);
   return (
     isProviderUpdateActive(provider) || (runtimeUpdate !== null && !runtimeUpdate.waitingForIdle)
