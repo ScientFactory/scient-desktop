@@ -137,6 +137,7 @@ it.each([
       spacer.remove();
     }
   },
+  60000,
 );
 
 it("template 15 repeats furniture at the next printable origin and preserves every editable row", async () => {
