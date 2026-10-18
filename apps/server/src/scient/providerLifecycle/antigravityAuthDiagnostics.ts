@@ -7,7 +7,6 @@ import * as AcpErrors from "effect-acp/errors";
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
 const isProcessExit = Schema.is(AcpErrors.AcpProcessExitedError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
-const maxNativeTextLength = 500;
 
 /**
  * Google accepted the sign-in, but the agent could not start a session with it. Lifecycle
@@ -61,69 +60,80 @@ export function antigravityAuthFailureDiagnostic(error: unknown, beforeAuthoriza
   };
 }
 
-const controlCharacters = /\p{Cc}+/gu;
-const anyUrl = /\b([a-z][a-z0-9+.-]*):\/\/[^\s"'<>]*/giu;
-const bearerOrBasic = /\b(Bearer|Basic)\s+[^\s"',;]+/giu;
-const jsonWebToken = /\beyJ[\w-]+\.[\w-]+(?:\.[\w-]+)?/gu;
-const secretKeyedValue =
-  /(["']?)([\w.-]*(?:token|secret|password|passwd|key|code|auth|session|cookie|credential)[\w.-]*)\1(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&}"']+)/giu;
-// A space belongs to a path only inside a directory name: more path follows it.
-const windowsPath =
-  /(?:\b[A-Za-z]:|\\\\[^\s\\/"'<>]+)[\\/](?:[^\s"'<>:*?|]| (?=[^\s"'<>:*?|\\/]+[\\/]))*/gu;
-const posixPath = /(?<![\w.:<>-])\/(?:(?:[^\s/"'<>:]| (?=[^\s/"'<>:]+\/))+\/)+[^\s/"'<>:]*/gu;
-const longOpaqueRun = /[A-Za-z0-9+/=_-]{20,}/gu;
+const standardJsonRpcMessages = new Set([
+  "Parse error",
+  "Invalid Request",
+  "Method not found",
+  "Invalid params",
+  "Internal error",
+]);
+const profileFolderNames = new Set([
+  "skills",
+  "plugins",
+  "config",
+  "conversations",
+  "antigravity-cli",
+  "antigravity-acp",
+]);
+// Node and Go spell the same failures differently, and Windows uses its own sentences.
+const osErrorPatterns: ReadonlyArray<readonly [code: string, pattern: RegExp]> = [
+  ["EEXIST", /\bEEXIST\b|\bfile exists\b|Cannot create a file when that file already exists\./iu],
+  [
+    "ENOENT",
+    /\bENOENT\b|\bno such file or directory\b|The system cannot find the (?:path|file) specified\./iu,
+  ],
+  ["EACCES", /\bEACCES\b|\bpermission denied\b|Access is denied\./iu],
+  ["EPERM", /\bEPERM\b|\boperation not permitted\b/iu],
+  ["ENOTDIR", /\bENOTDIR\b|\bnot a directory\b/iu],
+];
+const workspaceFolderFailure =
+  /failed to create workspace folder\s+"?([^"\s]+)"?\s*:\s*mkdir\b(.*)$/isu;
 
-/** `<path>/<last segment>`: the segment says what failed; the rest names the user's files. */
-function reducePath(path: string): string {
-  const segments = path.split(/[\\/]+/u).filter((segment) => segment.length > 0);
-  const last = segments.at(-1);
-  return last === undefined || /^[A-Za-z]:$/u.test(last) ? "<path>" : `<path>/${last}`;
-}
-
-function reduceUrl(match: string, scheme: string): string {
-  if (scheme.toLowerCase() === "file") {
-    let path = match.slice("file://".length).replace(/[?#].*$/u, "");
-    try {
-      path = decodeURIComponent(path);
-    } catch {
-      // A malformed escape still reduces like any other path.
-    }
-    return `file://${reducePath(path)}`;
-  }
+/** The folder's last segment, only when it is one of the agent profile's own folders. */
+function profileFolder(location: string): string | undefined {
+  let path = location;
   try {
-    // Scheme and host only: userinfo, path, query and fragment can all carry credentials.
-    const url = new URL(match);
-    return url.hostname ? `${url.protocol}//${url.hostname}` : `${url.protocol}//<host>`;
+    path = decodeURIComponent(location);
   } catch {
-    return `${scheme}://<host>`;
+    // A malformed escape is still split like any other path.
   }
+  const segment = path.split(/[\\/]+/u).findLast((part) => part.length > 0);
+  return segment !== undefined && profileFolderNames.has(segment) ? segment : undefined;
 }
 
 /**
- * Native text for the trace only, never for the UI, kept deny-by-default: URLs
- * shrink to scheme and host, absolute paths to their last segment, and anything
- * that can hold a credential is replaced, before the 500-character bound. What
- * remains still reads as the agent's sentence, so the failure stays diagnosable.
+ * The agent's `data.details` reduced to a known failure shape. No text of the
+ * agent's own is kept: an unrecognized message is recorded only as its kind and
+ * length, because a filter of credentials and paths inside free text cannot be
+ * complete.
  */
-export function localAntigravityNativeText(value: string): string {
-  const text = value
-    .replace(controlCharacters, " ")
-    .replace(anyUrl, reduceUrl)
-    .replace(bearerOrBasic, "$1 <redacted>")
-    .replace(jsonWebToken, "<redacted>")
-    .replace(secretKeyedValue, "$1$2$1$3<redacted>")
-    .replace(windowsPath, reducePath)
-    .replace(posixPath, reducePath)
-    .replace(longOpaqueRun, "<redacted>");
-  return text.length > maxNativeTextLength ? `${text.slice(0, maxNativeTextLength - 1)}…` : text;
+function classifyAcpRequestDetails(details: string) {
+  const workspace = workspaceFolderFailure.exec(details);
+  if (workspace) {
+    const folder = profileFolder(workspace[1]!);
+    const errorCode = osErrorPatterns.find(([, pattern]) => pattern.test(workspace[2]!))?.[0];
+    return {
+      detailsKind: "workspace_folder_create_failed",
+      ...(folder === undefined ? {} : { detailsFolder: folder }),
+      ...(errorCode === undefined ? {} : { detailsErrorCode: errorCode }),
+    } as const;
+  }
+  return { detailsKind: "unrecognized", detailsLength: details.length } as const;
 }
 
-/** The failed request's method, JSON-RPC code, message and `data.details`, for the trace. */
+/**
+ * Allowlisted facts of a failed ACP request, for the trace: the method this
+ * client sent, the JSON-RPC code, the message only when it is a standard
+ * JSON-RPC message, and the kind of failure `data.details` describes.
+ */
 export function antigravityAcpRequestDiagnostic(error: unknown): {
   readonly acpMethod?: string;
   readonly acpCode?: number;
   readonly acpMessage?: string;
-  readonly acpDetails?: string;
+  readonly detailsKind?: "workspace_folder_create_failed" | "unrecognized";
+  readonly detailsFolder?: string;
+  readonly detailsErrorCode?: string;
+  readonly detailsLength?: number;
 } {
   if (!isAcpRequestError(error)) return {};
   const details =
@@ -131,8 +141,8 @@ export function antigravityAcpRequestDiagnostic(error: unknown): {
   return {
     ...(error.method === undefined ? {} : { acpMethod: error.method }),
     acpCode: error.code,
-    acpMessage: localAntigravityNativeText(error.errorMessage),
-    ...(details === undefined ? {} : { acpDetails: localAntigravityNativeText(details) }),
+    ...(standardJsonRpcMessages.has(error.errorMessage) ? { acpMessage: error.errorMessage } : {}),
+    ...(details === undefined ? {} : classifyAcpRequestDetails(details)),
   };
 }
 

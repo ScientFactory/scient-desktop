@@ -108,16 +108,16 @@ closing the attempt scope cancels the owned flow. Pre-browser errors expose
 only fixed, allowlisted runtime-resolution, helper-preparation, runtime-startup,
 or link-capture messages; unknown causes remain generic. A failed current attempt
 records its authorization phase, known error type, and available numeric exit or
-allowlisted system error code. For a failed ACP request it also records the
-method, JSON-RPC code, message and `data.details`, each bounded to 500
-characters and sanitized deny-by-default: URLs keep only scheme and host,
-absolute paths (Windows, UNC, POSIX and `file://`) keep only their last segment,
-and bearer and basic values, JWTs, values keyed by token, secret, password, key,
-code, auth, session, cookie or credential, and opaque runs of 20 or more
-characters are replaced. These are attributes of a warning event in the server trace, so they follow
+allowlisted system error code. For a failed ACP request it also records an
+allowlist of facts and no text of the agent's own: the method, the JSON-RPC code,
+the message only when it is a standard JSON-RPC message, and the kind of failure
+`data.details` describes. The known shape "failed to create workspace folder …:
+mkdir …" is recorded as `workspace_folder_create_failed` with the folder's last
+segment when it is one of the profile's own folders and the OS error as
+EEXIST, ENOENT, EACCES, EPERM or ENOTDIR; anything else is `unrecognized` with its
+length. These are attributes of a warning event in the server trace, so they follow
 the user's trace exporter configuration like every other trace event; Settings >
-Diagnostics lists only the event's fixed message, and the UI never shows the
-native text. Credentials and OAuth URLs are not retained, and logging does not
+Diagnostics lists only the event's fixed message. Credentials and OAuth URLs are not retained, and logging does not
 determine the attempt's outcome. When
 Google accepted the sign-in but `session/new` failed, the failed operation carries
 `failedAfterSignIn` and the UI says the sign-in finished but Antigravity could not
