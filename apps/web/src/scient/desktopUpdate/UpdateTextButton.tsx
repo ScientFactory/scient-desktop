@@ -16,7 +16,7 @@ export function UpdateTextButton({
       type="button"
       data-slot="update-text-button"
       className={cn(
-        "-mx-1.5 -my-0.5 shrink-0 cursor-pointer rounded-sm px-1.5 py-0.5 text-xs whitespace-nowrap underline decoration-muted-foreground/60 underline-offset-3 outline-hidden hover:bg-accent hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-64",
+        "-mx-1.5 -my-0.5 shrink-0 cursor-pointer rounded-sm px-1.5 py-0.5 text-xs whitespace-nowrap underline decoration-muted-foreground/60 underline-offset-3 outline-hidden hover:bg-foreground/8 hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-64",
         emphasis ? "font-semibold text-foreground" : "text-foreground/80 hover:text-foreground",
         className,
       )}
