@@ -20,6 +20,7 @@ import { mathReadingPreviewReady } from "./mathReadingPreview";
 import template15 from "./fixtures/paging-long-table.tex?raw";
 import template26 from "./fixtures/paging-hebrew.tex?raw";
 import template28 from "./fixtures/paging-medical-article.tex?raw";
+import twoColumnArticle from "./fixtures/paging-two-column-article.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
@@ -363,3 +364,27 @@ it("finds the first letter of a line that follows a hyphenation break", async ()
     block.remove();
   }
 });
+
+it("sets a two-column article's title across both columns, above the body", async () => {
+  const editor = await mount(twoColumnArticle, "column-title");
+  const heading = [...editor.view.dom.querySelectorAll<HTMLElement>("*")].find((element) =>
+    element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+      ? element.value === "Layout fidelity specimen"
+      : element.textContent === "Layout fidelity specimen" && !element.children.length,
+  )!;
+  expect(heading).toBeTruthy();
+  const titleBox = heading.getBoundingClientRect();
+  const body = [
+    ...editor.view.dom.querySelectorAll<HTMLElement>('[data-layout="sourceColumns"] p'),
+  ];
+  expect(body.length).toBeGreaterThan(1);
+  expect(heading.closest('[data-layout="sourceColumns"]')).toBeNull();
+  // Centred on the page's text width, not on the first column.
+  const left = Math.min(...body.map((paragraph) => paragraph.getBoundingClientRect().left));
+  const right = Math.max(...body.map((paragraph) => paragraph.getBoundingClientRect().right));
+  expect(Math.abs((titleBox.left + titleBox.right) / 2 - (left + right) / 2)).toBeLessThan(4);
+  // Both columns begin below the title, as \maketitle sets it in twocolumn mode.
+  for (const paragraph of body)
+    expect(paragraph.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom - 1);
+  expect(published).toBe(twoColumnArticle);
+}, 60000);

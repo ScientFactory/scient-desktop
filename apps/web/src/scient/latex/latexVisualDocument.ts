@@ -4696,7 +4696,11 @@ export function projectLatexVisualDocument(
         flush();
         composed.push(block);
         columns = block.source.startsWith("\\onecolumn") ? 1 : 2;
-      } else if (block.node.attrs?.kind === "pagebreak") {
+      } else if (
+        block.node.attrs?.kind === "pagebreak" ||
+        // \maketitle sets the title across both columns in twocolumn mode.
+        (columns === 2 && block.node.attrs?.kind === "title")
+      ) {
         flush();
         composed.push(block);
       } else group.push(block);
