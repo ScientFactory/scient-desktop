@@ -603,6 +603,34 @@ it("asks above the pill before a pass that downloads this app stops running thre
   await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
   expect(run).not.toHaveBeenCalled();
 
+  // Pressing the pill again cancels rather than asking again.
+  await pill.click();
+  await expect.element(cancel).toBeVisible();
+  await pill.click();
+  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
+
+  // Escape cancels and returns focus to the pill.
+  await pill.click();
+  await expect.poll(() => document.activeElement).toBe(cancel.element());
+  await userEvent.keyboard("{Escape}");
+  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
+  await expect.poll(() => document.activeElement).toBe(pill.element());
+
+  // A question ends when Update stops running the pass, and does not come back on its own.
+  await pill.click();
+  await expect.element(cancel).toBeVisible();
+  setUpdateEverythingRun(() => ({
+    localVersion: null,
+    phase: "providers",
+    restartAt: null,
+    machines: [],
+  }));
+  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
+  setUpdateEverythingRun(() => null);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(document.querySelector("[data-update-ask]")).toBeNull();
+  expect(run).not.toHaveBeenCalled();
+
   await pill.click();
   await update.click();
   await expect.poll(() => run.mock.calls.length).toBe(1);

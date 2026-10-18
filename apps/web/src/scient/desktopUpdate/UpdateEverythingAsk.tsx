@@ -26,8 +26,18 @@ export function UpdateEverythingAsk({
   return (
     <Popover
       open={stops !== null}
-      onOpenChange={(open) => {
-        if (!open) onCancel();
+      onOpenChange={(open, details) => {
+        if (open) return;
+        // A press on the pill itself is the pill's to answer: it cancels without asking again.
+        const target = details.event?.target;
+        if (
+          details.reason === "outside-press" &&
+          target instanceof Node &&
+          document.getElementById(anchorId)?.contains(target)
+        ) {
+          return;
+        }
+        onCancel();
       }}
     >
       {stops !== null ? (

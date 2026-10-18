@@ -58,7 +58,8 @@ import type { ServerUpdateTarget } from "../ServerUpdateAction";
 import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
 import { restartUpdateNow } from "./updateEverythingRun";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — a pass asks beside the pill, and only when it would stop running threads.
+// SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
+// and only when it would stop running threads.
 import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
 import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
 // SCIENT-FORK:END
@@ -197,7 +198,8 @@ export function SidebarUpdatePill() {
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
-  // SCIENT-FORK:START — the pass waiting on its question: what it stops and what it admits.
+  // SCIENT-FORK:START — replaces upstream's dialog open state: the pass waiting on its
+  // question, with what it stops and what it admits.
   const [askingPass, setAskingPass] = useState<ReturnType<typeof confirmServerStops> | null>(null);
   // SCIENT-FORK:END
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -257,6 +259,8 @@ function SidebarUpdateControl() {
     action,
   );
   const isRunningEverything = run !== null && run.localVersion !== null;
+  // The question lasts only while Update would still run the pass; the next press asks again.
+  if (!runsEverything && askingPass !== null) setAskingPass(null);
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
@@ -319,7 +323,11 @@ function SidebarUpdateControl() {
 
     if (runsEverything) {
       // SCIENT-FORK:START — ask only when the pass would stop running threads elsewhere. This
-      // app's own restart keeps its countdown with Later.
+      // app's own restart keeps its countdown with Later. Pressing the pill again cancels.
+      if (askingPass !== null) {
+        setAskingPass(null);
+        return;
+      }
       const pass = confirmServerStops(everything.otherServers.map((server) => server.target));
       if (pass.stops === 0) {
         void runEverything(pass.admitServer);
@@ -647,10 +655,10 @@ function SidebarUpdateControl() {
           </PopoverPopup>
         ) : null}
       </Popover>
-      {/* SCIENT-FORK:START */}
+      {/* SCIENT-FORK:START — replaces upstream's confirmation dialog mount. */}
       <UpdateEverythingAsk
         anchorId={releaseNotesTriggerId}
-        stops={runsEverything && askingPass !== null ? askingPass.stops : null}
+        stops={askingPass?.stops ?? null}
         onCancel={() => setAskingPass(null)}
         onUpdate={() => {
           if (askingPass !== null) void runEverything(askingPass.admitServer);
