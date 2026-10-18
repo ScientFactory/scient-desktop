@@ -12,10 +12,11 @@ import { prepareAntigravityProfile } from "../../provider/antigravityAuthSupport
 import { verifyAntigravityBrowserHelperOnce } from "./antigravityBrowserHelperPreflight.ts";
 
 const timedOut = { _tag: "TimedOut" } as const;
-const once = (spawner: object, helperExecutable: string) =>
+const once = (spawner: object, helperExecutable: string, environment: NodeJS.ProcessEnv = {}) =>
   verifyAntigravityBrowserHelperOnce({
     spawner,
     helperExecutable,
+    environment,
     timeout: "5 seconds",
     onTimeout: () => timedOut,
   });
@@ -32,6 +33,23 @@ it.effect("keeps a successful verification per helper and spawner", () =>
     expect(runs).toBe(1);
     yield* verify.pipe(once(spawner, "/helper/b"));
     yield* verify.pipe(once({}, "/helper/a"));
+    expect(runs).toBe(3);
+  }),
+);
+
+it.effect("checks again when the helper's Node or Electron startup settings change", () =>
+  Effect.gen(function* () {
+    const spawner = {};
+    let runs = 0;
+    const verify = Effect.sync(() => {
+      runs += 1;
+    });
+    const launch = { ELECTRON_RUN_AS_NODE: "1", PATH: "/bin" };
+    yield* verify.pipe(once(spawner, "/helper", launch));
+    yield* verify.pipe(once(spawner, "/helper", { ...launch, PATH: "/usr/bin" }));
+    expect(runs).toBe(1);
+    yield* verify.pipe(once(spawner, "/helper", { ...launch, node_options: "--inspect" }));
+    yield* verify.pipe(once(spawner, "/helper", { PATH: "/bin" }));
     expect(runs).toBe(3);
   }),
 );

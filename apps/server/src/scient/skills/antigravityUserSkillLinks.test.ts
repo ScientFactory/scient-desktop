@@ -109,6 +109,22 @@ it.layer(NodeServices.layer)("Antigravity user skill links", (it) => {
     }),
   );
 
+  it.effect("never follows a link at the link path into another directory", () =>
+    Effect.gen(function* () {
+      const t = yield* setup;
+      const elsewhere = t.path.join(t.directory, "elsewhere-empty");
+      yield* t.fs.makeDirectory(elsewhere, { recursive: true });
+      yield* t.fs.makeDirectory(t.path.dirname(t.configLink), { recursive: true });
+      yield* plantLink(elsewhere, t.configLink);
+      yield* t.fs.makeDirectory(t.configTarget, { recursive: true });
+
+      yield* t.prepare;
+      // The stale link is replaced by upstream's linker; what it pointed at stays.
+      expect((yield* t.fs.stat(elsewhere)).type).toBe("Directory");
+      expect(yield* isLink(t.configLink)).toBe(true);
+    }),
+  );
+
   it.effect("keeps a link that still resolves when the expected target is missing", () =>
     Effect.gen(function* () {
       const t = yield* setup;

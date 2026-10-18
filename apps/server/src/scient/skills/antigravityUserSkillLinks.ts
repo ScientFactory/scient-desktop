@@ -39,10 +39,12 @@ export const prepareAntigravitySkillLink = Effect.fn("prepareAntigravitySkillLin
       Effect.orElseSucceed(() => false),
     );
     if (targetIsDirectory) {
-      if (!isLink) {
-        // rmdir refuses a directory with anything in it, so no content can be lost.
-        yield* Effect.tryPromise(() => NodeFSP.rmdir(input.link)).pipe(Effect.ignore);
-      }
+      // Only a real directory, never a link or junction to one; rmdir refuses a
+      // directory with anything in it, so no content can be lost.
+      yield* Effect.tryPromise(async () => {
+        const info = await NodeFSP.lstat(input.link);
+        if (info.isDirectory() && !info.isSymbolicLink()) await NodeFSP.rmdir(input.link);
+      }).pipe(Effect.ignore);
       return false;
     }
     if (!isLink) return true;
