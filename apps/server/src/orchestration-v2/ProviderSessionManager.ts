@@ -2474,6 +2474,12 @@ export const layerWithOptions = (
       );
 
       // SCIENT-FORK:START — execution authority of the exact live native owner.
+      const authorityLookupError =
+        (invocation: { readonly providerSessionId: string }) => (cause: unknown) =>
+          new ProviderSessionLookupError({
+            providerSessionId: ProviderSessionId.make(invocation.providerSessionId),
+            cause,
+          });
       const sessionAuthority = makeSessionAuthority({
         sessions,
         sessionKey,
@@ -2481,15 +2487,11 @@ export const layerWithOptions = (
         readThreadRecords: (invocation) =>
           projectionStore
             .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderSessionLookupError({
-                    providerSessionId: ProviderSessionId.make(invocation.providerSessionId),
-                    cause,
-                  }),
-              ),
-            ),
+            .pipe(Effect.mapError(authorityLookupError(invocation))),
+        readThreadShell: (invocation) =>
+          projectionStore
+            .getThreadShell(invocation.threadId)
+            .pipe(Effect.mapError(authorityLookupError(invocation))),
       });
       // SCIENT-FORK:END
 

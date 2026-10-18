@@ -351,11 +351,7 @@ patchedDependencies:
   # password, not the imported certificate's password, when granting signing access.
   app-builder-lib@26.15.6: patches/app-builder-lib@26.15.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
-  # SCIENT-FORK:START — node-pty stays on ^1.1.0 until the owner decides
-  # between it and ^1.2.0-beta.15, so upstream's node-pty patch entry is
-  # deliberately not mapped. The patch file itself stays in the repository so
-  # adopting the newer version needs no new artifact.
-  # SCIENT-FORK:END
+  node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
   react-native-keyboard-controller@1.22.7: patches/react-native-keyboard-controller@1.22.7.patch
   expo-modules-core@58.0.22: patches/expo-modules-core@58.0.22.patch

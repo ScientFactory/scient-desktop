@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 import type { McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
-/** Thread defaults govern future admissions; only the live native owner grants invocation authority. */
+/** Only the live native owner grants invocation authority, never above the thread's current modes. */
 export const requireInvocationPolicy = Effect.fn("mcp.requireInvocationPolicy")(function* (
   scope: McpThreadInvocationScope,
 ) {
@@ -21,7 +21,7 @@ export const requireInvocationPolicy = Effect.fn("mcp.requireInvocationPolicy")(
   if (Option.isNone(policy))
     return yield* new OrchestratorMcpFailure({
       code: "parent_not_active",
-      message: "This credential no longer owns an active run with a captured execution policy.",
+      message: "This credential no longer has a live run or background subagent on its thread.",
     });
   return policy.value;
 });

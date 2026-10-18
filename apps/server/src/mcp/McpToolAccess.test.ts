@@ -20,6 +20,7 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { isLiveCallerShell } from "./OrchestratorMcpService.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
@@ -197,7 +198,8 @@ const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementServi
         resolveMcpInvocationPolicy: (caller) => {
           const captured = shells.get(caller.threadId);
           return Effect.succeed(
-            captured?.activeRunId == null
+            // Mirrors the native owner: an active run, or a background subagent it started.
+            captured === undefined || !isLiveCallerShell(captured, caller.providerInstanceId)
               ? Option.none()
               : Option.some({
                   runtimeMode: captured.runtimeMode,
@@ -262,9 +264,7 @@ it.effect.each([
   ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
   ["acts_as_caller", supervised, {}, "ran"],
   ["acts_as_caller", ended, {}, "parent_not_active"],
-  // Upstream lets a background subagent act after its parent turn ends; Scient
-  // still requires the run whose execution policy was captured.
-  ["acts_as_caller", background, {}, "parent_not_active"],
+  ["acts_as_caller", background, {}, "ran"],
   ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
   ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
   ["acts_as_caller", archivedBackground, {}, "parent_not_active"],
@@ -273,7 +273,7 @@ it.effect.each([
 
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
-  ["writes", background, {}, "parent_not_active"],
+  ["writes", background, {}, "ran"],
   ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],
   ["writes", previewOnly, {}, "capability_denied"],
