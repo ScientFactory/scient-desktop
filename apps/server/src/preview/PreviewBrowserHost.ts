@@ -21,8 +21,8 @@ export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
  * Modelled on the profile Ubuntu ships for Google Chrome; `unconfined` adds
  * nothing beyond `userns`.
  */
-// SCIENT-FORK:START — Scient display copy retains native CLI and profile identifiers.
-export const APPARMOR_PROFILE = `# Written by \`t3 browser setup\`: lets Scient's headless browser use Chrome's sandbox.
+// SCIENT-FORK:START — Scient display copy retains the native profile identifiers.
+export const APPARMOR_PROFILE = `# Written by \`scient browser setup\`: lets Scient's headless browser use Chrome's sandbox.
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -63,7 +63,7 @@ export class PreviewBrowserSandboxError extends Schema.TaggedError<PreviewBrowse
   { setupCommand: Schema.String },
 ) {
   override get message(): string {
-    return `This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run \`${this.setupCommand}\` on the host once to allow it, then try again.`;
+    return `This host blocks the sandbox Scient's browser runs in (AppArmor on Ubuntu 23.10+). Run \`${this.setupCommand}\` on the host once to allow it, then try again.`;
   }
 }
 
@@ -72,7 +72,7 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
   { setupCommand: Schema.String, libraries: Schema.Array(Schema.String) },
 ) {
   override get message(): string {
-    return `This host is missing libraries T3's browser needs (${this.libraries.join(", ")}). Run \`${this.setupCommand}\` on the host to install them, then try again.`;
+    return `This host is missing libraries Scient's browser needs (${this.libraries.join(", ")}). Run \`${this.setupCommand}\` on the host to install them, then try again.`;
   }
 }
 

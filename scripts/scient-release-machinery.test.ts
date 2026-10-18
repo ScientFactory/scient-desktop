@@ -389,6 +389,8 @@ describe("Scient release machinery", () => {
 
     assert.equal(manifest.name, "t3");
     assert.equal(manifest.version, "0.6.0");
+    // `scient` is the documented command; `t3` keeps existing remote setups working.
+    assert.deepStrictEqual(manifest.bin, { scient: "./dist/bin.mjs", t3: "./dist/bin.mjs" });
     assert.deepStrictEqual(manifest.repository, {
       type: "git",
       url: "https://github.com/ScientFactory/scient-desktop.git",
