@@ -46,6 +46,16 @@ const markup = (element: Element) =>
     .querySelector(".scient-latex-math-preview")
     ?.shadowRoot?.querySelector("[data-math-preview-content]")?.textContent;
 
+/** Selects the formula at `index` without a click, as inserting one from a menu does. */
+function selectFormula(index: number) {
+  const positions: number[] = [];
+  editor().state.doc.descendants((node, position) => {
+    if (node.type.name === "latexInlineMath" || node.type.name === "latexDisplayMath")
+      positions.push(position);
+  });
+  editor().commands.setNodeSelection(positions[index]!);
+}
+
 afterEach(async () => {
   readiness.hold = false;
   root?.unmount();
@@ -156,6 +166,102 @@ it("protects the pending equation from typing, IME, paste and drop without chang
   editor().commands.setTextSelection(2);
   await frame();
   expect(reading.querySelector("math-field")).toBeNull();
+});
+
+it("types what was typed while the equation editor was prepared once it is ready", async () => {
+  await mount("Before $x+y$ after.");
+  const reading = readers()[0]!;
+  readiness.hold = true;
+  // Selected without a click, as a formula just inserted from the Math menu is.
+  selectFormula(0);
+  await expect.poll(() => reading.querySelector("math-field")).toBeTruthy();
+  expect(reading.dataset.mathEditorAdmission).toBe("pending");
+  await userEvent.keyboard("qw{Backspace}z");
+  await frame();
+  expect(source).not.toContain("qz");
+  const field = reading.querySelector<MathfieldElement>("math-field")!;
+  field.dataset.scientMathReady = "true";
+  await expect.poll(() => field.hasFocus()).toBe(true);
+  await expect.poll(() => field.getValue()).toContain("qz");
+  expect(field.getValue()).not.toContain("w");
+  await expect.poll(() => source).toContain("qz");
+});
+
+it("types kept keys exactly as typing into a ready editor", async () => {
+  await mount("Before $x$ and $x$ after.");
+  // A command, brackets, scripts, spaces and a mistyped letter removed again.
+  const keys = "\\alpha (a^2_1) qw{Backspace}z";
+  const [first, second] = readers();
+  const type = async (reading: HTMLElement, index: number, held: boolean) => {
+    readiness.hold = held;
+    selectFormula(index);
+    await expect.poll(() => reading.querySelector("math-field")).toBeTruthy();
+    const field = reading.querySelector<MathfieldElement>("math-field")!;
+    if (held) {
+      expect(reading.dataset.mathEditorAdmission).toBe("pending");
+      await userEvent.keyboard(keys);
+      field.dataset.scientMathReady = "true";
+    }
+    await expect.poll(() => field.hasFocus()).toBe(true);
+    if (!held) await userEvent.keyboard(keys);
+    await expect.poll(() => field.getValue()).toContain("qz");
+    return field.getValue();
+  };
+  const kept = await type(first!, 0, true);
+  editor().commands.setTextSelection(1);
+  await frame();
+  const typed = await type(second!, 1, false);
+  expect(kept).toBe(typed);
+});
+
+it("deletes nothing in the formula for a Backspace typed while its editor was prepared", async () => {
+  await mount("Before $x+y$ after.");
+  const reading = readers()[0]!;
+  readiness.hold = true;
+  selectFormula(0);
+  await expect.poll(() => reading.querySelector("math-field")).toBeTruthy();
+  await userEvent.keyboard("q{Backspace}{Backspace}{Backspace}");
+  const field = reading.querySelector<MathfieldElement>("math-field")!;
+  field.dataset.scientMathReady = "true";
+  await expect.poll(() => field.hasFocus()).toBe(true);
+  await frame();
+  expect(field.getValue()).toBe("x+y");
+});
+
+it("keeps no keys typed after a click while the equation editor was prepared", async () => {
+  await mount("Before $x+y$ after.");
+  const reading = readers()[0]!;
+  readiness.hold = true;
+  await userEvent.click(reading.querySelector<HTMLElement>(".scient-latex-mathfield")!);
+  await expect.poll(() => reading.querySelector("math-field")).toBeTruthy();
+  await userEvent.keyboard("q");
+  const field = reading.querySelector<MathfieldElement>("math-field")!;
+  field.dataset.scientMathReady = "true";
+  await expect.poll(() => field.hasFocus()).toBe(true);
+  await frame();
+  // The click's caret and selection belong to the relayed gesture.
+  expect(field.getValue()).toBe("x+y");
+});
+
+it("keeps no composing key typed while the equation editor was prepared", async () => {
+  await mount("Before $x+y$ after.");
+  const reading = readers()[0]!;
+  readiness.hold = true;
+  selectFormula(0);
+  await expect.poll(() => reading.querySelector("math-field")).toBeTruthy();
+  const composing = new KeyboardEvent("keydown", {
+    key: "n",
+    isComposing: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.activeElement!.dispatchEvent(composing);
+  expect(composing.defaultPrevented).toBe(true);
+  const field = reading.querySelector<MathfieldElement>("math-field")!;
+  field.dataset.scientMathReady = "true";
+  await expect.poll(() => field.hasFocus()).toBe(true);
+  await frame();
+  expect(field.getValue()).toBe("x+y");
 });
 
 it("closes the document while a formula is being edited without a late write", async () => {
