@@ -51,11 +51,12 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
     let scroller: () => HTMLElement | null = () => null;
     // The text at the top of the reading area: its document position (mapped
     // through edits) and, when it has none, its block. `offset` is its
-    // distance from the top of the reading area.
+    // distance from the top of the reading area, scrolled to `scrollTop`.
     let anchor: {
       position: number | null;
       element: Element;
       offset: number;
+      scrollTop: number;
       scale: number;
     } | null = null;
     return [
@@ -192,7 +193,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               } catch {
                 position = null;
               }
-            anchor = { position, element, offset: 0, scale: scale() };
+            anchor = { position, element, offset: 0, scrollTop: scroll.scrollTop, scale: scale() };
             const top = anchorTop();
             if (top === null) anchor = null;
             else anchor.offset = top - box.top;
@@ -221,9 +222,26 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               capture();
               return;
             }
-            const delta = top - scroll.getBoundingClientRect().top - anchor.offset;
+            const box = scroll.getBoundingClientRect();
+            // Scrolled since the anchor was taken, possibly before the scroll
+            // event (a restored reading position, the caret followed): the
+            // reading line is a new one, taken now. Content that moved the old
+            // line lies above the new one too only when reading moved down; a
+            // range clamped by content shrinking above is not a reading move.
+            const scrolled = scroll.scrollTop - anchor.scrollTop;
+            if (Math.abs(scrolled) > 0.5) {
+              const drift = top - box.top - (anchor.offset - scrolled);
+              if (scrolled > 0 && Math.abs(drift) > 0.5) {
+                scroll.scrollTop += drift;
+                own = scroll.scrollTop;
+              }
+              capture();
+              return;
+            }
+            const delta = top - box.top - anchor.offset;
             if (Math.abs(delta) <= 0.5) return;
             scroll.scrollTop += delta;
+            anchor.scrollTop = scroll.scrollTop;
             own = scroll.scrollTop;
           };
           let correctionQueued = false;

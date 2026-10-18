@@ -614,6 +614,69 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
   expect(Math.abs(scroller(editor).scrollTop - 300)).toBeLessThan(2);
 }, 30000);
 
+it("keeps a scroll made before the reading line is taken again, corrects drift, and ignores clamping", async () => {
+  const editor = await open("visual-stability-scroll-then-layout");
+  await formulasRendered();
+  const scroll = scroller(editor);
+  // Content above everything grows, and pages settle, right after a scroll:
+  // in the same task (a restored position, the caret followed) or from the
+  // scroll event, before the next frame takes the new reading line.
+  const spacers: HTMLElement[] = [];
+  const growAndSettle = () => {
+    const spacer = document.createElement("div");
+    spacer.style.height = "80px";
+    editor.view.dom.before(spacer);
+    spacers.push(spacer);
+    editor.view.dom.dispatchEvent(new CustomEvent("scient-latex-layout"));
+  };
+  // Blocks shown for the first time can still settle their heights.
+  const settled = async () => {
+    let last = Number.NaN;
+    for (let still = 0, frame = 0; still < 5 && frame < 120; frame++) {
+      await frames(1);
+      const top = editor.view.dom.getBoundingClientRect().top;
+      still = Math.abs(top - last) < 0.5 ? still + 1 : 0;
+      last = top;
+    }
+  };
+  for (const during of ["task", "scroll event"]) {
+    scroll.scrollTop = 400;
+    await settled();
+    // Where the text is once scrolled, the growth above corrected away.
+    const expected = editor.view.dom.getBoundingClientRect().top - 1200;
+    if (during === "scroll event") scroll.addEventListener("scroll", growAndSettle, { once: true });
+    scroll.scrollTop += 1200;
+    if (during === "task") growAndSettle();
+    await frames(3);
+    expect(Math.abs(editor.view.dom.getBoundingClientRect().top - expected), during).toBeLessThan(
+      2,
+    );
+  }
+  // At the end, content shrinking above clamps the scroll range once the
+  // paper's frame follows it: the text read stays where it is rather than
+  // counting the clamp as a reading move.
+  scroll.scrollTop = scroll.scrollHeight;
+  await settled();
+  const box = scroll.getBoundingClientRect();
+  const line = editor.view.posAtCoords({
+    left: box.left + box.width / 2,
+    top: box.top + box.height / 3,
+  })!.pos;
+  const end = editor.view.coordsAtPos(line).top;
+  // Pages set with other fonts (Linux CI) can end on a blank stretch of the
+  // last page: with no text in view there is no reading line to keep.
+  if (end < box.top || end > box.bottom) return;
+  for (const spacer of spacers) spacer.remove();
+  // The frame follows the paper and pages settle, as the stage observer does
+  // at its resize delivery (which a busy runner can defer or skip here).
+  const frame = editor.view.dom.closest<HTMLElement>(".scient-latex-page-zoom-frame")!;
+  const stage = frame.querySelector<HTMLElement>(".scient-latex-page-stage")!;
+  frame.style.height = `${stage.getBoundingClientRect().height}px`;
+  editor.view.dom.dispatchEvent(new CustomEvent("scient-latex-layout"));
+  await settled();
+  expect(Math.abs(editor.view.coordsAtPos(line).top - end)).toBeLessThan(2);
+}, 30000);
+
 it("renumbers a reference in an unchanged title when labels change places", async () => {
   const document = (first: string, second: string) => String.raw`\documentclass{article}
 \usepackage{amsthm}
