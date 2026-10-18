@@ -2331,33 +2331,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   li[data-level="3"] {
   padding-inline-start: 7em;
 }
-/* \newpage and \clearpage on continuous paper: a quiet labelled rule. */
+/* Source-backed page commands control flow without printing editor furniture,
+   including before the first page plan is ready. */
 .scient-latex-page-break {
-  position: relative;
-  display: block;
-  height: 1.6em;
-  margin: 0;
-  color: #8290a1;
-  font: 9px/1.4 var(--font-sans);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.scient-latex-page-break::before {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  border-top: 1px dashed #c4c8ce;
-  content: "";
-}
-.scient-latex-page-break::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  padding: 0 6px;
-  background: #fff;
-  content: "Page break";
-  transform: translate(-50%, -50%);
+  display: none;
 }
 .scient-latex-rich-preview {
   position: relative;
@@ -4291,10 +4268,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-selection-overlay {
     display: none !important;
   }
-}
-
-.scient-latex-visual-paper[data-paged] .scient-latex-page-break {
-  display: none;
 }
 
 /* Table struts affect row minima without multiplying wrapped paragraph leading. */
