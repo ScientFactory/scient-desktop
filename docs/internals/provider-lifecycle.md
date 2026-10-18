@@ -108,13 +108,54 @@ closing the attempt scope cancels the owned flow. Pre-browser errors expose
 only fixed, allowlisted runtime-resolution, helper-preparation, runtime-startup,
 or link-capture messages; unknown causes remain generic. A failed current attempt
 records its authorization phase, known error type, and available numeric exit or
-allowlisted system error code. The diagnostic never retains native output, paths,
-credentials, or OAuth URLs, and logging does not determine the attempt's outcome.
-The lifecycle handoff accepts the same 16,384-character authorization URL bound
-as native provider auth without truncating the link. Browser-opening errors in the compact
-desktop/web view belong to the provider instance, operation, and opening
-invocation. They are visible only while waiting for browser authorization,
-not after verification begins.
+allowlisted system error code. For a failed ACP request it also records, in the
+local server trace only, the method, JSON-RPC code, message and `data.details`,
+each bounded to 500 characters, without URL queries or fragments and with the
+user's home shown as `~`; users never see that text. Credentials and OAuth URLs
+are not retained, and logging does not determine the attempt's outcome. When
+Google accepted the sign-in but `session/new` failed, the failed operation carries
+`failedAfterSignIn` and the UI says the sign-in finished but Antigravity could not
+start; the manager sets the same flag when it cannot verify an account the provider
+reported as signed in. The lifecycle handoff accepts the same 16,384-character authorization URL bound
+as native provider auth without truncating the link.
+
+The agent reads skills under its private `GEMINI_HOME`, and creates
+`config/skills` and `antigravity-cli/skills` there on `session/new`; a link to a
+missing directory makes every session fail. Profile preparation therefore links
+those directories to `~/.gemini` only when the target exists, removes a dangling
+link otherwise, and replaces an empty directory the agent created once the target
+appears; a directory with content is never touched
+(`scient/skills/antigravityUserSkillLinks.ts`). The browser-helper preflight runs
+once per helper executable per server process, and a timeout no longer waits for
+the helper's teardown (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`).
+Verification cleanup also removes SQLite sidecars left without their database,
+which a failed `session/new` leaves behind.
+
+Starting Antigravity unpacks the agent first and can take up to a minute. Its
+connection actions name a starting message, which the manager publishes with the
+`starting` operation, and the setup card and Settings row say it is starting
+rather than claiming a browser is open. Scient does not pre-start the agent.
+
+## Opening sign-in pages
+
+The client that starts a sign-in opens its page, once, whatever is mounted when
+the page becomes available (`apps/web/src/scient/providerConnection/providerSignInBrowser.ts`).
+The lifecycle controller's `startConnection` runs the start command through that
+module: when the response reports a new operation waiting on a `primary` URL,
+the page opens, and the outcome is kept per environment, provider instance and
+operation. Only the client that sent the command receives that response, so other
+clients and windows never open the page; their setup views offer to open it and
+do not claim it is open. A remounted view, a reconnect, or a second start joined
+to the same operation does not open it again. While a setup view for the instance
+is mounted it shows an opening failure; otherwise a notification offers to open the
+page. Providers that open their own browser publish `manual_fallback` URLs, which
+open only on request. Scient Agent's account sign-ins use the same module.
+
+The Settings and onboarding row starts sign-in directly when the provider has
+exactly one method that only needs a page Scient opens (`codex_browser`,
+`cursor_browser`, `antigravity_google`); a choice of methods, a device code, a
+pairing or configured credentials open the setup card. A started flow that turns out
+to wait on something other than that page also opens the card.
 
 ## Independent lifecycle state
 
@@ -151,7 +192,9 @@ errors appear in the selected provider's detail pane rather than repeating in th
 
 Provider settings and onboarding share the same header actions. An enabled missing runtime with
 advertised install capability shows Install; an enabled installed runtime needing authentication
-with an advertised login method shows Sign in. Both retain an icon-only Manage entry. Active runtime,
+with an advertised login method shows Sign in, which starts sign-in directly or opens the setup
+card as described in [Opening sign-in pages](#opening-sign-in-pages). Both retain an icon-only
+Manage entry. Active runtime,
 sign-in, and external update operations show a compact progress control alongside icon-only Manage,
 including a download percentage only while downloading with a known total. Progress comes from the
 server's operation state and remains visible when the lifecycle dialog closes. Clicking progress or
