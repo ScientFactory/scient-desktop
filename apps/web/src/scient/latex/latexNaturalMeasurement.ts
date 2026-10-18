@@ -17,7 +17,7 @@ export interface NaturalLine {
 export function naturalTextLines(
   text: globalThis.Node,
   range: Range,
-): { offset: number; top: number; bottom: number; right: number }[] {
+): { offset: number; top: number; bottom: number; right: number; hyphenated: boolean }[] {
   const length = text.textContent?.length ?? 0;
   if (!length) return [];
   range.selectNodeContents(text);
@@ -39,9 +39,14 @@ export function naturalTextLines(
       else high = middle;
     }
     start = low;
-    return start < length
-      ? [{ offset: start, top: rect.top, bottom: rect.bottom, right: rect.right }]
-      : [];
+    if (start >= length) return [];
+    // After a hyphenation break the first letter also reports the hyphen
+    // printed on the previous line: evidence that this break hyphenates.
+    range.setStart(text, start);
+    range.setEnd(text, start + 1);
+    const hyphenated =
+      start > 0 && [...range.getClientRects()].filter((box) => box.width > 0).length > 1;
+    return [{ offset: start, top: rect.top, bottom: rect.bottom, right: rect.right, hyphenated }];
   });
 }
 
@@ -158,7 +163,7 @@ export function measureNatural<T>(
     copy.style.removeProperty("--scient-paged-left");
     copy.style.removeProperty("--scient-paged-display-shrink");
     copy.style.removeProperty("--scient-paged-flow-offset");
-    copy.classList.remove("scient-paged-line", "scient-paged-part");
+    copy.classList.remove("scient-paged-line", "scient-paged-part", "scient-paged-hyphen");
     if (node instanceof HTMLTextAreaElement && node.closest("figcaption")) {
       // A detached flex caption must retain the field's actual intrinsic size;
       // otherwise field-sizing can reserve an extra line above a longtable.

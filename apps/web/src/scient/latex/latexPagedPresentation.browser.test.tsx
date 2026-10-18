@@ -336,6 +336,96 @@ The second page starts here.
   inOrder();
 }, 60000);
 
+it("breaks a word across lines or columns only once, at a hyphen", async () => {
+  const editor = await mount(twoColumnArticle, "column-words");
+  // Words inserted at the start slide the column cut through the text until a
+  // hyphenated word lands on it; every layout on the way keeps words whole.
+  let cut = false;
+  for (let step = 0; step < 16 && !cut; step++) {
+    expectWholeWords(editor);
+    cut = cutsInsideWord(editor);
+    if (!cut) await insertAtArticleStart(editor, "word ");
+  }
+  expect(cut).toBe(true);
+  expectWholeWords(editor);
+  expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen").length).toBeGreaterThan(0);
+}, 120000);
+
+/** Whether a column or page cut falls between two letters of one word. */
+function cutsInsideWord(editor: Editor) {
+  const { doc } = editor.state;
+  const geometry = latexPagedKey.getState(editor.state)!.geometry;
+  return geometry.some((part, index) => {
+    const previous = geometry[index - 1];
+    if (!previous || (previous.page === part.page && previous.column === part.column)) return false;
+    const $at = doc.resolve(part.from);
+    return (
+      /\p{L}$/u.test($at.nodeBefore?.isText ? $at.nodeBefore.text! : "") &&
+      /^\p{L}/u.test($at.nodeAfter?.isText ? $at.nodeAfter.text! : "")
+    );
+  });
+}
+
+/** Every word's letters advance on one line, breaking at most once onto the
+ * next line or into the next column. */
+function expectWholeWords(editor: Editor) {
+  // A letter's own glyph box: the first letter after a hyphenation break also
+  // reports the hyphen left on the previous line.
+  const glyph = (node: Text, offset: number) => {
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    return [...range.getClientRects()].findLast((box) => box.width > 0);
+  };
+  let words = 0;
+  for (const element of editor.view.dom.querySelectorAll<HTMLElement>(":scope p")) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const letters: { character: string; box: DOMRect | undefined }[] = [];
+    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null)
+      for (let offset = 0; offset < node.data.length; offset++)
+        letters.push({ character: node.data[offset]!, box: glyph(node, offset) });
+    let start = -1;
+    for (let index = 0; index <= letters.length; index++) {
+      const letter = index < letters.length && /\p{L}/u.test(letters[index]!.character);
+      if (letter && start < 0) start = index;
+      if (letter || start < 0) continue;
+      const word = letters.slice(start, index);
+      const text = word.map((item) => item.character).join("");
+      let breaks = 0;
+      for (let at = 1; at < word.length; at++) {
+        const previous = word[at - 1]!.box,
+          current = word[at]!.box;
+        if (!previous || !current) continue;
+        if (Math.abs(current.top - previous.top) < 2) {
+          expect(current.left, text).toBeGreaterThan(previous.left - 1);
+          continue;
+        }
+        breaks++;
+        expect(current.top > previous.top || current.left > previous.right, text).toBe(true);
+      }
+      expect(breaks, text).toBeLessThanOrEqual(1);
+      words++;
+      start = -1;
+    }
+  }
+  expect(words).toBeGreaterThan(300);
+}
+
+/** Inserts at the start of the article's first paragraph, the same one each time. */
+async function insertAtArticleStart(editor: Editor, text: string) {
+  let at = -1;
+  editor.state.doc.descendants((node, position) => {
+    if (at < 0 && node.type.name === "paragraph" && node.textContent.includes("Alpha begins"))
+      at = position + 1;
+    return at < 0;
+  });
+  expect(at).toBeGreaterThan(0);
+  editor.view.dispatch(editor.state.tr.insertText(text, at));
+  await frames();
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
+  await frames();
+}
+
 it("finds the first letter of a line that follows a hyphenation break", async () => {
   const block = document.createElement("div");
   block.lang = "en";
@@ -387,4 +477,93 @@ it("sets a two-column article's title across both columns, above the body", asyn
   for (const paragraph of body)
     expect(paragraph.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom - 1);
   expect(published).toBe(twoColumnArticle);
+}, 60000);
+
+it("draws no hyphen at line ends that stay in their column", async () => {
+  const han = "中文段落的每一行都在字与字之间换行".repeat(12);
+  const words = "Hyphenation of considerably extraordinary vocabulary continues naturally. ".repeat(
+    12,
+  );
+  const editor = await mount(
+    String.raw`\documentclass{article}
+\begin{document}
+${han}
+
+${words}
+\end{document}
+`,
+    "no-invented-hyphen",
+  );
+  expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(1);
+  expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
+});
+
+it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async () => {
+  let editor = await mount(twoColumnArticle, "hyphen-edit");
+  for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
+    await insertAtArticleStart(editor, "word ");
+  const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
+  expect(hyphen).toBeTruthy();
+  const at = editor.view.posAtDOM(hyphen!, 0);
+  const paragraph = editor.state.doc.resolve(at).start();
+  editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph));
+  await frames();
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
+  await frames();
+  await expect.poll(() => published).toContain("Inserted words shift the wrap.");
+  const layout = (current: Editor) =>
+    latexPagedKey
+      .getState(current.state)!
+      .geometry.map(({ page, column, from, to }) => `${page}:${column}:${from}-${to}`);
+  const hyphens = (current: Editor) =>
+    [...current.view.dom.querySelectorAll(".scient-paged-hyphen")].map((element) =>
+      current.view.posAtDOM(element, 0),
+    );
+  const edited = { layout: layout(editor), hyphens: hyphens(editor) };
+  const source = published;
+  root.unmount();
+  host.remove();
+  editor = await mount(source, "hyphen-edit-fresh");
+  expect(layout(editor)).toEqual(edited.layout);
+  expect(hyphens(editor)).toEqual(edited.hyphens);
+}, 90000);
+
+it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async () => {
+  let editor = await mount(twoColumnArticle, "hyphen-replaced");
+  for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
+    await insertAtArticleStart(editor, "word ");
+  const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
+  expect(hyphen).toBeTruthy();
+  const at = editor.view.posAtDOM(hyphen!, 0);
+  editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1));
+  await frames();
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
+  await frames();
+  await expect.poll(() => published).toContain("-");
+  const hyphens = (current: Editor) =>
+    [...current.view.dom.querySelectorAll(".scient-paged-hyphen")].map((element) =>
+      current.view.posAtDOM(element, 0),
+    );
+  const edited = hyphens(editor);
+  const source = published;
+  root.unmount();
+  host.remove();
+  editor = await mount(source, "hyphen-replaced-fresh");
+  expect(hyphens(editor)).toEqual(edited);
+}, 120000);
+
+it("draws no hyphen where Han text continues in the next column", async () => {
+  const han =
+    "\u4e2d\u6587\u6bb5\u843d\u7684\u6bcf\u4e00\u884c\u90fd\u5728\u5b57\u4e0e\u5b57\u4e4b\u95f4\u6362\u884c";
+  const editor = await mount(
+    String.raw`\documentclass[twocolumn]{article}
+\begin{document}
+${Array.from({ length: 40 }, () => han.repeat(6)).join("\n\n")}
+\end{document}
+`,
+    "han-columns",
+  );
+  // A column cut falls between two Han characters, which TeX does not hyphenate.
+  expect(cutsInsideWord(editor)).toBe(true);
+  expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 }, 60000);
