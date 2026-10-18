@@ -1440,10 +1440,15 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                   entry.element.style.containIntrinsicBlockSize = value;
               }
               for (const group of noteGroups.values()) {
-                const placement = plan.placements[group[0]!.index]!;
+                const placement = plan.placements[group[0]!.index];
+                const sheet = placement && plan.sheets![placement.page];
+                // Notes are set only at the foot of a page this plan draws. Rarely,
+                // while an edit races the planner, a note's line has no drawn page
+                // yet; it keeps its previous position until the next pass.
+                if (!placement || !sheet) continue;
                 let top =
-                  plan.sheets![placement.page]!.top +
-                  plan.sheets![placement.page]!.height -
+                  sheet.top +
+                  sheet.height -
                   dimensions.bottom -
                   group.reduce((sum, note) => sum + note.height, 0);
                 group.forEach((note, index) => {
