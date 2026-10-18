@@ -599,6 +599,9 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
 `;
   let editor = await open("visual-stability-short-reopen", long);
   expect(editor.view.dom.dataset.latexLoading).toBeUndefined();
+  // A reader scrolls the laid-out document: its font and pages are in place.
+  await document.fonts.ready;
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
   scroller(editor).scrollTop = 300;
   await frames(3);
   root.render(<></>);
