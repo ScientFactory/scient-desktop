@@ -466,6 +466,7 @@ complete local gate once using the repository versions of Node and pnpm:
 ```text
 pnpm exec vp fmt --check
 pnpm exec vp lint --report-unused-disable-directives
+pnpm run knip:check
 pnpm run typecheck
 pnpm run test
 pnpm run build

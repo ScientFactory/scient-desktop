@@ -97,12 +97,15 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     committedServersRef.current = servers;
     // A failed server's Retry rechecks the same eligibility.
     publishQualifiedUpdateRunServers(servers);
-    return () => {
+  }, [committedServersRef, servers]);
+  useLayoutEffect(
+    () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
       committedServersRef.current = [];
       publishQualifiedUpdateRunServers([]);
-    };
-  }, [servers]);
+    },
+    [committedServersRef],
+  );
   const skipped: ReadonlyArray<SkippedMachine> = [
     ...unreachable,
     ...unsupportedBulkServerMachines(behindServers, servers),
@@ -217,7 +220,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           },
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
-          // settled as not updated, named in the summary, and never offered for retry.
+          // settled as not updated, named in the summary, and offered Retry once eligible again.
           updateServers: async () => {
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(
@@ -225,18 +228,6 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             );
             const withdrawnRuns = withdrawn.map((server) => {
               const message = "Not updated; it was no longer eligible when servers updated.";
-              // Retrying would dispatch the target this pass just withdrew.
-              setUpdateEverythingRun(
-                (run) =>
-                  run && {
-                    ...run,
-                    machines: run.machines.map((machine) =>
-                      machine.environmentId === server.environmentId
-                        ? { ...machine, server: null }
-                        : machine,
-                    ),
-                  },
-              );
               settleUpdateRunMachine(server.environmentId, message, {
                 providerFailure: providerFailures.get(server.environmentId) ?? null,
               });
