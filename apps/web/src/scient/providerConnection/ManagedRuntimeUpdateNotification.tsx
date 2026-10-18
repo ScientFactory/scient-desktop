@@ -14,9 +14,10 @@ import {
   getManagedRuntimeUpdateRunningToastView,
   getManagedRuntimeUpdateWaitingToastView,
   managedRuntimeUpdateNotificationKey,
+  managedRuntimeUpdateStartFailure,
   managedRuntimeUpdateTargets,
   settleManagedRuntimeUpdateRuns,
-  type ManagedRuntimeUpdateOutcome,
+  startedManagedRuntimeUpdate,
   type ManagedRuntimeUpdateRun,
   type ManagedRuntimeUpdateTarget,
 } from "./ManagedRuntimeUpdateNotification.logic";
@@ -44,16 +45,6 @@ function managedRuntimeSettingsSearch(targets: ReadonlyArray<ManagedRuntimeUpdat
   return targets.length === 1 && only
     ? { environmentId: only.environmentId, instanceId: only.instanceId }
     : undefined;
-}
-
-function startFailure(error: unknown): ManagedRuntimeUpdateOutcome {
-  return {
-    status: "failed",
-    message:
-      error instanceof Error
-        ? error.message
-        : "Scient could not start the update. Review the provider in Settings.",
-  };
 }
 
 /**
@@ -218,19 +209,10 @@ export function ManagedRuntimeUpdateNotification() {
             environmentId: target.environmentId,
             instanceId: target.instanceId,
             action: "update",
-          }).then(
-            (provider) => {
-              const operationId = provider.connection?.runtime?.operation?.operationId ?? null;
-              return {
-                operationId,
-                outcome:
-                  operationId === null
-                    ? startFailure(undefined)
-                    : ({ status: "pending" } as ManagedRuntimeUpdateOutcome),
-              };
-            },
-            (error: unknown) => ({ operationId: null, outcome: startFailure(error) }),
-          );
+          }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
+            operationId: null,
+            outcome: managedRuntimeUpdateStartFailure(error),
+          }));
           const current = updateCurrent((active) => ({
             ...active,
             runs: active.runs.map((run, runIndex) =>

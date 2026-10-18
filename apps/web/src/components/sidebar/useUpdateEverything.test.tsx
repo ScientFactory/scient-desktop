@@ -102,6 +102,34 @@ vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOrigina
       original.isCurrentScientServerReleasePublished(testState.availability!),
   };
 });
+// SCIENT-FORK:START — managed runtimes are part of the pass.
+const managedState = vi.hoisted(() => ({
+  targets: [] as Array<
+    import("~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic").ManagedRuntimeUpdateTarget
+  >,
+  update:
+    vi.fn<
+      (
+        targets: ReadonlyArray<unknown>,
+      ) => Promise<
+        Array<
+          import("~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic").ManagedRuntimeUpdateRun
+        >
+      >
+    >(),
+}));
+vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("~/scient/providerConnection/useManagedRuntimeUpdates")
+  >()),
+  useManagedRuntimeUpdates: () => ({
+    candidates: [],
+    targets: managedState.targets,
+    runs: new Map(),
+    update: managedState.update,
+  }),
+}));
+// SCIENT-FORK:END
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("./updateEverythingRun", async (importOriginal) => {
   const original = await importOriginal<typeof import("./updateEverythingRun")>();
@@ -190,6 +218,10 @@ beforeEach(() => {
   testState.updateStateAtom = Atom.make({ status: "idle" as const });
   testState.availability = AsyncResult.success(true);
   testState.updateProviders.mockReset().mockResolvedValue([]);
+  // SCIENT-FORK:START — managed runtimes are part of the pass.
+  managedState.targets = [];
+  managedState.update.mockReset().mockResolvedValue([]);
+  // SCIENT-FORK:END
   testState.settleMachine.mockReset();
   testState.setRun.mockReset();
   testState.publishedAtoms.clear();
@@ -621,5 +653,113 @@ describe("a server withdrawn when its step starts", () => {
       expect(update).not.toHaveBeenCalled();
     },
   );
+});
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — managed runtimes are part of the pass; SSH package remotes follow this app.
+describe("Scient-managed runtimes and self-updating remotes", () => {
+  const lab = EnvironmentId.make("lab");
+  const managedTarget = {
+    environmentId: lab,
+    environmentLabel: "lab",
+    instanceId: "codex" as never,
+    driver: "codex" as never,
+    availableVersion: "0.157.1",
+  };
+  function managedRun(
+    outcome: import("~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic").ManagedRuntimeUpdateOutcome,
+    waitingMessage: string | null = null,
+  ) {
+    return { target: managedTarget, operationId: "op-1", observed: true, outcome, waitingMessage };
+  }
+
+  it("offers and describes a managed runtime update when nothing else is behind", async () => {
+    testState.environments = [];
+    managedState.targets = [managedTarget];
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    expect(current!.hasUpdates).toBe(true);
+    expect(current!.summary).toBe("Update 1 provider");
+    expect(current!.lines).toEqual(["lab: Codex"]);
+  });
+
+  it("updates managed runtimes before servers and hands off a staged one", async () => {
+    managedState.targets = [managedTarget];
+    let finishManaged = (_runs: ReturnType<typeof managedRun>[]) => {};
+    managedState.update.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishManaged = resolve;
+        }),
+    );
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    let run: Promise<void> | undefined;
+    await act(() => {
+      run = current!.run({});
+    });
+    expect(managedState.update).toHaveBeenCalledWith([managedTarget]);
+    expect(testState.updateServer).not.toHaveBeenCalled();
+    await act(async () => {
+      finishManaged([managedRun({ status: "pending" }, "Waiting for 1 running turn.")]);
+      await run;
+    });
+    expect(testState.updateServer).toHaveBeenCalledTimes(2);
+    expect(testState.showResult).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedProviders: 0, failures: [] }),
+    );
+  });
+
+  it("reports a managed runtime failure in the pass summary", async () => {
+    managedState.targets = [managedTarget];
+    managedState.update.mockResolvedValueOnce([
+      managedRun({ status: "failed", message: "Checksum mismatch." }),
+    ]);
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    await act(async () => {
+      await current!.run({});
+    });
+    expect(testState.showResult).toHaveBeenCalledWith(
+      expect.objectContaining({ failures: ["lab · Codex: Checksum mismatch."] }),
+    );
+  });
+
+  it("does not list an SSH package remote as needing a manual update", async () => {
+    const manual = (id: string, tag: string): TestEnvironment => {
+      const base = environment(id, "boot-service");
+      const { serverSelfUpdate: _omitted, ...capabilities } =
+        base.serverConfig.environment.capabilities;
+      return {
+        ...base,
+        entry: { target: { _tag: tag, connectionId: id } } as TestEnvironment["entry"],
+        serverConfig: {
+          ...base.serverConfig,
+          environment: { ...base.serverConfig.environment, capabilities },
+        },
+      };
+    };
+    testState.environments = [
+      manual("ssh", "SshConnectionTarget"),
+      manual("bearer", "BearerConnectionTarget"),
+    ];
+    testState.sessions.set(
+      "bearer",
+      Atom.make<AsyncResult.AsyncResult<AuthSessionState, never>>(AsyncResult.success(session)),
+    );
+    testState.sessions.set(
+      "ssh",
+      Atom.make<AsyncResult.AsyncResult<AuthSessionState, never>>(AsyncResult.success(session)),
+    );
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    expect(current!.skipped).toEqual([
+      { environmentId: "bearer", label: "bearer", reason: "needs a manual update" },
+    ]);
+  });
 });
 // SCIENT-FORK:END

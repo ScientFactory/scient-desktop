@@ -39,6 +39,12 @@ import {
   unsupportedBulkServerMachines,
 } from "./updateEverything.logic";
 import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
+import { isSelfUpdatingSshRemote } from "~/scient/desktopUpdate/otherUpdates.logic";
+import {
+  managedRuntimeProviderMachines,
+  managedRuntimeRunOutcomes,
+  useManagedRuntimeUpdates,
+} from "~/scient/providerConnection/useManagedRuntimeUpdates";
 // SCIENT-FORK:END
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
@@ -106,10 +112,16 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     },
     [committedServersRef],
   );
+  // An SSH remote this app launches from its own package follows it on the next connection.
+  const selfUpdating = new Set(
+    environments.filter(isSelfUpdatingSshRemote).map((environment) => environment.environmentId),
+  );
   const skipped: ReadonlyArray<SkippedMachine> = [
-    ...unreachable,
+    ...unreachable.filter((machine) => !selfUpdating.has(machine.environmentId)),
     ...unsupportedBulkServerMachines(behindServers, servers),
   ];
+  // Reviewed Scient-managed runtimes update with the providers.
+  const managedRuntimes = useManagedRuntimeUpdates();
   // SCIENT-FORK:END
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
   const providers = useProviderUpdates();
@@ -118,17 +130,25 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const { summary, lines } = describeUpdateEverything({
     localVersion: localUpdateVersion,
     servers,
-    providerMachines: providers.machines.map((machine) => ({
-      environmentId: machine.environmentId,
-      label: machine.label,
-      providers: machine.candidates.map(
-        (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-      ),
-    })),
+    providerMachines: [
+      ...providers.machines.map((machine) => ({
+        environmentId: machine.environmentId,
+        label: machine.label,
+        providers: machine.candidates.map(
+          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+        ),
+      })),
+      // SCIENT-FORK:START — managed runtimes are part of the pass.
+      ...managedRuntimeProviderMachines(managedRuntimes.targets),
+      // SCIENT-FORK:END
+    ],
   });
 
   return {
-    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    // SCIENT-FORK:START — managed runtimes are part of the pass.
+    hasUpdates:
+      servers.length > 0 || providers.machines.length > 0 || managedRuntimes.targets.length > 0,
+    // SCIENT-FORK:END
     summary,
     lines,
     restarts,
@@ -186,7 +206,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
           updateProviders: async () => {
-            const runs = await providers.updateAll({ quiet: true });
+            // SCIENT-FORK:START — managed runtimes update beside the providers; one staged to
+            // switch when idle is handed off, so servers need not wait for its running turns.
+            const [runs, managedRuns] = await Promise.all([
+              providers.updateAll({ quiet: true }),
+              managedRuntimes.update(managedRuntimes.targets),
+            ]);
+            // SCIENT-FORK:END
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
               if (runOutcome.status !== "updated") {
@@ -216,7 +242,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
                   ),
                 },
             );
-            return outcomes;
+            // SCIENT-FORK:START — managed runtimes are part of the pass.
+            return [...outcomes, ...managedRuntimeRunOutcomes(managedRuns)];
+            // SCIENT-FORK:END
           },
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is

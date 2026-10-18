@@ -44,7 +44,7 @@ export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boole
 }
 
 export function collectManagedRuntimeUpdateCandidates(
-  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+  groups: ReadonlyArray<Pick<LocalEnvironmentUpdateGroup, "environmentId" | "label" | "providers">>,
 ): ManagedRuntimeUpdateCandidate[] {
   return groups.flatMap((group) =>
     group.providers.flatMap((provider) => {
@@ -87,7 +87,7 @@ export interface ManagedRuntimeUpdateTarget {
   readonly availableVersion: string | null;
 }
 
-function managedRuntimeUpdateTargetKey(target: {
+export function managedRuntimeUpdateTargetKey(target: {
   readonly environmentId: EnvironmentId;
   readonly driver: string;
 }): string {
@@ -157,6 +157,28 @@ export function resolveManagedRuntimeUpdateOutcome(input: {
     runtime.managedVersion === input.expectedVersion
     ? { status: "succeeded", version: runtime.managedVersion }
     : { status: "failed", message: UNCONFIRMED_MANAGED_UPDATE_MESSAGE };
+}
+
+export function managedRuntimeUpdateStartFailure(error: unknown): ManagedRuntimeUpdateOutcome {
+  return {
+    status: "failed",
+    message:
+      error instanceof Error
+        ? error.message
+        : "Scient could not start the update. Review the provider in Settings.",
+  };
+}
+
+/** The run fields a successful start returns; a start without an operation failed. */
+export function startedManagedRuntimeUpdate(
+  provider: ServerProvider,
+): Pick<ManagedRuntimeUpdateRun, "operationId" | "outcome"> {
+  const operationId = provider.connection?.runtime?.operation?.operationId ?? null;
+  return {
+    operationId,
+    outcome:
+      operationId === null ? managedRuntimeUpdateStartFailure(undefined) : { status: "pending" },
+  };
 }
 
 export interface ManagedRuntimeUpdateRun {
