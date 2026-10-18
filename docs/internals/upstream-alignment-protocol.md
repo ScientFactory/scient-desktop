@@ -546,8 +546,14 @@ Stop and ask for a product decision when the clean composition would:
 - activate a release, cloud, mobile, telemetry, identity, or credential boundary;
 - remove an intentionally supported system-managed or Scient-managed provider path;
 - require destructive user-data migration or reinterpret an existing migration;
-- weaken authorization, privacy, sandbox, or supply-chain controls; or
+- weaken a Scient-owned authorization, privacy, sandbox, or supply-chain control beyond what
+  upstream itself now does; or
 - demand a large Scient redesign rather than a bounded alignment.
+
+When upstream itself changes an authorization, dependency or supply-chain behavior (a wider default
+grant, a pre-release dependency, a new patch), adopt it by default and compose it with Scient's
+mechanisms so Scient ends up no wider than upstream. Record the change in the receipt. Holding back
+an upstream change of this kind is the decision that needs the owner, not adopting it.
 
 A failing or unavailable platform check is reported honestly; it is never converted into success by
 removing the gate. A temporary compatibility gate is acceptable only when it is explicit, tested at

@@ -211,6 +211,7 @@ interface ClaudeSubagentFoundFrame {
 
 type ClaudeOutboundFrame =
   | { readonly type: "query.stop_task"; readonly taskId: string }
+  | { readonly type: "query.background_tasks"; readonly toolUseId: string }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame

@@ -83,7 +83,6 @@ it.effect("collects planner statistics for an existing database on open", () => 
       `;
     }).pipe(Effect.provide(persistence()));
 
-    // A database written before statistics existed gets them on the next open.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql<{ readonly stat: string }>`

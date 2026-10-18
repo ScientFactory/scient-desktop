@@ -135,6 +135,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
               applyFlagSettings: () =>
                 Effect.die("No SDK flag settings mutation in captured Stop race"),
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+              backgroundTasks: () => Effect.succeed(false),
               setPermissionMode: () =>
                 Effect.die("No SDK permission mutation in captured Stop race"),
               interrupt: Effect.gen(function* () {

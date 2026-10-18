@@ -1,12 +1,3 @@
-/**
- * Host setup the shared headless browser needs, and the one command that does
- * it. Every failure here names that command, so the server log, an agent's tool
- * error, and the viewer all offer the same fix: `sudo scient browser setup`.
- *
- * T3 never turns Chrome's sandbox off by itself. A host that cannot give it one
- * gets the command instead, and only the operator's explicit
- * `T3CODE_SERVER_BROWSER_SANDBOX=0` launches without it.
- */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,10 +8,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 /** Callers render this host repair with sudo and an explicit profile. */
 export const SETUP_ARGUMENTS = ["browser", "setup"] as const;
 
-/** What Chrome prints before aborting when it cannot sandbox itself. */
 export const NO_SANDBOX_SIGNATURE = "No usable sandbox";
 
-/** Whether an operator explicitly allowed Chrome to run without its sandbox. */
 export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>>) =>
   env.T3CODE_SERVER_BROWSER_SANDBOX === "0";
 
@@ -29,9 +18,8 @@ const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_user
 export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
 
 /**
- * Lets T3's headless browser, in any T3 home and at any pinned version, create
- * the user namespace Chrome's sandbox runs in. Modelled on the profile Ubuntu
- * ships for Google Chrome; `unconfined` adds nothing beyond `userns`.
+ * Modelled on the profile Ubuntu ships for Google Chrome; `unconfined` adds
+ * nothing beyond `userns`.
  */
 // SCIENT-FORK:START — Scient display copy retains the native profile identifiers.
 export const APPARMOR_PROFILE = `# Written by \`scient browser setup\`: lets Scient's headless browser use Chrome's sandbox.
@@ -47,9 +35,8 @@ profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-head
 // SCIENT-FORK:END
 
 /**
- * Chrome's Debian dependencies that minimal images leave out, from the headless
- * shell's deb.deps. Ubuntu 24.04 and Debian 13 renamed some with a `t64`
- * suffix; setup installs whichever name the host's apt offers.
+ * Ubuntu 24.04 and Debian 13 renamed some with a `t64` suffix; setup installs
+ * whichever name the host's apt offers.
  */
 export const DEBIAN_PACKAGES: ReadonlyArray<ReadonlyArray<string>> = [
   ["libnss3"],
@@ -92,14 +79,8 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
 export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
-/** glibc's loader abort, naming the first library it could not load. */
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
 
-/**
- * After a launch fails, names the host setup it is missing: the sandbox, from
- * Chrome's own abort message, or shared libraries the loader refuses. Undefined
- * when neither explains it. Linux only; other hosts never need either.
- */
 export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunchFailure")(
   function* (input: {
     readonly executable: string;
@@ -119,10 +100,9 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
 );
 
 /**
- * Shared libraries the loader cannot find for `executable`. The browser's own
- * `--version` decides whether any are missing; `ldd` only lists them after the
- * real loader fails, because it can report libraries a host provides another
- * way (NixOS's nix-ld).
+ * The browser's own `--version` decides whether any are missing; `ldd` only
+ * lists them after the real loader fails, because it can report libraries a
+ * host provides another way (NixOS's nix-ld).
  */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (
   executable: string,
@@ -143,11 +123,6 @@ export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")
   return listed.length > 0 ? listed : [loaderError];
 });
 
-/**
- * Whether Chrome's sandbox will be blocked here: the host restricts user
- * namespaces and T3's AppArmor profile is not installed. Readable without
- * root, so the server checks it at startup.
- */
 export const sandboxBlocked = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return false;
   const fs = yield* FileSystem.FileSystem;

@@ -1,9 +1,3 @@
-/**
- * Cursor's server entry: the driver the server registers and its adapter
- * driver.
- *
- * @module provider-cursor/server
- */
 export {
   CursorDriver,
   makeCursorDriver,

@@ -11,8 +11,9 @@ import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
-import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
+import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
+  closeFinishedUpdateRun,
   collectRestartingMachines,
   collectServerUpdateTargets,
   collectUpdateEverythingResult,
@@ -27,6 +28,8 @@ import {
   setUpdateEverythingRun,
   settleUpdateRunMachine,
   showUpdateEverythingResult,
+  waitForServerUpdateHandoff,
+  waitForUpdateRestart,
 } from "./updateEverythingRun";
 // SCIENT-FORK:START — T3 npm publication does not qualify a Scient server artifact.
 import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverReleaseAvailability";
@@ -35,9 +38,11 @@ import {
   supportedBulkServerTargets,
   unsupportedBulkServerMachines,
 } from "./updateEverything.logic";
+import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
 // SCIENT-FORK:END
 
-/** Where this app's own download or install reports a failure. */
+const UPDATE_RESTART_DELAY_MS = 5_000;
+
 export type ReportLocalUpdateError = (title: string, description: string) => void;
 
 /**
@@ -47,8 +52,9 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
  * feed. Exact server-package targets require owned availability proof. `run`
  * performs the whole pass, including this app's own download and install when
  * given. It updates quietly, tracks each machine in the run state, and reports
- * one summary toast at the end. When this app installs, the summary waits for
- * the relaunch.
+ * one summary toast at the end. This app relaunches once every server restarts
+ * into its update, after a short countdown the user can postpone. The summary
+ * then waits for the relaunch, and servers still restarting are followed after it.
  */
 export function useUpdateEverything(localUpdateVersion: string | null) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
@@ -89,9 +95,12 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const committedServersRef = useRef(servers);
   useLayoutEffect(() => {
     committedServersRef.current = servers;
+    // A failed server's Retry rechecks the same eligibility.
+    publishQualifiedUpdateRunServers(servers);
     return () => {
-      // A delayed pass cannot retain eligibility after its sidebar owner leaves.
+      // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
       committedServersRef.current = [];
+      publishQualifiedUpdateRunServers([]);
     };
   }, [servers]);
   const skipped: ReadonlyArray<SkippedMachine> = [
@@ -117,16 +126,10 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
 
   return {
     hasUpdates: servers.length > 0 || providers.machines.length > 0,
-    /** Short label for the tooltip and the confirmation title. */
     summary,
-    /** One line per machine, for the confirmation. */
     lines,
-    /** The servers this run restarts, which stops their running threads. */
     restarts,
-    /** Behind machines the run leaves alone, with the reason. */
     skipped,
-    /** Runs the pass. `installLocal` resolves true when this app is relaunching.
-        Both report failures to the pass, which lists them in its summary. */
     run: async ({
       downloadLocal,
       installLocal,
@@ -138,14 +141,19 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
         localFailures.push(`${title}: ${description}`);
       };
+      const startedAt = Date.now();
       const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
       for (const machine of providers.machines) {
         machinesById.set(machine.environmentId, {
           environmentId: machine.environmentId,
           label: machine.label,
           updatesProviders: true,
-          updatesServer: false,
+          server: null,
+          handedOffVersion: null,
+          startedAt,
           result: null,
+          failure: null,
+          providerFailure: null,
         });
       }
       for (const server of servers) {
@@ -154,17 +162,23 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           environmentId: server.environmentId,
           label: server.serverLabel,
           updatesProviders: existing?.updatesProviders ?? false,
-          updatesServer: true,
+          server,
+          handedOffVersion: null,
+          startedAt,
           result: null,
+          failure: null,
+          providerFailure: null,
         });
       }
       const localVersion = installLocal ? localUpdateVersion : null;
       setUpdateEverythingRun(() => ({
         localVersion,
         phase: "providers",
+        restartAt: null,
         machines: Array.from(machinesById.values()),
       }));
-      const failedProviderMachines = new Set<UpdateRunMachine["environmentId"]>();
+      const providerFailures = new Map<UpdateRunMachine["environmentId"], string>();
+      const finishedServers: Array<{ label: string; outcome: ServerUpdateOutcome }> = [];
       try {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
@@ -172,68 +186,123 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             const runs = await providers.updateAll({ quiet: true });
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
-              // An interrupted update did not finish either, so its row is not "done".
-              if (runOutcome.status !== "updated") failedProviderMachines.add(run.environmentId);
+              if (runOutcome.status !== "updated") {
+                providerFailures.set(
+                  run.environmentId,
+                  runOutcome.status === "failed" ? runOutcome.line : "Provider update interrupted",
+                );
+              }
               return runOutcome;
             });
             for (const machine of machinesById.values()) {
-              if (!machine.updatesServer) {
+              if (machine.server === null) {
                 settleUpdateRunMachine(
                   machine.environmentId,
-                  failedProviderMachines.has(machine.environmentId),
+                  providerFailures.get(machine.environmentId) ?? null,
                 );
               }
             }
-            setUpdateEverythingRun((run) => run && { ...run, phase: "servers" });
+            const serversStartedAt = Date.now();
+            setUpdateEverythingRun(
+              (run) =>
+                run && {
+                  ...run,
+                  phase: "servers",
+                  machines: run.machines.map((machine) =>
+                    machine.server === null ? machine : { ...machine, startedAt: serversStartedAt },
+                  ),
+                },
+            );
             return outcomes;
           },
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
-          // settled as not updated and named in the summary.
-          updateServers: () => {
+          // settled as not updated, named in the summary, and never offered for retry.
+          updateServers: async () => {
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(
               (server) => !current.some((target) => target.environmentId === server.environmentId),
             );
-            for (const server of withdrawn) settleUpdateRunMachine(server.environmentId, true);
-            const withdrawnOutcomes = withdrawn.map((server) => ({
-              label: server.serverLabel,
-              outcome: {
-                status: "failed" as const,
-                message: "Not updated; it was no longer eligible when servers updated.",
-              },
-            }));
-            return Promise.all([
-              ...withdrawnOutcomes,
-              ...current.map(async (server) => {
-                const serverOutcome = await updateServer(server, { quiet: true });
-                settleUpdateRunMachine(
-                  server.environmentId,
-                  serverOutcome.status === "failed" ||
-                    failedProviderMachines.has(server.environmentId),
-                );
-                return { label: server.serverLabel, outcome: serverOutcome };
-              }),
-            ]);
+            const withdrawnRuns = withdrawn.map((server) => {
+              const message = "Not updated; it was no longer eligible when servers updated.";
+              // Retrying would dispatch the target this pass just withdrew.
+              setUpdateEverythingRun(
+                (run) =>
+                  run && {
+                    ...run,
+                    machines: run.machines.map((machine) =>
+                      machine.environmentId === server.environmentId
+                        ? { ...machine, server: null }
+                        : machine,
+                    ),
+                  },
+              );
+              settleUpdateRunMachine(server.environmentId, message, {
+                providerFailure: providerFailures.get(server.environmentId) ?? null,
+              });
+              const finished = {
+                label: server.serverLabel,
+                outcome: { status: "failed" as const, message },
+              };
+              finishedServers.push(finished);
+              return Promise.resolve(finished);
+            });
+            const runs = current.map(async (server) => {
+              const serverOutcome = await updateServer(server, { quiet: true });
+              settleUpdateRunMachine(
+                server.environmentId,
+                serverOutcome.status === "failed"
+                  ? serverOutcome.message
+                  : (providerFailures.get(server.environmentId) ?? null),
+                {
+                  serverUpdated: serverOutcome.status !== "failed",
+                  providerFailure: providerFailures.get(server.environmentId) ?? null,
+                },
+              );
+              const finished = { label: server.serverLabel, outcome: serverOutcome };
+              finishedServers.push(finished);
+              return finished;
+            });
+            await Promise.all(
+              current.map((server, index) =>
+                waitForServerUpdateHandoff(server.environmentId, runs[index]!),
+              ),
+            );
+            return [...withdrawnRuns, ...runs];
           },
           // SCIENT-FORK:END
         });
-        const result = () =>
+        const result = (finished: ReadonlyArray<{ label: string; outcome: ServerUpdateOutcome }>) =>
           collectUpdateEverythingResult({
             localVersion: null,
             localFailures,
-            servers: outcome.servers,
+            servers: finished,
             providers: outcome.providers,
           });
         if (outcome.localReady && installLocal) {
-          setUpdateEverythingRun((run) => run && { ...run, phase: "installing" });
-          saveUpdateEverythingResult({ ...result(), localVersion });
-          if (await installLocal(reportLocalError)) return;
-          clearSavedUpdateEverythingResult();
+          if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {
+            setUpdateEverythingRun(
+              (run) => run && { ...run, phase: "installing", restartAt: null },
+            );
+            saveUpdateEverythingResult({ ...result(finishedServers), localVersion });
+            if (await installLocal(reportLocalError)) return;
+            clearSavedUpdateEverythingResult();
+          }
         }
-        showUpdateEverythingResult(result());
-      } finally {
+        setUpdateEverythingRun(
+          (run) =>
+            run &&
+            closeFinishedUpdateRun({
+              ...run,
+              phase: "servers",
+              restartAt: null,
+              localVersion: null,
+            }),
+        );
+        showUpdateEverythingResult(result(await Promise.all(outcome.servers)));
+      } catch (error) {
         setUpdateEverythingRun(() => null);
+        throw error;
       }
     },
   };

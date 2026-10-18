@@ -19,10 +19,6 @@ import {
   type ComputeProtocolMessage,
 } from "@scientfactory/compute";
 
-// ---------------------------------------------------------------------------
-// Bounds
-// ---------------------------------------------------------------------------
-
 const MaxCodeLength = 1024 * 1024;
 const MaxStreamTextLength = 256 * 1024;
 const MaxErrorNameLength = 256;
@@ -50,10 +46,6 @@ const utf8Bound = (maximum: number) =>
     utf8.encode(value).byteLength <= maximum ? true : `Expected at most ${maximum} UTF-8 bytes.`,
   );
 
-// ---------------------------------------------------------------------------
-// Message type union
-// ---------------------------------------------------------------------------
-
 export const BridgeMessageType = Schema.Literals([
   "hello",
   "hello-ack",
@@ -77,10 +69,6 @@ export const BridgeMessageType = Schema.Literals([
   "fatal",
 ]);
 export type BridgeMessageType = typeof BridgeMessageType.Type;
-
-// ---------------------------------------------------------------------------
-// Direction
-// ---------------------------------------------------------------------------
 
 export const SERVER_TO_BRIDGE_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "hello",
@@ -114,10 +102,6 @@ function bridgeMessageDirection(type: BridgeMessageType): BridgeDirection {
   return SERVER_TO_BRIDGE_TYPES.has(type) ? "server-to-bridge" : "bridge-to-server";
 }
 
-// ---------------------------------------------------------------------------
-// Request-ID requirement
-// ---------------------------------------------------------------------------
-
 /**
  * Types that must carry a non-null `requestId` because they are correlated
  * with a specific execution. Everything else must be null.
@@ -142,10 +126,6 @@ const NULLABLE_REQUEST_ID_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "error",
   "warning",
 ]);
-
-// ---------------------------------------------------------------------------
-// Payload schemas
-// ---------------------------------------------------------------------------
 
 const Label = Schema.String.check(Schema.isMaxLength(256));
 const ShortText = Schema.String.check(Schema.isMaxLength(MaxDetailLength));
@@ -404,10 +384,6 @@ export const FatalPayload = Schema.Struct({
 });
 export type FatalPayload = typeof FatalPayload.Type;
 
-// ---------------------------------------------------------------------------
-// Payload decoder registry
-// ---------------------------------------------------------------------------
-
 /**
  * Compiled once at module load, keyed by message type.
  *
@@ -442,10 +418,6 @@ const PAYLOAD_DECODERS: Readonly<Record<BridgeMessageType, (input: unknown) => u
 /** Compiled once, for the same reason. */
 const isBridgeMessageType = Schema.is(BridgeMessageType);
 
-// ---------------------------------------------------------------------------
-// Decoded bridge message
-// ---------------------------------------------------------------------------
-
 export interface BridgeMessage {
   readonly type: BridgeMessageType;
   readonly sessionId: ComputeSessionId;
@@ -455,10 +427,6 @@ export interface BridgeMessage {
   readonly direction: BridgeDirection;
   readonly payload: unknown;
 }
-
-// ---------------------------------------------------------------------------
-// Decode
-// ---------------------------------------------------------------------------
 
 function bridgeProtocolError(
   reason: ComputeProtocolError["reason"],
@@ -547,10 +515,6 @@ export function decodeBridgeMessage(
     payload,
   } satisfies BridgeMessage);
 }
-
-// ---------------------------------------------------------------------------
-// Sequence tracking
-// ---------------------------------------------------------------------------
 
 export interface BridgeSequenceTracker {
   readonly expectedDirection: BridgeDirection;

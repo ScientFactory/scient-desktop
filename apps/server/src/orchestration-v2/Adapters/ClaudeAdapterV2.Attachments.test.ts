@@ -54,6 +54,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             open: () =>
               Effect.succeed({
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                backgroundTasks: () => Effect.succeed(false),
                 setPermissionMode: () =>
                   Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
@@ -204,6 +205,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 openCount += 1;
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                  backgroundTasks: () => Effect.succeed(false),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,

@@ -234,7 +234,6 @@ server.listen(0, "127.0.0.1", () => {
               { cwd: fixture, detached: false },
             ),
           );
-          // A failed assertion must still stop this captured fixture process.
           yield* Effect.addFinalizer(() =>
             child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore),
           );
@@ -263,7 +262,6 @@ server.listen(0, "127.0.0.1", () => {
               port: null,
             }),
           );
-          // Redirect only the state directory. Never use the developer's SSH state.
           const isolatedScript = script.replace(
             /^STATE_DIR=.*$/mu,
             'STATE_DIR="$T3_TEST_STATE_DIR"',

@@ -646,7 +646,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           );
 
           yield* Effect.yieldNow;
-          yield* TestClock.adjust("11 seconds");
+          yield* TestClock.adjust("21 seconds");
           yield* Effect.yieldNow;
 
           const status = yield* Fiber.join(statusFiber);

@@ -86,10 +86,6 @@ export const ConversationBoundedText = Schema.Struct({
 });
 export type ConversationBoundedText = typeof ConversationBoundedText.Type;
 
-// ---------------------------------------------------------------------------
-// Conversation snapshot
-// ---------------------------------------------------------------------------
-
 export const CONVERSATION_SNAPSHOT_FORMAT = "scient.conversation-snapshot";
 
 export const ConversationMessageRole = Schema.Literals(["user", "assistant", "system"]);
@@ -425,10 +421,6 @@ export const ConversationSnapshotV1 = Schema.Struct({
 });
 export type ConversationSnapshotV1 = typeof ConversationSnapshotV1.Type;
 
-// ---------------------------------------------------------------------------
-// Document bundle
-// ---------------------------------------------------------------------------
-
 /**
  * `chat` bundles come from a conversation; their line breaks are already
  * written explicitly, so a document renderer needs no chat plugins. `document`
@@ -708,9 +700,7 @@ export const DocumentBundle = Schema.Struct({
 });
 export type DocumentBundle = typeof DocumentBundle.Type;
 
-// ---------------------------------------------------------------------------
 // Export options, format capabilities, and the HTTP contract
-// ---------------------------------------------------------------------------
 
 export const ConversationExportFormat = Schema.Literals(["markdown", "pdf", "docx", "scic"]);
 export type ConversationExportFormat = typeof ConversationExportFormat.Type;

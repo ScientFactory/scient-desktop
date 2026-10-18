@@ -1,10 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- canonical path validation needs node:path.
 import * as NodePath from "node:path";
 
-// ---------------------------------------------------------------------------
-// Exact-key denylist
-// ---------------------------------------------------------------------------
-
 /**
  * Environment variables removed by exact key from every compute launch.
  *
@@ -65,10 +61,6 @@ export const ENVIRONMENT_PREFIX_DENYLIST: ReadonlyArray<string> = [
   "FFF_",
 ] as const;
 
-// ---------------------------------------------------------------------------
-// Overrides applied after sanitization
-// ---------------------------------------------------------------------------
-
 /**
  * Sets UTF-8 and unbuffered behavior so Python output is correct and prompt.
  */
@@ -76,10 +68,6 @@ const ENVIRONMENT_OVERRIDES: Readonly<Record<string, string>> = {
   PYTHONUTF8: "1",
   PYTHONUNBUFFERED: "1",
 } as const;
-
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
 
 /**
  * Rejects a working directory that is not absolute or not lexically canonical.
@@ -108,10 +96,6 @@ export function validateProjectRoot(root: string): string {
   }
   return resolved;
 }
-
-// ---------------------------------------------------------------------------
-// Sanitization
-// ---------------------------------------------------------------------------
 
 /**
  * The one spelling of a key that matching happens on.

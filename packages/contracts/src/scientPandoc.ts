@@ -78,9 +78,7 @@ export type ScientPandocToolStatus = typeof ScientPandocToolStatus.Type;
  */
 export const SCIENT_WORD_CONVERSION_TIMEOUT_MS = 120_000;
 
-// ---------------------------------------------------------------------------
 // Project Markdown file → Word
-// ---------------------------------------------------------------------------
 
 /**
  * Export a saved project Markdown file to Word. `revision` is the saved

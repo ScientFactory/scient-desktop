@@ -119,9 +119,7 @@ export function t3AcpPromptWithInstructions(input: T3AcpPromptWithInstructionsIn
 }
 
 /**
- * Providers without a system/developer-instruction channel receive this
- * context in the first prompt. Keep the wrapper explicit so it cannot be
- * mistaken for text authored by the user.
+ * Keep the wrapper explicit so it cannot be mistaken for text authored by the user.
  */
 function prependT3OrchestrationInstructions(
   prompt: string,

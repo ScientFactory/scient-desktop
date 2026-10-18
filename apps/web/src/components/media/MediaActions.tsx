@@ -3,7 +3,7 @@ import {
   mediaReferenceFileName,
   type MediaReference,
 } from "@t3tools/client-runtime/media-reference";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
   type AssetResource,
@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useRef, useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
@@ -26,7 +26,9 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+// SCIENT-FORK:START
 import { resolveMediaActionUrl, type MediaActionLocation } from "./mediaActionUrl";
+// SCIENT-FORK:END
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -43,7 +45,6 @@ function mediaFileName(source: MediaActionSource): string {
   );
 }
 
-/** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
@@ -55,33 +56,33 @@ function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
+// SCIENT-FORK:START — Scient images and the Markdown file surface resolve byte actions for
+// sources that have no media menu.
 export function useMediaActionUrl() {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
-  return useCallback(
-    (source: MediaActionLocation) =>
-      resolveMediaActionUrl(source, async ({ environmentId, resource }) => {
-        const connection = readPreparedConnection(environmentId);
-        if (
-          !canReadHostMedia(environmentId) &&
-          (resource._tag === "workspace-file" || resource._tag === "media-file")
-        )
-          throw new Error("This connection cannot read host files.");
-        if (!connection) throw new Error("Reconnect to this environment and try again.");
-        const result = await createAssetUrl({ environmentId, input: { resource } });
-        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-        if (
-          !canReadHostMedia(environmentId) &&
-          (resource._tag === "workspace-file" || resource._tag === "media-file")
-        )
-          throw new Error("This connection cannot read host files.");
-        return { httpBaseUrl: connection.httpBaseUrl, relativeUrl: result.value.relativeUrl };
-      }),
-    [createAssetUrl],
-  );
+  return (source: MediaActionLocation) =>
+    resolveMediaActionUrl(source, async ({ environmentId, resource }) => {
+      const connection = readPreparedConnection(environmentId);
+      if (
+        !canReadHostMedia(environmentId) &&
+        (resource._tag === "workspace-file" || resource._tag === "media-file")
+      )
+        throw new Error("This connection cannot read host files.");
+      if (!connection) throw new Error("Reconnect to this environment and try again.");
+      const result = await createAssetUrl({ environmentId, input: { resource } });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (
+        !canReadHostMedia(environmentId) &&
+        (resource._tag === "workspace-file" || resource._tag === "media-file")
+      )
+        throw new Error("This connection cannot read host files.");
+      return { httpBaseUrl: connection.httpBaseUrl, relativeUrl: result.value.relativeUrl };
+    });
 }
+// SCIENT-FORK:END
 
 export function useMediaActions(source: MediaActionSource) {
   const hostEnvironmentId =
@@ -95,21 +96,23 @@ export function useMediaActions(source: MediaActionSource) {
   const canReadMedia =
     hostEnvironmentId === null ||
     (fileSession.error === null && fileSession.data !== null && allowsHostMedia(fileSession.data));
-  const assertCanReadMedia = useCallback(() => {
+  const assertCanReadMedia = () => {
     if (!canReadHostMedia(hostEnvironmentId)) {
       throw new Error("This connection cannot read host files.");
     }
-  }, [hostEnvironmentId]);
+  };
 
+  // SCIENT-FORK:START — byte actions share Scient's URL resolver.
   const resolveActionUrl = useMediaActionUrl();
-  const actionUrl = useCallback(() => {
+  const actionUrl = () => {
     assertCanReadMedia();
     return resolveActionUrl(source);
-  }, [assertCanReadMedia, resolveActionUrl, source]);
-  const save = useCallback(async () => {
+  };
+  // SCIENT-FORK:END
+  const save = async () => {
     await downloadMedia(await actionUrl(), mediaFileName(source));
-  }, [actionUrl, source]);
-  const copyImage = useCallback(async () => {
+  };
+  const copyImage = async () => {
     assertCanReadMedia();
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
       throw new Error(
@@ -120,11 +123,10 @@ export function useMediaActions(source: MediaActionSource) {
     await navigator.clipboard.write([
       new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
     ]);
-  }, [actionUrl, assertCanReadMedia]);
+  };
   return { save, copyImage, canReadMedia, assertCanReadMedia };
 }
 
-/** Adds source-aware actions and a tooltip to the existing media element without a layout wrapper. */
 export function MediaActions({
   source,
   children,
@@ -145,7 +147,7 @@ export function MediaActions({
     setTooltipOpen(false);
     let failureTitle = "Could not open media menu";
     let progressToast: ReturnType<typeof toastManager.add> | undefined;
-    try {
+    const result = await settlePromise(async () => {
       const noun = source.kind === "image" ? "image" : "video";
       const unavailable = !canReadMedia || (source.src === null && source.asset === undefined);
       const canCopyImage =
@@ -202,7 +204,9 @@ export function MediaActions({
           title: action === "save" ? "Download started" : "Image copied",
         });
       }
-    } catch (error) {
+    });
+    if (AsyncResult.isFailure(result)) {
+      const error = squashAtomCommandFailure(result);
       const toast = stackedThreadToast({
         type: "error",
         title: failureTitle,
@@ -210,9 +214,8 @@ export function MediaActions({
       });
       if (progressToast) toastManager.update(progressToast, toast);
       else toastManager.add(toast);
-    } finally {
-      menuOpen.current = false;
     }
+    menuOpen.current = false;
   };
 
   return (

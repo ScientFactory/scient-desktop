@@ -10,7 +10,6 @@ const currentInstructionWrapper = (text: string) =>
         .replace("</t3_code_instructions>", "</scient_instructions>")
     : text;
 
-/** Adds current runtime context to legacy prompt expectations, keeping outbound matching exact. */
 export function materializeReplayTranscriptRuntimeInstructions(
   transcript: ProviderReplayTranscript,
   runtime: { readonly driver: ProviderDriverKind; readonly model: string },
