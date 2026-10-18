@@ -83,39 +83,65 @@ const SHELLS = new Set([
   "sh",
 ]);
 
+/** Pids of this process and its callers (shells, `timeout`, the terminal). */
+function selfAndAncestors(entries) {
+  const parents = new Map(entries.map((entry) => [entry.pid, entry.parent]));
+  const chain = new Set();
+  for (let pid = process.pid; pid > 0 && !chain.has(pid); pid = parents.get(pid) ?? 0) {
+    chain.add(pid);
+  }
+  return chain;
+}
+
 /**
- * Processes whose executable or command line lies under one of `roots`
- * (excluding this process). `null` when the process list cannot be read.
+ * Processes whose executable or command line lies under one of `roots`,
+ * except this process, its callers and shells (whose command line may merely
+ * mention a path). `null` when the process list cannot be read.
  */
 export function findProcessesUnder(roots, { spawnSync = NodeChildProcess.spawnSync } = {}) {
   const needles = roots.map((root) => NodePath.resolve(root).toLowerCase());
+  let entries;
   if (hostPlatform === "win32") {
     const result = runPowerShell(
-      "Get-CimInstance Win32_Process | ForEach-Object { '{0}\t{1}\t{2}' -f $_.ProcessId, $_.ExecutablePath, $_.CommandLine }",
+      'Get-CimInstance Win32_Process | ForEach-Object { "{0}`t{1}`t{2}`t{3}" -f $_.ProcessId, $_.ParentProcessId, $_.ExecutablePath, $_.CommandLine }',
       { timeout: 60_000, spawnSync },
     );
     if (!result.ok) return null;
-    return result.stdout
+    entries = result.stdout
       .split(/\r?\n/u)
       .map((line) => line.split("\t"))
-      .filter(([pid, executable = "", commandLine = ""]) => {
-        if (Number(pid) === process.pid) return false;
-        // A shell whose command merely mentions a path does not run from it.
-        if (SHELLS.has(NodePath.win32.basename(executable).toLowerCase())) return false;
-        const text = `${executable}\n${commandLine}`.toLowerCase();
-        return needles.some((needle) => text.includes(needle));
-      })
-      .map(([pid, executable, commandLine]) => ({ pid: Number(pid), executable, commandLine }));
+      .filter((fields) => fields.length >= 2)
+      .map(([pid, parent, executable = "", commandLine = ""]) => ({
+        pid: Number(pid),
+        parent: Number(parent),
+        name: NodePath.win32.basename(executable).toLowerCase(),
+        executable,
+        commandLine,
+      }));
+  } else {
+    const result = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
+    if (result.status !== 0) return null;
+    entries = result.stdout
+      .split("\n")
+      .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/u.exec(line))
+      .filter((match) => match !== null)
+      .map((match) => ({
+        pid: Number(match[1]),
+        parent: Number(match[2]),
+        name: NodePath.basename(match[3].split(" ")[0]).replace(/^-/u, ""),
+        executable: "",
+        commandLine: match[3],
+      }));
   }
-  const result = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
-  if (result.status !== 0) return null;
-  return result.stdout
-    .split("\n")
-    .map((line) => /^\s*(\d+)\s+(.*)$/u.exec(line))
-    .filter((match) => match !== null && Number(match[1]) !== process.pid)
-    .filter((match) => !SHELLS.has(NodePath.basename(match[2].split(" ")[0]).replace(/^-/u, "")))
-    .filter((match) => needles.some((needle) => match[2].toLowerCase().includes(needle)))
-    .map((match) => ({ pid: Number(match[1]), executable: "", commandLine: match[2] }));
+  const callers = selfAndAncestors(entries);
+  return entries
+    .filter((entry) => !callers.has(entry.pid) && !SHELLS.has(entry.name))
+    .filter((entry) =>
+      needles.some((needle) =>
+        `${entry.executable}\n${entry.commandLine}`.toLowerCase().includes(needle),
+      ),
+    )
+    .map(({ pid, executable, commandLine }) => ({ pid, executable, commandLine }));
 }
 
 // ── Windows: job host and job control ─────────────────────────────────────
