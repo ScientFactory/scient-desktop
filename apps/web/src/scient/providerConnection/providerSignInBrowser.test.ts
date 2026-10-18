@@ -84,26 +84,6 @@ let storage: MemoryStorage;
 let shared: MemoryStorage;
 const windowOpen = vi.fn<(url: string, target: string, features: string) => unknown>();
 
-/** Web Locks with `ifAvailable`, shared by every window of the test. */
-function fakeLocks() {
-  const held = new Set<string>();
-  return {
-    request: async <T>(
-      name: string,
-      _options: { readonly ifAvailable: boolean },
-      callback: (lock: { readonly name: string } | null) => T | Promise<T>,
-    ) => {
-      if (held.has(name)) return callback(null);
-      held.add(name);
-      try {
-        await Promise.resolve();
-        return await callback({ name });
-      } finally {
-        held.delete(name);
-      }
-    },
-  };
-}
 let clock = 0;
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -141,7 +121,8 @@ beforeEach(() => {
   shared = new MemoryStorage();
   windowOpen.mockReset();
   vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
-  vi.stubGlobal("navigator", { locks: fakeLocks() });
+  // The real Web Locks, as every window of one browser shares them.
+  vi.stubGlobal("navigator", { locks: realLocks });
   clock = Date.now();
   resetProviderSignInBrowserForTests({ open, now: () => clock });
 });
@@ -299,7 +280,6 @@ describe("provider sign-in page opening", () => {
   }
 
   it("opens once across windows whose claims overlap, under the real Web Locks", async () => {
-    vi.stubGlobal("navigator", { locks: realLocks });
     const id = await startWithLostReply();
     // The first window pauses inside its claim, between the check and the record.
     let resume!: () => void;
@@ -327,6 +307,89 @@ describe("provider sign-in page opening", () => {
     await settle();
     expect(open).toHaveBeenCalledTimes(1);
     expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  /** Starts a sign-in whose second window takes the claim first and pauses inside it. */
+  async function claimHeldBySecondWindow() {
+    const id = await startWithLostReply();
+    let release!: (outcome: "record" | "abandon") => void;
+    let paused!: () => void;
+    const inside = new Promise<void>((resolve) => (paused = resolve));
+    const second = await openSecondWindow({
+      beforeClaimRecord: () =>
+        new Promise<void>((resolve, reject) => {
+          release = (outcome) =>
+            outcome === "record" ? resolve() : reject(new Error("The window closed."));
+          paused();
+        }),
+    });
+    second.observe(operation({ signInRequestId: id }));
+    await inside;
+    return { id, release };
+  }
+
+  it("opens once when the window holding the claim gives it up before opening", async () => {
+    const { id, release } = await claimHeldBySecondWindow();
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+
+    // Its lock goes with it, as when its page closes; the record says nobody opened.
+    release("abandon");
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing, and shows nothing, when the holding window opens the page", async () => {
+    const { id, release } = await claimHeldBySecondWindow();
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    release("record");
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("offers the page when waiting for another window's claim runs out", async () => {
+    const { id, release } = await claimHeldBySecondWindow();
+    // The id is about to expire: the wait ends without the lock.
+    clock += 15 * 60_000 - 50;
+    observe(operation({ signInRequestId: id }));
+    await vi.waitFor(() => expect(toast.add).toHaveBeenCalledTimes(1));
+    expect(open).not.toHaveBeenCalled();
+    expect((toast.add.mock.calls[0]![0] as { readonly title: string }).title).toBe(
+      "Open the Antigravity sign-in page",
+    );
+    release("record");
+    await settle();
+  });
+
+  it("closes the blank window when navigating it fails, and offers the page again", async () => {
+    resetProviderSignInBrowserForTests({ now: () => clock });
+    const opened = {
+      closed: false,
+      opener: {} as unknown,
+      close: vi.fn(),
+      document: {
+        createElement: () => {
+          throw new Error("Navigation refused.");
+        },
+      },
+    };
+    windowOpen.mockReturnValue(opened);
+    await start(async (id) => operation({ signInRequestId: id }));
+    expect(opened.close).toHaveBeenCalledTimes(1);
+    expect(toast.add).toHaveBeenCalledTimes(1);
+    const notice = toast.add.mock.calls[0]![0] as {
+      readonly title: string;
+      readonly actionProps: { readonly children: string };
+    };
+    expect(notice.title).toBe("Couldn’t open the Antigravity sign-in page");
+    expect(notice.actionProps.children).toBe("Open sign-in page");
   });
 
   it("opens once when a second window claims after the first recorded its opening", async () => {

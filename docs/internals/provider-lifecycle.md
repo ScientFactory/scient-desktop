@@ -168,9 +168,13 @@ reply alone identifies a new operation. A remounted view or a reconnect does not
 open the page again. A window opened from another starts with a copy of its
 session storage, so before an automatic opening a window claims the operation:
 it checks and writes a record in local storage inside an exclusive Web Lock, and
-only the window that writes the record opens the page. Without Web Locks or
-storage there is no safe claim, so the page is not opened automatically; the
-card or a notification offers to open it. Once the manager has published an accepted operation, the
+only the window that writes the record opens the page. A window that finds the
+lock held keeps its request id and waits for the lock, until the id expires:
+the holder releases it once it has recorded the opening, given up, or closed (a
+closed page drops its locks), and the record then says whether to stay quiet or
+open the page itself. Without Web Locks or storage, or when that wait runs out,
+there is no safe claim, so the page is not opened automatically; the card or a
+notification offers to open it. Once the manager has published an accepted operation, the
 rest of its startup runs in a manager-owned fiber: the start request waits for it,
 but a reload or disconnect only detaches that request, while cancel, the provider's
 own failure or deadline, and manager teardown end the startup.
@@ -178,7 +182,8 @@ own failure or deadline, and manager teardown end the startup.
 In a browser tab, a page opened long after the user's click is usually blocked as
 a popup. Scient opens `about:blank` without `noopener` so it can see that, cuts the
 opener link, then follows a `noreferrer` link inside the new window, so the
-sign-in page receives no referrer. A blocked page is recorded as failed: the card and the notification
+sign-in page receives no referrer; if that navigation fails, the blank window is
+closed and the opening fails with its open action. A blocked page is recorded as failed: the card and the notification
 say the browser blocked it and offer to open it, which works because that is the
 user's own click. The desktop app opens pages through the system browser and is
 not affected. While a setup view for the instance

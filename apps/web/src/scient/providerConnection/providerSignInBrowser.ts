@@ -78,8 +78,18 @@ export async function openProviderAuthorizationPage(url: string): Promise<void> 
   // from its opener before it goes to the sign-in page.
   const opened = window.open("about:blank", "_blank", "popup");
   if (opened === null || opened.closed) throw new SignInPageBlocked();
-  opened.opener = null;
-  navigateWithoutReferrer(opened, url);
+  try {
+    opened.opener = null;
+    navigateWithoutReferrer(opened, url);
+  } catch (error) {
+    // Never leave a blank window behind; the failure offers the page again.
+    try {
+      opened.close();
+    } catch {
+      // Closing is best effort.
+    }
+    throw error;
+  }
 }
 
 /**
@@ -152,39 +162,49 @@ function sharedStore(): Storage | null {
 }
 
 type AutomaticOpeningClaim = "claimed" | "elsewhere" | "unavailable";
+type ClaimAttempt = AutomaticOpeningClaim | "held";
 
 /**
  * Claims the automatic opening of one operation across this browser's windows.
  * A window opened from this one starts with a copy of its session storage and
  * so holds the same request ids; only one of them may open the page. The
  * check-and-record of the shared record runs inside an exclusive Web Lock, so
- * two windows can never both see it absent. Without Web Locks or storage there
- * is no safe claim, and the page is left for the user to open.
+ * two windows can never both see it absent. A window that finds the lock held
+ * waits for it, until `waitUntil`: the holder releases it once it has recorded
+ * the opening, given up, or closed (a closed page drops its locks), and the
+ * record then says whether anyone opened the page. Without Web Locks or storage,
+ * or when the wait runs out, there is no safe claim, and the page is left for
+ * the user to open.
  */
-async function claimAutomaticOpening(openingKey: string): Promise<AutomaticOpeningClaim> {
+async function claimAutomaticOpening(
+  openingKey: string,
+  waitUntil: number,
+): Promise<AutomaticOpeningClaim> {
   const storage = sharedStore();
   const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
   if (!storage || !locks) return "unavailable";
   const recordKey = `${OPENED_RECORD_PREFIX}${openingKey}`;
+  const attempt = (options: { readonly ifAvailable: true } | { readonly signal: AbortSignal }) =>
+    locks.request(recordKey, options, async (lock): Promise<ClaimAttempt> => {
+      if (lock === null) return "held";
+      const cutoff = now();
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const name = storage.key(index);
+        if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
+        if (!(Number(storage.getItem(name)) > cutoff)) storage.removeItem(name);
+      }
+      if (storage.getItem(recordKey) !== null) return "elsewhere";
+      await beforeClaimRecord();
+      storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
+      return "claimed";
+    });
   try {
-    return await locks.request(
-      recordKey,
-      { ifAvailable: true },
-      async (lock): Promise<AutomaticOpeningClaim> => {
-        // Not granted: another window holds the claim and is opening the page.
-        if (lock === null) return "elsewhere";
-        const cutoff = now();
-        for (let index = storage.length - 1; index >= 0; index -= 1) {
-          const name = storage.key(index);
-          if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
-          if (!(Number(storage.getItem(name)) > cutoff)) storage.removeItem(name);
-        }
-        if (storage.getItem(recordKey) !== null) return "elsewhere";
-        await beforeClaimRecord();
-        storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
-        return "claimed";
-      },
-    );
+    const first = await attempt({ ifAvailable: true });
+    if (first !== "held") return first;
+    const remaining = waitUntil - now();
+    if (remaining <= 0) return "unavailable";
+    const waited = await attempt({ signal: AbortSignal.timeout(remaining) });
+    return waited === "held" ? "unavailable" : waited;
   } catch {
     return "unavailable";
   }
@@ -210,14 +230,32 @@ function offerManualOpening(input: {
   });
 }
 
-/** Opens the page if this window wins the claim; otherwise leaves it to another window or the user. */
+const claimsInFlight = new Set<string>();
+
+/**
+ * Opens the page if this window wins the claim; otherwise leaves it to the
+ * window that opened it, or to the user. `onSettled` runs once the claim is
+ * decided, before any opening.
+ */
 async function openIfClaimed(input: {
   readonly key: ProviderSignInKey;
   readonly operationId: string;
   readonly url: string;
   readonly providerName: string;
+  readonly waitUntil: number;
+  readonly onSettled?: () => void;
 }): Promise<void> {
-  const claim = await claimAutomaticOpening(openingKeyOf(input.key, input.operationId));
+  const openingKey = openingKeyOf(input.key, input.operationId);
+  // One claim per operation at a time; a later snapshot of it waits on this one.
+  if (claimsInFlight.has(openingKey)) return;
+  claimsInFlight.add(openingKey);
+  let claim: AutomaticOpeningClaim;
+  try {
+    claim = await claimAutomaticOpening(openingKey, input.waitUntil);
+  } finally {
+    claimsInFlight.delete(openingKey);
+  }
+  input.onSettled?.();
   if (claim === "claimed") await openFor(input);
   else if (claim === "unavailable") offerManualOpening(input);
 }
@@ -386,14 +424,22 @@ async function considerOwnOperation(
     return;
   }
   if (!opensPage(operation)) return;
-  // Released before opening, so a reload while the page opens never opens it again.
-  release(key, requestId);
-  if (openings.has(openingKeyOf(key, operation.operationId))) return;
+  if (openings.has(openingKeyOf(key, operation.operationId))) {
+    release(key, requestId);
+    return;
+  }
+  const createdAt =
+    (pending.get(keyOf(key)) ?? []).find((request) => request.id === requestId)?.createdAt ?? now();
+  // The id is kept until the claim is decided, so a window still waiting on
+  // another's claim survives a reload; the claim's record then prevents a
+  // second opening.
   await openIfClaimed({
     key,
     operationId: operation.operationId,
     url: operation.authorizationUrl,
     providerName,
+    waitUntil: createdAt + PENDING_REQUEST_LIFETIME_MS,
+    onSettled: () => release(key, requestId),
   });
 }
 
@@ -478,6 +524,7 @@ export async function startProviderSignIn<T>(input: {
       operationId: operation.operationId,
       url: operation.authorizationUrl,
       providerName: input.providerName,
+      waitUntil: now() + PENDING_REQUEST_LIFETIME_MS,
     });
   }
   return result;
