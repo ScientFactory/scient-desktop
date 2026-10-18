@@ -39,6 +39,8 @@ import {
 
 const ACCOUNT_METHOD = "scient_agent_account";
 
+class SignInInterrupted extends Error {}
+
 type Pending =
   | { readonly kind: "sign-in" | "sign-out"; readonly account: string }
   | { readonly kind: "answer" | "cancel" }
@@ -100,31 +102,34 @@ export function ScientAgentAccounts(props: {
   const signIn = async (account: ProviderConnectionAccount) => {
     setError(null);
     setPending({ kind: "sign-in", account: account.id });
-    // Opens the account's sign-in page for this client once, even if this view closes.
-    const result = await startProviderSignIn({
+    // Opens the account's sign-in page for this client once, even if this view
+    // closes. A failure is thrown into the opener unwrapped, so it can keep the
+    // request id when the outcome is unknown (a lost reply) and release it when
+    // the server rejected the start.
+    const failure = await startProviderSignIn({
       key: signInKey,
       providerName,
       previousOperationId: operation?.operationId ?? null,
-      start: (signInRequestId) =>
-        startConnection({
+      start: async (signInRequestId) => {
+        const result = await startConnection({
           environmentId: props.environmentId,
           input: { instanceId, method: ACCOUNT_METHOD, account: account.id, signInRequestId },
-        }),
+        });
+        if (result._tag === "Success") return result.value;
+        throw isAtomCommandInterrupted(result)
+          ? new SignInInterrupted()
+          : squashAtomCommandFailure(result);
+      },
       operationOf: (started) =>
-        started._tag === "Success"
-          ? started.value.providers.find((provider) => provider.instanceId === instanceId)
-              ?.connection?.accountOperation
-          : null,
-    });
+        started.providers.find((provider) => provider.instanceId === instanceId)?.connection
+          ?.accountOperation,
+    }).then(
+      () => null,
+      (cause: unknown) => cause,
+    );
     setPending(null);
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        fail(
-          squashAtomCommandFailure(result),
-          `Scient could not start the ${account.name} sign-in.`,
-        );
-      }
-      return;
+    if (failure !== null && !(failure instanceof SignInInterrupted)) {
+      fail(failure, `Scient could not start the ${account.name} sign-in.`);
     }
   };
 
