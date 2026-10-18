@@ -12,7 +12,7 @@ import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
-import { setUpdateEverythingRun } from "./updateEverythingRun";
+import { setUpdateEverythingRun, waitForUpdateRestart } from "./updateEverythingRun";
 import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
@@ -351,13 +351,56 @@ it("lists other updates with text actions and updates them without a confirmatio
   await expect.element(updating).toBeVisible();
   const bounds = (updating.element() as HTMLElement).getBoundingClientRect();
   expect([bounds.width, bounds.height]).toEqual([20, 20]);
-  const ring = (updating.element() as HTMLElement).querySelector("svg")!.getBoundingClientRect();
+  // The ring spins, so measure its drawn size rather than its rotated bounding box.
+  const ring = (updating.element() as HTMLElement).querySelector("svg")!;
+  expect(getComputedStyle(ring).width).toBe("24px");
   const app = page.getByRole("button", { name: /^Check for updates/ }).element();
-  expect(ring.width).toBe(24);
-  expect(ring.right).toBeLessThan(app.getBoundingClientRect().left);
+  expect(bounds.left + bounds.width / 2 + 12).toBeLessThan(app.getBoundingClientRect().left);
   await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
   expectFooterInOrder();
 });
+
+it.each(["Later", "Restart"] as const)(
+  "counts down above the Restart pill, and %s decides the restart",
+  async (choice) => {
+    await mountFooter(216, updateState);
+    // Room above the footer for the countdown, which otherwise flips below the pill.
+    host!.style.marginTop = "120px";
+    window.scrollTo(0, 0);
+    setUpdateEverythingRun(() => ({
+      localVersion: "0.6.21",
+      phase: "servers",
+      restartAt: null,
+      machines: [],
+    }));
+    const decision = waitForUpdateRestart(5_000);
+    const later = page.getByRole("button", { name: "Later" });
+    await expect.element(later).toBeVisible();
+    const countdown = document.querySelector<HTMLElement>("[data-update-countdown]")!;
+    expect(countdown.textContent).toMatch(/^Restart in [45]sLater$/);
+    const style = getComputedStyle(later.element());
+    expect(style.borderTopWidth).toBe("0px");
+    expect(style.textDecorationLine).toBe("underline");
+
+    const pill = page.getByRole("button", { name: /^Restart/ });
+    await expect.element(pill).toBeVisible();
+    expect(pill.element().getAttribute("aria-disabled")).toBeNull();
+    await expect
+      .poll(
+        () =>
+          countdown.getBoundingClientRect().bottom <=
+          (pill.element() as HTMLElement).getBoundingClientRect().top,
+      )
+      .toBe(true);
+    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS && choice === "Later") {
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/restart-countdown.png`,
+      });
+    }
+    await (choice === "Later" ? later : pill).click();
+    await expect(decision).resolves.toBe(choice === "Restart");
+  },
+);
 // SCIENT-FORK:END
 
 it("keeps all four utilities equally spaced and inset while updates are idle", async () => {

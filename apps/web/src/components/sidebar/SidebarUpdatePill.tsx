@@ -54,6 +54,10 @@ import { shouldRunUpdateEverything } from "./updateEverything.logic";
 import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic";
 import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
+import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
+import { restartUpdateNow } from "./updateEverythingRun";
+// SCIENT-FORK:END
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -278,7 +282,10 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
+  const isInteractionDisabled =
+    run?.phase !== "countdown" && (disabled || isActionPending || isRunningEverything);
+  // SCIENT-FORK:END
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
@@ -296,6 +303,12 @@ function SidebarUpdateControl() {
 
   const handleAction = async () => {
     const bridge = window.desktopBridge;
+    // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
+    if (run?.phase === "countdown") {
+      restartUpdateNow();
+      return;
+    }
+    // SCIENT-FORK:END
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
@@ -628,6 +641,9 @@ function SidebarUpdateControl() {
         ) : null}
       </Popover>
       {confirmDialog}
+      {/* SCIENT-FORK:START */}
+      <UpdateRestartCountdown anchorId={releaseNotesTriggerId} run={run} />
+      {/* SCIENT-FORK:END */}
     </SidebarMenuItem>
   );
 }
