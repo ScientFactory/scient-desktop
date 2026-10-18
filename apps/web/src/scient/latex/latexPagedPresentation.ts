@@ -1262,7 +1262,12 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 // Existing gaps already contribute to DOM positions; subtract them before adding a replacement.
                 const naturalTop = origin.natural + part.naturalTop;
                 const gapHeight = placement.top - naturalTop - displacement - origin.shift;
-                if (gapHeight < -1 && part === entry.measurement.parts[0]) {
+                // A run-in heading's top margin matches its paragraph's padding,
+                // which keeps both on one line; moving only the heading splits them.
+                const runIn =
+                  entry.node.type.name === "heading" &&
+                  [4, 5].includes(Number(entry.node.attrs.level));
+                if (gapHeight < -1 && part === entry.measurement.parts[0] && !runIn) {
                   // Negative empty-block margins collapse with authored display/heading
                   // skips. Move this block's ink instead, leaving browser flow measurable.
                   origin.shift = gapHeight;
