@@ -172,6 +172,9 @@ describe("profiles", () => {
     markProfileReady(profile, "a");
     assert.equal(readProfile(profiles, "pr-7").meta.lastReadySha, "a");
     assert.equal(readProfile(profiles, "pr-7").meta.lastRunSha, "a");
+    // A later run of the same commit that never becomes ready is not known-good.
+    markProfileRun(readProfile(profiles, "pr-7"), "a");
+    assert.isFalse(shouldSnapshotBeforeRun(readProfile(profiles, "pr-7").meta, "b"));
   });
 
   it("prunes old profiles but never the active one", () => {

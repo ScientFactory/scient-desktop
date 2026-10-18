@@ -69,6 +69,8 @@ const STABLE_PORT_OFFSET = "3100";
 // A cold renderer on a loaded machine can take many minutes; a launch that dies
 // ends the wait at once.
 const READY_TIMEOUT_MS = 30 * 60_000;
+/** Time for launchd to start the runner before "nothing runs" means it died. */
+const LAUNCH_GRACE_MS = 60_000;
 const QUIT_TIMEOUT_MS = 30_000;
 const INSTALL_IDLE_MS = 6 * 60_000;
 const INSTALL_DEADLINE_MS = 45 * 60_000;
@@ -400,6 +402,11 @@ function localDevApp(config, args, launch) {
         ...process.env,
         SCIENT_DEV_APP_CHECKOUT: config.checkout,
         SCIENT_NEXT_HOME: paths.root,
+        // Every macOS lifecycle step, including the launcher install, keeps
+        // the stable app's root and bundle identity.
+        SCIENT_DEV_APP_ROLE: "stable",
+        SCIENT_DEV_STABLE_ROOT: paths.root,
+        ...(config.bundleIdSuffix ? { SCIENT_DEV_BUNDLE_ID_SUFFIX: config.bundleIdSuffix } : {}),
         ...(launch ? launchEnvironment(config, launch) : {}),
       },
     },
@@ -442,11 +449,16 @@ async function startApp(config, { coldHandoff } = {}) {
   // exit before the managed app can take over; readiness is not awaited here.
   if (coldHandoff) return;
   let ended = false;
+  const startedAt = Date.now();
   const ready = await waitUntil(
     async () => {
       if ((await askApp(launch, "status"))?.ready === true) return true;
       // Windows: the job host records when the launch's runner has exited.
-      ended = readJsonFile(paths.jobEmptyPath)?.tokenHash === launch.tokenHash;
+      // macOS: once started, a launch that died leaves nothing running.
+      ended =
+        hostPlatform === "win32"
+          ? readJsonFile(paths.jobEmptyPath)?.tokenHash === launch.tokenHash
+          : Date.now() - startedAt > LAUNCH_GRACE_MS && stopState(config) === "stopped";
       return ended;
     },
     READY_TIMEOUT_MS,
@@ -553,7 +565,7 @@ async function withOperationLock(purpose, operation) {
   if (!lock.acquired) {
     fail(
       lock.state === "unknown"
-        ? `Could not verify who holds ${paths.operationLockPath}; leave it until you know.`
+        ? `Could not verify who holds ${paths.operationLockPath} (or a crashed controller left ${paths.operationLockPath}.reclaim). Remove it only after confirming no dev-app command is running.`
         : `${APP_NAME} is busy (${String(lock.holder?.purpose)} by PID ${String(lock.holder?.pid)}).`,
     );
   }

@@ -117,13 +117,12 @@ export function tryAcquireLock(path, owner, { ownerState }) {
   return { acquired: false, holder: readJsonFile(path), state: "unknown" };
 }
 
-const RECLAIM_LOCK_STALE_MS = 60_000;
-
 /**
  * Removes the stale record only while holding `<path>.reclaim`, so two
  * controllers that both saw the same dead owner cannot each remove a lock the
- * other has since taken. The reclaim lock is held for a few file operations;
- * one older than a minute belongs to a controller that crashed meanwhile.
+ * other has since taken. The guard is held for a few file operations and is
+ * never removed by anyone else: one left by a crashed controller blocks until
+ * a person deletes it (the caller reports the path).
  */
 function reclaimStaleLock(path, stale) {
   const reclaimPath = `${path}.reclaim`;
@@ -131,13 +130,6 @@ function reclaimStaleLock(path, stale) {
     NodeFS.writeFileSync(reclaimPath, String(process.pid), { flag: "wx", mode: 0o600 });
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
-    try {
-      if (Date.now() - NodeFS.statSync(reclaimPath).mtimeMs > RECLAIM_LOCK_STALE_MS) {
-        NodeFS.rmSync(reclaimPath, { force: true });
-      }
-    } catch {
-      // Gone already.
-    }
     return false;
   }
   try {
@@ -213,6 +205,8 @@ export function markProfileRun(profile, sha, now = Date.now()) {
     ...profile.meta,
     lastRunSha: sha,
     lastRunAt: new Date(now).toISOString(),
+    // Readiness belongs to this run; it is recorded again only if it succeeds.
+    lastReadySha: null,
   });
 }
 
