@@ -25,7 +25,10 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
-import { verifyAntigravityBrowserHelperOnce } from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
+import {
+  recordAntigravityPreflightChild,
+  verifyAntigravityBrowserHelperOnce,
+} from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
 import { prepareAntigravitySkillLink } from "../scient/skills/antigravityUserSkillLinks.ts";
 // SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -467,6 +470,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         shell: false,
       }),
     );
+    // SCIENT-FORK:START — a timed-out preflight can force-kill this helper.
+    yield* recordAntigravityPreflightChild(child);
+    // SCIENT-FORK:END
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectUint8StreamText({ stream: child.stdout, maxBytes: 4_096 }),

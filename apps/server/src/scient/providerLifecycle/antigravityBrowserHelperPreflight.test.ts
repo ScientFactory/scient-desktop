@@ -6,10 +6,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as TestClock from "effect/testing/TestClock";
 
 import { prepareAntigravityProfile } from "../../provider/antigravityAuthSupport.ts";
-import { verifyAntigravityBrowserHelperOnce } from "./antigravityBrowserHelperPreflight.ts";
+import {
+  recordAntigravityPreflightChild,
+  verifyAntigravityBrowserHelperOnce,
+} from "./antigravityBrowserHelperPreflight.ts";
 
 const timedOut = { _tag: "TimedOut" } as const;
 const once = (spawner: object, helperExecutable: string, environment: NodeJS.ProcessEnv = {}) =>
@@ -68,6 +74,24 @@ it.effect("checks again after a failure", () =>
   }),
 );
 
+it.effect("checks again when any spelling of a startup variable changes", () =>
+  Effect.gen(function* () {
+    const spawner = {};
+    let runs = 0;
+    const verify = Effect.sync(() => {
+      runs += 1;
+    });
+    // Both spellings reach the child on Windows; either may be the one Node reads.
+    const launch = { node_options: "--max-old-space-size=4096", NODE_OPTIONS: "" };
+    yield* verify.pipe(once(spawner, "/helper", launch));
+    yield* verify.pipe(once(spawner, "/helper", { ...launch }));
+    expect(runs).toBe(1);
+    yield* verify.pipe(once(spawner, "/helper", { ...launch, NODE_OPTIONS: "--inspect" }));
+    yield* verify.pipe(once(spawner, "/helper", { ...launch, node_options: "--inspect" }));
+    expect(runs).toBe(3);
+  }),
+);
+
 it.effect("times out without waiting for a teardown that never finishes", () =>
   Effect.gen(function* () {
     const spawner = {};
@@ -84,6 +108,58 @@ it.effect("times out without waiting for a teardown that never finishes", () =>
     expect(runs).toBe(1);
   }),
 );
+
+it.effect("gives up on a stalled teardown after one forced kill attempt", () => {
+  const messages: unknown[] = [];
+  const logger = Logger.make(({ message }) => {
+    messages.push(message);
+  });
+  return Effect.gen(function* () {
+    const spawner = {};
+    let kills = 0;
+    // A helper whose teardown and forced kill both stall.
+    const child = ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(4242),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      kill: () =>
+        Effect.suspend(() => {
+          kills += 1;
+          return Effect.never;
+        }),
+      stdin: undefined as never,
+      stdout: undefined as never,
+      stderr: undefined as never,
+      all: undefined as never,
+      getInputFd: () => undefined as never,
+      getOutputFd: () => undefined as never,
+      unref: undefined as never,
+    });
+    const stalled = recordAntigravityPreflightChild(child).pipe(
+      Effect.andThen(Effect.addFinalizer(() => Effect.never)),
+      Effect.andThen(Effect.never),
+    );
+    const fiber = yield* stalled.pipe(once(spawner, "/helper"), Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    expect(yield* Fiber.join(fiber)).toBe(timedOut);
+
+    yield* TestClock.adjust("5 seconds");
+    yield* Effect.yieldNow;
+    expect(kills).toBe(1);
+    yield* TestClock.adjust("5 seconds");
+    yield* Effect.yieldNow;
+    expect(messages).toContainEqual([
+      "The Antigravity browser-helper preflight teardown did not finish.",
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Logger.layer([logger], { mergeWithExisting: false }),
+        Layer.succeed(References.MinimumLogLevel, "Debug"),
+      ),
+    ),
+  );
+});
 
 it.layer(NodeServices.layer)("Antigravity profile preparation preflight", (it) => {
   it.effect("spawns the browser helper once for repeated sign-ins", () =>

@@ -1058,9 +1058,10 @@ worth proposing to T3:
 - `prepareAntigravityProfile`'s browser-helper preflight ran on every launch, and its
   `timeoutOrElse` waited for the helper's teardown (`taskkill`, then an unbounded exit wait on
   Windows). The seam (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`) keeps a
-  success per helper executable for the server process and lets a timed-out teardown finish in
-  the background. Creating the helper process is synchronous in Node on Windows and can still
-  block the event loop once.
+  success per helper executable and Node/Electron startup variables for the server process, and
+  lets a timed-out teardown finish in the background, bounded by one forced kill of the helper,
+  which a second marked line records as it starts. Creating the helper process is synchronous in
+  Node on Windows and can still block the event loop once.
 - `removeAntigravitySessionFiles` (`provider/acp/AntigravitySessionFiles.ts`) could not clean up
   after a failed `session/new`, which leaves `<session>.db-wal`/`-shm` and never reports the
   session id. The seam sweeps SQLite sidecars without their database
