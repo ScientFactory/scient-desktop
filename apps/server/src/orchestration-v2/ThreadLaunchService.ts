@@ -34,7 +34,6 @@ import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
-  WORKTREE_BRANCH_PREFIX,
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -429,10 +428,13 @@ const make = Effect.gen(function* () {
         if (
           branch !== null &&
           isTemporaryWorktreeBranch(branch) &&
+          // SCIENT-FORK: a temporary name may use Scient's or the earlier `t3`
+          // namespace, so check the plain branch that would block this one.
+          branch.includes("/") &&
           (yield* git
             .hasCommit({
               cwd: project.workspaceRoot,
-              refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
+              refName: `refs/heads/${branch.slice(0, branch.indexOf("/"))}`,
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
         ) {

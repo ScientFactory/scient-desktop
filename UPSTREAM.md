@@ -1360,6 +1360,12 @@ Production identity is a conscious Scient divergence: the package uses the
 canonical Scient bundle ID and protocol while retaining the established
 `scient-next` user-data location for compatibility. Future upstream merges must
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
+The server archive ships a `scient` command beside the retained `t3` one, and
+user instructions name `scient`. SSH launches run only the pinned Scient server
+release through that command (`packages/ssh/src/tunnel.ts`); they must not fall
+back to `t3@latest`, `t3@nightly`, or a `t3` already on the remote PATH. The
+Codex desktop handoff and its return addresses use Scient's registered
+`scient://` schemes, never `t3code://` or T3's hosted origin.
 
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its two

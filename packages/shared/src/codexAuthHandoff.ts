@@ -1,6 +1,9 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
+// SCIENT-FORK:START
+import { SCIENT_DESKTOP_IDENTITY } from "./scientDesktopIdentity.ts";
+// SCIENT-FORK:END
 
 export const CodexAuthHandoff = Schema.Struct({
   authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
@@ -82,8 +85,15 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
   return callback;
 }
 
+// SCIENT-FORK:START — the handoff opens Scient desktop through the scheme it registers.
+const desktopScheme = (development: boolean) =>
+  development
+    ? SCIENT_DESKTOP_IDENTITY.developmentScheme
+    : SCIENT_DESKTOP_IDENTITY.productionScheme;
+// SCIENT-FORK:END
+
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
-  const url = new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`);
+  const url = new URL(`${desktopScheme(development)}://auth/codex`);
   url.searchParams.set("request", encodeHandoff(input));
   return url.toString();
 }
@@ -93,7 +103,7 @@ export function readCodexAuthHandoff(value: string, development: boolean) {
     const url = new URL(value);
     if (
       value.length > 32_768 ||
-      url.protocol !== (development ? "t3code-dev:" : "t3code:") ||
+      url.protocol !== `${desktopScheme(development)}:` ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||
@@ -116,7 +126,7 @@ export function codexAuthDeliveryUrl(input: CodexAuthHandoff, callbackUrl: strin
   const request = codexAuthorizationRequest(input.authorizationUrl);
   codexCallbackUrl(callbackUrl, request.redirectUri, request.state);
   const destination = providerAuthReturnUrl(input.returnUrl);
-  if (!destination) throw new Error("Invalid T3 Code return address.");
+  if (!destination) throw new Error("Invalid Scient return address.");
   const url = new URL(destination);
   const delivery = {
     environmentId: input.environmentId,

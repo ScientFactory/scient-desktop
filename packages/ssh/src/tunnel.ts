@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/httpReadiness";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  SCIENT_SERVER_PACKAGE_NAME,
   scientServerAllowedScriptsValue,
 } from "@t3tools/shared/scientRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -87,8 +88,8 @@ export interface RemoteT3RunnerOptions {
   readonly archiveVersion?: string | null;
   readonly releaseBaseUrl?: string | null;
   /**
-   * Scient fork: exact npm package spec (a pinned `scient-server-<version>`
-   * tarball URL, or a channel such as `t3@nightly`) installed with npx/npm.
+   * Scient fork: the pinned `scient-server-<version>` release tarball URL
+   * installed with npx/npm. Absent means this build has no published server.
    */
   readonly packageSpec?: string;
 }
@@ -593,25 +594,46 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 // per-platform archive, so the npx/npm install path stays. Node is required
 // on the remote here, which is why the launch script's helper dispatch and
 // the launch budget both treat this mode like the dev node-script path.
+// Only that pinned package runs: never a `t3` or `scient` already on the
+// remote PATH, and never T3's npm package.
 const REMOTE_PACKAGE_INSTALL_BLOCK = `ensure_remote_node_path || true
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+if [ -z @@T3_PACKAGE_SPEC@@ ]; then
+  printf 'This Scient build has no published Scient server release to install on the remote host. Connect from a released Scient desktop build.\\n' >&2
+  exit 1
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
-# the npx cache without a t3 executable. \`npx --yes\` then exits 0 without
+# the npx cache without a scient executable. \`npx --yes\` then exits 0 without
 # running anything at all, which the caller only ever sees as a server that
 # never becomes ready. Resolve the CLI once up front so that install failure is
 # reported here, with npm's own output on stderr.
+# npm puts the package's bin directory first but keeps the inherited PATH, so
+# without a package executable \`command -v\` finds any other scient. Accept only
+# the bin of the package npm's own lockfile records as fetched from the spec.
+T3_PINNED_CLI_CHECK='const fs = require("node:fs");
+const path = require("node:path");
+const [cli, spec, name] = process.argv.slice(1);
+try {
+  const modules = path.dirname(path.dirname(cli));
+  const lock = JSON.parse(fs.readFileSync(path.join(modules, ".package-lock.json"), "utf8"));
+  const root = fs.realpathSync(path.join(modules, name));
+  const pinned =
+    path.basename(path.dirname(cli)) === ".bin" &&
+    lock.packages?.["node_modules/" + name]?.resolved === spec &&
+    fs.realpathSync(cli).startsWith(root + path.sep);
+  process.exitCode = pinned ? 0 : 1;
+} catch {
+  process.exitCode = 1;
+}'
 require_installed_t3_cli() {
-  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v t3')"; then
-    printf 'Remote host could not install %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
+  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v scient')"; then
+    printf 'Remote host could not install the Scient server from %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
     return 1
   fi
-  if [ -n "$T3_CLI_PATH" ]; then
+  if [ -n "$T3_CLI_PATH" ] && node -e "$T3_PINNED_CLI_CHECK" "$T3_CLI_PATH" @@T3_PACKAGE_SPEC@@ @@T3_PACKAGE_NAME@@; then
     return 0
   fi
-  printf 'Remote host installed %s but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
+  printf 'Remote host installed %s but npm produced no scient executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
   return 1
 }
 # The launcher records this PID, so exec the CLI without an npm wrapper process.
@@ -623,7 +645,7 @@ if command -v npm >/dev/null 2>&1; then
   require_installed_t3_cli npm exec --yes --allow-scripts=@@T3_ALLOWED_SCRIPTS@@ --package @@T3_PACKAGE_SPEC@@ || exit 1
   exec "$T3_CLI_PATH" "$@"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+printf 'Remote host could not install the Scient server from @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
 `;
 // SCIENT-FORK:END
@@ -788,7 +810,7 @@ elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PI
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   elif ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
+    printf 'Remote Scient server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
     exit 1
   fi
 else
@@ -812,7 +834,7 @@ if [ -z "$REMOTE_PORT" ]; then
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
+    printf 'Remote Scient server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
       tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     else
@@ -855,7 +877,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
   if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Remote T3 server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    printf 'Remote Scient server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
@@ -908,8 +930,10 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
     T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
     T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
-    // SCIENT-FORK: the pinned npm runtime only reads these two.
-    T3_PACKAGE_SPEC: shellSingleQuote(input?.packageSpec?.trim() || "t3@latest"),
+    // SCIENT-FORK: the pinned npm runtime only reads these three. Without a
+    // pinned Scient release the runner refuses to start instead of guessing.
+    T3_PACKAGE_SPEC: shellSingleQuote(input?.packageSpec?.trim() || ""),
+    T3_PACKAGE_NAME: shellSingleQuote(SCIENT_SERVER_PACKAGE_NAME),
     T3_ALLOWED_SCRIPTS: shellSingleQuote(scientServerAllowedScriptsValue()),
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
   };

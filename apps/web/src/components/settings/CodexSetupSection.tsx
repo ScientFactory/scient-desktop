@@ -15,6 +15,9 @@ import type {
 import { codexAuthHandoffUrl } from "@t3tools/shared/codexAuthHandoff";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+// SCIENT-FORK:START
+import { SCIENT_CODEX_SUBSCRIPTION_SHARING_ENABLED } from "@t3tools/shared/scientCodexPolicy";
+// SCIENT-FORK:END
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { Children, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
@@ -626,7 +629,12 @@ function ManagedCodexSetup({
   );
 
   const handoffUrl =
-    needsManualCallback && url && auth?.flowId && providerAuthReturnUrl(returnUrl.toString())
+    // SCIENT-FORK: offer the desktop return only while Scient desktop accepts the handoff.
+    SCIENT_CODEX_SUBSCRIPTION_SHARING_ENABLED &&
+    needsManualCallback &&
+    url &&
+    auth?.flowId &&
+    providerAuthReturnUrl(returnUrl.toString())
       ? codexAuthHandoffUrl(
           {
             authorizationUrl: url,
@@ -728,7 +736,7 @@ function ManagedCodexSetup({
           <details>
             <summary className="cursor-pointer">Other ways to connect</summary>
             <Button className="mt-2" size="sm" variant="outline" render={<a href={handoffUrl} />}>
-              Use T3 desktop for automatic return
+              Use Scient desktop for automatic return
             </Button>
           </details>
         ) : null}

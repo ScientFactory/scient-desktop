@@ -14,6 +14,8 @@ const WINDOWS_TESTS =
 const GATES = [
   { id: "fmt", argv: ["pnpm", "exec", "vp", "fmt", "--check"] },
   { id: "lint", argv: ["pnpm", "exec", "vp", "lint", "--report-unused-disable-directives"] },
+  // Hosted CI's check for unused files, dependencies and exports.
+  { id: "knip", argv: ["pnpm", "run", "knip:check"] },
   // pnpm reports every failing package in one run; `vp run -r` stops scheduling after the first.
   {
     id: "typecheck",

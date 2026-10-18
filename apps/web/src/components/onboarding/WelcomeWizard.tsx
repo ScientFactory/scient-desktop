@@ -630,7 +630,7 @@ function PairingForm({
               computer with your code.
             </p>
             <CommandBlock
-              command={'npx --package="$SCIENT_SERVER_PACKAGE" t3 pair'}
+              command={'npx --package="$SCIENT_SERVER_PACKAGE" scient pair'}
               className="mt-2"
             />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">

@@ -190,6 +190,19 @@ describe("isTemporaryWorktreeBranch", () => {
     );
   });
 
+  it("creates new temporary refs under the Scient namespace", () => {
+    expect(WORKTREE_BRANCH_PREFIX).toBe("scient");
+    expect(buildTemporaryWorktreeBranchName(() => "deadbeef")).toBe("scient/deadbeef");
+  });
+
+  it("matches temporary refs created under the earlier t3 prefix", () => {
+    expect(isTemporaryWorktreeBranch("t3/deadbeef")).toBe(true);
+    expect(isTemporaryWorktreeBranch("t3-deadbeef")).toBe(true);
+    expect(isTemporaryWorktreeBranch("t3/deadbeef-extra")).toBe(false);
+    expect(isTemporaryWorktreeBranch("t3/feature/demo")).toBe(false);
+    expect(flattenTemporaryWorktreeBranchName("t3/deadbeef")).toBe("scient-deadbeef");
+  });
+
   it("matches legacy t3code temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch("t3code/deadbeef")).toBe(true);
     expect(isTemporaryWorktreeBranch("t3code-deadbeef")).toBe(true);
