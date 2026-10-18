@@ -74,10 +74,25 @@ export async function openProviderAuthorizationPage(url: string): Promise<void> 
     return;
   }
   // Preview hosts distinguish a popup from a new-tab link. `noopener` would hide
-  // whether the browser blocked it, so the opener link is cut after the check.
-  const opened = window.open(url, "_blank", "popup");
+  // whether the browser blocked it, so a blank window is opened, checked and cut
+  // from its opener before it goes to the sign-in page.
+  const opened = window.open("about:blank", "_blank", "popup");
   if (opened === null || opened.closed) throw new SignInPageBlocked();
   opened.opener = null;
+  navigateWithoutReferrer(opened, url);
+}
+
+/**
+ * Navigates a same-origin window without sending a referrer. A navigation this
+ * window starts would carry its own URL as the referrer; a `noreferrer` link
+ * followed inside the target sends none.
+ */
+export function navigateWithoutReferrer(target: Window, url: string): void {
+  const link = target.document.createElement("a");
+  link.href = url;
+  link.rel = "noreferrer";
+  (target.document.body ?? target.document.documentElement).append(link);
+  link.click();
 }
 
 interface PendingRequest {
@@ -103,6 +118,7 @@ const startsInFlight = new Map<string, number>();
 const listeners = new Set<() => void>();
 let openPage: (url: string) => Promise<void> = openProviderAuthorizationPage;
 let now: () => number = Date.now;
+let beforeClaimRecord: () => Promise<void> = async () => {};
 let pendingKeysSnapshot: ReadonlyArray<ProviderSignInKey> = [];
 
 const keyOf = (key: ProviderSignInKey) => `${key.environmentId}\u0000${key.instanceId}`;
@@ -135,42 +151,75 @@ function sharedStore(): Storage | null {
   }
 }
 
+type AutomaticOpeningClaim = "claimed" | "elsewhere" | "unavailable";
+
 /**
  * Claims the automatic opening of one operation across this browser's windows.
  * A window opened from this one starts with a copy of its session storage and
- * so holds the same request ids; only one of them may open the page. A Web Lock
- * makes the check-and-record exclusive where available; the shared record alone
- * covers the rest.
+ * so holds the same request ids; only one of them may open the page. The
+ * check-and-record of the shared record runs inside an exclusive Web Lock, so
+ * two windows can never both see it absent. Without Web Locks or storage there
+ * is no safe claim, and the page is left for the user to open.
  */
-async function claimAutomaticOpening(openingKey: string): Promise<boolean> {
+async function claimAutomaticOpening(openingKey: string): Promise<AutomaticOpeningClaim> {
   const storage = sharedStore();
-  const recordKey = `${OPENED_RECORD_PREFIX}${openingKey}`;
-  const claim = () => {
-    if (!storage) return true;
-    try {
-      const cutoff = now();
-      for (let index = storage.length - 1; index >= 0; index -= 1) {
-        const name = storage.key(index);
-        if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
-        const expiresAt = Number(storage.getItem(name));
-        if (!(expiresAt > cutoff)) storage.removeItem(name);
-      }
-      if (storage.getItem(recordKey) !== null) return false;
-      storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
-      return true;
-    } catch {
-      return true;
-    }
-  };
   const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
-  if (!locks) return claim();
+  if (!storage || !locks) return "unavailable";
+  const recordKey = `${OPENED_RECORD_PREFIX}${openingKey}`;
   try {
-    return await locks.request(recordKey, { ifAvailable: true }, (lock) =>
-      lock === null ? false : claim(),
+    return await locks.request(
+      recordKey,
+      { ifAvailable: true },
+      async (lock): Promise<AutomaticOpeningClaim> => {
+        // Not granted: another window holds the claim and is opening the page.
+        if (lock === null) return "elsewhere";
+        const cutoff = now();
+        for (let index = storage.length - 1; index >= 0; index -= 1) {
+          const name = storage.key(index);
+          if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
+          if (!(Number(storage.getItem(name)) > cutoff)) storage.removeItem(name);
+        }
+        if (storage.getItem(recordKey) !== null) return "elsewhere";
+        await beforeClaimRecord();
+        storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
+        return "claimed";
+      },
     );
   } catch {
-    return claim();
+    return "unavailable";
   }
+}
+
+/** Offers the page to the user when this window could not safely open it itself. */
+function offerManualOpening(input: {
+  readonly key: ProviderSignInKey;
+  readonly operationId: string;
+  readonly url: string;
+  readonly providerName: string;
+}) {
+  // A setup view that is showing already offers to open the page.
+  if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
+  toastManager.add({
+    type: "info",
+    title: `Open the ${input.providerName} sign-in page`,
+    description: "Scient did not open it automatically in this window.",
+    actionProps: {
+      children: "Open sign-in page",
+      onClick: () => void openFor(input),
+    },
+  });
+}
+
+/** Opens the page if this window wins the claim; otherwise leaves it to another window or the user. */
+async function openIfClaimed(input: {
+  readonly key: ProviderSignInKey;
+  readonly operationId: string;
+  readonly url: string;
+  readonly providerName: string;
+}): Promise<void> {
+  const claim = await claimAutomaticOpening(openingKeyOf(input.key, input.operationId));
+  if (claim === "claimed") await openFor(input);
+  else if (claim === "unavailable") offerManualOpening(input);
 }
 
 function isPendingRequest(value: unknown): value is PendingRequest {
@@ -339,9 +388,8 @@ async function considerOwnOperation(
   if (!opensPage(operation)) return;
   // Released before opening, so a reload while the page opens never opens it again.
   release(key, requestId);
-  const openingKey = openingKeyOf(key, operation.operationId);
-  if (openings.has(openingKey) || !(await claimAutomaticOpening(openingKey))) return;
-  await openFor({
+  if (openings.has(openingKeyOf(key, operation.operationId))) return;
+  await openIfClaimed({
     key,
     operationId: operation.operationId,
     url: operation.authorizationUrl,
@@ -423,10 +471,9 @@ export async function startProviderSignIn<T>(input: {
     operation &&
     operation.operationId !== input.previousOperationId &&
     opensPage(operation) &&
-    !openings.has(openingKeyOf(input.key, operation.operationId)) &&
-    (await claimAutomaticOpening(openingKeyOf(input.key, operation.operationId)))
+    !openings.has(openingKeyOf(input.key, operation.operationId))
   ) {
-    await openFor({
+    await openIfClaimed({
       key: input.key,
       operationId: operation.operationId,
       url: operation.authorizationUrl,
@@ -510,10 +557,13 @@ export function resetProviderSignInBrowserForTests(
     readonly open?: (url: string) => Promise<void>;
     readonly now?: () => number;
     readonly reload?: boolean;
+    /** Runs between a claim's check and its record, to interleave two windows. */
+    readonly beforeClaimRecord?: () => Promise<void>;
   } = {},
 ): void {
   openPage = options.open ?? openProviderAuthorizationPage;
   now = options.now ?? Date.now;
+  beforeClaimRecord = options.beforeClaimRecord ?? (async () => {});
   openings.clear();
   surfaces.clear();
   startsInFlight.clear();

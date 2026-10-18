@@ -78,6 +78,7 @@ class MemoryStorage {
   }
 }
 
+const realLocks = globalThis.navigator.locks;
 const open = vi.fn<(url: string) => Promise<void>>();
 let storage: MemoryStorage;
 let shared: MemoryStorage;
@@ -273,35 +274,99 @@ describe("provider sign-in page opening", () => {
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it.each([true, false])(
-    "opens once across windows that share a copied session (Web Locks: %s)",
-    async (withLocks) => {
-      if (!withLocks) vi.stubGlobal("navigator", {});
-      const id = await startWithLostReply();
-      // A window opened from this one starts with a copy of its session storage.
-      const copied = storage.clone();
-      vi.resetModules();
-      vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
-      const second = await import("./providerSignInBrowser");
-      expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
-      second.resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
+  /** A second window opened from this one: a copy of its session storage, the same local storage. */
+  async function openSecondWindow(
+    options: { readonly beforeClaimRecord?: () => Promise<void> } = {},
+  ) {
+    const copied = storage.clone();
+    vi.resetModules();
+    vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
+    const second = await import("./providerSignInBrowser");
+    expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
+    second.resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true, ...options });
+    vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
+    return {
+      observe: (current: ProviderConnectionOperation) => {
+        vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
+        second.observeProviderSignInSnapshots(environmentId, [provider(current)]);
+        vi.stubGlobal("window", {
+          sessionStorage: storage,
+          localStorage: shared,
+          open: windowOpen,
+        });
+      },
+    };
+  }
 
-      second.observeProviderSignInSnapshots(environmentId, [
-        provider(operation({ signInRequestId: id })),
-      ]);
-      vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
-      observe(operation({ signInRequestId: id }));
-      await settle();
-      await settle();
-      expect(open).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("opens once across windows whose claims overlap, under the real Web Locks", async () => {
+    vi.stubGlobal("navigator", { locks: realLocks });
+    const id = await startWithLostReply();
+    // The first window pauses inside its claim, between the check and the record.
+    let resume!: () => void;
+    let paused!: () => void;
+    const inside = new Promise<void>((resolve) => (paused = resolve));
+    resetProviderSignInBrowserForTests({
+      open,
+      now: () => clock,
+      reload: true,
+      beforeClaimRecord: () =>
+        new Promise<void>((resolve) => {
+          resume = resolve;
+          paused();
+        }),
+    });
+    const second = await openSecondWindow();
+
+    observe(operation({ signInRequestId: id }));
+    await inside;
+    second.observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    resume();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  it("opens once when a second window claims after the first recorded its opening", async () => {
+    const id = await startWithLostReply();
+    const second = await openSecondWindow();
+    observe(operation({ signInRequestId: id }));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    second.observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["Web Locks are unavailable", () => vi.stubGlobal("navigator", {})],
+    [
+      "local storage throws",
+      () =>
+        vi.spyOn(shared, "setItem").mockImplementation(() => {
+          throw new Error("QuotaExceededError");
+        }),
+    ],
+  ])("never opens automatically when %s, and offers the page instead", async (_name, arrange) => {
+    arrange();
+    await start(async (id) => operation({ signInRequestId: id }));
+    expect(open).not.toHaveBeenCalled();
+    expect(toast.add).toHaveBeenCalledTimes(1);
+    const notice = toast.add.mock.calls[0]![0] as {
+      readonly title: string;
+      readonly actionProps: { readonly children: string; readonly onClick: () => void };
+    };
+    expect(notice.title).toBe("Open the Antigravity sign-in page");
+    notice.actionProps.onClick();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  });
 
   it("treats a blocked popup as failed and offers the user's own click", async () => {
     resetProviderSignInBrowserForTests({ now: () => clock });
     windowOpen.mockReturnValue(null);
     await start(async (id) => operation({ signInRequestId: id }));
-    expect(windowOpen).toHaveBeenCalledWith(url, "_blank", "popup");
+    expect(windowOpen).toHaveBeenCalledWith("about:blank", "_blank", "popup");
     expect(toast.add).toHaveBeenCalledTimes(1);
     const notice = toast.add.mock.calls[0]![0] as {
       readonly type: string;
@@ -317,11 +382,17 @@ describe("provider sign-in page opening", () => {
     expect(notice.description).not.toContain("could not open");
 
     // The toast's button is a click, so the browser lets that open through.
-    const opened = { closed: false, opener: {} as unknown };
+    const link = { href: "", rel: "", click: vi.fn() };
+    const opened = {
+      closed: false,
+      opener: {} as unknown,
+      document: { createElement: () => link, body: { append: vi.fn() } },
+    };
     windowOpen.mockReturnValue(opened);
     notice.actionProps.onClick();
-    await vi.waitFor(() => expect(windowOpen).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(link.click).toHaveBeenCalledTimes(1));
     expect(opened.opener).toBeNull();
+    expect(link).toMatchObject({ href: url, rel: "noreferrer" });
   });
 
   it("reports an opening failure as a toast with a retry when no setup view shows it", async () => {

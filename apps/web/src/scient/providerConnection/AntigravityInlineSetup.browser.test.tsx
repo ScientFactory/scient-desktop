@@ -15,6 +15,7 @@ import { page } from "vitest/browser";
 import { toastManager } from "../../components/ui/toast";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import {
+  navigateWithoutReferrer,
   observeProviderSignInSnapshots,
   resetProviderSignInBrowserForTests,
   startProviderSignIn,
@@ -300,13 +301,50 @@ describe("Antigravity sign-in page", () => {
     expect(text()).toContain("Your browser blocked the sign-in page. Open it to continue.");
     expect(text()).not.toContain("could not open");
 
-    const opened = { closed: false, opener: window } as unknown as Window;
-    open.mockReturnValueOnce(opened);
+    // A real same-origin window; its navigation to Google is stopped at the link.
+    const frame = document.createElement("iframe");
+    document.body.append(frame);
+    const followed: Array<{ readonly href: string; readonly rel: string }> = [];
+    frame.contentDocument!.addEventListener(
+      "click",
+      (event) => {
+        const link = event.target as HTMLAnchorElement;
+        followed.push({ href: link.href, rel: link.rel });
+        event.preventDefault();
+      },
+      true,
+    );
+    open.mockReturnValueOnce(frame.contentWindow);
     await page.getByRole("button", { name: "Open Google sign-in" }).click();
     await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
-    expect(open).toHaveBeenLastCalledWith(AUTHORIZATION_URL, "_blank", "popup");
-    expect(opened.opener).toBeNull();
+    expect(open).toHaveBeenLastCalledWith("about:blank", "_blank", "popup");
+    expect(frame.contentWindow!.opener).toBeNull();
+    expect(followed).toEqual([{ href: AUTHORIZATION_URL, rel: "noreferrer" }]);
+    frame.remove();
     open.mockRestore();
+  });
+
+  it("sends no referrer when it navigates the opened window", async () => {
+    const loaded = (frame: HTMLIFrameElement) =>
+      new Promise<void>((resolve) =>
+        frame.addEventListener("load", () => resolve(), { once: true }),
+      );
+    const target = `${location.origin}/favicon.ico?referrer-check`;
+    const frames = [document.createElement("iframe"), document.createElement("iframe")];
+    for (const frame of frames) document.body.append(frame);
+
+    // Control: a navigation started from this window carries this window's URL.
+    const control = loaded(frames[0]!);
+    frames[0]!.contentWindow!.location.replace(target);
+    await control;
+    expect(frames[0]!.contentDocument!.referrer).not.toBe("");
+
+    const navigated = loaded(frames[1]!);
+    navigateWithoutReferrer(frames[1]!.contentWindow!, target);
+    await navigated;
+    expect(frames[1]!.contentWindow!.location.href).toBe(target);
+    expect(frames[1]!.contentDocument!.referrer).toBe("");
+    for (const frame of frames) frame.remove();
   });
 
   it("does not open a page for a sign-in cancelled during startup", async () => {

@@ -166,16 +166,19 @@ a renderer reload during a slow start still opens the page, while a full quit
 leaves the card's open action. Against a server that does not stamp ids, the
 reply alone identifies a new operation. A remounted view or a reconnect does not
 open the page again. A window opened from another starts with a copy of its
-session storage, so before an automatic opening a window claims the operation in
-local storage, under a Web Lock where available; only the window that records the
-claim opens the page. Once the manager has published an accepted operation, the
+session storage, so before an automatic opening a window claims the operation:
+it checks and writes a record in local storage inside an exclusive Web Lock, and
+only the window that writes the record opens the page. Without Web Locks or
+storage there is no safe claim, so the page is not opened automatically; the
+card or a notification offers to open it. Once the manager has published an accepted operation, the
 rest of its startup runs in a manager-owned fiber: the start request waits for it,
 but a reload or disconnect only detaches that request, while cancel, the provider's
 own failure or deadline, and manager teardown end the startup.
 
 In a browser tab, a page opened long after the user's click is usually blocked as
-a popup. Scient opens without `noopener` so it can see that, cuts the opener link
-afterwards, and records a blocked page as failed: the card and the notification
+a popup. Scient opens `about:blank` without `noopener` so it can see that, cuts the
+opener link, then follows a `noreferrer` link inside the new window, so the
+sign-in page receives no referrer. A blocked page is recorded as failed: the card and the notification
 say the browser blocked it and offer to open it, which works because that is the
 user's own click. The desktop app opens pages through the system browser and is
 not affected. While a setup view for the instance
