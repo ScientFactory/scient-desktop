@@ -169,9 +169,10 @@ callers; do not reintroduce the confirmation during alignment.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
-`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation, which
-remains for a pass that downloads this app. Upstream's `SidebarUpdateCapsule` is retained unmounted
-(a knip entry) so its changes still merge; the pass's restart countdown is a Scient tooltip above
+`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
+that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
+servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
+are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
 the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.

@@ -98,10 +98,25 @@ function stopsThreads(target: ServerUpdateTarget): boolean {
 }
 
 /** Running threads a server update would stop now: those that cannot resume after it. */
-export function stoppedThreadsNow(target: ServerUpdateTarget): number {
+function stoppedThreadsNow(target: ServerUpdateTarget): number {
   return stopsThreads(target)
     ? appAtomRegistry.get(runningThreadCountAtom(target.environmentId))
     : 0;
+}
+
+/**
+ * What updating these servers would stop now, and an admission that restarts each one only
+ * while it would stop no more threads than that: what the user agreed to.
+ */
+export function confirmServerStops(targets: ReadonlyArray<ServerUpdateTarget>) {
+  const confirmed = new Map(
+    targets.map((target) => [target.environmentId, stoppedThreadsNow(target)] as const),
+  );
+  return {
+    stops: [...confirmed.values()].reduce((sum, count) => sum + count, 0),
+    admitServer: (target: ServerUpdateTarget) =>
+      stoppedThreadsNow(target) <= (confirmed.get(target.environmentId) ?? 0),
+  };
 }
 
 function startsPendingOn(

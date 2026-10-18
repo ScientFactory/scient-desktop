@@ -85,8 +85,10 @@ control includes everything else in one step: outdated providers first, then
 servers that are behind, then this desktop app. Servers move to the version this
 app is installing, or to your web app's version. A background service stays on
 its current release channel, and a remote desktop app installs the latest
-release from its own channel. The confirmation lists each machine it skips and
-why. Progress appears in the circle. Once each server has started its own
+release from its own channel. If servers would stop running threads, a small
+card above **Update** says how many and waits for you to choose **Update** or
+**Cancel**; otherwise the step starts straight away. Progress appears in the
+circle. Once each server has started its own
 restart, a tooltip above **Restart** counts down to this app's restart: choose
 **Restart** to restart now, or **Later** to keep working and restart when you
 are ready. A server that is still restarting finishes on its own.
@@ -176,10 +178,11 @@ replaces the "update available" notices for providers; the web app keeps them.
 
 After **Update all**, or a step that includes this app, one summary lists what
 was updated and each failure. When this desktop app installs last, the summary
-appears after it restarts. That step's confirmation identifies the servers that
-will restart and whether they can resume interrupted threads. Continuation still
-requires that server's supported capability and enabled setting; it does not
-revive stopped or settled work.
+appears after it restarts. Threads on a server that can resume them after its
+update are not counted as stopped. Continuation still requires that server's
+supported capability and enabled setting; it does not revive stopped or settled
+work. If a server would stop more threads when its restart is due than when you
+chose **Update**, it waits in the circle instead.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment

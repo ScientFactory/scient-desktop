@@ -24,7 +24,7 @@ import {
   type OtherUpdatesCircleState,
 } from "./otherUpdates.logic";
 import { UpdateTextButton } from "./UpdateTextButton";
-import { stoppedThreadsNow, useOtherUpdates } from "./useOtherUpdates";
+import { confirmServerStops, useOtherUpdates } from "./useOtherUpdates";
 
 /** How long the finished check stays before the circle steps aside. */
 const OTHER_UPDATES_DONE_VISIBLE_MS = 2_500;
@@ -292,11 +292,7 @@ export function SidebarOtherUpdates({
   const updateAllStops = passServers.reduce((count, item) => count + stoppedThreads(item), 0);
   const runUpdateAll = async () => {
     // Each server restarts only if it would stop no more threads than the user saw now.
-    const confirmed = new Map(
-      passServers.map((item) => [item.environmentId, stoppedThreads(item)] as const),
-    );
-    const admitServer = (target: ServerUpdateTarget) =>
-      stoppedThreadsNow(target) <= (confirmed.get(target.environmentId) ?? 0);
+    const { admitServer } = confirmServerStops(passServers.map((item) => item.target));
     setAsking(null);
     const result = await settlePromise(() => updateAll(admitServer));
     if (result._tag === "Failure") {

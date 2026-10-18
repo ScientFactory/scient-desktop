@@ -531,6 +531,85 @@ it.each(["Later", "Restart"] as const)(
     await expect(decision).resolves.toBe(choice === "Restart");
   },
 );
+
+const availableUpdateState: DesktopUpdateState = {
+  ...updateState,
+  status: "available",
+  downloadedVersion: null,
+};
+
+function countedEverythingFixture() {
+  const value = everythingFixture();
+  const run = vi.fn(value.run);
+  return { value: { ...value, run }, run };
+}
+
+it("starts a pass that downloads this app at once when it stops no threads", async () => {
+  const { value, run } = countedEverythingFixture();
+  fixture.everything = value;
+  await mountFooter(216, availableUpdateState);
+  await page.getByRole("button", { name: /^Update: / }).click();
+  await expect.poll(() => run.mock.calls.length).toBe(1);
+  expect(run.mock.calls[0]![0].admitServer).toBeTypeOf("function");
+  expect(document.querySelector("[data-update-ask]")).toBeNull();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+});
+
+it("asks above the pill before a pass that downloads this app stops running threads", async () => {
+  const { value, run } = countedEverythingFixture();
+  fixture.everything = value;
+  fixture.remoteThreads = [
+    { activeRunId: "run-1", activityRunStatus: "running", status: "queued" },
+    { activeRunId: null, status: "running" },
+  ];
+  await mountFooter(216, availableUpdateState);
+  // Room above the footer for the card, which otherwise flips below the pill.
+  host!.style.marginTop = "120px";
+  window.scrollTo(0, 0);
+  const pill = page.getByRole("button", { name: /^Update: / });
+  await pill.click();
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expect.element(cancel).toBeVisible();
+  const ask = document.querySelector<HTMLElement>("[data-update-ask]")!;
+  expect(ask.textContent).toBe("Stops 2 running threadsCancelUpdate");
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  // A small card above the pill, focused on Cancel and named by its question.
+  await expect
+    .poll(
+      () =>
+        ask.getBoundingClientRect().bottom <=
+        (pill.element() as HTMLElement).getBoundingClientRect().top,
+    )
+    .toBe(true);
+  await expect.poll(() => document.activeElement).toBe(cancel.element());
+  const card = ask.closest<HTMLElement>("[aria-labelledby]")!;
+  expect(document.getElementById(card.getAttribute("aria-labelledby")!)?.textContent).toBe(
+    "Stops 2 running threads",
+  );
+  const update = page.getByRole("button", { name: "Update", exact: true });
+  for (const action of [cancel, update]) {
+    const style = getComputedStyle(action.element());
+    expect(style.borderTopWidth).toBe("0px");
+    expect(style.textDecorationLine).toBe("underline");
+  }
+  expect(run).not.toHaveBeenCalled();
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/update-everything-ask.png`,
+    });
+  }
+
+  await cancel.click();
+  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
+  expect(run).not.toHaveBeenCalled();
+
+  await pill.click();
+  await update.click();
+  await expect.poll(() => run.mock.calls.length).toBe(1);
+  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
+  // The servers restart while they stop no more threads than the user agreed to.
+  expect(run.mock.calls[0]![0].admitServer!(alvinServer as never)).toBe(true);
+});
 // SCIENT-FORK:END
 
 it("keeps all four utilities equally spaced and inset while updates are idle", async () => {

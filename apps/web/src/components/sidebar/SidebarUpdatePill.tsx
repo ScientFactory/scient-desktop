@@ -39,7 +39,6 @@ import {
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
-import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import type { UpdateEverythingRun } from "./updateEverything.logic";
 import {
   clearSavedUpdateEverythingResult,
@@ -58,6 +57,10 @@ import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
 import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
 import { restartUpdateNow } from "./updateEverythingRun";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a pass asks beside the pill, and only when it would stop running threads.
+import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
+import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
 // SCIENT-FORK:END
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -194,7 +197,9 @@ export function SidebarUpdatePill() {
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
-  const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  // SCIENT-FORK:START — the pass waiting on its question: what it stops and what it admits.
+  const [askingPass, setAskingPass] = useState<ReturnType<typeof confirmServerStops> | null>(null);
+  // SCIENT-FORK:END
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -313,7 +318,16 @@ function SidebarUpdateControl() {
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
-      setIsConfirmingEverything(true);
+      // SCIENT-FORK:START — ask only when the pass would stop running threads elsewhere. This
+      // app's own restart keeps its countdown with Later.
+      const pass = confirmServerStops(everything.otherServers.map((server) => server.target));
+      if (pass.stops === 0) {
+        void runEverything(pass.admitServer);
+      } else {
+        releaseNotesPopoverHandle.close();
+        setAskingPass(pass);
+      }
+      // SCIENT-FORK:END
       return;
     }
 
@@ -404,9 +418,11 @@ function SidebarUpdateControl() {
       .finally(() => setIsActionPending(false));
   };
 
-  const runEverything = async () => {
+  // SCIENT-FORK:START — servers restart only while they stop no more threads than agreed.
+  const runEverything = async (admitServer: (target: ServerUpdateTarget) => boolean) => {
     const bridge = window.desktopBridge;
-    setIsConfirmingEverything(false);
+    setAskingPass(null);
+    // SCIENT-FORK:END
     setIsActionPending(true);
     const result = await settlePromise(() =>
       everything.run({
@@ -417,6 +433,7 @@ function SidebarUpdateControl() {
         ...(bridge && action !== "none"
           ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
           : {}),
+        admitServer,
         // SCIENT-FORK:END
       }),
     );
@@ -467,18 +484,6 @@ function SidebarUpdateControl() {
       status={iconStatus}
     />
   );
-  const confirmDialog = (
-    <UpdateEverythingDialog
-      open={isConfirmingEverything}
-      onOpenChange={setIsConfirmingEverything}
-      summary={everything.summary}
-      lines={everything.lines}
-      restarts={everything.restarts}
-      skipped={everything.skipped}
-      onConfirm={() => void runEverything()}
-    />
-  );
-
   const updateButton = (
     <button
       type="button"
@@ -642,8 +647,15 @@ function SidebarUpdateControl() {
           </PopoverPopup>
         ) : null}
       </Popover>
-      {confirmDialog}
       {/* SCIENT-FORK:START */}
+      <UpdateEverythingAsk
+        anchorId={releaseNotesTriggerId}
+        stops={runsEverything && askingPass !== null ? askingPass.stops : null}
+        onCancel={() => setAskingPass(null)}
+        onUpdate={() => {
+          if (askingPass !== null) void runEverything(askingPass.admitServer);
+        }}
+      />
       <UpdateRestartCountdown anchorId={releaseNotesTriggerId} run={run} />
       {/* SCIENT-FORK:END */}
     </SidebarMenuItem>
