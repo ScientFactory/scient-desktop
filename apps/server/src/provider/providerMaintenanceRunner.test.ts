@@ -928,6 +928,52 @@ describe("providerMaintenanceRunner", () => {
       ),
     );
   });
+  it.effect("keeps a published result when cancelled before the update returns", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const publishedLatch: { resolve: () => void } = { resolve: () => {} };
+      const releaseLatch: { resolve: () => void } = { resolve: () => {} };
+      const published = new Promise<void>((resolve) => {
+        publishedLatch.resolve = resolve;
+      });
+      const release = new Promise<void>((resolve) => {
+        releaseLatch.resolve = resolve;
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        setProviderMaintenanceActionState: Effect.fn(
+          "providerMaintenanceRunner.test.holdPublishedResult",
+        )(function* (input) {
+          const providers = yield* registry.setProviderMaintenanceActionState(input);
+          if (input.state?.status === "succeeded") {
+            publishedLatch.resolve();
+            yield* Effect.promise(() => release);
+          }
+          return providers;
+        }),
+      });
+
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => published);
+      // Cancellation arrives after the result is published but before the update returns.
+      const cancelling = yield* Fiber.interrupt(update).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      releaseLatch.resolve();
+      yield* Fiber.join(cancelling);
+
+      const providers = yield* registry.getProviders;
+      assert.strictEqual(providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(providers[0]?.updateState?.message, "Provider updated.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
   // SCIENT-FORK:END
 
   it.effect("accepts arbitrary driver-provided update lock keys", () => {

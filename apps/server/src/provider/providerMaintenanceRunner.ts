@@ -424,10 +424,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     ).pipe(Effect.asVoid);
 
+    // SCIENT-FORK:START — this attempt's result, once published, is final.
+    const completedRef = yield* Ref.make(false);
+    // SCIENT-FORK:END
     const runProviderUpdate = Effect.fn("ProviderMaintenanceRunner.runProviderUpdate")(
       function* () {
+        // SCIENT-FORK:START — publishing the result and marking the attempt complete happen
+        // together, so a late interruption cannot replace a finished result.
         const finish = (state: ServerProviderUpdateState) =>
-          setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
+          setUpdateState(state).pipe(
+            Effect.tap(() => Ref.set(completedRef, true)),
+            Effect.uninterruptible,
+            Effect.map((providers) => ({ providers })),
+          );
+        // SCIENT-FORK:END
         const startedAtRef = yield* Ref.make<string | null>(null);
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
@@ -597,17 +607,24 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ),
         // SCIENT-FORK:START — an update interrupted before it finishes, including while it waits
         // for the installer lock, records a terminal state instead of staying queued or running.
+        // One that already published its result keeps it.
         Effect.onInterrupt(() =>
-          nowIso.pipe(
-            Effect.flatMap((finishedAt) =>
-              setUpdateState(
-                makeUpdateState({
-                  status: "failed",
-                  startedAt: null,
-                  finishedAt,
-                  message: "Provider update was interrupted. Try again.",
-                }),
-              ),
+          Ref.get(completedRef).pipe(
+            Effect.flatMap((completed) =>
+              completed
+                ? Effect.void
+                : nowIso.pipe(
+                    Effect.flatMap((finishedAt) =>
+                      setUpdateState(
+                        makeUpdateState({
+                          status: "failed",
+                          startedAt: null,
+                          finishedAt,
+                          message: "Provider update was interrupted. Try again.",
+                        }),
+                      ),
+                    ),
+                  ),
             ),
             Effect.ignore,
           ),
