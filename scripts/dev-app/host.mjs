@@ -37,7 +37,7 @@ function psQuote(value) {
 
 // ── process identity ──────────────────────────────────────────────────────
 
-/** Same expression the job host uses, so both sides compare equal strings. */
+/** Start-time identity for lock owners (compared, never used to kill). */
 const WINDOWS_START_EXPRESSION = "$p.StartTime.ToUniversalTime().ToString('o')";
 
 /** {state:"alive", start} | {state:"gone"} | {state:"unknown"}. */
@@ -146,7 +146,31 @@ public static class ScientDevJob {
   [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
   [DllImport("kernel32", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
   [DllImport("kernel32", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32", SetLastError = true)] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
   const uint KillOnJobClose = 0x2000, CreateSuspended = 0x4, QueryAndTerminate = 0x0004 | 0x0008;
+  const uint ProcessTerminate = 0x0001, QueryLimited = 0x1000, Synchronize = 0x00100000;
+
+  public static long SelfCreation() {
+    long creation, exit, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), out creation, out exit, out kernel, out user)) throw new Win32Exception();
+    return creation;
+  }
+
+  // Validates and terminates through one handle, so a reused PID is never hit.
+  public static string KillIfCreated(int pid, long expectedCreation) {
+    IntPtr process = OpenProcess(ProcessTerminate | QueryLimited | Synchronize, false, pid);
+    if (process == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? "gone" : "unknown";
+    try {
+      long creation, exit, kernel, user;
+      if (!GetProcessTimes(process, out creation, out exit, out kernel, out user)) return "unknown";
+      if (creation != expectedCreation) return "other";
+      if (!TerminateProcess(process, 1)) return "unknown";
+      WaitForSingleObject(process, 10000);
+      return "killed";
+    } finally { CloseHandle(process); }
+  }
 
   public static IntPtr Create(string name) {
     IntPtr job = CreateJobObject(IntPtr.Zero, name);
@@ -210,13 +234,17 @@ if ($Mode -eq 'terminate') {
   [ScientDevJob]::TerminateByName($Target, 10000)
   exit 0
 }
+if ($Mode -eq 'kill') {
+  $parts = $Target.Split(':')
+  [ScientDevJob]::KillIfCreated([int]$parts[0], [long]$parts[1])
+  exit 0
+}
 if ($Mode -ne 'host') { throw "Unknown mode $Mode" }
-$launch = Get-Content -Raw -LiteralPath $Target | ConvertFrom-Json
+$launch = Get-Content -Raw -Encoding UTF8 -LiteralPath $Target | ConvertFrom-Json
 $job = [ScientDevJob]::Create($launch.jobName)
-$self = Get-Process -Id $PID
 $process = [IntPtr]::Zero
 $runnerPid = [ScientDevJob]::Start($job, $launch.runnerCommandLine, $launch.checkout, [ref]$process)
-Write-JsonAtomic $launch.jobPath @{ tokenHash = $launch.tokenHash; jobName = $launch.jobName; hostPid = $PID; hostStart = $self.StartTime.ToUniversalTime().ToString('o'); runnerPid = $runnerPid }
+Write-JsonAtomic $launch.jobPath @{ tokenHash = $launch.tokenHash; jobName = $launch.jobName; hostPid = $PID; hostCreation = [string][ScientDevJob]::SelfCreation(); runnerPid = $runnerPid }
 $code = [ScientDevJob]::Wait($process)
 if ([ScientDevJob]::Empty($job, 10000)) {
   Write-JsonAtomic $launch.jobEmptyPath @{ tokenHash = $launch.tokenHash; runnerExitCode = $code; at = (Get-Date).ToUniversalTime().ToString('o') }
@@ -236,12 +264,23 @@ export function terminateWindowsJob(jobScriptPath, jobName) {
     : "unknown";
 }
 
-/** Kills `pid` only if it still has `start`; the check and kill share one handle. */
-export function terminateWindowsProcess(pid, start) {
-  const result = runPowerShell(
-    `$p = Get-Process -Id ${String(pid)} -ErrorAction SilentlyContinue; if (-not $p) { 'gone'; exit 0 }; if (${WINDOWS_START_EXPRESSION} -ne ${psQuote(start)}) { 'other'; exit 0 }; $p.Kill(); $p.WaitForExit(10000) | Out-Null; 'killed'`,
+/** Kills `pid` only if it still has `creation` (FILETIME); "killed" | "gone" | "other" | "unknown". */
+export function terminateWindowsProcess(jobScriptPath, pid, creation) {
+  const result = NodeChildProcess.spawnSync(
+    POWERSHELL,
+    [...POWERSHELL_ARGS, "-File", jobScriptPath, "kill", `${String(pid)}:${String(creation)}`],
+    { encoding: "utf8", windowsHide: true, timeout: 60_000 },
   );
-  return result.ok ? result.stdout : "unknown";
+  const verdict = result.status === 0 ? result.stdout.trim().split(/\r?\n/u).at(-1) : "";
+  return ["killed", "gone", "other"].includes(verdict) ? verdict : "unknown";
+}
+
+/** Whether the scheduled task (and so a job host) is still running. Null when unknown. */
+export function scheduledTaskRunning(taskName) {
+  const result = runPowerShell(
+    `(Get-ScheduledTask -TaskName ${psQuote(taskName)} -ErrorAction Stop).State.ToString()`,
+  );
+  return result.ok ? result.stdout === "Running" : null;
 }
 
 // ── Windows: scheduled task and Start-menu shortcut ───────────────────────

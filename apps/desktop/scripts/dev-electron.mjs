@@ -76,8 +76,12 @@ const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.tr
 const hostPlatform = NodeOS.platform();
 const managedByLocalDevApp = process.env.SCIENT_LOCAL_DEV_APP_MANAGED === "1";
 const coldApprovedPath = process.env.SCIENT_DEV_COLD_APPROVED_PATH;
+// The stable app's receipts live in its management root; SCIENT_NEXT_HOME is
+// the reviewed reference's profile there.
 const coldStateRoot =
-  process.env.SCIENT_NEXT_HOME ?? NodePath.resolve(desktopDir, "..", "..", ".scient-next");
+  (process.env.SCIENT_DEV_APP_ROLE === "stable" ? process.env.SCIENT_DEV_STABLE_ROOT : undefined) ??
+  process.env.SCIENT_NEXT_HOME ??
+  NodePath.resolve(desktopDir, "..", "..", ".scient-next");
 const coldRole = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
 const coldFiles = coldApprovedPath
   ? takeApprovedHandoff({

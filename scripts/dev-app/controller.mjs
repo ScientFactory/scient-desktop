@@ -26,6 +26,7 @@ import {
   INSTALL_INPUT_PATHSPECS,
   installFingerprint,
   installWatchdogVerdict,
+  markProfileReady,
   markProfileRun,
   parseReviewRef,
   pruneProfiles,
@@ -35,6 +36,7 @@ import {
   resolveStablePaths,
   restoreProfileSnapshot,
   retireProfile,
+  shouldSnapshotBeforeRun,
   snapshotProfile,
   tryAcquireLock,
   validateProfileRoot,
@@ -48,10 +50,10 @@ import {
   launchJobName,
   launchTokenHash,
   ownerState,
-  processStart,
   quoteWindowsArgument,
   registerScheduledTask,
   runScheduledTask,
+  scheduledTaskRunning,
   scheduledTaskXml,
   selfOwner,
   startMenuShortcutPath,
@@ -183,7 +185,12 @@ function runInstallOnce(checkout, pnpm) {
     const child = NodeChildProcess.spawn(
       process.execPath,
       [pnpm, "install", "--frozen-lockfile", "--reporter=append-only"],
-      { cwd: checkout, windowsHide: true, detached: hostPlatform !== "win32", stdio: "pipe" },
+      {
+        cwd: checkout,
+        windowsHide: true,
+        detached: hostPlatform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     const onOutput = (chunk) => {
       lastOutputAt = Date.now();
@@ -221,6 +228,20 @@ function runInstallOnce(checkout, pnpm) {
   });
 }
 
+/** Windows keeps files of a just-stopped install (and Defender scans) open for a while. */
+async function renameWhenReleased(from, to, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      NodeFS.renameSync(from, to);
+      return;
+    } catch (error) {
+      if (!["EPERM", "EBUSY", "EACCES"].includes(error?.code) || Date.now() > deadline) throw error;
+      await sleep(2_000);
+    }
+  }
+}
+
 async function ensureInstalled(checkout, config) {
   const fingerprint = currentFingerprint(checkout);
   if (readJsonFile(installRecordPath(checkout))?.fingerprint === fingerprint) return;
@@ -228,10 +249,10 @@ async function ensureInstalled(checkout, config) {
   let result = await runInstallOnce(checkout, config.pnpm);
   if (result !== "ok") {
     // A stalled or failed install retries once from an empty node_modules; the
-    // old one is set aside, not deleted, so nothing is lost if this also fails.
-    const aside = NodePath.join(paths.root, `node_modules-aside-${String(Date.now())}`);
+    // old one is set aside next to the checkout, not deleted.
+    const aside = `${checkout}.node_modules-aside-${String(Date.now())}`;
     log(`dependency install ${result}; retrying from a clean node_modules (old copy: ${aside})`);
-    NodeFS.renameSync(NodePath.join(checkout, "node_modules"), aside);
+    await renameWhenReleased(NodePath.join(checkout, "node_modules"), aside);
     result = await runInstallOnce(checkout, config.pnpm);
     if (result !== "ok") fail(`Dependency install ${result} twice. See pnpm dev:app:stable logs.`);
   }
@@ -346,7 +367,7 @@ function newLaunch(config, review) {
     node: process.execPath,
     jobPath: paths.jobPath,
     jobEmptyPath: paths.jobEmptyPath,
-    runnerCommandLine: [process.execPath, controllerPath, "runner"]
+    runnerCommandLine: [process.execPath, controllerPath, "runner", launchTokenHash(token)]
       .map(quoteWindowsArgument)
       .join(" "),
     createdAt: new Date().toISOString(),
@@ -393,6 +414,9 @@ async function startApp(config, { coldHandoff } = {}) {
     );
   }
   if (stopState(config) !== "stopped") fail(`${APP_NAME} is already running or not fully stopped.`);
+  if (hostPlatform === "win32" && scheduledTaskRunning(taskName) !== false) {
+    fail(`A previous ${APP_NAME} launch is still running or could not be checked.`);
+  }
   const launch = newLaunch(config, review);
   const profile = readProfile(paths.profilesDir, review.profileId);
   markProfileRun(profile, review.sha);
@@ -412,6 +436,9 @@ async function startApp(config, { coldHandoff } = {}) {
   ) {
     fail(`Could not start ${APP_NAME}. See pnpm dev:app:stable logs.`);
   }
+  // The Finder app that handed a file over waits for this command and must
+  // exit before the managed app can take over; readiness is not awaited here.
+  if (coldHandoff) return;
   const ready = await waitUntil(
     async () => (await askApp(launch, "status"))?.ready === true,
     READY_TIMEOUT_MS,
@@ -422,6 +449,7 @@ async function startApp(config, { coldHandoff } = {}) {
       `${APP_NAME} did not become ready in time; it is left running. See pnpm dev:app:stable logs.`,
     );
   }
+  markProfileReady(profile, review.sha);
   log(`ready: ${review.ref} at ${review.sha.slice(0, 12)}`);
   if (hostPlatform === "darwin") ensureMacLauncher(config);
 }
@@ -461,21 +489,7 @@ async function stopApp(config) {
     await waitUntil(async () => (await askApp(launch, "status", 1_000)) === null, QUIT_TIMEOUT_MS);
   }
   if (hostPlatform === "win32") {
-    if (launch) {
-      const job = terminateWindowsJob(jobScriptPath, launch.jobName);
-      if (job === "unknown" || job.startsWith("busy:")) {
-        fail(`Could not empty the launch job (${job}); ${APP_NAME} may still be running.`);
-      }
-      const record = readJsonFile(paths.jobPath);
-      if (record?.tokenHash === launch.tokenHash) {
-        const exited = await waitUntil(
-          () => processStart(record.hostPid).state === "gone",
-          10_000,
-          500,
-        );
-        if (!exited) terminateWindowsProcess(record.hostPid, record.hostStart);
-      }
-    }
+    if (launch) await emptyWindowsLaunch(launch);
   } else if (!localDevApp(config, ["stop"])) {
     fail(`Could not stop ${APP_NAME}.`);
   }
@@ -488,8 +502,35 @@ async function stopApp(config) {
         .join(", ")}. Close them and retry.`,
     );
   }
+  // Revokes the launch: a job host that starts late finds nothing to run.
   NodeFS.rmSync(paths.launchPath, { force: true });
   log("stopped");
+}
+
+/**
+ * Empties the launch's job until the scheduled task (its job host) has ended,
+ * so a host that was still starting cannot create the job after we looked.
+ */
+async function emptyWindowsLaunch(launch) {
+  const deadline = Date.now() + QUIT_TIMEOUT_MS;
+  for (;;) {
+    const job = terminateWindowsJob(jobScriptPath, launch.jobName);
+    if (job === "unknown" || job.startsWith("busy:")) {
+      fail(`Could not empty the launch job (${job}); ${APP_NAME} may still be running.`);
+    }
+    const running = scheduledTaskRunning(taskName);
+    if (running === false) return;
+    if (Date.now() > deadline) {
+      const record = readJsonFile(paths.jobPath);
+      if (record?.tokenHash === launch.tokenHash && job === "empty") {
+        // The job is empty; only the host itself is left.
+        const verdict = terminateWindowsProcess(jobScriptPath, record.hostPid, record.hostCreation);
+        if (verdict !== "unknown") return;
+      }
+      fail(`The ${APP_NAME} launch did not finish stopping; its state is unknown.`);
+    }
+    await sleep(500);
+  }
 }
 
 // ── operations ────────────────────────────────────────────────────────────
@@ -553,9 +594,11 @@ async function review(args) {
         retireProfile(paths.profilesDir, choice.id);
       }
       if (choice.action !== "reuse") createProfile(paths.profilesDir, { id: choice.id, ref });
-      else if (choice.previousSha !== sha) {
+      else if (shouldSnapshotBeforeRun(readProfile(paths.profilesDir, choice.id).meta, sha)) {
         log(`saving ${choice.id} before running newer code on it`);
         snapshotProfile(paths.profilesDir, choice.id);
+      } else if (choice.previousSha !== sha) {
+        log(`keeping the earlier snapshot of ${choice.id}; its last run never became ready`);
       }
       next = { ref: ref.label, sha, profileId: choice.id };
     }
@@ -605,9 +648,14 @@ async function open() {
 
 // ── runner (Windows, inside the launch job) ───────────────────────────────
 
-async function runner() {
+async function runner(tokenHash) {
   const launch = readJsonFile(paths.launchPath);
-  if (!launch) fail("No launch was prepared; the runner only starts from the controller.");
+  if (!launch || launch.tokenHash !== tokenHash) {
+    fail("This launch was revoked or never prepared; the runner only starts from the controller.");
+  }
+  if (git(launch.checkout, ["rev-parse", "HEAD"]) !== launch.sha) {
+    fail("The review checkout moved after this launch was prepared.");
+  }
   if (!validateProfileRoot(paths.profilesDir, launch.profileRoot))
     fail("Invalid profile; launch refused.");
   const owner = selfOwner("runner");
@@ -766,13 +814,10 @@ async function install(args) {
     if (hostPlatform === "darwin") retireMacServices();
     const adopted = adoptLegacyState();
     if (adopted) {
-      log(`kept the earlier stable app's state as profile ${adopted}`);
-      writeJsonAtomic(paths.reviewPath, {
-        ref: "main",
-        sha: git(checkout, ["rev-parse", "HEAD"]),
-        profileId: adopted,
-        at: new Date().toISOString(),
-      });
+      // Which commit last touched it is unknown, so it is kept, not run.
+      log(
+        `kept the earlier stable app's state in profiles/${adopted}; reviews start fresh profiles`,
+      );
     }
     if (hostPlatform === "win32") installWindowsLaunchers(checkout);
   });
@@ -915,7 +960,7 @@ async function main(argv) {
   if (command === "status") return status();
   if (command === "logs") return printLogs();
   if (command === "open") return open();
-  if (command === "runner") return runner();
+  if (command === "runner") return runner(args[0]);
   if (command === "uninstall") return uninstall();
   fail(
     "Usage: pnpm dev:app:review <ref> [--fresh] | --restore-previous\n       pnpm dev:app:stable <install|start|stop|status|logs|open|uninstall>",

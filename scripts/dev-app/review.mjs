@@ -110,13 +110,46 @@ export function tryAcquireLock(path, owner, { ownerState }) {
     if (current === null) continue;
     const state = ownerState(current);
     if (state !== "gone") return { acquired: false, holder: current, state };
-    // Only remove the exact stale record we inspected.
-    const again = readJsonFile(path);
-    if (again?.pid === current.pid && again?.start === current.start) {
-      NodeFS.rmSync(path, { force: true });
+    if (!reclaimStaleLock(path, current)) {
+      return { acquired: false, holder: current, state: "unknown" };
     }
   }
   return { acquired: false, holder: readJsonFile(path), state: "unknown" };
+}
+
+const RECLAIM_LOCK_STALE_MS = 60_000;
+
+/**
+ * Removes the stale record only while holding `<path>.reclaim`, so two
+ * controllers that both saw the same dead owner cannot each remove a lock the
+ * other has since taken. The reclaim lock is held for a few file operations;
+ * one older than a minute belongs to a controller that crashed meanwhile.
+ */
+function reclaimStaleLock(path, stale) {
+  const reclaimPath = `${path}.reclaim`;
+  try {
+    NodeFS.writeFileSync(reclaimPath, String(process.pid), { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    try {
+      if (Date.now() - NodeFS.statSync(reclaimPath).mtimeMs > RECLAIM_LOCK_STALE_MS) {
+        NodeFS.rmSync(reclaimPath, { force: true });
+      }
+    } catch {
+      // Gone already.
+    }
+    return false;
+  }
+  try {
+    // Only the record we judged stale; anything else is a live owner's.
+    const again = readJsonFile(path);
+    if (again?.pid === stale.pid && again?.start === stale.start) {
+      NodeFS.rmSync(path, { force: true });
+    }
+    return true;
+  } finally {
+    NodeFS.rmSync(reclaimPath, { force: true });
+  }
 }
 
 export function releaseLock(path, owner) {
@@ -183,6 +216,23 @@ export function markProfileRun(profile, sha, now = Date.now()) {
   });
 }
 
+/** Recorded once the app on this commit finished loading against its backend. */
+export function markProfileReady(profile, sha) {
+  const current = readProfile(NodePath.dirname(profile.dir), profile.id);
+  writeJsonAtomic(NodePath.join(profile.dir, PROFILE_META), { ...current.meta, lastReadySha: sha });
+}
+
+/**
+ * Snapshot before newer code runs, but only state the last run left in good
+ * order: after a run that never became ready, the earlier snapshot is the
+ * last state known to work and is kept.
+ */
+export function shouldSnapshotBeforeRun(meta, sha) {
+  return (
+    Boolean(meta.lastRunSha) && meta.lastRunSha !== sha && meta.lastReadySha === meta.lastRunSha
+  );
+}
+
 export function snapshotPath(profilesDir, id) {
   return NodePath.join(profilesDir, `${id}.snapshot`);
 }
@@ -213,7 +263,7 @@ export function restoreProfileSnapshot(profilesDir, id, now = Date.now()) {
   return meta.lastRunSha;
 }
 
-/** Keeps the newest profiles and retired copies; never the active one or a snapshot. */
+/** Keeps the newest profiles and retired copies; never the active one. */
 export function pruneProfiles(profilesDir, activeId) {
   if (!NodeFS.existsSync(profilesDir)) return [];
   const entries = NodeFS.readdirSync(profilesDir, { withFileTypes: true }).filter((entry) =>
@@ -221,7 +271,8 @@ export function pruneProfiles(profilesDir, activeId) {
   );
   const live = entries
     .map((entry) => readProfile(profilesDir, entry.name))
-    .filter((profile) => profile !== null && profile.id !== activeId)
+    // A profile that never ran (such as adopted legacy state) is never pruned.
+    .filter((profile) => profile !== null && profile.id !== activeId && profile.meta.lastRunAt)
     .toSorted((a, b) => String(b.meta.lastRunAt).localeCompare(String(a.meta.lastRunAt)));
   const retired = entries
     .map((entry) => entry.name)

@@ -9,6 +9,7 @@ import {
   createProfile,
   installFingerprint,
   installWatchdogVerdict,
+  markProfileReady,
   markProfileRun,
   parseReviewRef,
   profileIdForRef,
@@ -17,6 +18,7 @@ import {
   releaseLock,
   restoreProfileSnapshot,
   retireProfile,
+  shouldSnapshotBeforeRun,
   snapshotProfile,
   tryAcquireLock,
   validateProfileRoot,
@@ -81,6 +83,37 @@ describe("locks", () => {
     releaseLock(path, second);
     assert.isFalse(NodeFS.existsSync(path));
   });
+
+  it("never lets two controllers reclaim the same stale lock", () => {
+    const path = NodePath.join(tempDir(), "operation.lock");
+    const dead = { pid: 1, start: "dead" };
+    const a = { pid: 2, start: "a" };
+    const b = { pid: 3, start: "b" };
+    assert.isTrue(tryAcquireLock(path, dead, { ownerState: () => "alive" }).acquired);
+    let bResult = null;
+    // While A is still judging the dead owner, B reclaims and takes the lock.
+    const aResult = tryAcquireLock(path, a, {
+      ownerState: (holder) => {
+        if (holder.pid === dead.pid && bResult === null) {
+          bResult = tryAcquireLock(path, b, { ownerState: () => "gone" });
+        }
+        return holder.pid === dead.pid ? "gone" : "alive";
+      },
+    });
+    assert.isTrue(bResult?.acquired);
+    assert.isFalse(aResult.acquired);
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(path, "utf8")), b);
+  });
+
+  it("does not reclaim while another controller is reclaiming", () => {
+    const path = NodePath.join(tempDir(), "operation.lock");
+    const dead = { pid: 1, start: "dead" };
+    assert.isTrue(tryAcquireLock(path, dead, { ownerState: () => "alive" }).acquired);
+    NodeFS.writeFileSync(`${path}.reclaim`, "4");
+    const result = tryAcquireLock(path, { pid: 5, start: "e" }, { ownerState: () => "gone" });
+    assert.isFalse(result.acquired);
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(path, "utf8")), dead);
+  });
 });
 
 describe("profiles", () => {
@@ -125,6 +158,20 @@ describe("profiles", () => {
       "before",
     );
     assert.isTrue(NodeFS.existsSync(NodePath.join(profiles, "pr-7.retired-1", "state.sqlite")));
+  });
+
+  it("keeps the last known-good snapshot across a failed upgrade", () => {
+    assert.isFalse(shouldSnapshotBeforeRun({ lastRunSha: null }, "a"));
+    assert.isFalse(shouldSnapshotBeforeRun({ lastRunSha: "a", lastReadySha: "a" }, "a"));
+    assert.isTrue(shouldSnapshotBeforeRun({ lastRunSha: "a", lastReadySha: "a" }, "b"));
+    // b ran but never became ready: the snapshot of a must survive the move to c.
+    assert.isFalse(shouldSnapshotBeforeRun({ lastRunSha: "b", lastReadySha: "a" }, "c"));
+    const profiles = tempDir();
+    const profile = createProfile(profiles, { id: "pr-7", ref });
+    markProfileRun(profile, "a");
+    markProfileReady(profile, "a");
+    assert.equal(readProfile(profiles, "pr-7").meta.lastReadySha, "a");
+    assert.equal(readProfile(profiles, "pr-7").meta.lastRunSha, "a");
   });
 
   it("prunes old profiles but never the active one", () => {

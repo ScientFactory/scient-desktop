@@ -1010,8 +1010,13 @@ async function installApp({ replace }) {
     process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
   }
   process.env.VITE_DEV_SERVER_URL = "http://127.0.0.1:5733";
-  const { resolveDevProtocolClient } =
-    await import("../apps/desktop/scripts/electron-launcher.mjs");
+  // From the checkout, not beside this file: the stable app's installed
+  // controller runs a copy of this script outside any checkout.
+  const { resolveDevProtocolClient } = await import(
+    NodeURL.pathToFileURL(
+      NodePath.join(repoRoot, "apps", "desktop", "scripts", "electron-launcher.mjs"),
+    ).href
+  );
   const source = resolveDevProtocolClient();
   if (!source) throw new Error("Could not create the macOS development app bundle.");
   const paths = resolveLocalDevAppPaths();
