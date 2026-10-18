@@ -526,6 +526,11 @@
   > .scient-latex-content-layout[data-layout="contentFloat"] {
   margin-block: 0;
 }
+/* The hyphen printed where a word continues in the next column or page. It is
+   drawn, not text: it is not copied and the caret does not stop on it. */
+.scient-paged-hyphen::after {
+  content: "\2010";
+}
 .scient-latex-pagination-gap {
   display: block;
   width: 0;

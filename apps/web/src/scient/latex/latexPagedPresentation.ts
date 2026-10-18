@@ -31,6 +31,8 @@ interface Part {
   readonly naturalTop: number;
   readonly row?: number | undefined;
   readonly passive?: PassiveBoundary | undefined;
+  /** The line starts after a hyphenation break inside a word. */
+  readonly hyphenated?: boolean | undefined;
 }
 interface Measurement {
   readonly parts: readonly Part[];
@@ -81,7 +83,7 @@ function measured(
     !followsRunIn &&
     !element.style.getPropertyValue("--scient-paged-display-shrink") &&
     !element.querySelector(
-      ".scient-latex-pagination-gap,.scient-paged-line,[data-paged-repeat],math-field",
+      ".scient-latex-pagination-gap,.scient-paged-line,.scient-paged-hyphen,[data-paged-repeat],math-field",
     ) &&
     (node.type.name !== "paragraph" ||
       node.textContent.length * parseFloat(style.fontSize) >= element.clientWidth * 3);
@@ -203,6 +205,7 @@ function measured(
         row?: number;
         keep?: boolean;
         passive?: PassiveBoundary | undefined;
+        hyphenated?: boolean;
       }[] = [];
       const paragraphs: { node: DocumentNode; position: number; element: HTMLElement }[] = [];
       const collect = (child: DocumentNode, at: number) => {
@@ -259,6 +262,7 @@ function measured(
           bottom: number;
           passive?: PassiveBoundary | undefined;
           right?: number;
+          hyphenated?: boolean;
         }[] = [];
         let text: globalThis.Node | null;
         while ((text = walker.nextNode())) {
@@ -280,11 +284,19 @@ function measured(
             }
             const prior = lines.find((item) => Math.abs(item.top - line.top) < 2);
             if (prior) {
+              if (from < prior.from) prior.hyphenated = line.hyphenated;
               prior.from = Math.min(prior.from, from);
               prior.bottom = Math.max(prior.bottom, line.bottom);
               prior.right = Math.max(prior.right ?? 0, line.right);
             } else
-              lines.push({ from, top: line.top, bottom: line.bottom, passive, right: line.right });
+              lines.push({
+                from,
+                top: line.top,
+                bottom: line.bottom,
+                passive,
+                right: line.right,
+                hyphenated: line.hyphenated,
+              });
           }
         }
         // Inline fractions and scripts can extend beyond the prose glyphs.
@@ -312,6 +324,7 @@ function measured(
                 Math.abs(b.top + b.bottom - top - bottom),
             )[0];
           if (nearest) {
+            if (from < nearest.from) nearest.hyphenated = false;
             nearest.from = Math.min(nearest.from, from);
             nearest.top = Math.min(nearest.top, top);
             nearest.bottom = Math.max(nearest.bottom, bottom);
@@ -339,6 +352,7 @@ function measured(
               : (lines[index + 1]?.from ?? paragraph.position + paragraph.node.nodeSize - 1) -
                 position,
             passive: line.passive,
+            hyphenated: index > 0 && line.hyphenated === true,
             top: edges[index]! - bounds.top,
             bottom: edges[index + 1]! - bounds.top,
             keep:
@@ -412,6 +426,7 @@ function measured(
           naturalTop: first ? 0 : piece.top,
           row: piece.row,
           passive: piece.passive,
+          hyphenated: piece.hyphenated,
           unit: {
             key: {},
             height:
@@ -711,10 +726,12 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                     ...measurement,
                     parts: measurement.parts.map((part, index) => {
                       const before = prior.measurement.parts[index]!;
-                      return Object.entries(part.unit).every(
-                        ([key, value]) =>
-                          key === "key" || before.unit[key as keyof PagedUnit] === value,
-                      )
+                      // A drawn hyphen depends on the break too, not only on its line.
+                      return part.hyphenated === before.hyphenated &&
+                        Object.entries(part.unit).every(
+                          ([key, value]) =>
+                            key === "key" || before.unit[key as keyof PagedUnit] === value,
+                        )
                         ? { ...part, unit: before.unit }
                         : part;
                     }),
@@ -1240,6 +1257,22 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 displacement -= Math.max(0, part.unit.height - placement.height);
                 continue;
               }
+              // A line that follows a hyphenation break and moves to another
+              // column or page becomes a separate element, where the browser
+              // can no longer hyphenate the word; it would hyphenate earlier
+              // and strand letters. Draw the hyphen TeX prints there and keep
+              // the break where it was measured.
+              const previous = index > 0 ? plan.placements[index - 1] : undefined;
+              if (
+                part.hyphenated &&
+                part !== entry.measurement.parts[0] &&
+                previous &&
+                (previous.page !== placement.page || previous.column !== placement.column) &&
+                doc.resolve(from).nodeBefore?.isText
+              )
+                decorations.push(
+                  Decoration.inline(from - 1, from, { class: "scient-paged-hyphen" }),
+                );
               if (entry.region) {
                 const bounds = regionBounds.get(entry.region)!;
                 bounds.end = Math.max(bounds.end, placement.top + placement.height);
