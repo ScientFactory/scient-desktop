@@ -2108,3 +2108,41 @@ describe("ProviderConnectionManager failure stage", () => {
     }),
   );
 });
+
+describe("ProviderConnectionManager sign-in request ids", () => {
+  it.effect("keeps the starting client's request id on every state of its operation", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://auth.openai.com/",
+            authorizationUrlKind: "primary",
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: "request-12345678",
+      });
+      yield* Deferred.fail(completed, new ProviderConnectionActionError({ message: "Declined." }));
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+      assert.deepStrictEqual(
+        transitions.map((item) => [item?.status, item?.signInRequestId]),
+        [
+          ["starting", "request-12345678"],
+          ["waiting_for_browser", "request-12345678"],
+          ["failed", "request-12345678"],
+        ],
+      );
+    }),
+  );
+});

@@ -74,6 +74,16 @@ export type ProviderConnectionOperationStatus = typeof ProviderConnectionOperati
 export const ProviderAuthorizationUrlKind = Schema.Literals(["primary", "manual_fallback"]);
 export type ProviderAuthorizationUrlKind = typeof ProviderAuthorizationUrlKind.Type;
 
+/**
+ * Opaque, client-generated id of one start request. It lets the client that
+ * started a sign-in recognize its operation in streamed snapshots, so it can
+ * open the sign-in page even if the start command's reply never arrives.
+ */
+export const ProviderSignInRequestId = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9-]{8,64}$/),
+);
+export type ProviderSignInRequestId = typeof ProviderSignInRequestId.Type;
+
 export const ProviderConnectionOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   method: ProviderConnectionMethod,
@@ -100,6 +110,8 @@ export const ProviderConnectionOperation = Schema.Struct({
    * starting a session or verifying the account, so the sign-in itself did finish.
    */
   failedAfterSignIn: Schema.optionalKey(Schema.Boolean),
+  /** The start request that created this operation, when its client sent one. */
+  signInRequestId: Schema.optionalKey(ProviderSignInRequestId),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 
@@ -262,6 +274,7 @@ export const ProviderConnectionStartInput = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
   /** Required when the provider lists accounts: the entry to sign in to. */
   account: Schema.optionalKey(ProviderConnectionAccountId),
+  signInRequestId: Schema.optionalKey(ProviderSignInRequestId),
 });
 export type ProviderConnectionStartInput = typeof ProviderConnectionStartInput.Type;
 

@@ -92,6 +92,7 @@ function operation(input: {
   readonly account?: string | undefined;
   readonly instructions?: string | undefined;
   readonly failedAfterSignIn?: boolean | undefined;
+  readonly signInRequestId?: string | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -112,6 +113,7 @@ function operation(input: {
     ...(input.account ? { account: input.account } : {}),
     ...(input.instructions ? { instructions: input.instructions } : {}),
     ...(input.failedAfterSignIn === true ? { failedAfterSignIn: true } : {}),
+    ...(input.signInRequestId ? { signInRequestId: input.signInRequestId } : {}),
   };
 }
 
@@ -219,6 +221,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       readonly operationId: string;
       readonly method: ProviderConnectionStartInput["method"];
       readonly account: string | undefined;
+      readonly signInRequestId: string | undefined;
       readonly startedAt: string;
     }) {
       const active = yield* takeIfCurrent(input.instanceId, input.operationId);
@@ -240,6 +243,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId: input.operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               status: "cancelled",
               startedAt: input.startedAt,
               finishedAt,
@@ -389,6 +393,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           operationId,
           method: input.method,
           account: input.account,
+          signInRequestId: input.signInRequestId,
           status: "starting",
           startedAt,
           message: actions.startingMessage ?? "Starting secure provider sign in.",
@@ -424,6 +429,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               status: "failed",
               startedAt,
               finishedAt,
@@ -466,6 +472,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               instructions: attempt.instructions,
               status: waitingStatus,
               startedAt,
@@ -552,6 +559,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     operationId,
                     method: input.method,
                     account: input.account,
+                    signInRequestId: input.signInRequestId,
                     status: "verifying",
                     startedAt,
                     message: "Verifying the connected provider account.",
@@ -590,6 +598,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   operationId,
                   method: input.method,
                   account: input.account,
+                  signInRequestId: input.signInRequestId,
                   status: completion._tag === "Success" ? "connected" : "failed",
                   startedAt,
                   finishedAt,
@@ -618,6 +627,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     operationId,
                     method: input.method,
                     account: input.account,
+                    signInRequestId: input.signInRequestId,
                     status: "failed",
                     startedAt,
                     finishedAt,
@@ -661,6 +671,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               startedAt,
             }),
       ),
