@@ -8,18 +8,23 @@
  * session with JSON-RPC -32603. Most users have no `~/.gemini`, so a link is
  * made only to a directory that exists, and a dangling one is removed so the
  * agent can create its own. This runs on every launch: the user may install
- * Gemini skills later.
+ * Gemini skills later, and the empty directory the agent created meanwhile is
+ * then replaced by the link.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's remove cannot remove only an empty directory.
+import * as NodeFSP from "node:fs/promises";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 /**
- * Whether the upstream linker should skip `link` because `target` is not a
- * directory. When it is not, a dangling link (symlink or Windows junction) at
- * `link` is removed. A real directory, or a link that still resolves, is never
- * touched.
+ * Prepares `link` for the upstream linker and says whether to skip it. With
+ * `target` missing, a dangling link (symlink or Windows junction) is removed
+ * and linking is skipped. With `target` present, an empty real directory at
+ * `link` is removed so the link can take its place. A directory with content,
+ * or a link that still resolves, is never touched.
  */
-export const skipMissingAntigravitySkillTarget = Effect.fn("skipMissingAntigravitySkillTarget")(
+export const prepareAntigravitySkillLink = Effect.fn("prepareAntigravitySkillLink")(
   function* (input: {
     readonly link: string;
     readonly target: string;
@@ -29,11 +34,17 @@ export const skipMissingAntigravitySkillTarget = Effect.fn("skipMissingAntigravi
       Effect.map((info) => info.type === "Directory"),
       Effect.orElseSucceed(() => false),
     );
-    if (targetIsDirectory) return false;
     const isLink = yield* fs.readLink(input.link).pipe(
       Effect.as(true),
       Effect.orElseSucceed(() => false),
     );
+    if (targetIsDirectory) {
+      if (!isLink) {
+        // rmdir refuses a directory with anything in it, so no content can be lost.
+        yield* Effect.tryPromise(() => NodeFSP.rmdir(input.link)).pipe(Effect.ignore);
+      }
+      return false;
+    }
     if (!isLink) return true;
     // `stat` follows the link, so only a link whose target is gone reports NotFound.
     const dangling = yield* fs.stat(input.link).pipe(

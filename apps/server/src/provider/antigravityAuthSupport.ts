@@ -26,7 +26,7 @@ import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPlug
 // SCIENT-FORK:END
 // SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
 import { verifyAntigravityBrowserHelperOnce } from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
-import { skipMissingAntigravitySkillTarget } from "../scient/skills/antigravityUserSkillLinks.ts";
+import { prepareAntigravitySkillLink } from "../scient/skills/antigravityUserSkillLinks.ts";
 // SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -372,8 +372,8 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
-      // SCIENT-FORK:START — link only an existing directory; drop a dangling link instead.
-      if (yield* skipMissingAntigravitySkillTarget({ link, target })) return;
+      // SCIENT-FORK:START — link only an existing directory; never leave a dangling link.
+      if (yield* prepareAntigravitySkillLink({ link, target })) return;
       // SCIENT-FORK:END
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),

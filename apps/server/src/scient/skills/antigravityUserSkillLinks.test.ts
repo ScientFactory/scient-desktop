@@ -84,6 +84,8 @@ it.layer(NodeServices.layer)("Antigravity user skill links", (it) => {
     Effect.gen(function* () {
       const t = yield* setup;
       yield* t.prepare;
+      // Meanwhile the agent created its own, empty, directory.
+      yield* t.fs.makeDirectory(t.configLink, { recursive: true });
       yield* t.fs.makeDirectory(t.path.join(t.configTarget, "review"), { recursive: true });
 
       yield* t.prepare;
