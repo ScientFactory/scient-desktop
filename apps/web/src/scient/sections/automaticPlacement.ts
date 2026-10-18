@@ -113,7 +113,7 @@ export function reconcilePlacement(
     const departures = new Set<string>();
     const upper = new Set(previous.upper.filter((key) => known.has(key)));
     const aside = new Set(previous.aside.filter((key) => known.has(key)));
-    let arrived = false;
+    const arrivals = new Set<string>();
     // New inactive rows follow their saved placement. Eligible arrivals append below retained members.
     for (const row of rows) {
       const old = oldRows.get(row.key);
@@ -130,7 +130,7 @@ export function reconcilePlacement(
         if (!upper.has(row.key) && !aside.has(row.key)) {
           order = atBoundary(order, upper, row.key);
           upper.add(row.key);
-          arrived = true;
+          arrivals.add(row.key);
         }
       } else if (aside.delete(row.key)) {
         // A set-aside thread that goes inactive stays where it was dropped.
@@ -151,6 +151,8 @@ export function reconcilePlacement(
         order = manualOrderForPlacement(order, keys, row.key);
         retainedPending.delete(row.key);
         departures.delete(row.key);
+        // Its place is the drop's, so it does not re-form the block as an arrival would.
+        arrivals.delete(row.key);
         placeDropped(order, upper, aside, row.key, row.eligible);
       }
     }
@@ -158,7 +160,7 @@ export function reconcilePlacement(
     for (const key of order.filter((key) => departures.has(key)).toReversed())
       order = atBoundary(order, upper, key);
     // An arrival re-forms the block at the top, above inactive threads dragged there.
-    if (arrived)
+    if (arrivals.size > 0)
       order = [...order.filter((key) => upper.has(key)), ...order.filter((key) => !upper.has(key))];
     return {
       id,
@@ -178,6 +180,8 @@ export function reconcilePlacement(
       return [];
     const rows = group.rows.filter((row) => !listed.has(row.key));
     const kept = new Set(rows.map((row) => row.key));
+    for (const key of kept)
+      if (pending.has(key)) retainedPending.set(key, pending.get(key) ?? null);
     const keep = (keys: readonly string[]) => keys.filter((key) => kept.has(key));
     return rows.length === 0
       ? []
@@ -205,9 +209,22 @@ export function manuallyPlaceThread(
   displayedOrder: readonly string[],
   key: string,
   currentRows: readonly PlacementInput[],
+  isFrozen: (key: string) => boolean = () => false,
 ): PlacementState {
+  const listed = new Set(currentRows.flatMap((entry) => entry.rows.map((row) => row.key)));
   const groups = state.groups.map((group) => {
-    const rows = currentRows.find((entry) => entry.id === group.id)?.rows ?? group.rows;
+    const current = currentRows.find((entry) => entry.id === group.id)?.rows;
+    const saved = new Map(group.rows.map((row) => [row.key, row]));
+    // Frozen rows keep the state reconciliation held, including rows it kept while missing.
+    const rows =
+      current === undefined
+        ? group.rows
+        : [
+            ...current.map((row) =>
+              row.key !== key && isFrozen(row.key) ? (saved.get(row.key) ?? row) : row,
+            ),
+            ...group.rows.filter((row) => !listed.has(row.key)),
+          ];
     if (group.id !== groupId) {
       return {
         ...group,

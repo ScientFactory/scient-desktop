@@ -200,7 +200,7 @@ export function useAutomaticPlacement(input: {
       );
       setSaved({
         key: current.storageKey,
-        state: manuallyPlaceThread(reconciled, groupId, order, key, inputs),
+        state: manuallyPlaceThread(reconciled, groupId, order, key, inputs, current.isFrozen),
       });
     },
     [],

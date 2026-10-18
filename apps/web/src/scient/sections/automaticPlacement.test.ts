@@ -106,6 +106,25 @@ it("classifies a drop made on another device like a local one", () => {
   expect(back.upper).toEqual(["a", "b"]);
   expect(back.aside).toEqual([]);
 });
+it("does not re-form the block for a thread that both arrives and is dropped elsewhere", () => {
+  const snapshot = (eligible: string[], bKey = "b") => [
+    {
+      id: "general",
+      rows: ["x", "a", "y", "b"].map((key) => ({
+        key,
+        eligible: eligible.includes(key),
+        orderKey: key === "b" ? bKey : key,
+      })),
+    },
+  ];
+  let state = reconcilePlacement(EMPTY_PLACEMENT, snapshot(["a"]), null, 0);
+  // x is deliberately held above active a.
+  state = manuallyPlaceThread(state, "general", ["x", "a", "y", "b"], "x", snapshot(["a"]));
+  // Another window drops b, now active, below y.
+  state = reconcilePlacement(state, snapshot(["a", "b"], "z"), null, 0);
+  expect(order(state)).toEqual(["x", "a", "y", "b"]);
+  expect(state.groups[0]!.aside).toEqual(["b"]);
+});
 it("keeps an active thread reordered within the block in it", () => {
   let state = drop(update(EMPTY_PLACEMENT, ["a", "b"]), ["b", "a", "x", "c"], "b", ["a", "b"]);
   expect(state.groups[0]!.aside).toEqual([]);
@@ -202,6 +221,22 @@ it("holds an unsynchronized environment's rows at their last known state", () =>
     remoteFrozen,
   );
   expect(order(missing)).toEqual(order(state));
+  // A local drop meanwhile keeps them too.
+  const dropped = manuallyPlaceThread(
+    missing,
+    "general",
+    ["local:a", "local:b"],
+    "local:a",
+    general(["local:b"], ["local:a", "local:b"]),
+    remoteFrozen,
+  );
+  expect(dropped.groups[0]!.rows.map((row) => row.key)).toEqual([
+    "local:a",
+    "local:b",
+    "remote:r",
+    "remote:s",
+  ]);
+  expect(dropped.groups[0]!.upper).toContain("remote:r");
   // So does a frozen environment's own section that is missing entirely.
   const remoteSection = { id: "section@remote", rows: rows(["remote:t"], ["remote:t"])[0]!.rows };
   const withSection = reconcilePlacement(EMPTY_PLACEMENT, [remoteSection], null, 0);
@@ -218,6 +253,13 @@ it("holds an unsynchronized environment's rows at their last known state", () =>
     remoteFrozen,
   );
   expect(listedElsewhere.groups.map((group) => group.id)).toEqual(["general"]);
+  // A carried section keeps its threads' review deadlines.
+  const remoteRead = { ...remoteSection, rows: [{ ...remoteSection.rows[0]!, eligible: false }] };
+  let reading = reconcilePlacement(withSection, [remoteRead], "remote:t", 1);
+  reading = reconcilePlacement(reading, [remoteRead], null, 2);
+  expect(reconcilePlacement(reading, [], null, 10, remoteFrozen).pending).toEqual([
+    { key: "remote:t", dueAt: 3002 },
+  ]);
   // A frozen thread's review deadline waits: it does not depart while its machine is away.
   let held = reconcilePlacement(EMPTY_PLACEMENT, general(["remote:r"]), null, 0);
   held = reconcilePlacement(held, general([]), "remote:r", 1);
