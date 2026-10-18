@@ -63,7 +63,10 @@ protections below. Final copy and layout require human review before activation.
 persisted/wire validator; the website gateway consumes its generated copy.
 Revision 3 added product insight signals. Revision 4 makes provider installation
 state explicit, so a bundled-but-missing provider cannot be mistaken for an
-installed runtime. Installation state is aggregated per provider driver: it is
+installed runtime. Revision 5 names every settings page in `settings.viewed`
+(Scheduled Tasks, SnapShots, Documents and Storage reported as `other` before);
+the desktop derives its page list from the settings sidebar, and a test fails
+when a page is missing from the contract. Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
@@ -75,8 +78,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v4.json \
-  /absolute/website/workers/events/fixtures/contract-v4.json
+  packages/scient-analytics/fixtures/contract-v5.json \
+  /absolute/website/workers/events/fixtures/contract-v5.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 

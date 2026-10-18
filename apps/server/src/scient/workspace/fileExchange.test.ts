@@ -5,9 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
-import { fileExchangeTestHelper } from "./fileExchange.testkit.ts";
+import { fileExchangeTestHelper, filePublicationTestHelper } from "./fileExchange.testkit.ts";
+
+import { bindNativeFilePublication, runNativeFilePublication } from "./NativeFilePublication.ts";
 
 const helper = await fileExchangeTestHelper();
+const publication = await filePublicationTestHelper();
 const diskImages =
   HostProcess.Platform.defaultValue() === "darwin" &&
   NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
@@ -77,5 +80,49 @@ describe.skipIf(helper === undefined || !diskImages)("file exchange helper on ot
       expect(await NodeFSP.readFile(left, "utf8")).toBe("first");
       expect(await NodeFSP.readFile(right, "utf8")).toBe("second");
     }),
+  );
+});
+
+describe.skipIf(publication === undefined || !diskImages)("file publication on other disks", () => {
+  it.each(["APFS", "MS-DOS FAT32", "ExFAT", "JHFS+"])(
+    "preserves both files on %s, exchanging only when supported",
+    (format) =>
+      onDisk(format, async (folder) => {
+        const rootPath = await NodeFSP.realpath(folder);
+        const recordPath = NodePath.join(rootPath, "record");
+        await NodeFSP.mkdir(recordPath, { mode: 0o700 });
+        const target = NodePath.join(rootPath, "target");
+        const staged = NodePath.join(recordPath, "staged");
+        await NodeFSP.writeFile(target, "original");
+        await NodeFSP.writeFile(staged, "replacement");
+        const binding = await bindNativeFilePublication(
+          publication!,
+          {
+            rootPath,
+            parentRelativePath: ".",
+            recordPath,
+          },
+          "bound-object",
+        );
+        const result = await runNativeFilePublication(publication!, {
+          binding,
+          operation: "exchange",
+          authority: "bound-object",
+          sourceName: "staged",
+          destinationName: "target",
+        });
+        if (format === "APFS") {
+          expect(result.code).toBe(0);
+          expect(result.outcome).toBe("applied");
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("replacement");
+          expect(await NodeFSP.readFile(staged, "utf8")).toBe("original");
+        } else {
+          expect(result.code).not.toBe(0);
+          expect(result.outcome).toBe("unchanged");
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+          expect(await NodeFSP.readFile(staged, "utf8")).toBe("replacement");
+        }
+      }),
+    30_000,
   );
 });

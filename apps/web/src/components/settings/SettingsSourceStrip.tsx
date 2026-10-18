@@ -107,7 +107,7 @@ export function SettingsSourcePanel(props: Omit<ComponentProps<"div">, "classNam
     <div
       {...props}
       data-source-panel=""
-      className="rounded-xl border border-border/60 bg-card/40 py-1 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50"
+      className="rounded-xl border border-border/60 bg-card/40 py-1 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50"
     />
   );
 }

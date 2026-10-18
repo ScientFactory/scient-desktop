@@ -231,6 +231,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
   const resourcesDir = path.join(packagedAppDir, "resources");
   yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
+  yield* fs.makeDirectory(path.join(resourcesDir, "file-exchange"), { recursive: true });
   yield* fs.makeDirectory(path.join(resourcesDir, "synctex-runtime"), { recursive: true });
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   if (input.copyUnpackedNatives) {
@@ -242,6 +243,10 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   yield* fs.writeFileString(
     path.join(resourcesDir, "resource-monitor/scient-resource-monitor.exe"),
     "monitor",
+  );
+  yield* fs.writeFileString(
+    path.join(resourcesDir, "file-exchange/scient-file-publication.exe"),
+    "publication",
   );
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
@@ -813,6 +818,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!**/node_modules/@cursor/sdk-*/**/*",
       "!apps/desktop/prod-resources/cursor-sdk",
       "!apps/desktop/prod-resources/cursor-sdk/**/*",
+      "!apps/server/dist/file-exchange",
+      "!apps/server/dist/file-exchange/**/*",
       "!apps/desktop/prod-resources/resource-monitor",
       "!apps/desktop/prod-resources/resource-monitor/**/*",
       "!apps/desktop/prod-resources/whisper-runtime",
@@ -895,13 +902,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, [
-        ...DESKTOP_EXTRA_RESOURCES,
-        {
-          from: "apps/desktop/prod-resources/file-exchange",
-          to: "file-exchange",
-        },
-      ]);
+      assert.deepStrictEqual(mac.extraResources, [...DESKTOP_EXTRA_RESOURCES]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
@@ -1102,6 +1103,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }
 
     assert.deepStrictEqual(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, [
+      "!apps/desktop/resources/file-exchange",
+      "!apps/desktop/resources/file-exchange/**/*",
+      "!apps/desktop/prod-resources/file-exchange",
+      "!apps/desktop/prod-resources/file-exchange/**/*",
       "!apps/desktop/resources/resource-monitor",
       "!apps/desktop/resources/resource-monitor/**/*",
       "!apps/desktop/resources/whisper-runtime",
@@ -2447,6 +2452,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         yield* fs.remove(resourceMonitorPath, { recursive: true });
         yield* fs.writeFileString(resourceMonitorPath, "monitor");
+        const publicationPath = path.join(
+          fixture.packagedAppDir,
+          "resources/file-exchange/scient-file-publication.exe",
+        );
+        yield* fs.remove(publicationPath);
+        yield* fs.makeDirectory(publicationPath);
+        const publicationError = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(publicationError, WindowsPackagedPayloadValidationError);
+        assert.equal(publicationError.reason, "file-publication-missing");
+        assert.deepStrictEqual(publicationError.missingFiles, [
+          "file-exchange/scient-file-publication.exe",
+        ]);
+        yield* fs.remove(publicationPath, { recursive: true });
+        yield* fs.writeFileString(publicationPath, "publication");
         const syncTexPath = path.join(
           fixture.packagedAppDir,
           "resources/synctex-runtime/synctex.exe",
@@ -2490,8 +2513,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has nine core files, plus the 39 approved component files.
-        for (let index = 0; index < 71; index += 1) {
+        // Fixture has ten core files, plus the 39 approved component files.
+        for (let index = 0; index < 70; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
             "core",
@@ -2979,24 +3002,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it("stages the resource monitor as an external executable resource", () => {
-    assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
-      {
-        from: "apps/desktop/prod-resources/cursor-sdk",
-        to: "node_modules/@cursor",
-      },
-      {
-        from: "apps/desktop/prod-resources/resource-monitor",
-        to: "resource-monitor",
-      },
-      {
-        from: "apps/desktop/prod-resources/whisper-runtime",
-        to: "whisper-runtime",
-      },
-      {
-        from: "apps/desktop/prod-resources/synctex-runtime",
-        to: "synctex-runtime",
-      },
-    ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

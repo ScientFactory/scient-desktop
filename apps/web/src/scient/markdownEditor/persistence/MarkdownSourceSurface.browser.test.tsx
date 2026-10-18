@@ -7,6 +7,7 @@ import { page, userEvent } from "vitest/browser";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import { MarkdownPersistenceRegistry } from "./markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "./markdownDraftCheckpointTestkit";
 
 it("types at the end after replacing a multiline source and acknowledging its save", async () => {
   const target = {
@@ -16,6 +17,7 @@ it("types at the end after replacing a multiline source and acknowledging its sa
   };
   let disk = { source: "first\nsecond\nthird\nfourth", revision: "initial" };
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     createTransport: () => ({
       write: async (intent) => {
         expect(intent.expectedRevision).toBe(disk.revision);

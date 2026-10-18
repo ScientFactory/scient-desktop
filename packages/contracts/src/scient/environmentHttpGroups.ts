@@ -60,12 +60,16 @@ import {
 } from "../scientSources.ts";
 import {
   ScientLatexBuildRequest,
+  ScientLatexArtworkRequest,
+  ScientLatexArtworkResult,
   ScientLatexBuildSnapshot,
   ScientLatexCancelRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexForwardSyncResult,
   ScientLatexInverseSyncRequest,
   ScientLatexInverseSyncResult,
+  ScientLatexPageAnchorsRequest,
+  ScientLatexPageAnchorsResult,
   ScientLatexManagedInstallState,
   ScientLatexResolveRequest,
   ScientLatexResolveResult,
@@ -374,6 +378,24 @@ export function makeScientEnvironmentHttpGroups({
 
   class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLatex")
     .add(
+      HttpApiEndpoint.post("imageUpload", "/api/scient/latex/images/upload", {
+        headers: OptionalBearerHeaders,
+        payload: ScientMarkdownImageUploadRequest,
+        success: ScientMarkdownImageUploadResult,
+        error: [
+          EnvironmentRequestInvalidError,
+          EnvironmentAuthInvalidError,
+          EnvironmentScopeRequiredError,
+          EnvironmentOperationForbiddenError,
+          EnvironmentResourceNotFoundError,
+          EnvironmentInternalError,
+          ScientMarkdownImageInvalidError,
+          ScientMarkdownImageTooLargeError,
+          ScientMarkdownImageConflictError,
+        ],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("resolve", "/api/scient/latex/resolve", {
         headers: OptionalBearerHeaders,
         payload: ScientLatexResolveRequest,
@@ -386,6 +408,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientLatexBuildRequest,
         success: ScientLatexBuildSnapshot,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("artwork", "/api/scient/latex/artwork", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLatexArtworkRequest,
+        success: ScientLatexArtworkResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -418,6 +448,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientLatexInverseSyncRequest,
         success: ScientLatexInverseSyncResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("pageAnchors", "/api/scient/latex/synctex/pages", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLatexPageAnchorsRequest,
+        success: ScientLatexPageAnchorsResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

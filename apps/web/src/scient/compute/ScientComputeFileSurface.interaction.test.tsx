@@ -75,6 +75,7 @@ describe("Compute file navigation", () => {
           cwd="/project"
           relativePath={`example${language.extensions[0]}`}
           contents="print(1)"
+          initialSource="print(1)"
           revision="r1"
           resolvedTheme="light"
           revealRequestId={0}

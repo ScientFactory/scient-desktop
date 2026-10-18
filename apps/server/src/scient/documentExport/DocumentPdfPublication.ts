@@ -17,6 +17,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as GeneratedDocumentStore from "../documentArtifacts/GeneratedDocumentStore.ts";
 import {
   readDocumentCapture,
@@ -137,14 +138,9 @@ export const validateDocumentRender = Effect.fn("DocumentPdfPublication.validate
   return bytes;
 });
 
-/**
- * A project file must still be the same file, reached the same way, with
- * exactly the captured revision. The requested path is resolved again, so a
- * symlinked file or directory retargeted during the render is detected even
- * when the new target has identical contents.
- */
-export const confirmCapturedSourceCurrent = Effect.fn(
-  "DocumentPdfPublication.confirmSourceCurrent",
+/** Raw verified check: callers must already hold the expected-epoch root fence. */
+const confirmCapturedSourceBytesCurrent = Effect.fn(
+  "DocumentPdfPublication.confirmSourceBytesCurrent",
 )(function* (record: DocumentCaptureRecord) {
   if (record.source._tag !== "workspace-file") return;
   const { workspaceRoot, relativePath, canonicalPath } = record.source;
@@ -165,6 +161,35 @@ export const confirmCapturedSourceCurrent = Effect.fn(
   }
 });
 
+/** Rechecks the fixed admission epoch without nesting settled public reads. */
+export const confirmCapturedSourceCurrent = Effect.fn(
+  "DocumentPdfPublication.confirmSourceCurrent",
+)(function* (record: DocumentCaptureRecord) {
+  if (record.source._tag !== "workspace-file") return;
+  if (record.source.mutationEpoch === undefined) {
+    return yield* new ScientDocumentPdfExportError({
+      reason: "source-changed",
+      detail: "This capture has no settled workspace epoch. Export the document again.",
+    });
+  }
+  const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+  yield* workspaceFiles
+    .withWorkspacePublicationFence(
+      { cwd: record.source.workspaceRoot, expectedEpoch: record.source.mutationEpoch },
+      () => confirmCapturedSourceBytesCurrent(record),
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new ScientDocumentPdfExportError({
+            reason: "source-changed",
+            detail:
+              "The workspace changed or has unsettled publication authority. Export it again.",
+          }),
+      ),
+    );
+});
+
 const storeErrorToExportError = (
   cause: GeneratedDocumentStore.GeneratedDocumentStoreError,
 ): ScientDocumentPdfExportError =>
@@ -182,6 +207,7 @@ const storeErrorToExportError = (
 
 export const beginDocumentPdfProduction = (record: DocumentCaptureRecord) =>
   Effect.gen(function* () {
+    yield* confirmCapturedSourceCurrent(record);
     const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
     return yield* store
       .beginProduction({
@@ -199,7 +225,7 @@ export const publishDocumentPdfBytes = Effect.fn("DocumentPdfPublication.publish
   bytes: Uint8Array,
 ) {
   const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
-  return yield* store
+  const publish = store
     .publishPdf({
       ...handle,
       bytes,
@@ -207,12 +233,37 @@ export const publishDocumentPdfBytes = Effect.fn("DocumentPdfPublication.publish
       provenanceKind: "browser-export",
       validationProfile: "browser-export",
     })
-    .pipe(
-      Effect.tapError((cause) =>
-        store.failProduction({ ...handle, reason: cause.detail }).pipe(Effect.ignore),
-      ),
-      Effect.mapError(storeErrorToExportError),
-    );
+    .pipe(Effect.mapError(storeErrorToExportError));
+  return yield* Effect.gen(function* () {
+    if (record.source._tag !== "workspace-file") return yield* publish;
+    if (record.source.mutationEpoch === undefined) {
+      return yield* new ScientDocumentPdfExportError({
+        reason: "source-changed",
+        detail: "This capture has no settled workspace epoch. Export the document again.",
+      });
+    }
+    const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    return yield* workspaceFiles
+      .withWorkspacePublicationFence(
+        { cwd: record.source.workspaceRoot, expectedEpoch: record.source.mutationEpoch },
+        () => confirmCapturedSourceBytesCurrent(record).pipe(Effect.andThen(publish)),
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ScientDocumentPdfExportError"
+            ? cause
+            : new ScientDocumentPdfExportError({
+                reason: "source-changed",
+                detail:
+                  "The workspace changed or has unsettled publication authority. Export it again.",
+              }),
+        ),
+      );
+  }).pipe(
+    Effect.tapError((cause) =>
+      store.failProduction({ ...handle, reason: cause.detail }).pipe(Effect.ignore),
+    ),
+  );
 });
 
 /**

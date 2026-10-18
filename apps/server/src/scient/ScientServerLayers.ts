@@ -39,6 +39,7 @@ import * as LatexManagedToolchain from "./latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./latex/LatexPackageInstaller.ts";
 import * as LatexToolchain from "./latex/LatexToolchain.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
+import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
@@ -155,7 +156,10 @@ export function makeScientRouteServices<
   // and the managed installer sits on top of the probe so a finished install can
   // drop its cache. The package installer is mounted once for both, because
   // `tlmgr` serializes against a single distribution tree.
-  const ScientLatexServicesLive = LatexBuildService.layer.pipe(
+  const ScientLatexServicesLive = Layer.mergeAll(
+    LatexBuildService.layer,
+    LatexTikzPreview.layer,
+  ).pipe(
     Layer.provide(LocalExecutionProcess.layer),
     Layer.provideMerge(LatexSyncTex.layer),
     Layer.provideMerge(LatexManagedToolchain.layer.pipe(Layer.provideMerge(LatexToolchain.layer))),

@@ -1,6 +1,8 @@
 const PDF_MIN_ZOOM = 0.25;
 const PDF_MAX_ZOOM = 5;
 const PDF_ZOOM_STEP_PERCENT = 5;
+// PDF.js reserves this inset for page-width in our vertical, bordered reader.
+export const PDF_FIT_WIDTH_PADDING = 40;
 
 export type PdfSidebarMode = "closed" | "thumbnails" | "outline";
 export type PdfZoomMode = "page-width" | "page-fit" | "page-actual";
@@ -23,6 +25,18 @@ export function nextPdfRotation(rotation: number): number {
 
 export function formatPdfZoom(scale: number): string {
   return `${Math.round(scale * 100)}%`;
+}
+
+/** Both readers measure physical pages in CSS pixels at 100% zoom. */
+export function pdfFitWidthScale(containerWidth: number, pageWidth: number): number | null {
+  if (
+    !Number.isFinite(containerWidth) ||
+    containerWidth <= 0 ||
+    !Number.isFinite(pageWidth) ||
+    pageWidth <= 0
+  )
+    return null;
+  return Math.max(0, containerWidth - PDF_FIT_WIDTH_PADDING) / pageWidth;
 }
 
 export function normalizePdfZoom(scale: number): number {

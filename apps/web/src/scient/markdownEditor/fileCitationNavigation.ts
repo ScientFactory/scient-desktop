@@ -61,16 +61,19 @@ export function openFileCitation(
     useRightPanelStore.getState().openFile(
       { environmentId: citation.environmentId, threadId: citation.threadId },
       path,
-      citation.sourceSelection ? citation.startLine : undefined,
+      citation.latex || citation.sourceSelection ? citation.startLine : undefined,
       sameWorkspace
         ? {
             fileCitation: citation,
             ...(citation.sourceSelection
               ? { latexPreviewMode: "source" as const, htmlPreviewMode: "source" as const }
               : {}),
-            ...(citation.sourceSelection && citation.latex
+            ...(citation.latex
               ? {
                   latexRootRelativePath: citation.latex.rootRelativePath,
+                  latexPreviewMode: citation.sourceSelection
+                    ? ("source" as const)
+                    : ("split" as const),
                 }
               : {}),
           }

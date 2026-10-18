@@ -8,6 +8,7 @@
  * living in a subdirectory finds the files it `\input`s and `\include`s.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
@@ -21,6 +22,9 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   GeneratedDocumentStore,
   layer as storeLayer,
@@ -32,8 +36,11 @@ import {
   layer as buildServiceLayer,
 } from "./LatexBuildService.ts";
 import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
-import { layer as toolchainLayer } from "./LatexToolchain.ts";
-import { layer as syncTexLayer } from "./LatexSyncTex.ts";
+import { LatexToolchain, layer as toolchainLayer } from "./LatexToolchain.ts";
+import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+
+const publicationHelper = await filePublicationTestHelper();
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -62,33 +69,65 @@ const serverEnvironment = Layer.succeed(
 const TERMINAL_STATES: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"]);
 
 /** Every service is the real one here; only the state root is disposable. */
-const makeWorkspace = (files: Readonly<Record<string, string>>) =>
+const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "scient-latex-engine-workspace-",
-    });
-    const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "scient-latex-engine-state-",
-    });
+    const workspaceRoot = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-engine-workspace-" }),
+    );
+    const baseDir = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-engine-state-" }),
+    );
     for (const [relativePath, contents] of Object.entries(files)) {
       const absolutePath = path.join(workspaceRoot, relativePath);
       yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
       yield* fileSystem.writeFileString(absolutePath, contents);
     }
+    if (managedRoot !== undefined) {
+      const managedDirectory = path.join(baseDir, "userdata", "latex", "managed");
+      yield* fileSystem.makeDirectory(managedDirectory, { recursive: true });
+      const installed = path.join(managedDirectory, "existing-installed-toolchain");
+      yield* fileSystem.symlink(managedRoot, installed);
+      yield* fileSystem.writeFileString(
+        path.join(managedDirectory, "managed-state.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          version: "existing-install-acceptance",
+          installedAtEpochMs: 0,
+          root: installed,
+        }),
+      );
+    }
+    const generatedStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
     return {
       workspaceRoot,
       serviceLayer: buildServiceLayer.pipe(
         Layer.provide(LocalExecutionProcess.layer),
         Layer.provideMerge(syncTexLayer.pipe(Layer.provide(serverEnvironment))),
+
         // Never asked for here — the engine on PATH is the user's own, which
         // this lane does not install into — but the service holds it the way
         // the server mounts it.
         Layer.provide(packageInstallerLayer),
         Layer.provideMerge(toolchainLayer),
-        Layer.provideMerge(storeLayer.pipe(Layer.provide(serverEnvironment))),
-        Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
+        Layer.provideMerge(generatedStoreLayer),
+        Layer.provideMerge(
+          WorkspaceFileSystem.layer.pipe(
+            Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+            Layer.provide(WorkspacePaths.layer),
+          ),
+        ),
+        Layer.provideMerge(
+          ServerConfig.layerTest(workspaceRoot, baseDir, {
+            ...(publicationHelper === undefined
+              ? {}
+              : { filePublicationHelperPath: publicationHelper }),
+            ...(process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH === undefined
+              ? {}
+              : { syncTexNavigatorPath: process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH }),
+          }),
+        ),
         Layer.provideMerge(NodeServices.layer),
       ),
     };
@@ -128,7 +167,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
       Effect.gen(function* () {
         const harness = yield* makeWorkspace({
           "main.tex":
-            "\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\\end{document}\n",
+            "% !TEX program = tectonic\n\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\\end{document}\n",
         });
         yield* Effect.gen(function* () {
           const service = yield* LatexBuildService;
@@ -143,6 +182,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           expect(finished.failureSummary).toBeNull();
           expect(finished.state).toBe("succeeded");
           expect(finished.diagnostics).toEqual([]);
+          expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
           expect(finished.descriptor).toMatchObject({
             _tag: "generated-pdf",
             bindingStatus: "current",
@@ -155,7 +195,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
   );
 
   it.live(
-    "compiles a root under paper/ that inputs and includes its neighbours",
+    "discovers and compiles a root under paper/ from an opened included fragment",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeWorkspace({
@@ -177,7 +217,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           const store = yield* GeneratedDocumentStore;
           const input: LatexBuildInput = {
             workspaceRoot: harness.workspaceRoot,
-            relativePath: "paper/main.tex",
+            relativePath: "paper/sections/intro.tex",
           };
           yield* service.requestBuild(input);
           const finished = yield* awaitTerminal(service, input);
@@ -186,9 +226,182 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           expect(finished.state).toBe("succeeded");
           expect(finished.diagnostics).toEqual([]);
           expect(finished.rootRelativePath).toBe("paper/main.tex");
+          expect(Object.keys(finished.visualSourceRevisions ?? {}).sort()).toEqual([
+            "paper/appendix.tex",
+            "paper/main.tex",
+            "paper/sections/intro.tex",
+          ]);
           yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     COMPILE_TIMEOUT_MS,
   );
 });
+
+describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
+  "edited-source real-engine round trip",
+  () => {
+    it.live(
+      "rebuilds edited prose, preserves math and recovers from a failed compile",
+      () =>
+        Effect.gen(function* () {
+          const original =
+            "\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\nProtected mathematics: $x^2 + y^2 = z^2$.\n\\end{document}\n";
+          const harness = yield* makeWorkspace({ "main.tex": original });
+          yield* Effect.gen(function* () {
+            const service = yield* LatexBuildService;
+            const store = yield* GeneratedDocumentStore;
+            const sync = yield* LatexSyncTex;
+            const fs = yield* FileSystem.FileSystem;
+            const input = { workspaceRoot: harness.workspaceRoot, relativePath: "main.tex" };
+            let source = original;
+            let lastRevision: string | null = null;
+            let initialPixels: string | null = null;
+            for (const replacement of [
+              null,
+              null,
+              "Hello from Science.",
+              "Hello from Science: 50% & counting.",
+              "A completely revised sentence.",
+            ]) {
+              if (replacement !== null) {
+                const sentence = source.split("\n")[2]!;
+                source = source.replace(
+                  sentence,
+                  replacement.replace(/[%&]/gu, (character) => `\\${character}`),
+                );
+                yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
+              }
+              yield* service.requestBuild(input);
+              const finished = yield* awaitTerminal(service, input);
+              expect(finished.state).toBe("succeeded");
+              const sourceRevision = `sha256:${NodeCrypto.createHash("sha256").update(source).digest("hex")}`;
+              expect(finished.visualSourceRevisions?.["main.tex"]).toBe(sourceRevision);
+              const descriptor = finished.descriptor;
+              if (descriptor?._tag !== "generated-pdf") return yield* Effect.die("missing PDF");
+              if (replacement !== null) expect(descriptor.revisionId).not.toBe(lastRevision);
+              lastRevision = descriptor.revisionId;
+              const published = yield* store.resolveRevision({
+                authority: descriptor.authority,
+                artifactId: descriptor.artifactId,
+                revisionId: descriptor.revisionId,
+              });
+              const text = NodeChildProcess.execFileSync("pdftotext", [published.path, "-"], {
+                encoding: "utf8",
+              });
+              expect(text).toContain(replacement ?? "Hello from Scient.");
+              if (replacement === null && resolvesOnPath("pdftoppm -v")) {
+                const pixels = NodeChildProcess.execFileSync(
+                  "pdftoppm",
+                  ["-singlefile", "-r", "72", published.path],
+                  { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
+                );
+                const digest = NodeCrypto.createHash("sha256").update(pixels).digest("hex");
+                if (initialPixels !== null) expect(digest).toBe(initialPixels);
+                initialPixels = digest;
+              }
+              expect(source).toContain("$x^2 + y^2 = z^2$");
+              const revision = {
+                workspaceRoot: harness.workspaceRoot,
+                rootRelativePath: "main.tex",
+                artifactId: descriptor.artifactId,
+                revisionId: descriptor.revisionId,
+              };
+              const forward = yield* sync.forward({
+                ...revision,
+                sourceRelativePath: "main.tex",
+                sourceRevision,
+                line: 3,
+              });
+              expect(
+                forward._tag,
+                forward._tag === "unavailable" ? forward.message : undefined,
+              ).toBe("found");
+              if (forward._tag === "found") {
+                const inverse = yield* sync.inverse({
+                  ...revision,
+                  page: forward.page,
+                  x: forward.x,
+                  y: forward.y,
+                });
+                expect(inverse).toMatchObject({ _tag: "found", relativePath: "main.tex" });
+              }
+            }
+            yield* fs.writeFileString(
+              `${harness.workspaceRoot}/main.tex`,
+              source.replace("\\end{document}", "\\UndefinedVisualTest\n\\end{document}"),
+            );
+            yield* service.requestBuild(input);
+            const failed = yield* awaitTerminal(service, input);
+            expect(failed.state).toBe("failed");
+            expect(failed.visualSourceRevisions).toBeUndefined();
+            expect(failed.descriptor).toMatchObject({
+              revisionId: lastRevision,
+              bindingStatus: "stale",
+            });
+            yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
+            yield* service.requestBuild(input);
+            expect((yield* awaitTerminal(service, input)).state).toBe("succeeded");
+          }).pipe(Effect.provide(harness.serviceLayer));
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      60_000,
+    );
+  },
+);
+
+const installedManagedRoot = process.env.SCIENT_LATEX_REAL_MANAGED_ROOT;
+describe.skipIf(installedManagedRoot === undefined)(
+  "existing optional compiler through production services",
+  () => {
+    it.live(
+      "builds LuaLaTeX, saves new source bytes, rebuilds, and preserves the default driver",
+      () =>
+        Effect.gen(function* () {
+          const source =
+            "% !TEX program = lualatex\n\\documentclass{article}\n\\begin{document}\nOptional compiler acceptance.\n\\end{document}\n";
+          const h = yield* makeWorkspace({ "main.tex": source }, installedManagedRoot);
+          yield* Effect.gen(function* () {
+            const service = yield* LatexBuildService;
+            const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+            const toolchain = yield* LatexToolchain;
+            const defaultBefore = yield* toolchain.probe(false);
+            const input = { workspaceRoot: h.workspaceRoot, relativePath: "main.tex" };
+            yield* service.requestBuild(input);
+            const first = yield* awaitTerminal(service, input);
+            expect(first.state, first.failureSummary ?? undefined).toBe("succeeded");
+            expect(first.failureSummary).toBeNull();
+            const before = yield* workspace.readFile({
+              cwd: h.workspaceRoot,
+              relativePath: "main.tex",
+            });
+            expect(before.contents).toBe(source);
+            const changed = source.replace(
+              "Optional compiler acceptance.",
+              "Saved and rebuilt without manual recovery.",
+            );
+            const saved = yield* workspace.writeFile({
+              cwd: h.workspaceRoot,
+              relativePath: "main.tex",
+              contents: changed,
+              expectedRevision: before.revision,
+              mutationId: "real-optional-save",
+            });
+            expect(saved.revision).not.toBe(before.revision);
+            yield* service.requestBuild(input);
+            const second = yield* awaitTerminal(service, input);
+            expect(second.state).toBe("succeeded");
+            expect(second.failureSummary).toBeNull();
+            expect(second.descriptor).not.toEqual(first.descriptor);
+            expect(
+              (yield* workspace.readFile({ cwd: h.workspaceRoot, relativePath: "main.tex" }))
+                .contents,
+            ).toBe(changed);
+            const defaultAfter = yield* toolchain.probe(false);
+            expect(defaultAfter.kind).toBe(defaultBefore.kind);
+            expect(defaultAfter.executable).toBe(defaultBefore.executable);
+          }).pipe(Effect.provide(h.serviceLayer));
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      60_000,
+    );
+  },
+);

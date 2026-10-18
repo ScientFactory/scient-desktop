@@ -14,7 +14,7 @@ export function WordPandocRequirement(props: {
   readonly disabled: boolean;
   readonly onAvailable: () => void;
 }) {
-  const { status, view, act } = usePandocTool(props.environmentId, props.onAvailable);
+  const { status, view, act, checking } = usePandocTool(props.environmentId, props.onAvailable);
   // Pandoc is installed, yet the server still cannot export Word: say why.
   if (view.kind === "ready") return <p className="text-muted-foreground text-sm">{props.reason}</p>;
   const offer = view.kind === "offer";
@@ -34,7 +34,7 @@ export function WordPandocRequirement(props: {
           type="button"
           size="sm"
           variant={offer ? "default" : "outline"}
-          disabled={view.busy || props.disabled}
+          disabled={view.busy || checking || props.disabled}
           onClick={act}
         >
           {actionLabel}

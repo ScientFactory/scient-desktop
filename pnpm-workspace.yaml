@@ -330,6 +330,7 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
+  mathlive@0.108.2: patches/mathlive@0.108.2.patch
   react-native-enriched-markdown@1.2.0-t3.15: patches/react-native-enriched-markdown@1.2.0-t3.15.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
