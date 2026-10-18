@@ -25,6 +25,7 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
+import { verifyAntigravityBrowserHelperOnce } from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
 import { skipMissingAntigravitySkillTarget } from "../scient/skills/antigravityUserSkillLinks.ts";
 // SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -484,12 +485,14 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       return yield* authSupportError("Antigravity browser suppression could not be verified.");
     }
   }).pipe(
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: "5 seconds",
-      orElse: () =>
-        Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
+    // SCIENT-FORK:START — verified once per helper; a timeout does not wait for its teardown.
+    verifyAntigravityBrowserHelperOnce({
+      spawner,
+      helperExecutable,
+      timeout: "5 seconds",
+      onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
+    // SCIENT-FORK:END
     Effect.mapError((error) =>
       error._tag === "AcpTransportError"
         ? error
