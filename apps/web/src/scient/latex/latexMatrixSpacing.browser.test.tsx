@@ -274,6 +274,9 @@ Before.
   await expect.poll(() => host?.querySelector("math-field")).toBeTruthy();
   const math = host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
+  // Edit the field once its editor is admitted and focused: until then it is a
+  // hidden staged copy, and a slower runner reaches this line before that.
+  await expect.poll(() => math.hasFocus()).toBe(true);
   spaced(math, 3);
   cell(math);
   math.insert("7");
