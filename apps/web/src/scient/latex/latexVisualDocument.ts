@@ -7577,10 +7577,18 @@ function projectLocalSourceEdit(
       };
       const leading = (text: string) => /^[\t ]*/u.exec(text)![0];
       const trailing = (text: string) => /[\t ]*$/u.exec(text)![0];
+      // Spaces beyond what the reopened text keeps (inside a wrapper such as
+      // \textbf{ x}) and what the block's source range already holds (plain
+      // text whose reopening trims them) still need an owner.
+      const owned = windowSource.slice(start, end);
       const head =
-        leading(edgeText(live, false)).length - leading(edgeText(block.node, false)).length;
+        leading(edgeText(live, false)).length -
+        leading(edgeText(block.node, false)).length -
+        leading(owned).length;
       const tail =
-        trailing(edgeText(live, true)).length - trailing(edgeText(block.node, true)).length;
+        trailing(edgeText(live, true)).length -
+        trailing(edgeText(block.node, true)).length -
+        trailing(owned).length;
       // The live paragraph owns newly authored boundary spaces too. Reopening
       // trims them; leaving them outside its range would strand them on editing.
       if (head > 0) {
