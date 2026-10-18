@@ -45,6 +45,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
+import { useProviderSignInBrowser } from "./providerSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -102,6 +103,23 @@ export function CodexInlineSetup(props: {
   const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
     ? connectionOperation
     : null;
+  const browser = useProviderSignInBrowser(
+    props.controller.signInKey,
+    activeConnectionOperation,
+    props.displayName,
+  );
+  const browserOpening = browser.opening;
+  const pageOpenFailure = browserOpening?.status === "failed" ? browserOpening.error : null;
+  // What the waiting view may say about the Codex page: only this client opens it.
+  const browserPageCopy =
+    pageOpenFailure ??
+    (browserOpening?.status === "opened"
+      ? "Complete sign-in in your browser."
+      : browserOpening !== null || browser.startInFlight
+        ? "Opening the sign-in page in your browser…"
+        : "Open the sign-in page to continue.");
+  const reopenLabel =
+    browserOpening === null && !browser.startInFlight ? "Open sign-in page" : "Reopen sign-in page";
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;
@@ -347,19 +365,31 @@ export function CodexInlineSetup(props: {
     pendingAction === "sign-in" ||
     pendingAction === "device-sign-in"
   ) {
+    const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
     const usingDeviceCode = activeConnectionOperation?.method === "codex_device_code";
+    const openFailure = !starting && !verifying ? pageOpenFailure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            verifying
-              ? "Confirming sign-in with Codex…"
-              : usingDeviceCode
-                ? "Enter this code on Codex’s secure sign-in page."
-                : "Complete sign-in in your browser."
+            starting
+              ? "Starting sign-in…"
+              : verifying
+                ? "Confirming sign-in with Codex…"
+                : (openFailure ??
+                  (usingDeviceCode
+                    ? "Enter this code on Codex’s secure sign-in page."
+                    : browserPageCopy))
           }
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          icon={
+            openFailure ? (
+              <TriangleAlertIcon className="size-5 text-warning" />
+            ) : (
+              <LoaderIcon className="size-5 animate-spin text-primary" />
+            )
+          }
+          role={openFailure ? "alert" : undefined}
           title={verifying ? "Checking your account" : "Finish signing in"}
         />
         {usingDeviceCode && activeConnectionOperation?.userCode ? (
@@ -368,16 +398,13 @@ export function CodexInlineSetup(props: {
         {!verifying && activeConnectionOperation?.authorizationUrl ? (
           <AssistedSetupActions>
             <Button
-              onClick={() =>
-                void props.controller.openAuthorizationPage(
-                  activeConnectionOperation.authorizationUrl!,
-                )
-              }
+              disabled={browserOpening?.status === "opening"}
+              onClick={() => void browser.reopen()}
               size="sm"
               type="button"
               variant="ghost-muted"
             >
-              <ExternalLinkIcon aria-hidden /> Reopen sign-in page
+              <ExternalLinkIcon aria-hidden /> {reopenLabel}
             </Button>
             {activeConnectionOperation ? (
               <Button

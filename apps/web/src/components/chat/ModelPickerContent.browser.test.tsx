@@ -47,6 +47,7 @@ vi.mock("../../scient/providerConnection/useProviderLifecycleController", () => 
     cancelConnection: vi.fn(),
     submitAuthorizationCode: vi.fn(),
     disconnect: vi.fn(),
+    signInKey: { environmentId: "environment-test", instanceId: "sign-in-test" },
     openAuthorizationPage: vi.fn(),
     updateExternalRuntime: vi.fn(),
     refresh: vi.fn(),

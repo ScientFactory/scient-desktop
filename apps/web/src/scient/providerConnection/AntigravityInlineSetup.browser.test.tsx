@@ -1,6 +1,7 @@
 import "../../index.css";
 
 import {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderConnectionOperation,
@@ -11,20 +12,41 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
+import { toastManager } from "../../components/ui/toast";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
+import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const INSTANCE_ID = ProviderInstanceId.make("antigravity");
-const OTHER_INSTANCE_ID = ProviderInstanceId.make("antigravity-other");
 const PRIVATE_BROWSER_FAILURE = new Error(
   "Unable to open /private/provider/profile https://accounts.google.com/?code=private-code",
 );
+const AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test";
+const signInKey = {
+  environmentId: EnvironmentId.make("environment-test"),
+  instanceId: INSTANCE_ID,
+};
+
+// The server's answer to this client's start command.
+const serverStart = vi.fn<() => Promise<ServerProvider>>();
+const openPage = vi.fn<(url: string) => Promise<void>>();
+let latest: ServerProvider;
 
 const controller = {
-  startConnection: vi.fn<ProviderLifecycleController["startConnection"]>(),
+  // As the production controller does: the shared opener runs the start command.
+  startConnection: vi.fn<ProviderLifecycleController["startConnection"]>(() =>
+    startProviderSignIn({
+      key: signInKey,
+      providerName: "Antigravity",
+      previousOperationId: latest.connection?.operation?.operationId ?? null,
+      start: serverStart,
+      operationOf: (provider) => provider.connection?.operation,
+    }),
+  ),
   cancelConnection: vi.fn<ProviderLifecycleController["cancelConnection"]>(),
   submitAuthorizationCode: vi.fn<ProviderLifecycleController["submitAuthorizationCode"]>(),
   disconnect: vi.fn<ProviderLifecycleController["disconnect"]>(),
+  signInKey,
   openAuthorizationPage: vi.fn<ProviderLifecycleController["openAuthorizationPage"]>(),
   planRuntime: vi.fn<ProviderLifecycleController["planRuntime"]>(),
   startRuntime: vi.fn<ProviderLifecycleController["startRuntime"]>(),
@@ -51,7 +73,7 @@ function operation(patch: Partial<ProviderConnectionOperation> = {}): ProviderCo
     startedAt: "2026-10-11T00:00:00.000Z",
     finishedAt: null,
     message: "Finish signing in.",
-    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test",
+    authorizationUrl: AUTHORIZATION_URL,
     authorizationUrlKind: "primary",
     acceptsAuthorizationCode: true,
     authorizationResponseKind: "callback_url",
@@ -59,12 +81,18 @@ function operation(patch: Partial<ProviderConnectionOperation> = {}): ProviderCo
   };
 }
 
-function snapshot(
-  current: ProviderConnectionOperation | null = null,
-  instanceId = INSTANCE_ID,
-): ServerProvider {
+function starting(): ProviderConnectionOperation {
+  const {
+    authorizationUrl: _url,
+    authorizationUrlKind: _kind,
+    ...value
+  } = operation({ status: "starting", message: "Starting Antigravity." });
+  return value;
+}
+
+function snapshot(current: ProviderConnectionOperation | null = null): ServerProvider {
   return {
-    instanceId,
+    instanceId: INSTANCE_ID,
     driver: ProviderDriverKind.make("antigravity"),
     enabled: true,
     installed: true,
@@ -83,6 +111,7 @@ let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 
 function renderProvider(provider: ServerProvider) {
+  latest = provider;
   if (!host) {
     host = document.createElement("div");
     document.body.append(host);
@@ -99,17 +128,22 @@ function renderProvider(provider: ServerProvider) {
   });
 }
 
-async function settleBrowserActions() {
-  await Promise.resolve();
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+/** The setup popover closing, while the server keeps the sign-in. */
+function closeView(provider: ServerProvider) {
+  latest = provider;
+  flushSync(() => root!.render(null));
 }
+
+const text = () => host!.textContent ?? "";
 
 beforeEach(() => {
   vi.resetAllMocks();
-  controller.startConnection.mockResolvedValue(snapshot());
+  latest = snapshot();
+  openPage.mockResolvedValue(undefined);
+  resetProviderSignInBrowserForTests(openPage);
+  serverStart.mockResolvedValue(snapshot(operation()));
   controller.cancelConnection.mockResolvedValue(snapshot());
   controller.submitAuthorizationCode.mockResolvedValue(snapshot());
-  controller.openAuthorizationPage.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -119,302 +153,125 @@ afterEach(() => {
   host = undefined;
 });
 
-describe("Antigravity browser opening", () => {
-  it("shows a safe first-open failure while waiting and retries the same sign-in", async () => {
-    const waiting = snapshot(operation());
-    controller.startConnection.mockImplementation(async () => {
-      renderProvider(waiting);
-      return waiting;
-    });
-    controller.openAuthorizationPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
+describe("Antigravity sign-in page", () => {
+  it("opens once for this client even when the setup view closes during a slow start", async () => {
+    const start = deferred<ServerProvider>();
+    serverStart.mockReturnValue(start.promise);
+    const toastAdd = vi.spyOn(toastManager, "add");
     renderProvider(snapshot());
 
     await page.getByRole("button", { name: "Sign in with Google" }).click();
-    await expect.element(page.getByRole("alert")).toBeVisible();
-    expect(host!.textContent).not.toContain("private-code");
-    expect(host!.textContent).not.toContain("/private/provider/profile");
+    renderProvider(snapshot(starting()));
+    await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
+    expect(text()).toContain("This can take up to a minute.");
 
-    await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-    await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
+    closeView(snapshot(starting()));
+    start.resolve(snapshot(operation()));
+    await vi.waitFor(() => expect(openPage.mock.calls).toEqual([[AUTHORIZATION_URL]]));
+
+    // Back in the view, and through reconnects that redeliver the same snapshot.
+    renderProvider(snapshot(operation()));
+    renderProvider(snapshot(operation()));
+    await expect
+      .element(page.getByText("Complete the official Antigravity sign-in in your browser."))
+      .toBeVisible();
+    closeView(snapshot(operation()));
+    renderProvider(snapshot(operation()));
     await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
-    expect(controller.startConnection).toHaveBeenCalledTimes(1);
-    expect(controller.openAuthorizationPage.mock.calls).toEqual([
-      [waiting.connection!.operation!.authorizationUrl],
-      [waiting.connection!.operation!.authorizationUrl],
-    ]);
+    expect(openPage).toHaveBeenCalledTimes(1);
+    expect(toastAdd).not.toHaveBeenCalled();
   });
 
-  it("handles Reopen rejection and clears its error when a retry starts", async () => {
-    const retry = deferred<void>();
-    const waiting = snapshot(operation());
-    controller.openAuthorizationPage
-      .mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE)
-      .mockReturnValueOnce(retry.promise);
-    renderProvider(waiting);
+  it("does not open another client's sign-in, or claim that a page is open", async () => {
+    renderProvider(snapshot(operation()));
 
-    await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-    await expect.element(page.getByRole("alert")).toBeVisible();
-    await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-    await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
+    await expect.element(page.getByText("Open the Google sign-in page to continue.")).toBeVisible();
+    expect(text()).not.toContain("in your browser");
+    expect(openPage).not.toHaveBeenCalled();
+
+    await page.getByRole("button", { name: "Open Google sign-in" }).click();
     await expect
-      .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-      .toBeDisabled();
-    retry.resolve();
-    await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
+      .element(page.getByText("Complete the official Antigravity sign-in in your browser."))
+      .toBeVisible();
+    expect(openPage.mock.calls).toEqual([[AUTHORIZATION_URL]]);
     expect(controller.startConnection).not.toHaveBeenCalled();
-    expect(controller.openAuthorizationPage.mock.calls).toEqual([
-      [waiting.connection!.operation!.authorizationUrl],
-      [waiting.connection!.operation!.authorizationUrl],
-    ]);
   });
 
-  it.each(["before", "after"] as const)(
-    "discards browser opening errors when verification begins %s the rejection",
-    async (timing) => {
-      const opening = deferred<void>();
-      controller.openAuthorizationPage.mockReturnValueOnce(opening.promise);
+  it("shows a safe opening failure in the visible view and reopens the same sign-in", async () => {
+    const toastAdd = vi.spyOn(toastManager, "add");
+    openPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
+    serverStart.mockImplementation(async () => {
       renderProvider(snapshot(operation()));
-      await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-      if (timing === "before") {
-        opening.reject(PRIVATE_BROWSER_FAILURE);
-        await expect.element(page.getByRole("alert")).toBeVisible();
-      }
-      renderProvider(snapshot(operation({ status: "verifying" })));
-      if (timing === "after") opening.reject(PRIVATE_BROWSER_FAILURE);
-      await settleBrowserActions();
-      await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
-      await expect
-        .element(page.getByRole("button", { name: "Cancel Antigravity sign-in" }))
-        .toBeEnabled();
-    },
-  );
-
-  describe.each(["initial", "reopen"] as const)("late %s opening", (origin) => {
-    it.each(["resolve", "reject"] as const)(
-      "does not let an old %s clear a newer operation's pending state or error",
-      async (outcome) => {
-        const oldOpening = deferred<void>();
-        const newOpening = deferred<void>();
-        const first = snapshot(operation());
-        controller.openAuthorizationPage
-          .mockReturnValueOnce(oldOpening.promise)
-          .mockReturnValueOnce(newOpening.promise);
-        controller.startConnection.mockImplementation(async () => {
-          renderProvider(first);
-          return first;
-        });
-        renderProvider(origin === "initial" ? snapshot() : first);
-        await page
-          .getByRole("button", {
-            name: origin === "initial" ? "Sign in with Google" : "Reopen Google sign-in",
-          })
-          .click();
-        await expect
-          .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-          .toBeDisabled();
-
-        const next = snapshot(operation({ operationId: "auth-2" }));
-        renderProvider(next);
-        await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-        if (outcome === "resolve") oldOpening.resolve();
-        else oldOpening.reject(PRIVATE_BROWSER_FAILURE);
-        await settleBrowserActions();
-        await expect
-          .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-          .toBeDisabled();
-        expect(host!.querySelector("[role=alert]")).toBeNull();
-
-        newOpening.reject(PRIVATE_BROWSER_FAILURE);
-        await expect.element(page.getByRole("alert")).toBeVisible();
-        await expect
-          .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-          .toBeEnabled();
-        expect(controller.startConnection).toHaveBeenCalledTimes(origin === "initial" ? 1 : 0);
-      },
-    );
-
-    it.each([
-      ["cancelled", "resolve"],
-      ["cancelled", "reject"],
-      ["provider-switched", "resolve"],
-      ["provider-switched", "reject"],
-      ["unmounted", "resolve"],
-      ["unmounted", "reject"],
-    ] as const)("ignores a %s attempt's late %s", async (transition, outcome) => {
-      const opening = deferred<void>();
-      const cancellation = deferred<ServerProvider>();
-      const first = snapshot(operation());
-      controller.openAuthorizationPage.mockReturnValueOnce(opening.promise);
-      controller.cancelConnection.mockReturnValueOnce(cancellation.promise);
-      controller.startConnection.mockImplementation(async () => {
-        renderProvider(first);
-        return first;
-      });
-      renderProvider(origin === "initial" ? snapshot() : first);
-      await page
-        .getByRole("button", {
-          name: origin === "initial" ? "Sign in with Google" : "Reopen Google sign-in",
-        })
-        .click();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeDisabled();
-
-      if (transition === "cancelled") {
-        await page.getByRole("button", { name: "Cancel Antigravity sign-in" }).click();
-      } else if (transition === "provider-switched") {
-        renderProvider(snapshot(operation(), OTHER_INSTANCE_ID));
-      } else {
-        flushSync(() => root!.render(null));
-      }
-      if (outcome === "resolve") opening.resolve();
-      else opening.reject(PRIVATE_BROWSER_FAILURE);
-      await settleBrowserActions();
-      expect(host!.querySelector("[role=alert]")).toBeNull();
-
-      if (transition === "cancelled") {
-        await expect
-          .element(page.getByRole("button", { name: "Cancel Antigravity sign-in" }))
-          .toBeDisabled();
-        const cancelled = snapshot(operation({ status: "cancelled" }));
-        renderProvider(cancelled);
-        cancellation.resolve(cancelled);
-        await expect
-          .element(page.getByRole("button", { name: "Sign in with Google" }))
-          .toBeEnabled();
-        expect(controller.cancelConnection).toHaveBeenCalledWith("auth-1");
-      } else if (transition === "provider-switched") {
-        await expect
-          .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-          .toBeEnabled();
-      } else {
-        expect(host!.children).toHaveLength(0);
-        renderProvider(snapshot());
-        await expect
-          .element(page.getByRole("button", { name: "Sign in with Google" }))
-          .toBeEnabled();
-      }
-    });
-  });
-
-  it("does not open a URL returned after cancellation during startup", async () => {
-    const startup = deferred<ServerProvider>();
-    const { authorizationUrl: _authorizationUrl, ...startingOperation } = operation({
-      status: "starting",
-    });
-    const starting = snapshot(startingOperation);
-    controller.startConnection.mockImplementation(() => {
-      renderProvider(starting);
-      return startup.promise;
+      return snapshot(operation());
     });
     renderProvider(snapshot());
+
     await page.getByRole("button", { name: "Sign in with Google" }).click();
-    await page.getByRole("button", { name: "Cancel Antigravity sign-in" }).click();
-    renderProvider(snapshot(operation({ status: "cancelled" })));
-    startup.resolve(snapshot(operation()));
-    await settleBrowserActions();
-    await expect.element(page.getByRole("button", { name: "Sign in with Google" })).toBeEnabled();
-    expect(host!.querySelector("[role=alert]")).toBeNull();
-    expect(controller.openAuthorizationPage).not.toHaveBeenCalled();
+    await expect.element(page.getByRole("alert")).toBeVisible();
+    expect(text()).not.toContain("private-code");
+    expect(text()).not.toContain("/private/provider/profile");
+    expect(toastAdd).not.toHaveBeenCalled();
+
+    await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
+    await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
+    expect(openPage).toHaveBeenCalledTimes(2);
+    expect(serverStart).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts a command result before its streamed operation arrives", async () => {
-    const opening = deferred<void>();
-    const waiting = snapshot(operation());
-    controller.startConnection.mockResolvedValue(waiting);
-    controller.openAuthorizationPage.mockReturnValueOnce(opening.promise);
+  it("reports an opening failure as a toast when no view is visible, and keeps it for the view", async () => {
+    const start = deferred<ServerProvider>();
+    serverStart.mockReturnValue(start.promise);
+    openPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
+    const toastAdd = vi.spyOn(toastManager, "add");
     renderProvider(snapshot());
+
     await page.getByRole("button", { name: "Sign in with Google" }).click();
-    await expect
-      .poll(() => controller.openAuthorizationPage.mock.calls)
-      .toEqual([[waiting.connection!.operation!.authorizationUrl]]);
-    renderProvider(waiting);
-    opening.reject(PRIVATE_BROWSER_FAILURE);
+    closeView(snapshot(starting()));
+    start.resolve(snapshot(operation()));
+    await vi.waitFor(() => expect(toastAdd).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(toastAdd.mock.calls[0]![0])).not.toContain("private");
+
+    renderProvider(snapshot(operation()));
     await expect.element(page.getByRole("alert")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
   });
 
-  it("stops waiting when an observed operation disappears before browser opening settles", async () => {
-    const opening = deferred<void>();
-    const waiting = snapshot(operation());
-    controller.startConnection.mockImplementation(async () => {
-      renderProvider(waiting);
-      return waiting;
-    });
-    controller.openAuthorizationPage.mockReturnValueOnce(opening.promise);
+  it("does not open a page for a sign-in cancelled during startup", async () => {
+    const start = deferred<ServerProvider>();
+    serverStart.mockReturnValue(start.promise);
     renderProvider(snapshot());
     await page.getByRole("button", { name: "Sign in with Google" }).click();
-    await expect
-      .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-      .toBeDisabled();
-    renderProvider(snapshot());
+    renderProvider(snapshot(starting()));
+    await page.getByRole("button", { name: "Cancel Antigravity sign-in" }).click();
+    const cancelled = snapshot(operation({ status: "cancelled" }));
+    renderProvider(cancelled);
+    start.resolve(cancelled);
     await expect.element(page.getByRole("button", { name: "Sign in with Google" })).toBeEnabled();
-    opening.reject(PRIVATE_BROWSER_FAILURE);
-    await settleBrowserActions();
-    expect(host!.querySelector("[role=alert]")).toBeNull();
-    await expect.element(page.getByRole("button", { name: "Sign in with Google" })).toBeEnabled();
+    expect(openPage).not.toHaveBeenCalled();
+    expect(controller.cancelConnection).toHaveBeenCalledWith("auth-1");
   });
 
-  it.each(["resolve", "reject"] as const)(
-    "does not let a superseded startup %s affect a Reopen of the same operation",
-    async (outcome) => {
-      const startup = deferred<ServerProvider>();
-      const opening = deferred<void>();
-      const waiting = snapshot(operation());
-      controller.startConnection.mockImplementation(() => {
-        renderProvider(waiting);
-        return startup.promise;
-      });
-      controller.openAuthorizationPage.mockReturnValueOnce(opening.promise);
-      renderProvider(snapshot());
-      await page.getByRole("button", { name: "Sign in with Google" }).click();
-      await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-      if (outcome === "resolve") startup.resolve(waiting);
-      else startup.reject(PRIVATE_BROWSER_FAILURE);
-      await settleBrowserActions();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeDisabled();
-      expect(host!.querySelector("[role=alert]")).toBeNull();
-      expect(controller.openAuthorizationPage).toHaveBeenCalledTimes(1);
-      opening.resolve();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeEnabled();
-    },
-  );
+  it("says the sign-in finished when only starting a session failed", async () => {
+    const failed = (failedAfterSignIn: boolean) =>
+      snapshot(
+        operation({
+          status: "failed",
+          finishedAt: "2026-10-11T00:01:00.000Z",
+          message: failedAfterSignIn
+            ? "Antigravity authenticated, but could not initialize a session or load models."
+            : "Google sign-in failed. Start sign-in again.",
+          ...(failedAfterSignIn ? { failedAfterSignIn } : {}),
+        }),
+      );
 
-  it.each(["resolve", "reject"] as const)(
-    "ignores an older Reopen's %s after cancellation fails and the same URL is reopened",
-    async (outcome) => {
-      const oldOpening = deferred<void>();
-      const newOpening = deferred<void>();
-      controller.openAuthorizationPage
-        .mockReturnValueOnce(oldOpening.promise)
-        .mockReturnValueOnce(newOpening.promise);
-      controller.cancelConnection.mockRejectedValueOnce(new Error("Cancellation failed."));
-      renderProvider(snapshot(operation()));
-      await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-      await page.getByRole("button", { name: "Cancel Antigravity sign-in" }).click();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeEnabled();
-      await page.getByRole("button", { name: "Reopen Google sign-in" }).click();
-      if (outcome === "resolve") oldOpening.resolve();
-      else oldOpening.reject(PRIVATE_BROWSER_FAILURE);
-      await settleBrowserActions();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeDisabled();
-      expect(host!.querySelector("[role=alert]")).toBeNull();
-      newOpening.resolve();
-      await expect
-        .element(page.getByRole("button", { name: "Reopen Google sign-in" }))
-        .toBeEnabled();
-      expect(host!.querySelector("[role=alert]")).toBeNull();
-      expect(controller.startConnection).not.toHaveBeenCalled();
-    },
-  );
+    renderProvider(failed(true));
+    await expect.element(page.getByText("Signed in, but Antigravity couldn’t start")).toBeVisible();
+    expect(text()).toContain("could not initialize a session");
+    expect(text()).not.toContain("didn’t finish");
+
+    renderProvider(failed(false));
+    await expect.element(page.getByText("Google sign-in didn’t finish")).toBeVisible();
+  });
 
   it("keeps a manual fallback explicit and reports its browser failure safely", async () => {
     const fallback = snapshot(
@@ -424,17 +281,17 @@ describe("Antigravity browser opening", () => {
         acceptsAuthorizationCode: false,
       }),
     );
-    controller.startConnection.mockImplementation(async () => {
+    serverStart.mockImplementation(async () => {
       renderProvider(fallback);
       return fallback;
     });
     renderProvider(snapshot());
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     await expect.element(page.getByRole("button", { name: "Open sign-in help" })).toBeEnabled();
-    expect(controller.openAuthorizationPage).not.toHaveBeenCalled();
-    controller.openAuthorizationPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
+    expect(openPage).not.toHaveBeenCalled();
+    openPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
     await page.getByRole("button", { name: "Open sign-in help" }).click();
     await expect.element(page.getByRole("alert")).toBeVisible();
-    expect(controller.startConnection).toHaveBeenCalledTimes(1);
+    expect(serverStart).toHaveBeenCalledTimes(1);
   });
 });

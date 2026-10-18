@@ -21,15 +21,14 @@ import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   isActiveProviderConnectionOperation,
-  isSafeProviderAuthorizationUrl,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
+import { startProviderSignIn, useProviderSignInBrowser } from "./providerSignInBrowser";
 import {
   type ScientAgentAnswerDraft,
   scientAgentAccountOperation,
@@ -81,6 +80,10 @@ export function ScientAgentAccounts(props: {
   const failed = operation?.status === "failed" ? operation : null;
   const answer = scientAgentAnswerFor(draft, active);
   const setAnswer = (value: string) => setDraft({ operationId: active?.operationId ?? "", value });
+  const signInKey = { environmentId: props.environmentId, instanceId: props.provider.instanceId };
+  const providerName = props.provider.displayName?.trim() || "Scient Agent";
+  const browser = useProviderSignInBrowser(signInKey, active, providerName);
+  const shownError = error ?? (browser.opening?.status === "failed" ? browser.opening.error : null);
   // Without a list there is nothing to choose from, but a sign-in that is
   // running or just failed is still shown.
   if (listed === undefined && active === null && failed === null) return null;
@@ -94,24 +97,24 @@ export function ScientAgentAccounts(props: {
   const fail = (failure: unknown, fallback: string) =>
     setError(providerLifecycleFailureMessage(failure, fallback));
 
-  const openPage = async (url: string) => {
-    if (!isSafeProviderAuthorizationUrl(url)) {
-      setError("Scient refused a sign-in link that is not secure.");
-      return;
-    }
-    try {
-      await ensureLocalApi().shell.openExternal(url);
-    } catch (failure) {
-      fail(failure, "Scient could not open the sign-in page.");
-    }
-  };
-
   const signIn = async (account: ProviderConnectionAccount) => {
     setError(null);
     setPending({ kind: "sign-in", account: account.id });
-    const result = await startConnection({
-      environmentId: props.environmentId,
-      input: { instanceId, method: ACCOUNT_METHOD, account: account.id },
+    // Opens the account's sign-in page for this client once, even if this view closes.
+    const result = await startProviderSignIn({
+      key: signInKey,
+      providerName,
+      previousOperationId: operation?.operationId ?? null,
+      start: () =>
+        startConnection({
+          environmentId: props.environmentId,
+          input: { instanceId, method: ACCOUNT_METHOD, account: account.id },
+        }),
+      operationOf: (started) =>
+        started._tag === "Success"
+          ? started.value.providers.find((provider) => provider.instanceId === instanceId)
+              ?.connection?.accountOperation
+          : null,
     });
     setPending(null);
     if (result._tag === "Failure") {
@@ -122,11 +125,6 @@ export function ScientAgentAccounts(props: {
         );
       }
       return;
-    }
-    const started = result.value.providers.find((provider) => provider.instanceId === instanceId)
-      ?.connection?.accountOperation;
-    if (started?.authorizationUrl && started.authorizationUrlKind !== "manual_fallback") {
-      await openPage(started.authorizationUrl);
     }
   };
 
@@ -242,7 +240,7 @@ export function ScientAgentAccounts(props: {
                 type="button"
                 size="sm"
                 variant="ghost-primary"
-                onClick={() => void openPage(active.authorizationUrl!)}
+                onClick={() => void browser.reopen()}
               >
                 <ExternalLinkIcon />
                 Open the sign-in page
@@ -311,13 +309,13 @@ export function ScientAgentAccounts(props: {
           {nameOf(failed.account)}: {failed.message}
         </p>
       ) : null}
-      {error ? (
+      {shownError ? (
         <div
           role="alert"
           className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
         >
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>{error}</span>
+          <span>{shownError}</span>
         </div>
       ) : null}
     </section>

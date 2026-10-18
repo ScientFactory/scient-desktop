@@ -46,6 +46,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
+import { useProviderSignInBrowser } from "./providerSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -127,6 +128,21 @@ export function CursorInlineSetup(props: {
   const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
     ? connectionOperation
     : null;
+  const browser = useProviderSignInBrowser(
+    props.controller.signInKey,
+    activeConnectionOperation,
+    props.displayName,
+  );
+  const browserOpening = browser.opening;
+  const pageOpenFailure = browserOpening?.status === "failed" ? browserOpening.error : null;
+  // What the waiting view may say about the Cursor page: only this client opens it.
+  const browserPageCopy =
+    pageOpenFailure ??
+    (browserOpening?.status === "opened"
+      ? "Complete sign-in in your browser."
+      : browserOpening !== null || browser.startInFlight
+        ? "Opening the sign-in page in your browser…"
+        : "Open the sign-in page to continue.");
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -352,29 +368,42 @@ export function CursorInlineSetup(props: {
   }
 
   if (activeConnectionOperation || pendingAction === "sign-in") {
+    const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
+    const openFailure = !starting && !verifying ? pageOpenFailure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            verifying ? "Finding models for your account…" : "Complete sign-in in your browser."
+            starting
+              ? "Starting sign-in…"
+              : verifying
+                ? "Finding models for your account…"
+                : browserPageCopy
           }
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          icon={
+            openFailure ? (
+              <TriangleAlertIcon className="size-5 text-warning" />
+            ) : (
+              <LoaderIcon className="size-5 animate-spin text-primary" />
+            )
+          }
+          role={openFailure ? "alert" : undefined}
           title={verifying ? "Checking your account" : "Finish signing in"}
         />
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
             <Button
-              onClick={() =>
-                void props.controller.openAuthorizationPage(
-                  activeConnectionOperation.authorizationUrl!,
-                )
-              }
+              disabled={browserOpening?.status === "opening"}
+              onClick={() => void browser.reopen()}
               size="sm"
               type="button"
               variant="ghost-muted"
             >
-              <ExternalLinkIcon aria-hidden /> Reopen Cursor sign-in
+              <ExternalLinkIcon aria-hidden />{" "}
+              {browserOpening === null && !browser.startInFlight
+                ? "Open Cursor sign-in"
+                : "Reopen Cursor sign-in"}
             </Button>
           ) : null}
           {activeConnectionOperation ? (
