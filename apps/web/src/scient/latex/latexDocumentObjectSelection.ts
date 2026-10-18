@@ -86,6 +86,10 @@ export function latexDocumentObjectSelection() {
         if (drag.origin && !drag.managed) {
           const bounds = drag.origin.element.getBoundingClientRect();
           if (pointerInsideLatexObject(event, bounds)) return;
+          // An object's own editor (a footnote's text field) can open outside
+          // its box; pointing into it has not left the object.
+          const over = view.dom.ownerDocument.elementFromPoint(event.clientX, event.clientY);
+          if (over && drag.origin.element.contains(over)) return;
           drag.locked = true;
         }
         if (!drag.locked) {
