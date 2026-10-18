@@ -1,4 +1,3 @@
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -62,37 +61,65 @@ export function antigravityAuthFailureDiagnostic(error: unknown, beforeAuthoriza
   };
 }
 
-const userHomeTrail = /[\\/]+$/;
-const controlCharacters = /[\p{Cc}]+/gu;
-// A URL's query and fragment can carry OAuth codes and state.
-const urlQueryOrFragment = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)[?#][^\s"'<>]*/giu;
+const controlCharacters = /\p{Cc}+/gu;
+const anyUrl = /\b([a-z][a-z0-9+.-]*):\/\/[^\s"'<>]*/giu;
+const bearerOrBasic = /\b(Bearer|Basic)\s+[^\s"',;]+/giu;
+const jsonWebToken = /\beyJ[\w-]+\.[\w-]+(?:\.[\w-]+)?/gu;
+const secretKeyedValue =
+  /(["']?)([\w.-]*(?:token|secret|password|passwd|key|code|auth|session|cookie|credential)[\w.-]*)\1(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&}"']+)/giu;
+// A space belongs to a path only inside a directory name: more path follows it.
+const windowsPath =
+  /(?:\b[A-Za-z]:|\\\\[^\s\\/"'<>]+)[\\/](?:[^\s"'<>:*?|]| (?=[^\s"'<>:*?|\\/]+[\\/]))*/gu;
+const posixPath = /(?<![\w.:<>-])\/(?:(?:[^\s/"'<>:]| (?=[^\s/"'<>:]+\/))+\/)+[^\s/"'<>:]*/gu;
+const longOpaqueRun = /[A-Za-z0-9+/=_-]{20,}/gu;
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+/** `<path>/<last segment>`: the segment says what failed; the rest names the user's files. */
+function reducePath(path: string): string {
+  const segments = path.split(/[\\/]+/u).filter((segment) => segment.length > 0);
+  const last = segments.at(-1);
+  return last === undefined || /^[A-Za-z]:$/u.test(last) ? "<path>" : `<path>/${last}`;
+}
+
+function reduceUrl(match: string, scheme: string): string {
+  if (scheme.toLowerCase() === "file") {
+    let path = match.slice("file://".length).replace(/[?#].*$/u, "");
+    try {
+      path = decodeURIComponent(path);
+    } catch {
+      // A malformed escape still reduces like any other path.
+    }
+    return `file://${reducePath(path)}`;
+  }
+  try {
+    // Scheme and host only: userinfo, path, query and fragment can all carry credentials.
+    const url = new URL(match);
+    return url.hostname ? `${url.protocol}//${url.hostname}` : `${url.protocol}//<host>`;
+  } catch {
+    return `${scheme}://<host>`;
+  }
 }
 
 /**
- * Native text for the local server trace only, never for the UI: bounded, without URL queries or
- * fragments, and with the user's home shown as `~`.
+ * Native text for the trace only, never for the UI, kept deny-by-default: URLs
+ * shrink to scheme and host, absolute paths to their last segment, and anything
+ * that can hold a credential is replaced, before the 500-character bound. What
+ * remains still reads as the agent's sentence, so the failure stays diagnosable.
  */
-export function localAntigravityNativeText(value: string, userHome: string): string {
-  let text = value.replace(controlCharacters, " ").replace(urlQueryOrFragment, "$1");
-  const home = userHome.replace(userHomeTrail, "");
-  if (home.length > 1) {
-    const slashed = home.replaceAll("\\", "/");
-    // File URLs carry the home percent-encoded.
-    for (const form of new Set([home, slashed, home.replaceAll("/", "\\"), encodeURI(slashed)])) {
-      text = text.replace(new RegExp(escapeRegExp(form), "giu"), "~");
-    }
-  }
+export function localAntigravityNativeText(value: string): string {
+  const text = value
+    .replace(controlCharacters, " ")
+    .replace(anyUrl, reduceUrl)
+    .replace(bearerOrBasic, "$1 <redacted>")
+    .replace(jsonWebToken, "<redacted>")
+    .replace(secretKeyedValue, "$1$2$1$3<redacted>")
+    .replace(windowsPath, reducePath)
+    .replace(posixPath, reducePath)
+    .replace(longOpaqueRun, "<redacted>");
   return text.length > maxNativeTextLength ? `${text.slice(0, maxNativeTextLength - 1)}…` : text;
 }
 
-/** The failed request's method, JSON-RPC code, message and `data.details`, for the local trace. */
-export function antigravityAcpRequestDiagnostic(
-  error: unknown,
-  userHome: string,
-): {
+/** The failed request's method, JSON-RPC code, message and `data.details`, for the trace. */
+export function antigravityAcpRequestDiagnostic(error: unknown): {
   readonly acpMethod?: string;
   readonly acpCode?: number;
   readonly acpMessage?: string;
@@ -104,8 +131,8 @@ export function antigravityAcpRequestDiagnostic(
   return {
     ...(error.method === undefined ? {} : { acpMethod: error.method }),
     acpCode: error.code,
-    acpMessage: localAntigravityNativeText(error.errorMessage, userHome),
-    ...(details === undefined ? {} : { acpDetails: localAntigravityNativeText(details, userHome) }),
+    acpMessage: localAntigravityNativeText(error.errorMessage),
+    ...(details === undefined ? {} : { acpDetails: localAntigravityNativeText(details) }),
   };
 }
 
@@ -115,11 +142,10 @@ export const recordAntigravityAuthFailure = (
 ) =>
   Effect.gen(function* () {
     const error = Option.getOrUndefined(Cause.findErrorOption(cause));
-    const userHome = yield* HostProcess.HomeDirectory;
     yield* Effect.logWarning("Antigravity sign-in failed.").pipe(
       Effect.annotateLogs({
         ...antigravityAuthFailureDiagnostic(error, beforeAuthorizationUrl),
-        ...antigravityAcpRequestDiagnostic(error, userHome),
+        ...antigravityAcpRequestDiagnostic(error),
       }),
     );
   }).pipe(Effect.ignoreCause({ log: false }));

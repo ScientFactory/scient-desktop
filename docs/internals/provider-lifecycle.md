@@ -110,8 +110,11 @@ or link-capture messages; unknown causes remain generic. A failed current attemp
 records its authorization phase, known error type, and available numeric exit or
 allowlisted system error code. For a failed ACP request it also records the
 method, JSON-RPC code, message and `data.details`, each bounded to 500
-characters, without URL queries or fragments and with the user's home shown as
-`~`. These are attributes of a warning event in the server trace, so they follow
+characters and sanitized deny-by-default: URLs keep only scheme and host,
+absolute paths (Windows, UNC, POSIX and `file://`) keep only their last segment,
+and bearer and basic values, JWTs, values keyed by token, secret, password, key,
+code, auth, session, cookie or credential, and opaque runs of 20 or more
+characters are replaced. These are attributes of a warning event in the server trace, so they follow
 the user's trace exporter configuration like every other trace event; Settings >
 Diagnostics lists only the event's fixed message, and the UI never shows the
 native text. Credentials and OAuth URLs are not retained, and logging does not
