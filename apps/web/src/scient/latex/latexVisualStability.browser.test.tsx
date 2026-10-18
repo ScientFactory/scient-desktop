@@ -604,6 +604,9 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
   root.render(<></>);
   await frames(2);
   editor = await open("visual-stability-short-reopen", long);
+  // Where reading resumes once the pages are laid out; a busy runner can still
+  // be placing them three frames after opening.
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
   await frames(3);
   expect(Math.abs(scroller(editor).scrollTop - 300)).toBeLessThan(2);
 }, 30000);
