@@ -166,6 +166,15 @@ sidebar and Settings. The notice and the shared install call live in
 carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment.
+The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
+and Scient-managed runtimes appear in a Scient-owned circle and card
+(`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
+`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation, which
+remains for a pass that downloads this app. Upstream's `SidebarUpdateCapsule` is retained unmounted
+(a knip entry) so its changes still merge; the pass's restart countdown is a Scient tooltip above
+the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`.
+In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
+available" toasts to the circle; the browser client keeps them.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
