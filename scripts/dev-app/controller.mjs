@@ -66,7 +66,9 @@ import {
 const APP_NAME = "Scient (Dev) Stable";
 /** Outside dev-runner's hashed worktree range (1-3000), so ports never move. */
 const STABLE_PORT_OFFSET = "3100";
-const READY_TIMEOUT_MS = 10 * 60_000;
+// A cold renderer on a loaded machine can take many minutes; a launch that dies
+// ends the wait at once.
+const READY_TIMEOUT_MS = 30 * 60_000;
 const QUIT_TIMEOUT_MS = 30_000;
 const INSTALL_IDLE_MS = 6 * 60_000;
 const INSTALL_DEADLINE_MS = 45 * 60_000;
