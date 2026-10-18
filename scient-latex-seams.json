@@ -27,6 +27,7 @@
     "apps/server/src/scient/ScientServerLayers.ts",
     "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx",
     "apps/web/latexSelection.vitest.config.ts",
+    "apps/web/latexPaging.vitest.config.ts",
     "apps/web/scripts/render-template-previews.ts",
     "apps/web/src/scient/documents/DocumentsSettings.tsx",
     "apps/web/src/scient/documents/latexInstallationModel.ts",
