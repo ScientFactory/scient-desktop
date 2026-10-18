@@ -1,22 +1,23 @@
 import { Plugin, NodeSelection, type Selection } from "@tiptap/pm/state";
-import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
   captureLatexObjectDrag,
   isLatexSelectionObject,
   latexObjectOwnsPointerSelection,
   latexDocumentSelectionAtPointer,
+  latexObjectSelectionAtPointer,
   latexSelectionObjectAtElement,
   pointerInsideLatexObject,
+  readLatexObjectDragSelection,
+  setLatexObjectDragSelection,
 } from "./latexObjectSelection";
 
 /** Prose drags crossing embedded editors remain one document selection. */
 export function latexDocumentObjectSelection() {
-  let pointerSelection: { selection: Selection; doc: DocumentNode } | null = null;
   return new Plugin({
     props: {
       createSelectionBetween(view) {
-        return pointerSelection?.doc === view.state.doc ? pointerSelection.selection : null;
+        return readLatexObjectDragSelection(view)?.selection ?? null;
       },
       decorations(state) {
         const { selection, doc } = state;
@@ -48,10 +49,18 @@ export function latexDocumentObjectSelection() {
         origin: ReturnType<typeof latexSelectionObjectAtElement>;
       } | null = null;
       let suppressClick = false;
+      let pointerId: number | null = null;
+      let generation = 0;
       let release: (() => void) | null = null;
-      let finishing: { selection: Selection; doc: typeof view.state.doc } | null = null;
-      const apply = (selection: Selection) => {
+      let finishing: {
+        selection: Selection;
+        doc: typeof view.state.doc;
+        generation: number;
+        nested: boolean;
+      } | null = null;
+      const apply = (selection: Selection, pin = true) => {
         if (view.isDestroyed) return;
+        if (pin) setLatexObjectDragSelection(view, selection);
         if (!view.state.selection.eq(selection))
           view.dispatch(view.state.tr.setSelection(selection).setMeta("pointer", true));
         // Force DOM synchronization even while Chrome's native drag is active.
@@ -62,17 +71,21 @@ export function latexDocumentObjectSelection() {
         release?.();
         release = null;
         drag = null;
-        pointerSelection = null;
+        setLatexObjectDragSelection(view, null);
       };
       const move = (event: PointerEvent) => {
         if (!drag || view.isDestroyed) return;
+        if (
+          drag.origin &&
+          (!drag.origin.element.isConnected ||
+            view.state.doc.nodeAt(drag.origin.position) !== drag.origin.node)
+        ) {
+          stop();
+          return;
+        }
         if (drag.origin && !drag.managed) {
           const bounds = drag.origin.element.getBoundingClientRect();
           if (pointerInsideLatexObject(event, bounds)) return;
-          const before =
-            event.clientY < bounds.top ||
-            (event.clientY <= bounds.bottom && event.clientX < bounds.left);
-          drag.anchor = drag.origin.position + (before ? drag.origin.node.nodeSize : 0);
           drag.locked = true;
         }
         if (!drag.locked) {
@@ -89,7 +102,14 @@ export function latexDocumentObjectSelection() {
           }
         }
         const anchor = Math.min(drag.anchor, view.state.doc.content.size);
-        const selection = latexDocumentSelectionAtPointer(view, anchor, event);
+        const selection = drag.origin
+          ? latexObjectSelectionAtPointer(
+              view,
+              drag.origin.position,
+              event,
+              drag.origin.element.getBoundingClientRect(),
+            )
+          : latexDocumentSelectionAtPointer(view, anchor, event);
         if (!selection) return;
         let includesObject = false;
         view.state.doc.nodesBetween(selection.from, selection.to, (node) => {
@@ -100,7 +120,6 @@ export function latexDocumentObjectSelection() {
         if (!drag.managed && !includesObject) return;
         drag.managed = true;
         drag.locked = true;
-        pointerSelection = { selection, doc: view.state.doc };
         event.preventDefault();
         event.stopImmediatePropagation();
         apply(selection);
@@ -108,14 +127,21 @@ export function latexDocumentObjectSelection() {
       const finish = (event: PointerEvent) => {
         if (drag?.managed && event.type === "pointerup") {
           suppressClick = true;
-          const selection = latexDocumentSelectionAtPointer(
-            view,
-            Math.min(drag.anchor, view.state.doc.content.size),
-            event,
-          );
+          const selection = drag.origin
+            ? latexObjectSelectionAtPointer(
+                view,
+                drag.origin.position,
+                event,
+                drag.origin.element.getBoundingClientRect(),
+              )
+            : latexDocumentSelectionAtPointer(
+                view,
+                Math.min(drag.anchor, view.state.doc.content.size),
+                event,
+              );
           if (selection) {
             apply(selection);
-            finishing = { selection, doc: view.state.doc };
+            finishing = { selection, doc: view.state.doc, generation, nested: false };
           }
         }
         stop();
@@ -123,6 +149,8 @@ export function latexDocumentObjectSelection() {
       const start = (event: PointerEvent) => {
         if (!view.editable || event.button !== 0 || event.pointerType === "touch") return;
         stop();
+        generation++;
+        pointerId = event.pointerId;
         finishing = null;
         suppressClick = false;
         if (!(event.target instanceof Element) || event.target.closest("button,select")) return;
@@ -141,7 +169,6 @@ export function latexDocumentObjectSelection() {
           const selection = latexDocumentSelectionAtPointer(view, drag.anchor, event);
           if (selection) {
             drag.managed = true;
-            pointerSelection = { selection, doc: view.state.doc };
             suppressClick = true;
             event.preventDefault();
             apply(selection);
@@ -159,36 +186,71 @@ export function latexDocumentObjectSelection() {
         if (drag?.origin) event.preventDefault();
       };
       const nativeMove = (event: MouseEvent) => {
-        if (drag?.managed && event.buttons & 1) event.preventDefault();
+        if (readLatexObjectDragSelection(view) && event.buttons & 1) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      };
+      const pointerFinished = (event: PointerEvent) => {
+        if (event.pointerId !== pointerId) return;
+        pointerId = null;
+        const pending = readLatexObjectDragSelection(view);
+        if (event.type === "pointerup" && pending) {
+          finishing = { ...pending, generation, nested: true };
+          suppressClick = true;
+        } else {
+          finishing = null;
+          setLatexObjectDragSelection(view, null);
+        }
       };
       const nativeFinish = (event: MouseEvent) => {
-        const pending = finishing;
+        const selection = readLatexObjectDragSelection(view);
+        const pending =
+          pointerId === null
+            ? selection
+              ? { ...selection, generation }
+              : finishing?.nested
+                ? null
+                : finishing
+            : null;
         finishing = null;
+        setLatexObjectDragSelection(view, null);
         if (!pending) return;
+        suppressClick = true;
         event.preventDefault();
         // ProseMirror may finish its own mouse tracker in this same event.
         queueMicrotask(() => {
-          if (!view.isDestroyed && view.state.doc === pending.doc) apply(pending.selection);
+          if (
+            !view.isDestroyed &&
+            generation === pending.generation &&
+            view.state.doc === pending.doc
+          )
+            apply(pending.selection, false);
         });
       };
       const blurred = () => {
         stop();
+        generation++;
+        pointerId = null;
         finishing = null;
       };
       view.dom.addEventListener("pointerdown", start, true);
       view.dom.addEventListener("click", click, true);
       view.dom.addEventListener("dragstart", dragStart, true);
       window.addEventListener("mousemove", nativeMove, true);
+      window.addEventListener("pointerup", pointerFinished, true);
+      window.addEventListener("pointercancel", pointerFinished, true);
       window.addEventListener("mouseup", nativeFinish, true);
       window.addEventListener("blur", blurred);
       return {
         destroy() {
-          stop();
-          finishing = null;
+          blurred();
           view.dom.removeEventListener("pointerdown", start, true);
           view.dom.removeEventListener("click", click, true);
           view.dom.removeEventListener("dragstart", dragStart, true);
           window.removeEventListener("mousemove", nativeMove, true);
+          window.removeEventListener("pointerup", pointerFinished, true);
+          window.removeEventListener("pointercancel", pointerFinished, true);
           window.removeEventListener("mouseup", nativeFinish, true);
           window.removeEventListener("blur", blurred);
         },

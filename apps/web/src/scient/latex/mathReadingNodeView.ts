@@ -52,6 +52,9 @@ export function mathReadingNodeView(
   let disposed = false;
   let epoch = 0;
   let signature = "";
+  let retryPreview: ReturnType<typeof setTimeout> | undefined;
+  let retryable = false;
+  let retries = 0;
   let renderedMarkup: string | null = null;
   let numberSignature = "";
   let cancelPreview: (() => void) | undefined;
@@ -146,7 +149,10 @@ export function mathReadingNodeView(
       display,
       mathReadingPreviewContextId(macros, configuration.colors),
     ]);
-    if (next === signature) return;
+    if (next === signature && !retryable) return;
+    if (next !== signature) retries = 0;
+    retryable = false;
+    clearTimeout(retryPreview);
     signature = next;
     renderedMarkup = null;
     const version = ++epoch;
@@ -158,18 +164,26 @@ export function mathReadingNodeView(
       new CustomEvent("scient-latex-math-preview", { bubbles: true, detail: { pending: true } }),
     );
     preview.setAttribute("aria-label", value);
-    const apply = (markup: string | null, cached = false) => {
+    const apply = (markup: string | null, cached = false, transient = false) => {
       const present = () => {
         if (disposed || full || version !== epoch) return;
         if (markup === null) content.textContent = value;
         else content.innerHTML = markup;
         preview.toggleAttribute("data-math-preview-fallback", markup === null);
-        if (markup === null) {
+        if (markup === null && !transient) {
           terminalFallbacks.set(
             props.node,
             mathReadingPreviewContextId(macros, configuration.colors),
           );
           rememberMathReadingFallback(value, display, macros, configuration.colors);
+        }
+        if (markup === null && transient && retries < 1) {
+          retries++;
+          retryPreview = setTimeout(() => {
+            if (disposed || full || version !== epoch) return;
+            retryable = true;
+            refresh();
+          }, 500);
         }
         renderedMarkup = markup;
         content.dataset.mathPreviewReady = "true";
@@ -199,11 +213,12 @@ export function mathReadingNodeView(
         priority,
       );
     } catch {
-      apply(null);
+      apply(null, false, true);
     }
   };
   const releaseReading = () => {
     epoch++;
+    clearTimeout(retryPreview);
     cancelPreview?.();
     queued?.cancel();
     cancelNumbers?.();

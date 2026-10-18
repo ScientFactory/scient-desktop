@@ -7,6 +7,7 @@ import "../scient-latex.css";
 import { LatexVisualEditor } from "../LatexVisualEditor";
 import { useLatexVisualTestOwner } from "../latexVisualTestOwner";
 import { clearVisualDraft } from "../visualDrafts";
+import { pagedLayoutSettled } from "../latexPagedGeometry";
 import { latexBenchmarkDocument } from "./latexBenchmarkDocument";
 
 /** Production-build page driven by `scripts/latex-visual-benchmark.ts`. */
@@ -29,7 +30,7 @@ function BenchmarkEditor(props: { source: string; draftKey: string }) {
       onEditingChange={() => {}}
       onOpenSource={() => {}}
       onEdit={(request) => {
-        const outcome = owner.edit(request, request.edit.source === value);
+        const outcome = owner.edit(request);
         if (outcome.accepted) setValue(outcome.snapshot.source);
         return outcome;
       }}
@@ -78,6 +79,10 @@ const benchmark = {
       (document.querySelector(".scient-latex-visual-document") as HTMLElement & { editor?: Editor })
         ?.editor ?? null
     );
+  },
+  settled() {
+    const editor = benchmark.editor();
+    return !!editor && pagedLayoutSettled(editor.view);
   },
   synthetic: latexBenchmarkDocument,
 };

@@ -1,5 +1,6 @@
 /** Dimensions are kept in TeX points or inches until the presentation boundary. */
 import { latexDocumentLanguage, latexLanguageFont } from "./latexLanguage";
+import { latexPreambleEnd } from "./latexSourceSyntax";
 
 export const TEX_POINTS_PER_INCH = 72.27;
 export const CSS_PIXELS_PER_INCH = 96;
@@ -66,6 +67,12 @@ export interface LatexVisualLayoutProfile {
   readonly titleSizePt: number;
   readonly authorSizePt: number;
   readonly lists: Readonly<Record<LatexVisualListKind, LatexVisualListLayout>>;
+  readonly twoSided: boolean;
+  readonly bindingOffsetIn: number;
+  readonly sectionBefore: string;
+  readonly sectionAfter: string;
+  readonly sansFontFamily: string;
+  readonly monoFontFamily: string;
 }
 
 export function latexLengthInches(value: string): number | null {
@@ -121,8 +128,7 @@ function optionList(value: string): string[] {
 const profileCache = new Map<string, LatexVisualLayoutProfile>();
 
 export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfile {
-  const uncommented = withoutComments(source);
-  const preamble = uncommented.split(/\\begin\s*\{document\}/u)[0] ?? "";
+  const preamble = withoutComments(source.slice(0, latexPreambleEnd(source)));
   const cached = profileCache.get(preamble);
   if (cached) return cached;
   const depthAt = new Uint32Array(preamble.length + 1);
@@ -220,7 +226,10 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     standardClass && !hasGeometry ? paperWidthIn - standardWidth : paperWidthIn * 0.3;
   const verticalSpace =
     standardClass && !hasGeometry ? paperHeightIn - standardHeight : paperHeightIn * 0.3;
-  const defaultLeft = horizontalSpace / 2;
+  const twoSided =
+    classOptions.includes("twoside") ||
+    (documentClass === "book" && !classOptions.includes("oneside"));
+  const defaultLeft = horizontalSpace * (twoSided ? 0.4 : 0.5);
   const defaultTop =
     standardClass && !hasGeometry
       ? verticalSpace / 2 +
@@ -256,6 +265,8 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     const scale = Math.min(1, (size * 0.9) / Math.max(a + b, 0.001));
     return [a * scale, b * scale] as const;
   };
+  const bindingOffsetIn = Math.max(0, latexLengthInches(geometry.get("bindingoffset") ?? "") ?? 0);
+  marginLeftIn += bindingOffsetIn;
   [marginLeftIn, marginRightIn] = fitMargins(marginLeftIn, marginRightIn, paperWidthIn);
   [marginTopIn, marginBottomIn] = fitMargins(marginTopIn, marginBottomIn, paperHeightIn);
 
@@ -393,8 +404,52 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     titleSizePt: baseFontPt === 12 ? 20.74 : 17.28,
     authorSizePt: baseFontPt === 12 ? 14.4 : 12,
     lists,
+    twoSided,
+    bindingOffsetIn,
+    sectionBefore:
+      topLevel(/\\titlespacing\*?\s*\{\\section\}\s*\{[^{}]*\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}/gu).at(
+        -1,
+      )?.[1] ?? "",
+    sectionAfter:
+      topLevel(/\\titlespacing\*?\s*\{\\section\}\s*\{[^{}]*\}\s*\{([^{}]*)\}\s*\{([^{}]*)\}/gu).at(
+        -1,
+      )?.[2] ?? "",
+    sansFontFamily: latexLanguageFont(
+      topLevel(/\\setsansfont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu).at(-1)?.[1] ?? null,
+      '"KaTeX_SansSerif", sans-serif',
+    ),
+    monoFontFamily: latexLanguageFont(
+      topLevel(/\\setmonofont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu).at(-1)?.[1] ?? null,
+      '"KaTeX_Typewriter", monospace',
+    ),
   };
+  const sectionFont = topLevel(
+    /\\titleformat\s*\{\\section\}\s*\{\\normalfont\\fontsize\{([\d.]+)\}\{[\d.]+\}\\selectfont\\bfseries\}/gu,
+  ).at(-1);
+  if (sectionFont) Object.assign(profile, { sectionSizePt: Number(sectionFont[1]) });
+  const titleFont = topLevel(
+    /\\pretitle\s*\{\\begin\{center\}\\fontsize\{([\d.]+)\}\{[\d.]+\}\\selectfont\}/gu,
+  ).at(-1);
+  if (titleFont) Object.assign(profile, { titleSizePt: Number(titleFont[1]) });
   if (profileCache.size >= 16) profileCache.delete(profileCache.keys().next().value!);
   profileCache.set(preamble, profile);
   return profile;
+}
+
+/** The standard Computer Modern setup substitutes unsupported explicit sizes; scalable fonts keep them. */
+export function resolvedLatexFontSize(points: number, source: string): number {
+  const preamble = source.slice(
+    0,
+    source.indexOf("\\begin{document}") < 0 ? source.length : source.indexOf("\\begin{document}"),
+  );
+  if (
+    /\\(?:setmainfont|babelfont)\b|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\b(?:fontspec|lmodern|newtxtext|newpxtext|tgtermes|tgpagella)\b/u.test(
+      preamble,
+    )
+  )
+    return points;
+  const sizes = [5, 6, 7, 8, 9, 10, 10.95, 12, 14.4, 17.28, 20.74, 24.88];
+  return sizes.reduce((nearest, size) =>
+    Math.abs(points - size) < Math.abs(points - nearest) ? size : nearest,
+  );
 }

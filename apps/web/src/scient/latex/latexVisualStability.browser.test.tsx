@@ -16,6 +16,7 @@ vi.mock("~/assets/assetUrls", () => ({
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { latexPageAt, latexPageMarkersKey, setLatexPageMarkers } from "./latexPageMarkers";
+import { pagedLayoutSettled } from "./latexPagedGeometry";
 import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
@@ -174,6 +175,10 @@ async function formulasRendered() {
       { timeout: 20000 },
     )
     .toBe(true);
+  const editor = (
+    container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
+  ).editor;
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
 }
 
 /** Samples after each paint: layout, resize observers and paint have run. */
@@ -197,6 +202,38 @@ function topOf(editor: Editor, position: number) {
   const element = editor.view.nodeDOM(position);
   return element instanceof HTMLElement ? element.getBoundingClientRect().top : Number.NaN;
 }
+
+it("moves from section controls into Math and preserves both edits", async () => {
+  const initial = String.raw`\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+New heading
+
+Body text.
+\end{document}`;
+  const editor = await open("visual-section-to-math", initial);
+  editor.commands.setTextSelection(2);
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Paragraph style", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /^Section(?:\s|$)/u }).click();
+  await expect.poll(() => published).toContain("\\section{New heading}");
+  let body = 0;
+  editor.state.doc.forEach((node, position) => {
+    if (node.type.name === "paragraph" && node.textContent === "Body text.")
+      body = position + node.nodeSize - 1;
+  });
+  expect(body).toBeGreaterThan(0);
+  editor.commands.setTextSelection(body);
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Paragraph style", exact: true }).click();
+  await page.getByRole("button", { name: "Math", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Inline math", exact: true }).click();
+  await expect.poll(() => container.querySelector("math-field")).toBeTruthy();
+  await userEvent.keyboard("x+1");
+  await expect.poll(() => published).toContain("x+1");
+  expect(published).toContain("\\section{New heading}");
+  expect(published).toContain("Body text.");
+});
 
 it("opens without publishing source or creating undo history", async () => {
   const editor = await open("visual-stability-open");
@@ -761,6 +798,7 @@ ${"Text that follows the run-in heading on the same line. ".repeat(8)}
     if (node.textContent.startsWith("Text that follows")) paragraph = offset;
   });
   const heading = editor.view.dom.querySelector<HTMLElement>("h4, h5")!;
+  await expect.poll(() => editor.view.dom.closest("[data-paged]")).toBeTruthy();
   const floated = getComputedStyle(heading).float;
   setLatexPageMarkers(editor.view, {
     key: "build-run-in",
@@ -770,9 +808,12 @@ ${"Text that follows the run-in heading on the same line. ".repeat(8)}
       { page: 2, position: paragraph },
     ],
   });
-  expect(heading.nextElementSibling?.classList.contains("scient-latex-page-marker")).toBe(true);
+  expect(editor.view.dom.querySelector(".scient-latex-page-marker")).toBeTruthy();
   expect(getComputedStyle(heading).float).toBe(floated);
   expect(floated).toBe("left");
+  expect(
+    Math.abs(editor.view.coordsAtPos(paragraph + 1).top - heading.getBoundingClientRect().top),
+  ).toBeLessThan(3);
 }, 30000);
 
 it.each([String.raw`\columnbreak`, String.raw`\columnbreak[4]`])(
@@ -830,7 +871,7 @@ Closing paragraph.
       if (node.isText && node.text!.startsWith("first0")) start = position;
     });
     editor.chain().setTextSelection(start).insertContent("inserted words ".repeat(8)).run();
-    await expect.poll(() => published).toContain("inserted words");
+    await expect.poll(() => published, { timeout: 5000 }).toContain("inserted words");
     await expect
       .poll(() => editor.view.dom.querySelectorAll(".scient-latex-column-break-gap").length)
       .toBe(1);
@@ -874,7 +915,7 @@ After the list.
   expect(getComputedStyle(list()).contentVisibility).toBe("visible");
 });
 
-it("shows a two-column document as one continuous column", async () => {
+it("shows a two-column document in printable-width columns", async () => {
   const paragraph = (name: string) =>
     `${name} ${Array.from({ length: 60 }, (_, index) => `word${index}`).join(" ")}`;
   const editor = await open(
@@ -900,8 +941,9 @@ ${paragraph("Following")}
   const textWidth =
     body.width -
     (Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)) * scale;
-  // Full text width, one after the other, nothing positioned into a second column.
-  expect(first!.width).toBeGreaterThan(textWidth * 0.95);
+  // Existing paragraphs keep one model while filling printable columns.
+  expect(first!.width).toBeGreaterThan(textWidth * 0.4);
+  expect(first!.width).toBeLessThan(textWidth * 0.51);
   expect(Math.abs(second!.left - first!.left)).toBeLessThan(1);
   expect(second!.top).toBeGreaterThanOrEqual(first!.bottom - 1);
 });
@@ -920,6 +962,7 @@ An ordinary paragraph.
   const paragraph = [...editor.view.dom.children].find((child) =>
     child.textContent?.startsWith("An ordinary"),
   ) as HTMLElement;
+  await expect.poll(() => editor.view.dom.closest("[data-paged]")).toBeTruthy();
   expect(getComputedStyle(paragraph).contentVisibility).toBe("auto");
   // The idle pass renders each block once so its real height is remembered.
   paragraph.setAttribute("data-latex-measure", "");

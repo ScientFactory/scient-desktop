@@ -53,6 +53,16 @@ export function latexContentDeclarations(source: string, start = 0) {
         break;
       style.color = color.value;
       end = color.end;
+    } else if (name === "setlength") {
+      const length = latexSourceArgument(source, end);
+      const value = length && latexSourceArgument(source, length.end);
+      const key = { "\\parskip": "parGap", "\\LTpre": "tableBefore", "\\LTpost": "tableAfter" }[
+        length?.value.trim() ?? ""
+      ];
+      const css = value && latexLayoutLength(value.value);
+      if (!key || !css) break;
+      style[key] = css;
+      end = value!.end;
     } else if (name === "fontsize") {
       const size = latexSourceArgument(source, end);
       const leading = size && latexSourceArgument(source, size.end);
@@ -76,6 +86,18 @@ export function latexContentDeclarations(source: string, start = 0) {
 }
 
 export function latexContentWrapper(source: string) {
+  if (/^\\begingroup\b/u.test(source)) {
+    const end = latexExplicitGroupEnd(source);
+    if (end === source.trimEnd().length) {
+      const close = source.lastIndexOf("\\endgroup", end);
+      const declarations = latexContentDeclarations(source, "\\begingroup".length);
+      return {
+        from: declarations.from,
+        to: close,
+        layout: { kind: "contentGroup", ...declarations.style },
+      };
+    }
+  }
   const colored = /^\\textcolor\b/u.exec(source);
   if (colored) {
     const color = latexSourceArgument(source, colored[0].length);
@@ -278,11 +300,22 @@ export function latexContentHeading(
     : null;
 }
 
+function latexExplicitGroupEnd(source: string) {
+  let depth = 0;
+  for (const command of latexSourceCommands(source)) {
+    if (command.depth !== 0) continue;
+    if (command.name === "begingroup") depth++;
+    else if (command.name === "endgroup" && --depth === 0) return command.to;
+  }
+  return undefined;
+}
+
 export function latexContentBoundary(
   source: string,
   macros?: ReturnType<typeof latexContentHeadingMacros>,
   calls?: ReadonlyMap<string, number>,
 ) {
+  if (/^\\begingroup\b/u.test(source)) return latexExplicitGroupEnd(source);
   const column = /^\\(?:twocolumn|onecolumn)\b/u.exec(source);
   if (column)
     return latexSourceArgument(source, column[0].length, "[", "]")?.end ?? column[0].length;

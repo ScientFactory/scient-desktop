@@ -188,7 +188,9 @@ Math → Brackets puts Left/Right above Size/Match, then Insert.
 Editing controls should not block the document with a modal backdrop. Use compact
 anchored popovers for short forms and nonmodal panels for larger workflows.
 Link, Citation/Cross-reference and Document settings already use nonmodal controls.
-Document settings uses one card without tabs: Type, Text size, Paper, Orientation,
+Document settings uses one card without tabs; expandable layout groups add
+columns, spacing, binding, supported typography and running furniture. The
+existing compact fields remain: Type, Text size, Paper, Orientation,
 Margins and Paragraphs. Show current values; Apply changes only requested fields.
 
 The owner has verified the available workflows. These remaining UI conversion

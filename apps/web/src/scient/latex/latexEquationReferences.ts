@@ -63,6 +63,7 @@ interface StatementPresentation {
 
 interface EquationReferences {
   documentClass: string;
+  contentsDepth: number;
   titlePage: boolean;
   headings: Map<number, { number: string | null; chapterName: string }>;
   floatContents: {
@@ -207,7 +208,13 @@ function remapReferences(
     }),
     floatContents: entries(previous.floatContents),
   };
-  referenceLayouts.set(next, referenceLayouts.get(previous) ?? previous);
+  if (
+    !previous.contents.some((entry) => {
+      const title = headingTitles.get(position(entry.position));
+      return title !== undefined && title !== entry.title;
+    })
+  )
+    referenceLayouts.set(next, referenceLayouts.get(previous) ?? previous);
   referenceCounts.set(next, referenceCounts.get(previous) ?? previous);
   return next;
 }
@@ -332,7 +339,21 @@ function equationReferences(
   source: string,
   compiled: CompiledBibliographyItem[] | null,
 ): EquationReferences {
-  const clean = latexWithoutComments(activeLatexSource(source));
+  const originalClean = latexWithoutComments(activeLatexSource(source));
+  const setupEnd = latexDocumentBoundary(originalClean)?.from ?? originalClean.length;
+  const numberingDepth = Number(
+    [
+      ...originalClean
+        .slice(0, setupEnd)
+        .matchAll(/\\setcounter\s*\{secnumdepth\}\s*\{(-?\d+)\}/gu),
+    ].at(-1)?.[1] ?? 3,
+  );
+  const clean =
+    originalClean
+      .slice(0, setupEnd)
+      .replace(/\\setcounter\s*\{(?:secnumdepth|tocdepth)\}\s*\{-?\d+\}/gu, (command) =>
+        " ".repeat(command.length),
+      ) + originalClean.slice(setupEnd);
   const begin = latexDocumentBoundary(clean)?.from ?? -1;
   const preamble = begin < 0 ? "" : clean.slice(0, begin);
   const documentClass = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/u.exec(preamble)?.[1];
@@ -352,6 +373,11 @@ function equationReferences(
   const declarations = latexEnvironmentDeclarations(source);
   const result: EquationReferences = {
     documentClass: documentClass ?? "article",
+    contentsDepth: Number(
+      [
+        ...originalClean.slice(0, setupEnd).matchAll(/\\setcounter\s*\{tocdepth\}\s*\{(-?\d+)\}/gu),
+      ].at(-1)?.[1] ?? (documentClass === "article" ? 3 : 2),
+    ),
     titlePage:
       /\\documentclass\s*\[[^\]]*\btitlepage\b/u.test(preamble) ||
       (["report", "book"].includes(documentClass ?? "") &&
@@ -583,7 +609,9 @@ function equationReferences(
           ? chapterLabel()
           : `${chapterPrefix()}${latexCounterLabel(section, appendix && documentClass === "article" ? "Alph" : "arabic")}${level >= 2 ? `.${subsection}` : ""}${level >= 3 ? `.${subsubsection}` : ""}`;
       const number =
-        headingsReliable && node.attrs.unnumbered !== true && (level <= 3 || level === 6)
+        headingsReliable &&
+        node.attrs.unnumbered !== true &&
+        (level <= Math.min(3, numberingDepth) || (level === 6 && numberingDepth >= 0))
           ? local
           : null;
       const title = referenceHeadingTitle(node);
@@ -908,6 +936,109 @@ function equationReferences(
   return result;
 }
 
+const referenceInputs = new WeakMap<DocumentNode, string>();
+
+/** Counter dependencies only. Immutable subtrees keep their cached contribution;
+ * splitting prose or changing a formula body does not introduce a counter event.
+ * Unrecognized objects retain their complete input rather than guessing their effects.
+ */
+function referenceInput(node: DocumentNode): string {
+  const cached = referenceInputs.get(node);
+  if (cached !== undefined) return cached;
+  const type = node.type.name;
+  let value: string;
+  if (node.isText || type === "inlineMath" || type === "hardBreak") value = "";
+  else if (
+    ["doc", "paragraph", "bulletList", "orderedList", "listItem", "blockquote"].includes(type) ||
+    (type === "latexScientific" &&
+      [
+        "direction",
+        "basicBox",
+        "boxRegion",
+        "minipage",
+        "sourceColumns",
+        "contentGroup",
+        "fullWidthTitle",
+        "macroHeading",
+        "alignment",
+      ].includes(String(node.attrs.layout?.kind)))
+  ) {
+    value = type === "latexScientific" ? JSON.stringify([type, node.attrs.layout?.kind]) : "";
+    node.forEach((child) => {
+      value += referenceInput(child);
+    });
+    if (type === "latexScientific") value += '["end-scientific"]';
+  } else if (type === "latexDisplayMath") {
+    const projected = projectMathNumbering(String(node.attrs.tex ?? ""));
+    const commands =
+      Array.isArray(node.attrs.numbering) &&
+      node.attrs.numbering.every(
+        (row: unknown) =>
+          Array.isArray(row) && row.every((command: unknown) => typeof command === "string"),
+      )
+        ? node.attrs.numbering
+        : (projected?.commands ?? [[]]);
+    value = JSON.stringify([type, node.attrs.environment, projected !== null, commands]);
+  } else if (type === "latexRichPreview" && node.attrs.kind === "table") {
+    const raw = latexWithoutComments(String(node.attrs.raw ?? ""));
+    const captions = [...raw.matchAll(/\\caption\b/gu)];
+    const captionAt = captions[0]?.index;
+    const labelAt = raw.indexOf("\\label");
+    value = JSON.stringify([
+      type,
+      "table",
+      latexVisualFloatHasCaption({ attrs: node.attrs }),
+      /\\begin\{(?:table\*?|longtable)\}/u.test(raw),
+      node.attrs.tableKind,
+      node.attrs.sourceMeta?.longtable != null,
+      captions.length,
+      /\\caption\s*\*/u.test(raw),
+      node.attrs.caption,
+      node.attrs.label,
+      node.attrs.captionRemoved,
+      node.attrs.tableCanonical,
+      captionAt === undefined || labelAt < 0 || captionAt < labelAt,
+    ]);
+  } else if (type === "latexScientific" && !node.attrs.layout) {
+    value = JSON.stringify([type, node.attrs.environment]);
+    node.forEach((child) => {
+      value += referenceInput(child);
+    });
+    value += '["end-scientific"]';
+  } else if (type === "heading") {
+    value = JSON.stringify([
+      type,
+      node.attrs.level,
+      node.attrs.unnumbered,
+      node.attrs.referenceLabel,
+      referenceHeadingTitle(node),
+    ]);
+    node.forEach((child) => {
+      value += referenceInput(child);
+    });
+  } else {
+    value = JSON.stringify(node.toJSON(), (key, input: unknown) =>
+      key === "sourceId" ? undefined : input,
+    );
+  }
+  referenceInputs.set(node, value);
+  return value;
+}
+
+/** Ordinary source has setup plus model-owned counter events. Any source-wide
+ * counter customization keeps the conservative whole-source invalidation path.
+ */
+function referenceSourceInput(source: string): string {
+  const clean = latexWithoutComments(activeLatexSource(source));
+  const boundary = latexDocumentBoundary(clean)?.from ?? 0;
+  const body = clean.slice(boundary);
+  return /\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode|frontmatter|backmatter|includeonly|newtheoremstyle|newtheorem|theoremstyle|newenvironment|renewenvironment|newcommand|renewcommand|def|gdef|xdef|captionof|captionsetup|subcaptionsetup|the[A-Za-z]+|footnotemark|footnotetext|usepackage|RequirePackage|lstlistingname)\b|showonlyrefs|numberbychapter\s*=/u.test(
+    body,
+  )
+    ? clean
+    : clean.slice(0, boundary);
+}
+
 export function latexEquationReferences(
   source: () => string,
   compiledSource: () => string | null = () => null,
@@ -927,17 +1058,40 @@ export function latexEquationReferences(
   let decoratedDocument: DocumentNode | undefined;
   let decoratedReferences: EquationReferences | undefined;
   let headingDecorations = DecorationSet.empty;
+  let countedInput: string | undefined;
+  let countedSource: string | undefined;
+  let countedBibliography: CompiledBibliographyItem[] | null | undefined;
+  let lastSource: string | undefined;
+  let sourceInput = "";
+  const currentSourceInput = () => {
+    const next = source();
+    if (next !== lastSource) {
+      lastSource = next;
+      sourceInput = referenceSourceInput(next);
+    }
+    return sourceInput;
+  };
+  const count = (doc: DocumentNode) => {
+    countedInput = referenceInput(doc);
+    countedSource = currentSourceInput();
+    countedBibliography = bibliography();
+    return equationReferences(doc, source(), countedBibliography);
+  };
+  const dependenciesUnchanged = (doc: DocumentNode) =>
+    referenceInput(doc) === countedInput &&
+    currentSourceInput() === countedSource &&
+    bibliography() === countedBibliography;
   return new Plugin({
     key: latexEquationReferencesKey,
     state: {
       init: (_config, state) => {
         const plan = opening();
         if (!plan || (plan.document.content?.length ?? 0) === state.doc.childCount)
-          return equationReferences(state.doc, source(), bibliography());
+          return count(state.doc);
         // Number from the whole document at once, so references in the first
         // blocks never change while the rest loads.
         const whole = latexWholeDocument(state.schema, plan.document);
-        const references = equationReferences(whole, source(), bibliography());
+        const references = count(whole);
         if (plan.start === 0) return references;
         let prefix = 0;
         for (let index = 0; index < plan.start; index++) prefix += whole.child(index).nodeSize;
@@ -947,10 +1101,7 @@ export function latexEquationReferences(
         if (isLatexVisualLoading(transaction)) {
           // The document is whole: number it once, keeping an equal presentation.
           if (transaction.getMeta(LATEX_VISUAL_LOADING) === "done")
-            return settleReferences(
-              equationReferences(state.doc, source(), bibliography()),
-              previous,
-            );
+            return settleReferences(count(state.doc), previous);
           // Appended blocks already have their positions. A prepend shifts
           // every position by its size, including those of blocks not yet
           // loaded before it (negative until then), which mapping would not move.
@@ -965,13 +1116,15 @@ export function latexEquationReferences(
           // While loading, the partial document would lose forward targets;
           // completion renumbers the whole document.
           if (opening()) return previous;
+          if (
+            !previous.contents.some((entry) => entry.number === "") &&
+            dependenciesUnchanged(state.doc)
+          )
+            return previous;
           // Source acknowledgements still recheck packages/counters and compiled
           // bibliography. An equal presentation retains its identity and layout
           // caches; positions have already been mapped by the typing transaction.
-          return settleReferences(
-            equationReferences(state.doc, source(), bibliography()),
-            previous,
-          );
+          return settleReferences(count(state.doc), previous);
         }
         if (!transaction.docChanged) return previous;
         // Text edits preserve numbering and labels; heading edits update only their titles.
@@ -984,8 +1137,36 @@ export function latexEquationReferences(
           }
           return mapped;
         }
-        // Refreshing source attributes does not invalidate an equal layout.
-        return settleReferences(equationReferences(state.doc, source(), bibliography()), previous);
+        if (
+          !previous.contents.some((entry) => entry.number === "") &&
+          dependenciesUnchanged(state.doc)
+        ) {
+          // A whole-object replacement can delete its old start position even
+          // when the counter contribution is equal. Recount that case; ordinary
+          // splits/joins and attribute edits only map surviving targets.
+          const positions = [
+            ...previous.headings.keys(),
+            ...previous.equations.keys(),
+            ...previous.statements.keys(),
+            ...previous.tables.keys(),
+            ...previous.figures.keys(),
+            ...previous.algorithms.keys(),
+            ...previous.listings.keys(),
+            ...previous.algorithmLines.keys(),
+            ...previous.footnotes.keys(),
+            ...previous.bibliographies.keys(),
+            ...[
+              ...previous.labels.values(),
+              ...previous.anchors.values(),
+              ...previous.citations.values(),
+              ...previous.contents,
+              ...previous.floatContents,
+            ].map((entry) => entry.position),
+          ];
+          if (!positions.some((position) => transaction.mapping.mapResult(position).deleted))
+            return mapReferences(previous, transaction);
+        }
+        return settleReferences(count(state.doc), previous);
       },
     },
     view: (view) => ({ destroy: () => clearHighlight(view) }),

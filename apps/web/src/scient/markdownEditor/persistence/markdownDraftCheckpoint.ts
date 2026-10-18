@@ -222,10 +222,13 @@ export interface MarkdownDraftCheckpointStore {
 
 const MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const MAX_CHECKPOINTS = 32;
-const drafts = createIndexedDbConnection({
+export const documentRecoveryDatabase = createIndexedDbConnection({
   name: "scient-markdown-drafts",
-  version: 1,
-  upgrade: (database) => database.createObjectStore("drafts"),
+  version: 2,
+  upgrade: (database) => {
+    for (const name of ["drafts", "document-input-owners", "document-input-blocks"])
+      if (!database.objectStoreNames.contains(name)) database.createObjectStore(name);
+  },
   blockedMessage: "Markdown recovery storage is blocked.",
 });
 
@@ -344,7 +347,7 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
 }
 
 async function readStoredCheckpoint(key: string): Promise<unknown> {
-  return drafts.transaction(
+  return documentRecoveryDatabase.transaction(
     "drafts",
     "readonly",
     (transaction) =>
@@ -362,7 +365,7 @@ function replaceStoredCheckpoint<T extends { readonly token: string }>(
   next: T | undefined,
   decodeBefore: (value: unknown) => T | undefined,
 ): Promise<boolean> {
-  return drafts.transaction("drafts", "readwrite", (transaction) =>
+  return documentRecoveryDatabase.transaction("drafts", "readwrite", (transaction) =>
     replaceDraft(transaction, key, expectedToken, next, decodeBefore),
   );
 }

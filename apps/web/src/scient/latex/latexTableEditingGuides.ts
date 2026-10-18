@@ -66,7 +66,13 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
       }
     };
     for (const cell of table.querySelectorAll<HTMLElement>("td,th")) {
-      if (cell.closest("table") !== table || cell.closest(".scient-latex-longtable-rule")) continue;
+      if (
+        cell.closest("table") !== table ||
+        cell.closest(
+          ".scient-latex-longtable-rule,.scient-latex-table-page-gap,[data-paged-measurement]",
+        )
+      )
+        continue;
       add(cell);
     }
     // A border on the table itself also supplies the corresponding outer edge.
@@ -103,6 +109,9 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
       missing.set(key(edge), group);
     }
     const lines: string[] = [];
+    const pageGaps = [...table.querySelectorAll(".scient-latex-table-page-gap")].map((row) =>
+      row.getBoundingClientRect(),
+    );
     for (const { edge, parts } of missing.values()) {
       // Shared missing edges paint once, so their opacity stays uniform.
       parts.sort((a, b) => a[0] - b[0]);
@@ -113,7 +122,22 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
           previous[1] = Math.max(previous[1], part[1]);
         else merged.push([...part]);
       }
-      for (const [from, to] of merged) {
+      const printable = edge.horizontal
+        ? pageGaps.some((gap) => edge.at > gap.top && edge.at < gap.bottom)
+          ? []
+          : merged
+        : pageGaps.reduce(
+            (parts, gap) =>
+              parts.flatMap(([from, to]) => {
+                if (gap.bottom <= from || gap.top >= to) return [[from, to] as [number, number]];
+                const result: [number, number][] = [];
+                if (gap.top > from) result.push([from, gap.top]);
+                if (gap.bottom < to) result.push([gap.bottom, to]);
+                return result;
+              }),
+            merged,
+          );
+      for (const [from, to] of printable) {
         if (to - from < tolerance) continue;
         const at = edge.at - (edge.horizontal ? bounds.top : bounds.left);
         const start = from - (edge.horizontal ? bounds.left : bounds.top);

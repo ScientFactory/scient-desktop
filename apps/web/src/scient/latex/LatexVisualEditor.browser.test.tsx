@@ -752,7 +752,7 @@ Proof body.
     expect(current).toContain("$u_0 \\in L^2(\\Omega)$");
   });
 
-  it("shows the explicit break after Contents on continuous paper", async () => {
+  it("keeps source-backed page commands off the paper", async () => {
     const owner = createLatexVisualTestOwner(source);
     root.render(
       <LatexVisualEditor
@@ -774,16 +774,13 @@ Proof body.
     const firstSection = [...container.querySelectorAll<HTMLElement>("h1")].find((heading) =>
       heading.textContent?.includes("What Computer Science Research Involves"),
     )!;
-    // Visual is continuous paper: the break is a visible rule between the
-    // Contents and the first section, not a simulated page.
-    expect(pageBreak.getBoundingClientRect().height).toBeGreaterThan(0);
-    expect(pageBreak.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+    // The command is retained for paging; it never prints a labelled rule.
+    expect(getComputedStyle(pageBreak).display).toBe("none");
+    expect(pageBreak.getBoundingClientRect().height).toBe(0);
+    expect(getComputedStyle(pageBreak, "::after").content).toBe("none");
+    expect(firstSection.getBoundingClientRect().top).toBeGreaterThanOrEqual(
       contents.getBoundingClientRect().bottom - 1,
     );
-    expect(firstSection.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      pageBreak.getBoundingClientRect().bottom - 1,
-    );
-    expect(getComputedStyle(pageBreak, "::after").content).toContain("Page break");
 
     const preview = container.querySelector<HTMLElement>(".scient-latex-math-preview");
     expect(preview).not.toBeNull();

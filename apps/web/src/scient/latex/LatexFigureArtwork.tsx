@@ -12,6 +12,12 @@ export function LatexFigureArtwork({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [rotatedHeight, setRotatedHeight] = useState<number | null>(null);
+  const publishedHeight = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (publishedHeight.current === rotatedHeight) return;
+    publishedHeight.current = rotatedHeight;
+    box.current?.dispatchEvent(new Event("scient-latex-content-resized", { bubbles: true }));
+  }, [rotatedHeight]);
   useLayoutEffect(() => {
     const element = box.current;
     if (!element || artwork.angle === 0) {

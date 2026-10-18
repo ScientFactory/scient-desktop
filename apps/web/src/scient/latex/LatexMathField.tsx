@@ -276,6 +276,7 @@ export const LatexMathField = forwardRef<
               field.current.getValue("latex-without-placeholders"),
               initialMacros.current,
               completionContext.current.source,
+              currentConfiguration.current.value,
             )
           : lastAcknowledged.current,
       isEmpty: () => {
@@ -604,6 +605,7 @@ export const LatexMathField = forwardRef<
           math.getValue("latex-without-placeholders"),
           initialMacros.current,
           completionContext.current.source,
+          currentConfiguration.current.value,
         );
         const previousAcknowledged = lastAcknowledged.current;
         const result = change.current(source);
@@ -1282,7 +1284,12 @@ export const LatexMathField = forwardRef<
             ? math.getValue("latex-without-placeholders")
             : math.getValue(math.selection, "latex-without-placeholders"));
         return copyFormat.current(
-          mathTextFormattingSource(tex, initialMacros.current, completionContext.current.source),
+          mathTextFormattingSource(
+            tex,
+            initialMacros.current,
+            completionContext.current.source,
+            currentConfiguration.current.value,
+          ),
         );
       };
       const copied = (event: ClipboardEvent) => {

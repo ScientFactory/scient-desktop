@@ -42,6 +42,38 @@ afterEach(() => {
 });
 
 describe("visual processing ownership and scheduling", () => {
+  it("keeps a superseded typing worker warm without delivering its abandoned result", async () => {
+    const { processVisualDocument } = await import("./visualProcessing");
+    const abandoned = vi.fn(),
+      next = vi.fn();
+    const cancel = processVisualDocument({ kind: "references", source: "Old" }, abandoned, {
+      keepWorkerOnCancel: true,
+    });
+    const worker = ProcessingWorker.instances[0]!;
+    worker.emit({ ready: true });
+    cancel();
+    processVisualDocument({ kind: "references", source: "Current" }, next);
+    expect(worker.terminated).toBe(false);
+    worker.emit({ id: worker.requests[0]!.id, output: null });
+    expect(abandoned).not.toHaveBeenCalled();
+    expect(worker.requests).toHaveLength(2);
+    worker.emit({ id: worker.requests[1]!.id, output: null });
+    expect(next).toHaveBeenCalledExactlyOnceWith(null);
+    expect(ProcessingWorker.instances).toHaveLength(1);
+  });
+  it("still bounds a cancelled warm job by the existing deadline", async () => {
+    const { processVisualDocument } = await import("./visualProcessing");
+    const abandoned = vi.fn();
+    const cancel = processVisualDocument({ kind: "references", source: "Old" }, abandoned, {
+      keepWorkerOnCancel: true,
+    });
+    const worker = ProcessingWorker.instances[0]!;
+    worker.emit({ ready: true });
+    cancel();
+    await vi.advanceTimersByTimeAsync(3001);
+    expect(worker.terminated).toBe(true);
+    expect(abandoned).not.toHaveBeenCalled();
+  });
   it("retains the submitted block identities across a structured-clone reply", async () => {
     const { processVisualDocument } = await import("./visualProcessing");
     const source = "First.\n\nLast.",

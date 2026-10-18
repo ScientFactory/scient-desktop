@@ -1,5 +1,7 @@
 import type { LatexTableCellLayout } from "./latexVisualDocument";
 import { latexTableRulePresentation } from "./latexTableAuthoring";
+import type { Editor } from "@tiptap/core";
+import { LatexProsePreview } from "./LatexProsePreview";
 
 export interface LongTableBand {
   rows: string[][];
@@ -15,12 +17,20 @@ export function LatexLongTableBand({
   columns,
   alignments,
   number,
+  repeat = false,
+  left = 0,
+  editor,
+  rootSource,
 }: {
   band: LongTableBand;
   kind: string;
   columns: number;
   alignments: readonly string[];
   number: string | null;
+  repeat?: boolean;
+  left?: number;
+  editor?: Editor;
+  rootSource?: string;
 }) {
   return (
     <>
@@ -28,9 +38,16 @@ export function LatexLongTableBand({
         <tr
           key={rowIndex}
           data-latex-longtable-band={kind}
+          data-paged-repeat={repeat || undefined}
           style={{
-            fontSize: `var(--scient-latex-size-${band.sizes[rowIndex] ?? "normalsize"})`,
-            lineHeight: `var(--scient-latex-baseline-${band.sizes[rowIndex] ?? "normalsize"})`,
+            position: "relative",
+            left,
+            fontSize: band.sizes[rowIndex]
+              ? `var(--scient-latex-size-${band.sizes[rowIndex]})`
+              : "inherit",
+            lineHeight: band.sizes[rowIndex]
+              ? `var(--scient-latex-baseline-${band.sizes[rowIndex]})`
+              : "inherit",
           }}
         >
           {row.map((text, column) => {
@@ -59,14 +76,22 @@ export function LatexLongTableBand({
                   paddingBottom: layout?.bottom ? bottomRule.before : 0,
                 }}
               >
-                {text.replaceAll("SCIENTTABLENUMBER", number ?? "??")}
+                <LatexProsePreview
+                  source={text.replaceAll("SCIENTTABLENUMBER", number ?? "??")}
+                  {...(editor === undefined ? {} : { editor })}
+                  {...(rootSource === undefined ? {} : { rootSource })}
+                />
               </td>
             );
           })}
         </tr>
       ))}
       {band.rows.length === 0 && band.rule ? (
-        <tr data-latex-longtable-band={kind}>
+        <tr
+          data-latex-longtable-band={kind}
+          data-paged-repeat={repeat || undefined}
+          style={{ position: "relative", left }}
+        >
           <td
             colSpan={columns}
             className="scient-latex-longtable-rule"

@@ -61,6 +61,19 @@ export function restoreLatexReadingPosition(key: string, view: EditorView, block
     return scroll.scrollTop;
   };
   const set = apply();
+  // The first page plan can arrive after the ordinary two-frame restoration.
+  const finished = () => {
+    view.dom.removeEventListener("scient-latex-layout", laidOut);
+    for (const name of ["wheel", "pointerdown", "keydown"])
+      view.dom.removeEventListener(name, finished);
+  };
+  const laidOut = () => {
+    if (element.isConnected) apply();
+    finished();
+  };
+  view.dom.addEventListener("scient-latex-layout", laidOut);
+  for (const name of ["wheel", "pointerdown", "keydown"])
+    view.dom.addEventListener(name, finished, { once: true });
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       if (element.isConnected && Math.abs(scroll.scrollTop - set) < 1) apply();

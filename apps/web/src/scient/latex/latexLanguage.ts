@@ -31,9 +31,7 @@ export function latexDirectionMark(name: string) {
 
 /** Only literal, top-level declarations are settings; macro bodies are not evaluated. */
 function preambleDeclarations(source: string) {
-  const withoutComments = latexWithoutComments(source);
-  const begin = latexDocumentBoundary(source)?.from ?? -1;
-  const clean = begin < 0 ? withoutComments : withoutComments.slice(0, begin);
+  const clean = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
   const depths = new Int32Array(clean.length);
   let depth = 0;
   for (let at = 0; at < clean.length; at++) {

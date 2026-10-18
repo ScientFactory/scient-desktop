@@ -169,6 +169,32 @@ function paint() {
     overlay?.replaceChildren();
     return;
   }
+  const selection = snapshot.selection();
+  const activeField =
+    active.element instanceof HTMLInputElement || active.element instanceof HTMLTextAreaElement
+      ? active.element
+      : null;
+  const emptyFields = emptyTextFields(participantGuide(active));
+  const vacantText = emptyFields.filter((field) => field !== activeField).map(emptyFieldGuideRect);
+  const current =
+    activeField && !activeField.value && !activeField.closest("td,th")
+      ? [emptyFieldGuideRect(activeField)]
+      : snapshot.scopes();
+  const vacant = !selection.length ? (snapshot.vacantScopes?.() ?? []) : [];
+  // Ordinary prose uses the native caret and has no overlay geometry. Reading
+  // its empty overlay would force the entire paper's pending layout to finish.
+  if (
+    !splitRetained &&
+    !selection.length &&
+    !current.length &&
+    !vacantText.length &&
+    !vacant.length
+  ) {
+    present(active, false, snapshot.selectionOverlay === true);
+    if (overlay?.childNodes.length) overlay.replaceChildren();
+    root.dispatchEvent(new CustomEvent("scient-latex-selection-scope", { detail: snapshot.path }));
+    return;
+  }
   if (!overlay) {
     overlay = document.createElement("div");
     overlay.className = "scient-latex-selection-overlay";
@@ -222,7 +248,6 @@ function paint() {
       });
       return [box];
     });
-  const selection = snapshot.selection();
   const documentStyle = getComputedStyle(
     active.element.closest(".scient-latex-visual-document") ?? root,
   );
@@ -231,17 +256,6 @@ function paint() {
     "--scient-latex-cell-selection-background",
     "--scient-latex-retained-selection-background",
   ].map((name) => [name, documentStyle.getPropertyValue(name)] as const);
-  const activeField =
-    active.element instanceof HTMLInputElement || active.element instanceof HTMLTextAreaElement
-      ? active.element
-      : null;
-  const emptyFields = emptyTextFields(guideOwner);
-  const vacantText = emptyFields.filter((field) => field !== activeField).map(emptyFieldGuideRect);
-  // An empty field being typed in is framed around its hint word.
-  const current =
-    activeField && !activeField.value && !activeField.closest("td,th")
-      ? [emptyFieldGuideRect(activeField)]
-      : snapshot.scopes();
   const children = [
     ...(splitRetained
       ? []
@@ -254,7 +268,7 @@ function paint() {
           )
         : [
             ...boxes(
-              [...vacantText, ...(snapshot.vacantScopes?.() ?? [])],
+              [...vacantText, ...vacant],
               "scient-latex-scope-outline",
               VACANT_GUIDE_MARGIN,
               true,

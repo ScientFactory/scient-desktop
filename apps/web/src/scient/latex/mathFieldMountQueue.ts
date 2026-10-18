@@ -1,3 +1,5 @@
+import { afterLatexInputQuiet, latexInputQuietDelay } from "./latexInputPriority";
+
 const pending = new Map<() => void, () => number>();
 const priorities = new WeakMap<Element, number>();
 const visibleCallbacks = new WeakMap<Element, () => void>();
@@ -36,32 +38,33 @@ function nextJob() {
     if (value > maximum) {
       chosen = job;
       maximum = value;
+      if (value >= 2) break;
     }
   }
-  return chosen!;
+  return { mount: chosen!, priority: maximum };
 }
 let cancelBatch: (() => void) | undefined;
 
-type BackgroundScheduler = {
+type PreviewTaskScheduler = {
   postTask(
     callback: () => void,
-    options: { priority: "background"; signal: AbortSignal },
+    options: { priority: "user-visible"; signal: AbortSignal },
   ): Promise<unknown>;
 };
 
-function queueBackgroundBatch(callback: () => void, deferForInput: boolean) {
+function queuePreviewBatch(callback: () => void, deferForInput: boolean) {
   let active = true;
   const run = () => {
     if (!active) return;
     active = false;
     callback();
   };
-  const scheduler = (globalThis as typeof globalThis & { scheduler?: BackgroundScheduler })
+  const scheduler = (globalThis as typeof globalThis & { scheduler?: PreviewTaskScheduler })
     .scheduler;
   if (!deferForInput && scheduler?.postTask) {
     const controller = new AbortController();
     void scheduler
-      .postTask(run, { priority: "background", signal: controller.signal })
+      .postTask(run, { priority: "user-visible", signal: controller.signal })
       .catch((error) => {
         if (!controller.signal.aborted) reportError(error);
       });
@@ -80,8 +83,9 @@ function queueBackgroundBatch(callback: () => void, deferForInput: boolean) {
 function scheduleBatch(deferForInput = false) {
   if (cancelBatch || pending.size === 0) return;
   // Preview work must progress even when an occluded window receives sparse
-  // animation frames. Background tasks still yield to input and browser paint.
-  cancelBatch = queueBackgroundBatch(() => {
+  // animation frames. Normal-priority tasks avoid starvation behind page reflow;
+  // the input checks and four-millisecond budget still yield to editing and paint.
+  cancelBatch = queuePreviewBatch(() => {
     cancelBatch = undefined;
     const start = performance.now();
     let waitingForInput = false;
@@ -94,7 +98,14 @@ function scheduleBatch(deferForInput = false) {
           waitingForInput = true;
           break;
         }
-        const mount = nextJob();
+        const { mount, priority } = nextJob();
+        if (priority < 2 && latexInputQuietDelay() > 0) {
+          cancelBatch = afterLatexInputQuiet(() => {
+            cancelBatch = undefined;
+            scheduleBatch();
+          });
+          break;
+        }
         mount();
         if (performance.now() - start >= 4) break;
       }
@@ -111,6 +122,10 @@ export function scheduleMathFieldMount(mount: () => void, priority: () => number
     mount();
   };
   pending.set(run, priority);
+  if (priority() >= 2) {
+    cancelBatch?.();
+    cancelBatch = undefined;
+  }
   scheduleBatch();
   return {
     flush: run,

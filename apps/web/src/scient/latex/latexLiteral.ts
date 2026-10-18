@@ -278,6 +278,7 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
     "tabsize",
     "captionpos",
     "numbersep",
+    "columns",
   ]);
   if ([...options.keys()].some((key) => !supported.has(key))) return null;
   const colors = latexDocumentColors(preamble);
@@ -307,6 +308,7 @@ export function latexListingPresentation(preamble: string, local: Map<string, { 
     : null;
   if (options.has("numbersep") && !numberSep) return null;
   if (
+    (options.has("columns") && !["flexible", "fullflexible"].includes(options.get("columns")!)) ||
     !basic ||
     !keyword ||
     !comment ||

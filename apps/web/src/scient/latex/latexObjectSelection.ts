@@ -1,9 +1,23 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
+import { pagedPositionAtPoint } from "./latexPagedGeometry";
 
 type ObjectBounds = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 type PointerPoint = Pick<PointerEvent, "clientX" | "clientY">;
+
+const pointerSelections = new WeakMap<EditorView, { selection: Selection; doc: DocumentNode }>();
+
+/** Nested editors and prose share the same native-drag fence. */
+export function setLatexObjectDragSelection(view: EditorView, selection: Selection | null) {
+  if (selection) pointerSelections.set(view, { selection, doc: view.state.doc });
+  else pointerSelections.delete(view);
+}
+
+export function readLatexObjectDragSelection(view: EditorView) {
+  const pending = pointerSelections.get(view);
+  return !view.isDestroyed && pending?.doc === view.state.doc ? pending : null;
+}
 
 const LATEX_SELECTION_OBJECT_SELECTOR =
   '.scient-latex-visual-inline-math, .scient-latex-visual-display-math, [data-node-view-wrapper][contenteditable="false"]';
@@ -71,7 +85,8 @@ export function latexDocumentSelectionAtPointer(
   point: PointerPoint,
 ): Selection | null {
   const { doc } = view.state;
-  const hit = view.posAtCoords({ left: point.clientX, top: point.clientY });
+  const positionAtPoint = pagedPositionAtPoint(view, point.clientX, point.clientY);
+  const hit = positionAtPoint === null ? null : { pos: positionAtPoint };
   if (!hit) return null;
   let head = hit.pos;
   const target = view.dom.ownerDocument.elementFromPoint(point.clientX, point.clientY);
@@ -119,7 +134,8 @@ export function latexObjectSelectionAtPointer(
   const node = doc.nodeAt(position);
   if (!node) return null;
   const end = position + node.nodeSize;
-  const hit = view.posAtCoords({ left: point.clientX, top: point.clientY });
+  const positionAtPoint = pagedPositionAtPoint(view, point.clientX, point.clientY);
+  const hit = positionAtPoint === null ? null : { pos: positionAtPoint };
   const before = hit && hit.pos < position;
   const after = hit && hit.pos > end;
   const direction = before
@@ -155,6 +171,9 @@ export function captureLatexObjectDrag(
   };
   const finish = (event: PointerEvent) => {
     if (event.pointerId !== pointerId) return;
+    // Release coordinates can differ from the last move, especially during
+    // a scroll or when a reading block finishes layout.
+    if (event.type === "pointerup") onMove(event);
     cleanup();
     onFinish(event);
   };

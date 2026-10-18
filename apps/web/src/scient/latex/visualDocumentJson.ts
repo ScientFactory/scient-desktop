@@ -3,6 +3,10 @@ import type { Node as DocumentNode } from "@tiptap/pm/model";
 
 const nodes = new WeakMap<DocumentNode, JSONContent>();
 const serialized = new WeakMap<DocumentNode, string>();
+const documents = new WeakMap<DocumentNode, JSONContent>();
+// Undo retains old documents. Keep only one assembled recovery string rather
+// than retaining a whole-document string for every history state.
+let serializedDocument: { readonly doc: WeakRef<DocumentNode>; readonly value: string } | undefined;
 
 function documentEnvelope(doc: DocumentNode): JSONContent {
   const json: JSONContent = { type: doc.type.name };
@@ -13,6 +17,8 @@ function documentEnvelope(doc: DocumentNode): JSONContent {
 
 /** ProseMirror nodes are immutable; unchanged blocks retain their wire identity. */
 export function visualDocumentJson(doc: DocumentNode): JSONContent {
+  const cached = documents.get(doc);
+  if (cached) return cached;
   const content: JSONContent[] = [];
   doc.forEach((node) => {
     let json = nodes.get(node);
@@ -24,6 +30,7 @@ export function visualDocumentJson(doc: DocumentNode): JSONContent {
   });
   const json = documentEnvelope(doc);
   if (content.length) json.content = content;
+  documents.set(doc, json);
   return json;
 }
 
@@ -55,6 +62,20 @@ function authoredAttributes(this: JSONContent, key: string, value: unknown): unk
 
 /** Reuse authored block encodings in the existing recovery JSON envelope. */
 export function serializedVisualDocument(doc: DocumentNode): string {
+  if (serializedDocument?.doc.deref() === doc) return serializedDocument.value;
+  const { envelope, content } = serializedVisualDocumentParts(doc);
+  const result = content.length
+    ? `${envelope.slice(0, -1)},"content":[${content.join(",")}]}`
+    : envelope;
+  serializedDocument = { doc: new WeakRef(doc), value: result };
+  return result;
+}
+
+/** Durable input can checkpoint changed blocks without assembling the whole JSON string. */
+export function serializedVisualDocumentParts(doc: DocumentNode): {
+  envelope: string;
+  content: string[];
+} {
   const content: string[] = [];
   doc.forEach((node) => {
     let json = serialized.get(node);
@@ -65,5 +86,5 @@ export function serializedVisualDocument(doc: DocumentNode): string {
     content.push(json);
   });
   const envelope = JSON.stringify(documentEnvelope(doc), authoredAttributes);
-  return content.length ? `${envelope.slice(0, -1)},"content":[${content.join(",")}]}` : envelope;
+  return { envelope, content };
 }

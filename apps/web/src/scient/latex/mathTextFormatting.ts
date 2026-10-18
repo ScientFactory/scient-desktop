@@ -1,6 +1,7 @@
 import type { MathfieldElement, Style } from "mathlive";
 import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { mathColorInput, mathColorSource } from "./mathColorSyntax";
+import { mathOperatorRenderingInput, mathOperatorRenderingSource } from "./mathOperatorRendering";
 
 export type MathTextFormat = "bold" | "italic" | "monospace";
 
@@ -367,7 +368,9 @@ export function mathTextFormattingSource(
   source: string,
   customCommands?: Readonly<Record<string, unknown>>,
   documentSource?: string,
+  originalSource?: string,
 ): string {
+  source = mathOperatorRenderingSource(source, customCommands, originalSource);
   source = mathColorSource(source, customCommands, documentSource);
   if (customCommands?.mathbfit || !source.includes("\\mathbfit")) return source;
   for (const command of latexSourceCommands(source).toReversed()) {
@@ -387,6 +390,7 @@ export function mathTextFormattingInput(
   source: string,
   customCommands?: Readonly<Record<string, unknown>>,
 ): string {
+  source = mathOperatorRenderingInput(source, customCommands);
   source = mathColorInput(source, customCommands);
   source = emptyFormattingInput(source, customCommands);
   if (customCommands?.mathbfit || customCommands?.mathit)

@@ -4,6 +4,7 @@ import {
   composeLatexSourcePatches,
   latexCommands,
   latexDocumentBoundary,
+  latexPreambleEnd,
   latexSourceArgument,
   latexSourceCommands,
   maskLatexSource,
@@ -12,6 +13,19 @@ import { latexPackageInventory } from "./latexPackages";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 
 describe("lossless native lexical boundaries", () => {
+  it.each([
+    "% \\begin{document}\n",
+    "\\verb|\\begin{document}|\n",
+    "\\newcommand{\\later}{\\begin{document}}\n",
+    "\\begin{comment}\\begin{document}\\end{comment}\n",
+    "\\\\begin{document}\n",
+    "% \\begin{document}\n".repeat(10),
+  ])("finds the active preamble boundary after %s", (prefix) => {
+    const source = `${prefix}\\begin% comment\n{document}Body\\end{document}`;
+    expect(latexPreambleEnd(source)).toBe(prefix.length);
+    expect(latexPreambleEnd(source)).toBe(latexDocumentBoundary(source)?.from);
+  });
+
   it.each([
     "\\newcommand{\\hiddenBegin}{\\begin{comment}}",
     "\\renewcommand *{\\hiddenBegin}[1][default]{\\begin{comment}#1}",

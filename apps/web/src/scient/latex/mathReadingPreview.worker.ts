@@ -18,7 +18,10 @@ self.addEventListener("message", (event: MessageEvent<MathPreviewRequest>) => {
   const { macros, documentMacros, colors } = current;
   try {
     let markup = convertLatexToMarkup(
-      mathTextFormattingInput(mathLiveFontDeclarations(source), documentMacros),
+      // Explicit style also reaches the SSR render context, unlike defaultMode
+      // alone in MathLive 0.108. Inline fractions must not acquire display height.
+      (display ? "\\displaystyle " : "\\textstyle ") +
+        mathTextFormattingInput(mathLiveFontDeclarations(source), documentMacros),
       { defaultMode: display ? "math" : "inline-math", macros },
     );
     // The static converter does not consult the interactive color hooks.
