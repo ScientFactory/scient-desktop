@@ -586,7 +586,8 @@ it("clicking beside a display returns to prose without initializing math", async
   expect(editor().state.selection).not.toBeInstanceOf(NodeSelection);
   expect(host.querySelectorAll("math-field")).toHaveLength(0);
   await userEvent.keyboard("q");
-  await expect.poll(() => source).toContain("qAfter.");
+  // Slow runners have exceeded the 1 s default here.
+  await expect.poll(() => source, { timeout: 5000 }).toContain("qAfter.");
   await userEvent.keyboard(isMacKeyboard() ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}");
   await expect.poll(() => source).toBe(original);
 });
