@@ -281,3 +281,56 @@ it("detached measurements preserve mixed-script paragraph line heights", async (
   }
   expect(checked).toBeGreaterThan(0);
 });
+
+it("keeps paragraphs in source order around a note moved to the foot of the page", async () => {
+  const editor = await mount(
+    String.raw`\documentclass[10pt]{article}
+\usepackage[letterpaper,margin=1in]{geometry}
+\begin{document}
+\section{Page one}
+Alpha begins this paragraph with a note.\footnote{A note set at the foot of page one.}
+
+Beta is the next body paragraph.\footnote{A second note, from another paragraph.}
+
+Gamma follows without a note.
+\vfill
+A closing line before the page break.
+\newpage
+\section{Page two}
+The second page starts here.
+\end{document}
+`,
+    "note-order",
+  );
+  const paragraph = (start: string) =>
+    [...editor.view.dom.querySelectorAll<HTMLElement>(":scope > p")].find((element) =>
+      element.textContent?.startsWith(start),
+    )!;
+  const inOrder = () => {
+    const blocks = ["Alpha", "Beta", "Gamma"].map(paragraph);
+    for (let index = 1; index < blocks.length; index++) {
+      // Each is painted below the previous one; paging did not pull it up.
+      expect(blocks[index]!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        blocks[index - 1]!.getBoundingClientRect().bottom - 1,
+      );
+      expect(parseFloat(blocks[index]!.style.top) || 0).toBeGreaterThanOrEqual(0);
+    }
+    const notes = [...host.querySelectorAll<HTMLElement>(".scient-latex-footnote")];
+    expect(notes).toHaveLength(2);
+    for (const note of notes)
+      expect(note.getBoundingClientRect().top).toBeGreaterThan(
+        blocks.at(-1)!.getBoundingClientRect().bottom,
+      );
+  };
+  inOrder();
+  // Repaginating after an edit keeps the order.
+  let end = 0;
+  editor.state.doc.forEach((node, offset) => {
+    if (node.textContent.startsWith("Alpha")) end = offset + node.nodeSize - 1;
+  });
+  editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end));
+  await frames();
+  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
+  await frames();
+  inOrder();
+}, 60000);

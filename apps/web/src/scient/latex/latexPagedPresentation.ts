@@ -1060,6 +1060,13 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             ).domObserver;
             measurementObserver.stop();
             try {
+              // Notes leave the flow for the foot of their page before origins
+              // are read. Lifting them out afterwards would move every later
+              // block up by the band's height after its offset was computed.
+              for (const { band } of notes) {
+                band.dataset.pagedFootnoteBand = "true";
+                band.style.position = "absolute";
+              }
               for (const entry of entries) {
                 if (entry.region || reusable.has(entry)) continue;
                 // Read origins with the margins this publication will actually paint.
