@@ -103,12 +103,31 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             if (paper.top >= box.top) return; // nothing above can move the reading position
             let left = paper.left + paper.width / 2;
             let y = box.top + 1;
+            const usable = (element: Element | null) =>
+              element &&
+              element !== view.dom &&
+              view.dom.contains(element) &&
+              (!element.closest('[data-layout="sourceColumns"]') || element.closest(ANCHOR_BLOCK));
+            // Text at the top edge is the reading line itself: anchoring a
+            // later line would let rewrapping above it move the top line.
+            const readsText = () => {
+              if (!usable(view.dom.ownerDocument.elementFromPoint(left, y))) return false;
+              try {
+                const position = pagedPositionAtPoint(view, left, y);
+                if (position === null) return false;
+                const line = view.coordsAtPos(position);
+                const tolerance = Math.max(4, (line.bottom - line.top) / 2);
+                return y >= line.top - tolerance && y <= line.bottom + tolerance;
+              } catch {
+                return false;
+              }
+            };
             // The planner already knows the visible line origins. Page margins
             // and column gutters must not make hit testing reveal dozens of
             // otherwise skipped blocks while searching for the first line.
             const geometry = latexPagedKey.getState(view.state)?.geometry;
             const zoom = paper.width / (view.dom.offsetWidth || 1);
-            if (geometry?.length) {
+            if (geometry?.length && !readsText()) {
               const top = (y - paper.top) / zoom;
               const bottom = (box.bottom - paper.top) / zoom;
               let first: (typeof geometry)[number] | undefined;
@@ -128,11 +147,6 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               }
             }
             let hit = view.dom.ownerDocument.elementFromPoint(left, y);
-            const usable = (element: Element | null) =>
-              element &&
-              element !== view.dom &&
-              view.dom.contains(element) &&
-              (!element.closest('[data-layout="sourceColumns"]') || element.closest(ANCHOR_BLOCK));
             // A page margin or column gutter has no text at the viewport edge.
             // Anchor the first visible content below it rather than dropping the anchor.
             if (!usable(hit)) {
