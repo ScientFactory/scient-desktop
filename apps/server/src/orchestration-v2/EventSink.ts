@@ -62,9 +62,6 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { applyLegacyHistoryRepairGuards } from "./legacy/LegacyHistoryRepairGuards.ts";
 import { legacyQueueImportReusesMessageIdentity } from "./legacy/LegacyQueueImportIdentity.ts";
 
-/**
- * ERRORS
- */
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
   {
@@ -96,9 +93,6 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
-/**
- * SERVICE DEFINITION
- */
 // SCIENT-FORK:START — declined-start owner, kept importable from EventSink.
 export {
   matchesPendingStartOwner,
@@ -239,10 +233,6 @@ export interface EventSinkV2Shape {
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptStore.CommandReceiptV2, EventSinkV2Error>;
-  /**
-   * Append a project event, fold it into its row and record the receipt in one
-   * transaction. A reused command id commits nothing and returns its receipt.
-   */
   readonly commitProjectCommand: (input: {
     readonly commandId: CommandId;
     readonly projectId: ProjectId;
@@ -253,7 +243,6 @@ export interface EventSinkV2Shape {
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
   >;
-  /** Record a rejected project command, or return the receipt its command id already has. */
   readonly commitRejectedProjectCommand: (input: {
     readonly commandId: CommandId;
     readonly projectId: ProjectId;
@@ -264,7 +253,6 @@ export interface EventSinkV2Shape {
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
-    /** Filter before queuing live events so a busy worker retains only the events it handles. */
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     /** Bound RPC subscribers; internal workers must not drop their subscription under load. */
     readonly bounded?: boolean;
@@ -281,9 +269,6 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
-/**
- * IMPLEMENTATIONS
- */
 const layerBase: Layer.Layer<
   EventSinkV2,
   never,
@@ -471,12 +456,7 @@ const layerBase: Layer.Layer<
           yield* effectOutbox.enqueue(input.effects);
           if (input.transactionHooks !== undefined) yield* input.transactionHooks.finalize;
           return committed;
-        }).pipe(
-          // Every streamed agent event is a write, so its statements would
-          // dominate the trace file. This span and its sql.transaction span
-          // still time each write, including the commit.
-          Effect.withTracerEnabled(false),
-        ),
+        }).pipe(Effect.withTracerEnabled(false)),
         (storedEvents) =>
           Effect.gen(function* () {
             yield* eventStore.publishCommitted(storedEvents);
@@ -1164,10 +1144,8 @@ const layerBase: Layer.Layer<
 );
 
 /**
- * Event sink layer for application compositions that already own the
- * persistence services. Keeping the outbox instance shared with the worker is
- * important because enqueue notifications are in-memory wakeups backed by the
- * durable SQL queue.
+ * Keeping the outbox instance shared with the worker is important because enqueue notifications
+ * are in-memory wakeups backed by the durable SQL queue.
  */
 export const layerFromStores = layerBase;
 

@@ -15,6 +15,22 @@ periodically while the app is open. Updates are deliberate:
 3. When the download finishes, a notice appears just above the control. Choose
    **Restart now** to install the update.
 
+When connected machines or providers are also behind, the control reads
+**Update** and updates them in one step: outdated providers first, then servers
+that are behind, then this desktop app. Servers move to the version this app is
+installing, or to your web app's version. A background service stays on its
+current release channel, and a remote desktop app installs the latest release
+from its own channel. Hover the control to see what it will update. The
+confirmation lists each machine it skips and why, such as a machine that is
+offline or needs a manual update; use **Settings → Connections** for those.
+
+While it runs, the control widens to show progress. It names a machine that is
+taking longer than usual and offers **Retry** for a server that failed; click it
+to see every machine. Once each server has started its own restart, this app
+restarts after a short countdown. Choose **Later** to keep working and restart
+from the update control when you are ready. A server that is still restarting
+finishes on its own.
+
 The notice closes after about five seconds, or when you dismiss it. The update
 control then shows **Restart**. Choosing **Restart** in the sidebar, or
 **Install** in **Settings**, restarts Scient right away, with no extra

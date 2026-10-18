@@ -25,9 +25,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
 }: {
   text: string;
   label?: string;
-  /** The icon shown until the copy lands. */
   icon?: typeof Copy;
-  /** Additional clipboard types written beside `text/plain` when the platform allows it. */
   extraFlavors?: Readonly<Record<string, string>>;
   // SCIENT-FORK:START
   /** Rich `text/html` built at click time from the rendered message; null keeps the plain copy. */

@@ -34,9 +34,6 @@ export interface EnsureWslNodePtyOptions {
   readonly nodeEngineRange?: string | null;
 }
 
-// The packaged WSL runtime archive plus the SHA-256 identity the build recorded
-// for it. The cache key derives from the same digest, and installation verifies
-// the bytes before promoting the extracted tree.
 export interface WslRuntimeArchive {
   readonly windowsPath: string;
   readonly runtimeId: string;
@@ -91,22 +88,18 @@ export class DesktopWslEnvironment extends Context.Service<
       distro: string | null,
       windowsPath: string,
     ) => Effect.Effect<Option.Option<string>>;
-    // Resolves the user's Linux home dir inside the chosen distro (e.g.
-    // "/home/josh"). Used by the folder picker to expand `~` correctly.
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
-    // Resolves the WSL distro's IPv4 address on the WSL vEthernet adapter
-    // (e.g. "172.x.x.x"). The orchestrator uses this for the WSL backend's
-    // httpBaseUrl so the renderer can reach it without relying on wslhost's
-    // localhost→WSL automatic forwarding, which is flaky in practice
-    // (the backend can be listening for 30+ seconds before wslhost starts
-    // forwarding 127.0.0.1:port to WSL-side localhost).
+    // The orchestrator uses this for the WSL backend's httpBaseUrl so the
+    // renderer can reach it without relying on wslhost's localhost→WSL
+    // automatic forwarding, which is flaky in practice (the backend can be
+    // listening for 30+ seconds before wslhost starts forwarding 127.0.0.1:port
+    // to WSL-side localhost).
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,
       archive: WslRuntimeArchive,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-    // Marks a staged runtime as unusable so the next launch reinstalls it.
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly ensureNodePty: (
       distro: string | null,
@@ -162,9 +155,6 @@ const formatWslShellTransportFailureReason = (
   }
 };
 
-// Reuse the SSH remote resolver so WSL and SSH discover version-managed Node
-// the same way. Passing the engine range lets the resolver fall through to
-// version managers like nvm when a system node exists but is too old.
 const buildWslNodeEnvPreamble = (
   nodeEngineRange?: string | null,
 ): string => `${buildRemoteNodeEnvScript({ nodeEngineRange: nodeEngineRange ?? null })}
@@ -172,8 +162,7 @@ ensure_remote_node_path || true
 `;
 
 // wsl.exe re-escapes args before forwarding them to the Linux side, which
-// mangles quotes inside `bash -lc "<script>"`. Pipe the script via stdin to
-// avoid passing it on the command line at all.
+// mangles quotes inside `bash -lc "<script>"`.
 const runWslShell = (
   distro: string | null,
   bashScript: string,
@@ -184,9 +173,6 @@ const runWslShell = (
   } = {},
 ): Effect.Effect<ShellResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const spawner = ChildProcessSpawner.ChildProcessSpawner;
-  // Node probes use a login bash so profile-managed PATH entries and supported
-  // version managers are available. Runtime installation needs only POSIX tools,
-  // so it skips profile loading and runs sh directly.
   const resolveNode = options.resolveNode !== false;
   const command = ChildProcess.make(
     "wsl.exe",
@@ -256,18 +242,12 @@ const runWslShell = (
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 // Holds the sha256 of the runtime's server entry, written when the install
-// promotes a verified tree. Presence alone only says an install once finished
-// here; the digest is what lets a later launch prove the entry still is what
-// that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
 const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
 
-// `archiveSha256` is the digest the build recorded alongside the archive. The
-// install verifies the bytes before extracting, so an archive can never be
-// promoted under an identity that does not describe it.
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string,
   runtimeId: string,
@@ -308,9 +288,6 @@ export const buildWslRuntimeInstallScript = (
     '    [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&',
     '    [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&',
     '    node_pty_payload_present "$runtime_root" &&',
-    // An empty or unreadable marker is a miss, not a pass: that is what a
-    // runtime installed before the marker carried a digest looks like, and one
-    // reinstall is the cheapest way to make it verifiable from then on.
     `    recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) &&`,
     '    [ -n "$recorded_entry_digest" ] &&',
     '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
@@ -325,28 +302,18 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
     "  exit 0",
     "fi",
-    // Hash only on a cache miss: a warm launch already exited above, and a cold
-    // install is about to read the whole archive through tar anyway. `set -eu`
-    // turns a distro without sha256sum into an install failure, which falls back
-    // to the mounted server tree rather than trusting unverified bytes.
     `archive_sha=$(sha256sum ${shellQuote(linuxArchivePath)} | cut -d ' ' -f 1)`,
     `if [ "$archive_sha" != ${shellQuote(archiveSha256)} ]; then`,
     `  printf 'WSL runtime archive does not match its recorded SHA-256 (expected %s, got %s)\\n' ${shellQuote(archiveSha256)} "$archive_sha" >&2`,
     "  exit 1",
     "fi",
-    // A backend can still be running out of an unready tree: the probe revokes
-    // the ready marker without stopping the process it just failed for, and
-    // invalidation deliberately leaves the tree in place for exactly that
-    // reason. Deleting it here unlinks node_modules from under a live backend,
-    // which then breaks the moment it lazily loads anything it had not already
-    // read. Move it aside either way, but only delete it now when nothing is
-    // running from it; otherwise hand it to the pruner's scratch sweep, which
-    // is what that delay is for. A process's cmdline keeps the pre-rename path,
-    // so this has to be asked before the move, not after. This script arrives
-    // on stdin, so it cannot match itself.
+    // Deleting it here unlinks node_modules from under a live backend, which
+    // then breaks the moment it lazily loads anything it had not already read.
+    // A process's cmdline keeps the pre-rename path, so this has to be asked
+    // before the move, not after.
     "runtime_in_use() {",
     // No /proc means no way to tell, and guessing wrong costs a live backend
-    // its runtime. Keeping the tree only costs disk until the sweep runs.
+    // its runtime.
     "  [ -d /proc/1 ] || return 0",
     '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
     "}",
@@ -382,14 +349,10 @@ export const buildWslRuntimeInstallScript = (
 
     // Never write the ready marker over a tree that is missing the native
     // payload. Failing here drops out to the mounted-tree fallback, which is
-    // recoverable; promoting it would mark the defect ready and cache it.
     'if ! node_pty_payload_present "$runtime_tmp"; then',
     "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
     "  exit 1",
     "fi",
-    // The archive's bytes were verified against archiveSha256 above, so the
-    // digest recorded here describes content this install proved. Every later
-    // warm reuse checks the entry against it.
     'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
     'if [ -z "$installed_entry_digest" ]; then',
     "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
@@ -409,9 +372,8 @@ export const buildWslRuntimeInstallScript = (
   ].join("\n");
 };
 
-// An interrupted install leaves a dot-prefixed scratch directory behind. A cold
-// install extracts a few hundred MB inside the distro, so two hours is far past
-// any live install while still bounding how long an orphan survives.
+// A cold install extracts a few hundred MB inside the distro, so two hours is
+// far past any live install while still bounding how long an orphan survives.
 const ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES = 120;
 
 export const buildWslRuntimePruneScript = (runtimeId: string): string => {
@@ -441,8 +403,6 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '    previous_runtime="$candidate"',
     "  fi",
     "done",
-    // Only this desktop-owned prefix is eligible. Markerless roots are broken
-    // caches left by invalidation and must not become permanent disk leaks.
     'for candidate in "$runtime_parent"/sha256-*; do',
     '  [ -d "$candidate" ] || continue',
     '  [ "$candidate" != "$current_runtime" ] || continue',
@@ -452,7 +412,6 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '  candidate_lock="$runtime_parent/.${candidate_name}.install.lock"',
     '  exec 9> "$candidate_lock"',
     // A held lock means another launch is installing or repairing this cache.
-    // Skip instead of waiting or deleting underneath it.
     "  flock -n 9 || continue",
     `  selected_marker="$candidate/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `  if [ -f "$selected_marker" ] && find "$selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; then`,
@@ -462,7 +421,6 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '  rm -rf -- "$candidate"',
     "  flock -u 9",
     "done",
-    // Interrupted installs use dot-prefixed names under this dedicated parent.
     'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     '  [ -d "$scratch" ] || continue',
     `  find "$scratch" -maxdepth 0 -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -print -quit | grep -q . || continue`,
@@ -590,10 +548,6 @@ export const parseToolchainReport = (stdout: string): ToolchainReport => {
   return { missingTools, nodeVersion };
 };
 
-// Pulls the absolute node path the WSL distro resolved after the shared remote
-// resolver repaired PATH. Returns null when no node was found, which the caller
-// turns into an actionable "install Node" message instead of a confusing
-// node-pty error.
 export const parseNodePath = (stdout: string): string | null => {
   const path = stdout
     .split("\n")
@@ -614,9 +568,8 @@ export const parseNodeVersion = (stdout: string): string | null => {
   return version ?? null;
 };
 
-// Captures the login-shell PATH after the shared resolver has loaded version
-// managers. Preserve the value byte-for-byte apart from a Windows-style CR so
-// paths containing spaces or apostrophes can be forwarded as one env argv.
+// Preserve the value byte-for-byte apart from a Windows-style CR so paths
+// containing spaces or apostrophes can be forwarded as one env argv.
 export const parseResolvedPath = (stdout: string): string | null => {
   const prefix = "resolvedPath:";
   const line = stdout.split("\n").find((candidate) => candidate.startsWith(prefix));
@@ -694,9 +647,6 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // No node at all, even after the shared resolver repaired PATH. Surface
-    // the specific, actionable toolchain message rather than a confusing
-    // node-pty error, and don't try to build.
     if (nodePath === null) {
       const toolchainCheck = yield* runWslShell(
         distro,
@@ -730,12 +680,6 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // The packages the server bundle leaves external (node-pty and the other
-    // native addons) couldn't be resolved on the WSL filesystem — a packaging
-    // regression, since those must be unpacked from the asar. Fatal so wsl-only
-    // mode falls back to Windows and dual mode surfaces the reason inline,
-    // instead of the server crash-looping on ERR_MODULE_NOT_FOUND once it
-    // actually launches.
     if (probe.exitCode === 3) {
       return {
         ok: false,
@@ -773,7 +717,6 @@ const ensureNodePtyImpl = (
       }
     }
 
-    // node is present but node-pty's native module didn't load.
     const toolchainCheck = yield* runWslShell(
       distro,
       TOOLCHAIN_CHECK_SCRIPT,
@@ -796,10 +739,7 @@ const ensureNodePtyImpl = (
     if (options.allowBuild !== true) {
       // Packaged builds ship a prebuilt Linux node-pty, so no compiler, node-gyp,
       // or network is needed — and we must not nag the user to install build
-      // tools they don't need. Still surface a missing/too-old Node (both the
-      // prebuilt and the server require a compatible Node); otherwise reaching
-      // here means the bundled binary itself couldn't load, which is almost
-      // always an unsupported CPU architecture or incompatible system libraries.
+      // tools they don't need.
       const nodeOnlyReason = formatMissingToolsReason(
         {
           missingTools: report.missingTools.filter((tool) => tool === "node"),
@@ -816,10 +756,6 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // Dev only: no prebuilt is bundled in a checkout, so compile node-pty from
-    // source. Run the toolchain check first so a missing compiler or out-of-range
-    // Node surfaces a specific, actionable message instead of an opaque node-gyp
-    // failure. Developers have the toolchain; end users never reach this path.
     const missingReason = formatMissingToolsReason(report, options.nodeEngineRange?.trim() || null);
     if (missingReason !== null) {
       return { ok: false, reason: missingReason, fatal: true } as const;
@@ -930,8 +866,6 @@ const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(
   if (result.transportFailure === null && result.exitCode === 0) return;
 
   const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
-  // Best effort: the caller has already fallen back to the mounted tree, so a
-  // failure here only costs the reinstall that would have repaired the cache.
   yield* Effect.logWarning("Could not invalidate the staged WSL runtime cache.", {
     distro,
     runtimeId,
@@ -1080,8 +1014,6 @@ const getUserHomeImpl = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        // printf so there's no trailing newline noise; getent so we get the
-        // real home from /etc/passwd even if $HOME is unset for some reason.
         [
           ...buildDistroArgs(distro),
           "--",
@@ -1191,17 +1123,12 @@ export const layer = Layer.effect(
     ): Effect.Effect<A, E> =>
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
-    // Probe wsl.exe once at layer init and cache the result, exposing
-    // `isAvailable` as a resolved value rather than a re-running effect.
-    // WSL availability is effectively static for the process lifetime — the
-    // Windows feature isn't added/removed mid-session, and backend mode
-    // changes already require an app restart — so the cached boolean stays
-    // accurate. Crucially this keeps `isAvailable` synchronously resolvable:
-    // it's read inside the sync IPC handler getLocalEnvironmentBootstraps
-    // (via the primary instance's lazy label -> resolvePrimaryLabel ->
-    // describePrimary). The underlying probe does a filesystem `exists`
-    // check, so leaving it as a live effect would make Effect.runSync throw
-    // there and break the renderer's synchronous bootstrap path.
+    // Crucially this keeps `isAvailable` synchronously resolvable: it's read
+    // inside the sync IPC handler getLocalEnvironmentBootstraps (via the
+    // primary instance's lazy label -> resolvePrimaryLabel -> describePrimary).
+    // The underlying probe does a filesystem `exists` check, so leaving it as a
+    // live effect would make Effect.runSync throw there and break the
+    // renderer's synchronous bootstrap path.
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, environment.path),
@@ -1214,10 +1141,6 @@ export const layer = Layer.effect(
         Effect.withSpan("desktop.wsl.windowsToWslPath"),
       );
 
-    // Cache user-home results per distro key — folder picker can be opened
-    // many times in a session and the value is stable for the life of the
-    // distro. Negative results aren't cached so a transient wsl.exe failure
-    // doesn't permanently disable tilde expansion.
     const userHomeCache = new Map<string, string>();
     const getUserHome = Effect.fn("desktop.wsl.getUserHome")(function* (distro: string | null) {
       const key = distro ?? "__default__";

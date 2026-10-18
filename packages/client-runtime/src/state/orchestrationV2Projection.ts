@@ -195,7 +195,6 @@ function upsertVisibleTurnItem(
   return renumberVisibleItems(updated);
 }
 
-/** Applies one committed event to a matching thread projection. */
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,

@@ -43,6 +43,7 @@ import {
   CODEX_TEST_RUNTIME_POLICY,
 } from "./CodexAdapterV2.replay.testkit.ts";
 import { describe } from "@effect/vitest";
+import { layerGitVcsDriverWithoutBranches } from "../testkit/ProviderRuntimeTestServices.ts";
 
 describe("CodexAdapterV2 post-settle continuation", () => {
   const decodeCitationPresentation = Schema.decodeUnknownEffect(ProviderCitationPresentation);
@@ -59,7 +60,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     imageStoresLayer,
     imageSinkLayer,
     ProviderEventIngestor.layer.pipe(
-      Layer.provide(Layer.mergeAll(imageStoresLayer, imageSinkLayer, IdAllocator.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          imageStoresLayer,
+          imageSinkLayer,
+          IdAllocator.layer,
+          layerGitVcsDriverWithoutBranches,
+        ),
+      ),
     ),
     IdAllocator.layer,
     McpProviderSessions.layer,

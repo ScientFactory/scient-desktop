@@ -22,13 +22,12 @@ vi.mock("react-native", () => ({
   StyleSheet: { hairlineWidth: 1 },
   View: "div",
   Image: { resolveAssetSource: () => ({ uri: "test-icon" }) },
-  ActionSheetIOS: {},
   Share: {},
 }));
 vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeAppearance: "light" }),
 }));
-vi.mock("../components/AndroidAnchoredMenu", () => ({ AndroidAnchoredMenu: "div" }));
+vi.mock("../components/ui/Menu", () => ({ Menu: "div" }));
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("../lib/markdownFileIcons", () => ({
   markdownFileIconSource: () => ({ uri: "test-icon" }),

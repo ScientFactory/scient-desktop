@@ -41,6 +41,7 @@ import * as Ingestor from "./ProviderEventIngestor.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2, layerWithOptions } from "./ProviderSessionManager.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { layerProviderRuntimeTestServices } from "./testkit/ProviderRuntimeTestServices.ts";
 
 function processIsLive(pid: number): boolean {
   try {
@@ -194,6 +195,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
             Ingestor.layer.pipe(Layer.provide(dependencies)),
           ),
         ),
+        Layer.provide(layerProviderRuntimeTestServices(dependencies)),
       );
       return yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;

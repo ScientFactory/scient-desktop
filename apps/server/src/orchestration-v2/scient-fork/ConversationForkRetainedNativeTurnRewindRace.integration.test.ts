@@ -42,6 +42,7 @@ import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { layerGitVcsDriverWithoutBranches } from "../testkit/ProviderRuntimeTestServices.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -105,7 +106,9 @@ it.effect(
       const store = yield* ProjectionStoreV2;
       const forks = yield* ConversationForkService;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
-        Effect.provide(ProviderEventIngestor.layer),
+        Effect.provide(
+          ProviderEventIngestor.layer.pipe(Layer.provide(layerGitVcsDriverWithoutBranches)),
+        ),
       );
       const fs = yield* FileSystem.FileSystem;
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-fork-rewind-" });

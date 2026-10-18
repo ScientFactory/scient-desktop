@@ -15,10 +15,6 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 // Settings → Install `scient` command, like VS Code's "Install 'code' command".
 // The app's launcher (see DesktopCliShim) lives in the Scient home and is off PATH
-// by default. Installing links it into a folder on the user's PATH, or on
-// Windows adds the launcher's folder to the user's PATH. Removing undoes only
-// what installing did: a link that points at one of the app's launchers, or a
-// PATH entry the app recorded adding.
 
 export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommandError>()(
   "DesktopCliCommandError",
@@ -28,7 +24,6 @@ export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommand
 const pathEntries = (value: string | undefined, separator: string) =>
   (value ?? "").split(separator).filter((entry) => entry.length > 0);
 
-/** Windows paths compare without case or a trailing separator. */
 const sameWindowsPath = (left: string, right: string) =>
   left.replace(/[\\/]+$/, "").toLowerCase() === right.replace(/[\\/]+$/, "").toLowerCase();
 
@@ -78,7 +73,6 @@ export const make = Effect.gen(function* () {
   const commandName = SCIENT_DESKTOP_IDENTITY.cliCommandName;
   const launcher = DesktopCliShim.launcherPath(environment);
   const binDirectory = path.dirname(launcher);
-  /** Records that Install added `binDirectory` to the Windows PATH, so Remove takes out only that. */
   const ownedPathMarker = path.join(environment.stateDir, "cli-command-path-entry");
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
@@ -153,7 +147,6 @@ export const make = Effect.gen(function* () {
     return first;
   });
 
-  /** Where this app's command is installed now, if anywhere. */
   const installedAt = Effect.gen(function* () {
     for (const directory of directories) {
       const link = path.join(directory, commandName);
@@ -205,7 +198,6 @@ export const make = Effect.gen(function* () {
         ...shadow,
       };
     }
-    // On Windows only terminals opened after the change see it. On Unix the
     // first `scient` on PATH must be ours; a `scient` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
     const onPath = Option.isSome(first) && (yield* isOurLink(first.value));
@@ -225,7 +217,6 @@ export const make = Effect.gen(function* () {
     })),
   );
 
-  /** Writes the launcher if the app has not yet, e.g. when no local backend runs. */
   const ensureLauncher = DesktopCliShim.install.pipe(
     Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -272,7 +263,6 @@ export const make = Effect.gen(function* () {
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = directories;
-    // Prefer a folder already on PATH that the user can write to without admin rights.
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
@@ -285,7 +275,6 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           );
       if (!created) continue;
-      // symlink fails if anything, even a broken link, is already there.
       const linked = yield* fs.symlink(launcher, link).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),

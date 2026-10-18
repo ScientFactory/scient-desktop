@@ -22,7 +22,9 @@ export const APP_BASE_NAME =
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??
+  // SCIENT-FORK:START desktop-release-channels — upstream T3's Alpha-to-Beta rename is not adopted.
   (import.meta.env.DEV ? "Dev" : "Alpha");
+// SCIENT-FORK:END desktop-release-channels
 export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });

@@ -419,7 +419,34 @@ describe("managed runtime catalog resolution", () => {
     );
   });
 
-  it("protects revision 1 and 2 clients while accepting the new Codex contract", () => {
+  it.each([
+    { version: "0.162.1", expectsZsh: true },
+    { version: "0.163.0", expectsZsh: false },
+  ])("applies Codex $version package policy to a qualified feed", ({ version, expectsZsh }) => {
+    const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
+    const codex = bundled.providers.codex!;
+    const catalog = {
+      ...bundled,
+      providers: { ...bundled.providers, codex: { ...codex, version } },
+    };
+    const artifact = resolveManagedRuntimeCatalogArtifact({
+      catalog,
+      policy: resolveReviewedCodexArtifact({ platform: "darwin", arch: "arm64" })!,
+      contractRevision: MANAGED_RUNTIME_POLICY.codex.revision,
+    });
+    assert.isDefined(artifact);
+    assert.strictEqual(
+      artifact.auxiliaryExecutablePaths?.includes("codex-resources/zsh/bin/zsh"),
+      expectsZsh,
+    );
+    assert.strictEqual(
+      artifact.auxiliaryExecutablePaths?.includes("bin/codex-code-mode-host"),
+      true,
+    );
+    assert.strictEqual(artifact.auxiliaryExecutablePaths?.includes("codex-path/rg"), true);
+  });
+
+  it("protects revision 1, 2 and 3 clients while accepting the new Codex contract", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex!;
     const claude = bundled.providers.claudeAgent!;
@@ -430,6 +457,10 @@ describe("managed runtime catalog resolution", () => {
     const revisionTwoClient = {
       ...bundled,
       providers: { ...bundled.providers, codex: { ...codex, contractRevision: 2 } },
+    };
+    const revisionThreeClient = {
+      ...bundled,
+      providers: { ...bundled.providers, codex: { ...codex, contractRevision: 3 } },
     };
     const feed = {
       ...bundled,
@@ -445,6 +476,10 @@ describe("managed runtime catalog resolution", () => {
       mergeManagedRuntimeCatalogs(revisionTwoClient, feed).providers.codex,
       revisionTwoClient.providers.codex,
     );
+    assert.deepStrictEqual(
+      mergeManagedRuntimeCatalogs(revisionThreeClient, feed).providers.codex,
+      revisionThreeClient.providers.codex,
+    );
     assert.strictEqual(oldResult.providers.claudeAgent?.version, nextPatch(claude.version));
     assert.strictEqual(
       resolveFetchedManagedRuntimeCatalog(feed).providers.codex?.version,
@@ -458,7 +493,7 @@ describe("managed runtime catalog resolution", () => {
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 1 }),
     );
     assert.deepStrictEqual(
-      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 3 })
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 4 })
         ?.extractionLimits,
       { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     );
@@ -467,14 +502,17 @@ describe("managed runtime catalog resolution", () => {
       resolveManagedRuntimeCatalogArtifact({
         catalog: feed,
         policy: windowsPolicy,
-        contractRevision: 3,
+        contractRevision: 4,
       })?.extractionLimits,
       { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     );
     assert.isUndefined(
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 }),
     );
-    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.codex.historicalRevisions, [1, 2]);
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 3 }),
+    );
+    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.codex.historicalRevisions, [1, 2, 3]);
   });
 
   it("never lets an older cache outrank a newer bundled provider release", () => {
