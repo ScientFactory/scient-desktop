@@ -163,13 +163,11 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
   const listedKey = items.map((item) => item.key).join("\n");
 
   useEffect(() => {
-    const next = trackUpdatingRows(
-      appAtomRegistry.get(trackedOtherUpdatesAtom),
-      rows,
-      new Set(listedKey.split("\n")),
-    );
+    // Rows were derived from this render's tracking; a newer write gets its own render.
+    if (appAtomRegistry.get(trackedOtherUpdatesAtom) !== tracked) return;
+    const next = trackUpdatingRows(tracked, rows, new Set(listedKey.split("\n")));
     if (next !== null) appAtomRegistry.set(trackedOtherUpdatesAtom, next);
-  }, [listedKey, rows]);
+  }, [listedKey, rows, tracked]);
 
   const update = async (item: OtherUpdateItem): Promise<void> => {
     switch (item.kind) {

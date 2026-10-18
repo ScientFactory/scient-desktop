@@ -510,8 +510,8 @@ function itemSnapshotKey(item: OtherUpdateItem): string {
 
 /**
  * Starts tracking rows seen updating, so they report "done" after they leave the list. While a
- * row updates its snapshot follows the item, so the versions shown are the ones it updates.
- * Returns null when nothing changed.
+ * row updates its snapshot follows the item, so the versions shown are the ones it updates. An
+ * item that no longer has a row is forgotten. Returns null when nothing changed.
  */
 export function trackUpdatingRows(
   tracked: ReadonlyMap<string, TrackedOtherUpdate>,
@@ -527,6 +527,12 @@ export function trackUpdatingRows(
     if (existing && itemSnapshotKey(existing.item) === itemSnapshotKey(item)) continue;
     next ??= new Map(tracked);
     next.set(item.key, { item, action: existing?.action ?? null });
+  }
+  const shown = new Set(rows.map(({ item }) => item.key));
+  for (const key of tracked.keys()) {
+    if (shown.has(key)) continue;
+    next ??= new Map(tracked);
+    next.delete(key);
   }
   return next;
 }

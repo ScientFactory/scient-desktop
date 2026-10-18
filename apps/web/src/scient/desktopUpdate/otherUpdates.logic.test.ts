@@ -450,6 +450,8 @@ describe("rows", () => {
     const tracked = trackUpdatingRows(new Map(), rows, new Set([cli!.key]));
     expect([...tracked!.keys()]).toEqual([cli!.key]);
     expect(trackUpdatingRows(tracked!, rows, new Set([cli!.key]))).toBeNull();
+    // A tracked item that no longer has a row is forgotten.
+    expect([...trackUpdatingRows(tracked!, [], new Set())!.keys()]).toEqual([]);
   });
 
   it("summarizes the circle", () => {
