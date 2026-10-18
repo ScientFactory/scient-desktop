@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-
 // SCIENT-FORK:START — sidecars left without their database are swept on every cleanup.
 import { removeOrphanedAntigravityConversationSidecars } from "../../scient/providerLifecycle/antigravityConversationSidecars.ts";
 // SCIENT-FORK:END
