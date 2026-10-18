@@ -47,12 +47,14 @@ function composePatches(
         let after: number | undefined;
         let inside: number | undefined;
         let insertedAnchor: number | undefined;
+        let withinInserted = false;
         for (const piece of pieces) {
           const length = "text" in piece ? piece.text.length : piece.end - piece.start;
           const end = offset + length;
           if ("text" in piece) {
             if (offset <= patch.start && patch.start <= end)
               insertedAnchor ??= piece.insertionOffset;
+            if (offset <= patch.start && patch.start <= end) withinInserted = true;
           } else {
             if (offset < patch.start && patch.start < end)
               inside = piece.start + patch.start - offset;
@@ -75,7 +77,13 @@ function composePatches(
           before !== after
         )
           return null;
-        if (patch.insertionAffinity && anchor === undefined) return null;
+        if (patch.insertionAffinity && anchor === undefined) {
+          // Text typed into text an earlier step of this chain inserted, with
+          // no native boundary at that point, is part of that text: it has no
+          // native side of its own to keep.
+          if (!withinInserted) return null;
+          delete insertedPiece.insertionAffinity;
+        }
         if (anchor !== undefined) insertedPiece.insertionOffset = anchor;
       }
       const kept: Piece[] = [];
