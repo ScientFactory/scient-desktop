@@ -15,8 +15,8 @@ import * as DesktopWindow from "../../window/DesktopWindow.ts";
  * window forward, or quits through the normal before-quit shutdown. Launches
  * without both variables (packaged apps, plain `pnpm dev:desktop`) never open it.
  */
-export const DEV_LAUNCH_CONTROL_ENV = "SCIENT_DEV_LAUNCH_CONTROL";
-export const DEV_LAUNCH_TOKEN_ENV = "SCIENT_DEV_LAUNCH_TOKEN";
+const DEV_LAUNCH_CONTROL_ENV = "SCIENT_DEV_LAUNCH_CONTROL";
+const DEV_LAUNCH_TOKEN_ENV = "SCIENT_DEV_LAUNCH_TOKEN";
 
 const MAX_REQUEST_BYTES = 4 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
