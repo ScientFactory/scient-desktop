@@ -10,6 +10,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -69,6 +70,8 @@ interface ActiveConnection {
   readonly attemptRef: Ref.Ref<ProviderConnectionAttempt | undefined>;
   readonly authorizationCodeSubmittedRef: Ref.Ref<boolean>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
+  /** The manager-owned startup, until it hands off to its supervisor. */
+  readonly startupRef: Ref.Ref<Fiber.Fiber<unknown, unknown> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
 }
 
@@ -214,6 +217,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   });
 
   yield* Effect.addFinalizer(() => cleanupAll);
+  // Accepted startups run here, not in the request that asked for them.
+  const managerScope = yield* Scope.Scope;
 
   const cleanupInterruptedStart = Effect.fn("ProviderConnectionManager.cleanupInterruptedStart")(
     function* (input: {
@@ -345,12 +350,14 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const authorizationCodeSubmittedRef = yield* Ref.make(false);
     const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
     const transitionLock = yield* Semaphore.make(1);
+    const startupRef = yield* Ref.make<Fiber.Fiber<unknown, unknown> | undefined>(undefined);
     const active: ActiveConnection = {
       operationId,
       scope,
       attemptRef,
       authorizationCodeSubmittedRef,
       fiberRef,
+      startupRef,
       transitionLock,
     };
     const lifecycleReserved = yield* lifecycleCoordinator.reserve({
@@ -386,8 +393,12 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
 
-    return yield* Effect.gen(function* () {
-      yield* providerRegistry.setProviderConnectionOperation({
+    // Once accepted, startup belongs to the manager: a provider can take a minute
+    // to reach its browser step, and a reload or brief disconnect of the client
+    // that asked only detaches it from the reply. Cancel, the operation's own
+    // failure, and manager teardown still stop it.
+    yield* providerRegistry
+      .setProviderConnectionOperation({
         instanceId: input.instanceId,
         operation: operation({
           operationId,
@@ -398,8 +409,22 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           startedAt,
           message: actions.startingMessage ?? "Starting secure provider sign in.",
         }),
-      });
-
+      })
+      .pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : cleanupInterruptedStart({
+                instanceId: input.instanceId,
+                operationId,
+                method: input.method,
+                account: input.account,
+                signInRequestId: input.signInRequestId,
+                startedAt,
+              }),
+        ),
+      );
+    const startup = yield* Effect.gen(function* () {
       const attemptResult = yield* actions.start(input.method, input.account).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.result,
@@ -675,7 +700,14 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               startedAt,
             }),
       ),
+      Effect.forkIn(managerScope),
     );
+    yield* Ref.set(startupRef, startup);
+    const outcome = yield* Fiber.await(startup);
+    // A cancelled startup answers with the cancelled state, as before.
+    return Exit.isFailure(outcome) && Cause.hasInterruptsOnly(outcome.cause)
+      ? { providers: yield* providerRegistry.getProviders }
+      : yield* outcome;
   });
 
   const submitAuthorizationCode: ProviderConnectionManagerShape["submitAuthorizationCode"] =
@@ -796,6 +828,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         message: "The connection operation is no longer active.",
       });
     }
+    // A startup still running stops with its operation; its own cleanup finds
+    // nothing left to do because the operation was taken above.
+    const startup = yield* Ref.get(active.startupRef);
+    if (startup) yield* Fiber.interrupt(startup).pipe(Effect.forkDetach);
     const providers = yield* settleActive(
       active,
       "interrupt",

@@ -1,9 +1,12 @@
 import { describe, it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthProvidersManageScope,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  WS_METHODS,
+  WsRpcGroup,
   type ProviderConnectionOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -17,6 +20,9 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as RpcTest from "effect/rpc/RpcTest";
+import { RPC_REQUIRED_SCOPES } from "../../auth/RpcAuthorization.ts";
+import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 
 import {
   ProviderRegistry,
@@ -1143,7 +1149,7 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
-  it.effect("releases the connection reservation when starting is interrupted", () =>
+  it.effect("keeps an accepted startup when its caller goes away, and cancel still stops it", () =>
     Effect.gen(function* () {
       const interrupted = yield* Deferred.make<void>();
       const starts = yield* Ref.make(0);
@@ -1175,6 +1181,13 @@ describe("ProviderConnectionManager", () => {
         (providers) => providers[0]?.connection?.operation?.status === "starting",
       );
       yield* Fiber.interrupt(first);
+      // A reload or disconnect of the asking client only detaches it.
+      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+      assert.isFalse(yield* Deferred.isDone(interrupted));
+      const running = (yield* Ref.get(providersRef))[0]?.connection?.operation;
+      assert.strictEqual(running?.status, "starting");
+
+      yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId: running!.operationId });
       yield* Deferred.await(interrupted);
 
       const retry = yield* manager
@@ -2143,6 +2156,73 @@ describe("ProviderConnectionManager sign-in request ids", () => {
           ["failed", "request-12345678"],
         ],
       );
+    }),
+  );
+});
+
+describe("ProviderConnectionManager over the RPC boundary", () => {
+  it.effect("keeps an accepted startup when the asking client disconnects", () =>
+    Effect.gen(function* () {
+      const reachBrowser = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Deferred.await(reachBrowser).pipe(
+            Effect.as({
+              authorizationUrl: "https://auth.openai.com/",
+              authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_browser" as const,
+              waitForCompletion: Effect.never,
+              cancel: Effect.void,
+            }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({ actions });
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.serverStartProviderConnection
+          > => tag !== WS_METHODS.serverStartProviderConnection,
+        ),
+      );
+      const clientScope = yield* Scope.make();
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverStartProviderConnection, (input) =>
+              manager.start(input),
+            ),
+            RpcAuthorization.layer([AuthProvidersManageScope]),
+          ),
+        ),
+        Scope.provide(clientScope),
+      );
+
+      yield* client[WS_METHODS.serverStartProviderConnection]({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: "request-12345678",
+      }).pipe(Effect.ignore, Effect.forkChild);
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.operation?.status === "starting",
+      );
+      // The renderer reloads: its connection, and the request on it, go away.
+      yield* Scope.close(clientScope, Exit.void);
+      yield* Deferred.succeed(reachBrowser, undefined);
+
+      const providers = yield* yieldUntil(
+        Ref.get(providersRef),
+        (current) => current[0]?.connection?.operation?.status !== "starting",
+      );
+      const operation = providers[0]?.connection?.operation;
+      assert.strictEqual(operation?.status, "waiting_for_browser");
+      assert.strictEqual(operation?.signInRequestId, "request-12345678");
+      assert.strictEqual(operation?.authorizationUrl, "https://auth.openai.com/");
     }),
   );
 });
