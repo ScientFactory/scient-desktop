@@ -16,7 +16,7 @@ vi.mock("~/assets/assetUrls", () => ({
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { latexPageAt, latexPageMarkersKey, setLatexPageMarkers } from "./latexPageMarkers";
-import { pagedLayoutSettled } from "./latexPagedGeometry";
+import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
 import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
@@ -604,13 +604,64 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
   await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
   scroller(editor).scrollTop = 300;
   await frames(3);
+  {
+    const scroll = scroller(editor);
+    const p0 = editor.view.dom.querySelector<HTMLElement>(":scope > p")!;
+    console.error(
+      "PROBE before-close " +
+        JSON.stringify({
+          scrollTop: scroll.scrollTop,
+          pTop: Math.round(p0.getBoundingClientRect().top - scroll.getBoundingClientRect().top),
+          pad: getComputedStyle(editor.view.dom).paddingTop,
+          rev: latexPagedKey.getState(editor.state)?.revision,
+        }),
+    );
+  }
+  const events: string[] = [];
+  const started = performance.now();
+  const watch = (label: string) => {
+    const ed = (
+      container.querySelector(".scient-latex-visual-document") as
+        | (HTMLElement & { editor?: Editor })
+        | null
+    )?.editor;
+    if (!ed || ed.isDestroyed) return;
+    try {
+      void ed.view.dom;
+    } catch {
+      return;
+    }
+    const scroll = scroller(ed);
+    const p0 = ed.view.dom.querySelector<HTMLElement>(":scope > p");
+    events.push(
+      `${label}@${Math.round(performance.now() - started)} st=${scroll.scrollTop} pTop=${p0 ? Math.round(p0.getBoundingClientRect().top - scroll.getBoundingClientRect().top) : "?"} rev=${latexPagedKey.getState(ed.state)?.revision} pad=${getComputedStyle(ed.view.dom).paddingTop} paged=${ed.view.dom.closest("[data-paged]") ? 1 : 0}`,
+    );
+  };
+  const layoutListener = () => watch("layout-event");
+  document.addEventListener("scient-latex-layout", layoutListener, true);
+  const scrollListener = () => watch("scroll");
+  document.addEventListener("scroll", scrollListener, true);
+  let count = 0;
+  const tick = () => {
+    watch("frame");
+    if (count++ < 240) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
   root.render(<></>);
   await frames(2);
   editor = await open("visual-stability-short-reopen", long);
+  watch("opened");
   // Where reading resumes once the pages are laid out; a busy runner can still
   // be placing them three frames after opening.
   await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
   await frames(3);
+  watch("asserting");
+  document.removeEventListener("scient-latex-layout", layoutListener, true);
+  document.removeEventListener("scroll", scrollListener, true);
+  const compact: string[] = [];
+  for (const e of events)
+    if (compact.at(-1)?.replace(/^\S+@\d+/u, "") !== e.replace(/^\S+@\d+/u, "")) compact.push(e);
+  console.error("PROBE reopen\n" + compact.join("\n"));
   expect(Math.abs(scroller(editor).scrollTop - 300)).toBeLessThan(2);
 }, 30000);
 
