@@ -7,6 +7,7 @@ import type { ProviderUpdateToastId } from "~/components/ProviderUpdateLaunchNot
 import { useLocalEnvironmentUpdateGroups } from "~/components/ProviderUpdateLaunchNotification.environments";
 import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useDismissedProviderUpdateNotificationKeys } from "~/providerUpdateDismissal";
+import { offersProviderUpdateToasts } from "~/scient/desktopUpdate/updateAvailabilityToasts";
 
 import {
   collectManagedRuntimeUpdateCandidates,
@@ -50,7 +51,8 @@ function managedRuntimeSettingsSearch(targets: ReadonlyArray<ManagedRuntimeUpdat
 /**
  * Offers a reviewed Scient-managed runtime update and starts it in place. The
  * server stages the update while turns run and switches runtimes once the
- * provider is idle; this notice follows that operation to its result.
+ * provider is idle; this notice follows that operation to its result. In the
+ * desktop app the sidebar's update circle makes the offer instead.
  */
 export function ManagedRuntimeUpdateNotification() {
   const navigate = useNavigate();
@@ -245,6 +247,7 @@ export function ManagedRuntimeUpdateNotification() {
     }
 
     if (
+      !offersProviderUpdateToasts() ||
       !notificationKey ||
       activeToastRef.current !== null ||
       dismissedNotificationKeys.has(notificationKey) ||
