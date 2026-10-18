@@ -1054,6 +1054,12 @@ and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
 already bypass grouping. See [provider architecture](docs/internals/providers.md).
 
+Claude's health-check commands, `claude --version` and Scient's `claude auth status` gate, use a
+20-second deadline instead of the shared 4-second probe deadline, in `SCIENT-FORK` regions of
+`ClaudeProvider.ts`. The native CLI needs 2-4 seconds to answer on Windows. Drop the version-check
+region once upstream gives that check an equivalent deadline. See
+[Claude health check](docs/internals/providers.md#claude-health-check).
+
 Desktop/web also reconciles historical Antigravity family selections in unstarted
 drafts against the instance's live native variants. Preserve its draft-store write,
 reasoning and visibility checks, and started-session guard; a render-only alias can

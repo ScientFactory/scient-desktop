@@ -84,7 +84,7 @@ describe("Claude health-check deadline", () => {
   it.effect("waits for a slow but healthy `--version`", () =>
     Effect.gen(function* () {
       const status = yield* checkWithSlowCli({
-        "--version": { stdout: VERSION, seconds: 10 },
+        "--version": { stdout: VERSION, seconds: 19 },
         "auth status --json": { stdout: SIGNED_IN, seconds: 0 },
       });
       assert.strictEqual(status.status, "ready");
@@ -96,7 +96,7 @@ describe("Claude health-check deadline", () => {
     Effect.gen(function* () {
       const status = yield* checkWithSlowCli({
         "--version": { stdout: VERSION, seconds: 0 },
-        "auth status --json": { stdout: SIGNED_IN, seconds: 10 },
+        "auth status --json": { stdout: SIGNED_IN, seconds: 19 },
       });
       assert.strictEqual(status.status, "ready");
       assert.strictEqual(status.auth.status, "authenticated");
@@ -104,16 +104,28 @@ describe("Claude health-check deadline", () => {
     }),
   );
 
-  it.effect("still reports a CLI that does not answer within 20 seconds", () =>
+  it.effect("still reports a `--version` that does not answer within 20 seconds", () =>
     Effect.gen(function* () {
       const status = yield* checkWithSlowCli({
-        "--version": { stdout: VERSION, seconds: 25 },
+        "--version": { stdout: VERSION, seconds: 21 },
       });
       assert.strictEqual(status.status, "error");
       assert.strictEqual(
         status.message,
         "Claude Agent CLI is installed but failed to run. Timed out while running command.",
       );
+    }),
+  );
+
+  it.effect("still reports an `auth status` that does not answer within 20 seconds", () =>
+    Effect.gen(function* () {
+      const status = yield* checkWithSlowCli({
+        "--version": { stdout: VERSION, seconds: 0 },
+        "auth status --json": { stdout: SIGNED_IN, seconds: 21 },
+      });
+      assert.strictEqual(status.status, "warning");
+      assert.strictEqual(status.auth.status, "unknown");
+      assert.strictEqual(status.message, "Could not verify Claude account status.");
     }),
   );
 });

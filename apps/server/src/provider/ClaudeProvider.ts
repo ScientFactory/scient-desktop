@@ -613,12 +613,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     // the first-party readiness gate; installation alone must never expose
     // usable models. Explicit API/custom-backend configurations retain T3's
     // SDK-derived readiness path below.
+    // SCIENT-FORK:START — Claude health-check command deadline.
     const authStatusProbe = yield* runClaudeCommand(
       claudeSettings,
       ["auth", "status", "--json"],
       resolvedEnvironment,
       cwd,
     ).pipe(Effect.timeoutOption(CLAUDE_CLI_CHECK_TIMEOUT_MS), Effect.result);
+    // SCIENT-FORK:END
     const authStatusResult = Result.isSuccess(authStatusProbe)
       ? Option.getOrUndefined(authStatusProbe.success)
       : undefined;
