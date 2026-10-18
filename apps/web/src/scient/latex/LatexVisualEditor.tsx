@@ -1583,10 +1583,13 @@ function LatexMathView({
         }}
         onChange={(tex) => {
           const body = mathEnvironmentBody(tex, attributes.environment);
-          if (editor.isEditable) {
+          const position = getPos();
+          // A late publication from a view the document has since replaced
+          // must not write through its stale position.
+          const live = position === undefined ? null : editor.state.doc.nodeAt(position);
+          if (editor.isEditable && live?.type === node.type) {
             if (body !== attributes.tex) updateAttributes({ tex: body });
           }
-          const position = getPos();
           const accepted = String(
             (position === undefined ? node : editor.state.doc.nodeAt(position))?.attrs.tex ??
               node.attrs.tex ??
