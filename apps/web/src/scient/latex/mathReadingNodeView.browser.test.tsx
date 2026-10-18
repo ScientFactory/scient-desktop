@@ -158,6 +158,41 @@ it("protects the pending equation from typing, IME, paste and drop without chang
   expect(reading.querySelector("math-field")).toBeNull();
 });
 
+it("closes the document while a formula is being edited without a late write", async () => {
+  await mount("Before $x$ and $x$ after.");
+  const [first, second] = readers();
+  const errors: unknown[] = [];
+  const caught = (event: ErrorEvent) => errors.push(event.error ?? event.message);
+  const rejected = (event: PromiseRejectionEvent) => errors.push(event.reason);
+  window.addEventListener("error", caught);
+  window.addEventListener("unhandledrejection", rejected);
+  try {
+    for (const reading of [first!, second!]) {
+      const target = reading.querySelector<HTMLElement>(".scient-latex-mathfield")!;
+      const box = target.getBoundingClientRect();
+      await userEvent.click(target, { position: { x: box.width - 2, y: box.height / 2 } });
+      await expect
+        .poll(() => reading.querySelector<MathfieldElement>("math-field")?.hasFocus())
+        .toBe(true);
+      const field = reading.querySelector<MathfieldElement>("math-field")!;
+      await userEvent.keyboard("\\alpha (a^2_1) q");
+      await expect.poll(() => field.getValue()).toContain("q");
+      if (reading === first) {
+        editor().commands.setTextSelection(1);
+        await frame();
+      }
+    }
+    // Closing while the second formula is still being edited.
+    root.unmount();
+    root = createRoot(host);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(errors).toEqual([]);
+  } finally {
+    window.removeEventListener("error", caught);
+    window.removeEventListener("unhandledrejection", rejected);
+  }
+});
+
 it("preserves an outside focus change immediately after publication through MathLive's delayed focus", async () => {
   await mount("Before $x+y$ after.");
   const original = source;
