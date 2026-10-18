@@ -32,7 +32,10 @@ export function naturalTextLines(
       const middle = Math.floor((low + high) / 2);
       range.setStart(text, middle);
       range.setEnd(text, Math.min(length, middle + 1));
-      if (range.getBoundingClientRect().top < rect.top - 0.5) low = middle + 1;
+      // The first letter after a hyphenation break also reports the hyphen
+      // left on the previous line; its own glyph box is the last with width.
+      const glyph = [...range.getClientRects()].findLast((box) => box.width > 0);
+      if ((glyph ?? range.getBoundingClientRect()).top < rect.top - 0.5) low = middle + 1;
       else high = middle;
     }
     start = low;
