@@ -21,6 +21,7 @@ import {
   type UpdateRunMachine,
 } from "./updateEverything.logic";
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
+import * as Equal from "effect/Equal";
 import { currentConfirmedServerTargets } from "./updateEverything.logic";
 // SCIENT-FORK:END
 
@@ -67,14 +68,23 @@ export function settleUpdateRunMachine(
 }
 
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
-let qualifiedUpdateRunServers: ReadonlyArray<ServerUpdateTarget> = [];
+const qualifiedUpdateRunServersAtom = Atom.make<ReadonlyArray<ServerUpdateTarget>>([]).pipe(
+  Atom.withEquality(Equal.equals),
+  Atom.keepAlive,
+  Atom.withLabel("update-everything-qualified-servers"),
+);
 
 /** The servers "update everything" currently qualifies; empty once its sidebar owner leaves. */
 export function publishQualifiedUpdateRunServers(servers: ReadonlyArray<ServerUpdateTarget>): void {
-  qualifiedUpdateRunServers = servers;
+  appAtomRegistry.set(qualifiedUpdateRunServersAtom, servers);
 }
 
-const WITHDRAWN_RETRY_FAILURE = "Not retried; it is no longer eligible for this update.";
+/** The servers "update everything" currently qualifies, so Retry follows eligibility. */
+export function useQualifiedUpdateRunServers(): ReadonlyArray<ServerUpdateTarget> {
+  return useAtomValue(qualifiedUpdateRunServersAtom);
+}
+
+const WITHDRAWN_RETRY_FAILURE = "Not retried; it is not currently eligible for this update.";
 // SCIENT-FORK:END
 
 export function retryFailedUpdateRunServers(
@@ -91,11 +101,11 @@ export function retryFailedUpdateRunServers(
   );
   // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
   // flags, and never sends a target that is no longer qualified. A withdrawn target settles
-  // as failed without a server, so it is not offered for retry again.
+  // as failed with its confirmed target, so Retry returns once it is eligible again.
   const eligible = new Map(
     currentConfirmedServerTargets(
       confirmed.map(({ target }) => target),
-      qualifiedUpdateRunServers,
+      appAtomRegistry.get(qualifiedUpdateRunServersAtom),
     ).map((target) => [target.environmentId, target]),
   );
   const withdrawn = new Set(
@@ -106,7 +116,7 @@ export function retryFailedUpdateRunServers(
   if (withdrawn.size > 0) {
     updateRunMachines((machine) =>
       withdrawn.has(machine.environmentId)
-        ? { ...machine, server: null, result: "failed", failure: WITHDRAWN_RETRY_FAILURE }
+        ? { ...machine, result: "failed", failure: WITHDRAWN_RETRY_FAILURE }
         : machine,
     );
   }
