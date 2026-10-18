@@ -98,22 +98,6 @@ async function mount(source: string, name: string) {
   return editor()!;
 }
 
-/** Whether a system font draws `sample`: text set in it measures unlike both generic fallbacks. */
-function fontAvailable(family: string, sample = "abcdefghijklmnopqrstuvwxyz0123456789") {
-  const context = document.createElement("canvas").getContext("2d")!;
-  return ["monospace", "serif"].every((fallback) => {
-    context.font = `32px ${fallback}`;
-    const base = context.measureText(sample).width;
-    context.font = `32px "${family}", ${fallback}`;
-    return context.measureText(sample).width !== base;
-  });
-}
-
-it("detects whether a system font is installed", () => {
-  expect(fontAvailable("Scient Missing Font 7f3a")).toBe(false);
-  expect(fontAvailable("Scient Missing Font 7f3a", "\u05d0\u05d1\u05d2")).toBe(false);
-});
-
 it.each([
   ["15", template15, 2],
   ["26", template26, 4],
@@ -122,10 +106,10 @@ it.each([
   "template %s has the compiled PDF's page count and opens without source or undo changes",
   async (name, source, pages) => {
     const editor = await mount(source, name);
-    // Page counts match the PDF only with the document's own fonts; template 26
-    // sets its Hebrew text in Arial, whose Hebrew Linux runners do not have
-    // (their Arial substitute has Latin letters only).
-    if (name !== "26" || fontAvailable("Arial", "\u05d0\u05d1\u05d2\u05d3\u05d4\u05d5\u05d6"))
+    // Page counts match the PDF only with the document's own fonts. Template 26
+    // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
+    // do not; there a substitute with other metrics gives a different count.
+    if (name !== "26" || !/Linux/u.test(navigator.userAgent))
       await expect
         .poll(() => latexPagedKey.getState(editor.state)?.plan?.pages, { timeout: 15000 })
         .toBe(pages);
