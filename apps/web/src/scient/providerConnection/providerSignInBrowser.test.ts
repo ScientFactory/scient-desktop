@@ -55,7 +55,18 @@ function provider(current: ProviderConnectionOperation): ServerProvider {
 }
 
 class MemoryStorage {
-  private readonly values = new Map<string, string>();
+  readonly values = new Map<string, string>();
+  get length() {
+    return this.values.size;
+  }
+  key(index: number) {
+    return [...this.values.keys()][index] ?? null;
+  }
+  clone() {
+    const copy = new MemoryStorage();
+    for (const [name, value] of this.values) copy.values.set(name, value);
+    return copy;
+  }
   getItem(name: string) {
     return this.values.get(name) ?? null;
   }
@@ -69,6 +80,29 @@ class MemoryStorage {
 
 const open = vi.fn<(url: string) => Promise<void>>();
 let storage: MemoryStorage;
+let shared: MemoryStorage;
+const windowOpen = vi.fn<(url: string, target: string, features: string) => unknown>();
+
+/** Web Locks with `ifAvailable`, shared by every window of the test. */
+function fakeLocks() {
+  const held = new Set<string>();
+  return {
+    request: async <T>(
+      name: string,
+      _options: { readonly ifAvailable: boolean },
+      callback: (lock: { readonly name: string } | null) => T | Promise<T>,
+    ) => {
+      if (held.has(name)) return callback(null);
+      held.add(name);
+      try {
+        await Promise.resolve();
+        return await callback({ name });
+      } finally {
+        held.delete(name);
+      }
+    },
+  };
+}
 let clock = 0;
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -103,8 +137,11 @@ beforeEach(() => {
   vi.resetAllMocks();
   open.mockResolvedValue(undefined);
   storage = new MemoryStorage();
-  vi.stubGlobal("window", { sessionStorage: storage });
-  clock = 1_000_000;
+  shared = new MemoryStorage();
+  windowOpen.mockReset();
+  vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
+  vi.stubGlobal("navigator", { locks: fakeLocks() });
+  clock = Date.now();
   resetProviderSignInBrowserForTests({ open, now: () => clock });
 });
 
@@ -195,6 +232,19 @@ describe("provider sign-in page opening", () => {
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
 
+  it("keeps the id when the start fails with an unknown outcome", async () => {
+    let sent: string | undefined;
+    await expect(
+      start((id) => {
+        sent = id;
+        return Promise.reject(new Error("The environment connection closed."));
+      }),
+    ).rejects.toThrow("connection closed");
+    observe(operation({ signInRequestId: sent! }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
   it("releases the id of a start the server rejected", async () => {
     await expect(
       start(() => Promise.reject({ _tag: "ProviderConnectionError", message: "Already running." })),
@@ -221,6 +271,57 @@ describe("provider sign-in page opening", () => {
     await start(async () => operation());
     expect(open).toHaveBeenCalledTimes(1);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([true, false])(
+    "opens once across windows that share a copied session (Web Locks: %s)",
+    async (withLocks) => {
+      if (!withLocks) vi.stubGlobal("navigator", {});
+      const id = await startWithLostReply();
+      // A window opened from this one starts with a copy of its session storage.
+      const copied = storage.clone();
+      vi.resetModules();
+      vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
+      const second = await import("./providerSignInBrowser");
+      expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
+      second.resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
+
+      second.observeProviderSignInSnapshots(environmentId, [
+        provider(operation({ signInRequestId: id })),
+      ]);
+      vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
+      observe(operation({ signInRequestId: id }));
+      await settle();
+      await settle();
+      expect(open).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("treats a blocked popup as failed and offers the user's own click", async () => {
+    resetProviderSignInBrowserForTests({ now: () => clock });
+    windowOpen.mockReturnValue(null);
+    await start(async (id) => operation({ signInRequestId: id }));
+    expect(windowOpen).toHaveBeenCalledWith(url, "_blank", "popup");
+    expect(toast.add).toHaveBeenCalledTimes(1);
+    const notice = toast.add.mock.calls[0]![0] as {
+      readonly type: string;
+      readonly title: string;
+      readonly description: string;
+      readonly actionProps: { readonly children: string; readonly onClick: () => void };
+    };
+    expect(notice).toMatchObject({
+      type: "warning",
+      title: "The Antigravity sign-in page was blocked",
+      description: "Your browser blocked the sign-in page. Open it to continue.",
+    });
+    expect(notice.description).not.toContain("could not open");
+
+    // The toast's button is a click, so the browser lets that open through.
+    const opened = { closed: false, opener: {} as unknown };
+    windowOpen.mockReturnValue(opened);
+    notice.actionProps.onClick();
+    await vi.waitFor(() => expect(windowOpen).toHaveBeenCalledTimes(2));
+    expect(opened.opener).toBeNull();
   });
 
   it("reports an opening failure as a toast with a retry when no setup view shows it", async () => {

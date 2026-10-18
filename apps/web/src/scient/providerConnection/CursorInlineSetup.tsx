@@ -401,7 +401,7 @@ export function CursorInlineSetup(props: {
               variant="ghost-muted"
             >
               <ExternalLinkIcon aria-hidden />{" "}
-              {browserOpening === null && !browser.startedHere
+              {(browserOpening === null && !browser.startedHere) || browserOpening?.blocked === true
                 ? "Open Cursor sign-in"
                 : "Reopen Cursor sign-in"}
             </Button>

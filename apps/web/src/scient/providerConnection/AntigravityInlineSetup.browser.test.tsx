@@ -285,6 +285,30 @@ describe("Antigravity sign-in page", () => {
     await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
   });
 
+  it("says a blocked popup was blocked and opens it from the user's click", async () => {
+    // The real opener, in a browser tab: a delayed window.open is blocked.
+    resetProviderSignInBrowserForTests();
+    const open = vi.spyOn(window, "open").mockReturnValueOnce(null);
+    serverStart.mockImplementation(async () => {
+      renderProvider(snapshot(mine()));
+      return snapshot(mine());
+    });
+    renderProvider(snapshot());
+
+    await page.getByRole("button", { name: "Sign in with Google" }).click();
+    await expect.element(page.getByRole("alert")).toBeVisible();
+    expect(text()).toContain("Your browser blocked the sign-in page. Open it to continue.");
+    expect(text()).not.toContain("could not open");
+
+    const opened = { closed: false, opener: window } as unknown as Window;
+    open.mockReturnValueOnce(opened);
+    await page.getByRole("button", { name: "Open Google sign-in" }).click();
+    await expect.poll(() => host!.querySelector("[role=alert]")).toBeNull();
+    expect(open).toHaveBeenLastCalledWith(AUTHORIZATION_URL, "_blank", "popup");
+    expect(opened.opener).toBeNull();
+    open.mockRestore();
+  });
+
   it("does not open a page for a sign-in cancelled during startup", async () => {
     const start = deferred<ServerProvider>();
     serverStart.mockReturnValue(start.promise);

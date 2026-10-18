@@ -35,10 +35,16 @@ export interface ProviderSignInKey {
 export interface ProviderSignInBrowserOpening {
   readonly status: "opening" | "opened" | "failed";
   readonly error: string | null;
+  /** The browser blocked the page: the user's own click opens it. */
+  readonly blocked?: boolean;
 }
 
 const PROVIDER_SIGN_IN_PAGE_OPEN_FAILURE =
   "Scient could not open the sign-in page in your browser. Try opening it again.";
+const PROVIDER_SIGN_IN_PAGE_BLOCKED = "Your browser blocked the sign-in page. Open it to continue.";
+
+/** A browser refused to open a window that no click of the user's asked for. */
+class SignInPageBlocked extends Error {}
 
 /**
  * Methods that sign in through a page Scient opens, with nothing to choose or
@@ -67,9 +73,11 @@ export async function openProviderAuthorizationPage(url: string): Promise<void> 
     await ensureLocalApi().shell.openExternal(url);
     return;
   }
-  // Preview hosts distinguish a popup from a new-tab link. Preserve the
-  // originating setup page and isolate the authorization page from its opener.
-  window.open(url, "_blank", "popup,noopener,noreferrer");
+  // Preview hosts distinguish a popup from a new-tab link. `noopener` would hide
+  // whether the browser blocked it, so the opener link is cut after the check.
+  const opened = window.open(url, "_blank", "popup");
+  if (opened === null || opened.closed) throw new SignInPageBlocked();
+  opened.opener = null;
 }
 
 interface PendingRequest {
@@ -84,6 +92,8 @@ interface PendingRequest {
  */
 const PENDING_REQUEST_LIFETIME_MS = 15 * 60_000;
 const STORAGE_KEY = "scient.providerSignIn.pendingRequests.v1";
+const OPENED_RECORD_PREFIX = "scient.providerSignIn.opened.v1:";
+const OPENED_RECORD_LIFETIME_MS = PENDING_REQUEST_LIFETIME_MS;
 const MAX_RETAINED_OPENINGS = 64;
 
 const openings = new Map<string, ProviderSignInBrowserOpening>();
@@ -114,6 +124,52 @@ function sessionStore(): Storage | null {
     return typeof window === "undefined" ? null : window.sessionStorage;
   } catch {
     return null;
+  }
+}
+
+function sharedStore(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claims the automatic opening of one operation across this browser's windows.
+ * A window opened from this one starts with a copy of its session storage and
+ * so holds the same request ids; only one of them may open the page. A Web Lock
+ * makes the check-and-record exclusive where available; the shared record alone
+ * covers the rest.
+ */
+async function claimAutomaticOpening(openingKey: string): Promise<boolean> {
+  const storage = sharedStore();
+  const recordKey = `${OPENED_RECORD_PREFIX}${openingKey}`;
+  const claim = () => {
+    if (!storage) return true;
+    try {
+      const cutoff = now();
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const name = storage.key(index);
+        if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
+        const expiresAt = Number(storage.getItem(name));
+        if (!(expiresAt > cutoff)) storage.removeItem(name);
+      }
+      if (storage.getItem(recordKey) !== null) return false;
+      storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
+      return true;
+    } catch {
+      return true;
+    }
+  };
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (!locks) return claim();
+  try {
+    return await locks.request(recordKey, { ifAvailable: true }, (lock) =>
+      lock === null ? false : claim(),
+    );
+  } catch {
+    return claim();
   }
 }
 
@@ -228,15 +284,18 @@ async function openFor(input: {
   try {
     await openPage(input.url);
     setOpening(id, { status: "opened", error: null });
-  } catch {
+  } catch (error) {
     // The native error can name the link or local paths; users see fixed guidance.
-    const message = PROVIDER_SIGN_IN_PAGE_OPEN_FAILURE;
-    setOpening(id, { status: "failed", error: message });
+    const blocked = error instanceof SignInPageBlocked;
+    const message = blocked ? PROVIDER_SIGN_IN_PAGE_BLOCKED : PROVIDER_SIGN_IN_PAGE_OPEN_FAILURE;
+    setOpening(id, { status: "failed", error: message, ...(blocked ? { blocked } : {}) });
     // A setup view that is showing presents the failure itself.
     if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
     toastManager.add({
-      type: "error",
-      title: `Couldn’t open the ${input.providerName} sign-in page`,
+      type: blocked ? "warning" : "error",
+      title: blocked
+        ? `The ${input.providerName} sign-in page was blocked`
+        : `Couldn’t open the ${input.providerName} sign-in page`,
       description: message,
       actionProps: {
         children: "Open sign-in page",
@@ -280,7 +339,8 @@ async function considerOwnOperation(
   if (!opensPage(operation)) return;
   // Released before opening, so a reload while the page opens never opens it again.
   release(key, requestId);
-  if (openings.has(openingKeyOf(key, operation.operationId))) return;
+  const openingKey = openingKeyOf(key, operation.operationId);
+  if (openings.has(openingKey) || !(await claimAutomaticOpening(openingKey))) return;
   await openFor({
     key,
     operationId: operation.operationId,
@@ -363,7 +423,8 @@ export async function startProviderSignIn<T>(input: {
     operation &&
     operation.operationId !== input.previousOperationId &&
     opensPage(operation) &&
-    !openings.has(openingKeyOf(input.key, operation.operationId))
+    !openings.has(openingKeyOf(input.key, operation.operationId)) &&
+    (await claimAutomaticOpening(openingKeyOf(input.key, operation.operationId)))
   ) {
     await openFor({
       key: input.key,
@@ -460,6 +521,11 @@ export function resetProviderSignInBrowserForTests(
   else {
     pending.clear();
     sessionStore()?.removeItem(STORAGE_KEY);
+    const shared = sharedStore();
+    for (let index = (shared?.length ?? 0) - 1; index >= 0; index -= 1) {
+      const name = shared?.key(index);
+      if (name?.startsWith(OPENED_RECORD_PREFIX)) shared?.removeItem(name);
+    }
     refreshPendingKeys();
   }
   notify();

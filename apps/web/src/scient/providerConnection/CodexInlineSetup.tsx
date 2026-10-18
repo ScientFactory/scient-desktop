@@ -119,7 +119,9 @@ export function CodexInlineSetup(props: {
         ? "Opening the sign-in page in your browser…"
         : "Open the sign-in page to continue.");
   const reopenLabel =
-    browserOpening === null && !browser.startedHere ? "Open sign-in page" : "Reopen sign-in page";
+    (browserOpening === null && !browser.startedHere) || browserOpening?.blocked === true
+      ? "Open sign-in page"
+      : "Reopen sign-in page";
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;

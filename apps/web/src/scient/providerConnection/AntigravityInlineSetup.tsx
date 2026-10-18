@@ -614,7 +614,8 @@ export function AntigravityInlineSetup(props: {
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
                   ? "Open sign-in help"
-                  : browserOpening === null && !browser.startedHere
+                  : (browserOpening === null && !browser.startedHere) ||
+                      browserOpening?.blocked === true
                     ? "Open Google sign-in"
                     : "Reopen Google sign-in"}
               </Button>
