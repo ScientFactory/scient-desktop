@@ -227,6 +227,16 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             own = scroll.scrollTop;
           };
           let correctionQueued = false;
+          // One correction after the current task's changes, before any later
+          // task or rendering update can see the reading line moved.
+          const queueCorrection = () => {
+            if (!anchor || correctionQueued) return;
+            correctionQueued = true;
+            queueMicrotask(() => {
+              correctionQueued = false;
+              if (!disposed) correct();
+            });
+          };
           const resized = (entries: readonly ResizeObserverEntry[]) => {
             if (!anchor) return;
             if (
@@ -241,14 +251,9 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               )
             )
               return; // Growing content below the reading line cannot move it.
-            if (correctionQueued) return;
-            correctionQueued = true;
             // All resized blocks share one correction after the observer's
             // delivery, before paint, rather than forcing layout per block.
-            queueMicrotask(() => {
-              correctionQueued = false;
-              if (!disposed) correct();
-            });
+            queueCorrection();
           };
           const scrolled = () => {
             const scroll = scroller();
@@ -375,6 +380,13 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               unmeasured.add(block);
               scheduleMeasure();
             }
+            // A formula's rendering lands in its shadow root inside a preview task;
+            // resize delivery follows only at the next rendering update. Correct now,
+            // so no later task or paint sees the reading line moved.
+            const pending =
+              event.type === "scient-latex-math-preview" &&
+              (event as CustomEvent<{ pending?: boolean }>).detail?.pending;
+            if (!pending) queueCorrection();
           };
           view.dom.addEventListener("scient-latex-math-preview", contentChanged);
           view.dom.addEventListener("load", contentChanged, true);
