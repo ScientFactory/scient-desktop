@@ -48,19 +48,38 @@ it("puts departures first among inactive and keeps batch order stable", () => {
   expect(order(state)).toEqual(["c", "a", "b", "x"]);
   expect(order(update(state, []))).toEqual(["c", "a", "b", "x"]);
 });
-it("honours manual exceptions until their own next eligibility transition", () => {
-  let state = update(EMPTY_PLACEMENT, ["a"]);
-  state = manuallyPlaceThread(
-    state,
-    "general",
-    ["x", "a", "b", "c"],
-    "x",
-    rows(["x", "a", "b", "c"], ["a"]),
-  );
+const drop = (state: PlacementState, displayed: string[], key: string, eligible: string[]) =>
+  manuallyPlaceThread(state, "general", displayed, key, rows(["x", "a", "b", "c"], eligible));
+it("holds an inactive thread dropped above active work until the next arrival", () => {
+  let state = drop(update(EMPTY_PLACEMENT, ["a"]), ["x", "a", "b", "c"], "x", ["a"]);
+  expect(order(update(state, ["a"]))).toEqual(["x", "a", "b", "c"]);
+  // b becoming active re-forms the block above x.
   state = update(state, ["a", "b"]);
-  expect(order(state)).toEqual(["x", "a", "b", "c"]);
-  state = update(state, ["x", "a", "b"]);
   expect(order(state)).toEqual(["a", "b", "x", "c"]);
+  // x's own activation joins the bottom of the block.
+  expect(order(update(state, ["x", "a", "b"]))).toEqual(["a", "b", "x", "c"]);
+});
+it("puts a new arrival above an inactive thread dropped at the top when nothing is active", () => {
+  const state = drop(update(EMPTY_PLACEMENT, []), ["c", "x", "a", "b"], "c", []);
+  expect(order(state)).toEqual(["c", "x", "a", "b"]);
+  expect(order(update(state, ["b"]))).toEqual(["b", "c", "x", "a"]);
+});
+it("sets aside an active thread dropped below inactive ones; arrivals still take the top", () => {
+  let state = drop(update(EMPTY_PLACEMENT, ["a"]), ["x", "b", "c", "a"], "a", ["a"]);
+  expect(state.groups[0]!.aside).toEqual(["a"]);
+  state = update(state, ["a", "b"]);
+  expect(order(state)).toEqual(["b", "x", "c", "a"]);
+  // Going inactive ends the set-aside in place; the next activation rejoins the block.
+  state = update(state, ["b"]);
+  expect(order(state)).toEqual(["b", "x", "c", "a"]);
+  expect(state.groups[0]!.aside).toEqual([]);
+  expect(order(update(state, ["a", "b"]))).toEqual(["b", "a", "x", "c"]);
+});
+it("keeps an active thread reordered within the block in it", () => {
+  let state = drop(update(EMPTY_PLACEMENT, ["a", "b"]), ["b", "a", "x", "c"], "b", ["a", "b"]);
+  expect(state.groups[0]!.aside).toEqual([]);
+  state = update(state, ["a", "b", "c"]);
+  expect(order(state)).toEqual(["b", "a", "c", "x"]);
 });
 it("manual movement cancels review grace and stays put on ordinary updates", () => {
   let state = update(update(EMPTY_PLACEMENT, ["a", "b"]), ["b"], "a");
@@ -122,6 +141,50 @@ it("isolates sections/environments, prunes absent membership, and revalidates re
   expect(readPlacement({ groups: [{ id: "bad", rows: [null], order: [4], upper: [4] }] })).toEqual(
     EMPTY_PLACEMENT,
   );
+  // Placement saved before set-aside existed still loads.
+  const legacy = { groups: [{ id: "g", rows: [{ key: "a", eligible: true, orderKey: null }] }] };
+  expect(
+    readPlacement({ groups: [{ ...legacy.groups[0], order: ["a"], upper: ["a"] }] }).groups[0],
+  ).toMatchObject({ order: ["a"], upper: ["a"], aside: [] });
+});
+it("holds an unsynchronized environment's rows at their last known state", () => {
+  const general = (eligible: string[], keys = ["local:a", "remote:r", "local:b", "remote:s"]) =>
+    [
+      {
+        id: "general",
+        rows: keys.map((key) => ({ key, eligible: eligible.includes(key), orderKey: null })),
+      },
+    ] satisfies PlacementInput[];
+  const remoteFrozen = (key: string) => key.startsWith("remote:");
+  let state = reconcilePlacement(EMPTY_PLACEMENT, general(["remote:r"]), null, 0);
+  expect(order(state)).toEqual(["remote:r", "local:a", "local:b", "remote:s"]);
+  // A stale copy says r stopped and s started; neither is believed while remote is frozen.
+  // Local work still rises, below r's last known activity.
+  state = reconcilePlacement(state, general(["remote:s", "local:b"]), null, 10, remoteFrozen);
+  expect(order(state)).toEqual(["remote:r", "local:b", "local:a", "remote:s"]);
+  // A frozen environment whose threads are missing keeps them in place.
+  const missing = reconcilePlacement(
+    state,
+    general(["local:b"], ["local:a", "local:b"]),
+    null,
+    20,
+    remoteFrozen,
+  );
+  expect(order(missing)).toEqual(order(state));
+  // So does a frozen environment's own section that is missing entirely.
+  const remoteSection = { id: "section@remote", rows: rows(["remote:t"], ["remote:t"])[0]!.rows };
+  const withSection = reconcilePlacement(EMPTY_PLACEMENT, [remoteSection], null, 0);
+  expect(reconcilePlacement(withSection, [], null, 5, remoteFrozen).groups).toEqual(
+    withSection.groups,
+  );
+  expect(reconcilePlacement(withSection, [], null, 5).groups).toEqual([]);
+  // Once live again its rows are judged from current data.
+  expect(order(reconcilePlacement(missing, general(["local:b"]), null, 30))).toEqual([
+    "local:b",
+    "remote:r",
+    "local:a",
+    "remote:s",
+  ]);
 });
 it("stays stable on large streaming snapshots", () => {
   const input = rows(

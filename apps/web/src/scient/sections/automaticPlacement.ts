@@ -14,7 +14,10 @@ export interface PlacementInput {
 export interface PlacementGroup {
   readonly id: string;
   readonly order: readonly string[];
+  /** The active block, kept at the top. */
   readonly upper: readonly string[];
+  /** Active threads dragged below inactive ones; they stay put until they go inactive. */
+  readonly aside: readonly string[];
   readonly rows: readonly PlacementRow[];
 }
 
@@ -52,29 +55,47 @@ function atBoundary(order: readonly string[], upper: ReadonlySet<string>, key: s
   return rest;
 }
 
-/** Reconcile complete, synchronized membership. Filtering/collapse never enters this model. */
+/**
+ * Reconcile complete membership. Filtering/collapse never enters this model. Rows of an
+ * environment without a live thread list (`isFrozen`) keep their last known state: they are
+ * neither re-judged from a stale copy nor forgotten while missing.
+ */
 export function reconcilePlacement(
   state: PlacementState,
   input: readonly PlacementInput[],
   openKey: string | null,
   now: number,
+  isFrozen: (key: string) => boolean = () => false,
 ): PlacementState {
   const pending = new Map(state.pending.map((entry) => [entry.key, entry.dueAt]));
   const retainedPending = new Map<string, number | null>();
-  const groups = input.map(({ id, rows }): PlacementGroup => {
+  const listed = new Set(input.flatMap((group) => group.rows.map((row) => row.key)));
+  const groups = input.map(({ id, rows: current }): PlacementGroup => {
     const previous = state.groups.find((group) => group.id === id);
+    const oldRows = new Map(previous?.rows.map((row) => [row.key, row]));
+    const rows = [
+      ...current.map((row) => (isFrozen(row.key) ? (oldRows.get(row.key) ?? row) : row)),
+      ...(previous?.rows.filter((row) => isFrozen(row.key) && !listed.has(row.key)) ?? []),
+    ];
     const keys = rows.map((row) => row.key);
     const known = new Set(keys);
     if (previous === undefined) {
       const upper = rows.filter((row) => row.eligible).map((row) => row.key);
       const upperKeys = new Set(upper);
-      return { id, rows, order: [...upper, ...keys.filter((key) => !upperKeys.has(key))], upper };
+      return {
+        id,
+        rows,
+        order: [...upper, ...keys.filter((key) => !upperKeys.has(key))],
+        upper,
+        aside: [],
+      };
     }
     let order = previous.order.filter((key) => known.has(key));
     const ordered = new Set(order);
     const departures = new Set<string>();
     const upper = new Set(previous.upper.filter((key) => known.has(key)));
-    const oldRows = new Map(previous.rows.map((row) => [row.key, row]));
+    const aside = new Set(previous.aside.filter((key) => known.has(key)));
+    let arrived = false;
     // New inactive rows follow their saved placement. Eligible arrivals append below retained members.
     for (const row of rows) {
       const old = oldRows.get(row.key);
@@ -83,10 +104,13 @@ export function reconcilePlacement(
         ordered.add(row.key);
       }
       if (row.eligible) {
-        if (!upper.has(row.key)) {
+        if (!upper.has(row.key) && !aside.has(row.key)) {
           order = atBoundary(order, upper, row.key);
           upper.add(row.key);
+          arrived = true;
         }
+      } else if (aside.delete(row.key)) {
+        // A set-aside thread that goes inactive stays where it was dropped.
       } else if (upper.has(row.key)) {
         if (row.key === openKey) retainedPending.set(row.key, null);
         else {
@@ -110,10 +134,26 @@ export function reconcilePlacement(
     // Prepend a simultaneous departure batch without reversing its visible order.
     for (const key of order.filter((key) => departures.has(key)).toReversed())
       order = atBoundary(order, upper, key);
-    return { id, rows, order, upper: order.filter((key) => upper.has(key)) };
+    // An arrival re-forms the block at the top, above inactive threads dragged there.
+    if (arrived)
+      order = [...order.filter((key) => upper.has(key)), ...order.filter((key) => !upper.has(key))];
+    return {
+      id,
+      rows,
+      order,
+      upper: order.filter((key) => upper.has(key)),
+      aside: order.filter((key) => aside.has(key)),
+    };
   });
+  // A frozen environment's whole section can be missing too; keep it as it was.
+  const carried = state.groups.filter(
+    (group) =>
+      !input.some((entry) => entry.id === group.id) &&
+      group.rows.length > 0 &&
+      group.rows.every((row) => isFrozen(row.key)),
+  );
   const next = {
-    groups,
+    groups: [...groups, ...carried],
     pending: [...retainedPending].map(([key, dueAt]) => ({ key, dueAt })),
   };
   return JSON.stringify(next) === JSON.stringify(state) ? state : next;
@@ -135,13 +175,27 @@ export function manuallyPlaceThread(
         rows,
         order: group.order.filter((id) => id !== key),
         upper: group.upper.filter((id) => id !== key),
+        aside: group.aside.filter((id) => id !== key),
       };
     }
     const order = manualOrderForPlacement(group.order, displayedOrder, key);
     const upper = new Set(group.upper);
-    if (rows.find((row) => row.key === key)?.eligible) upper.add(key);
-    else upper.delete(key);
-    return { ...group, rows, order, upper: order.filter((id) => upper.has(id)) };
+    const aside = new Set(group.aside);
+    upper.delete(key);
+    aside.delete(key);
+    if (rows.find((row) => row.key === key)?.eligible) {
+      // Within or just below the active block it stays in it; lower, below inactive
+      // threads, it is set aside and later arrivals no longer join beneath it.
+      const lastUpper = order.findLastIndex((id) => upper.has(id));
+      (order.indexOf(key) <= lastUpper + 1 ? upper : aside).add(key);
+    }
+    return {
+      ...group,
+      rows,
+      order,
+      upper: order.filter((id) => upper.has(id)),
+      aside: order.filter((id) => aside.has(id)),
+    };
   });
   return { groups, pending: state.pending.filter((entry) => entry.key !== key) };
 }
@@ -181,21 +235,18 @@ export function readPlacement(value: unknown): PlacementState {
       rows.push({ key: row.key, eligible: row.eligible, orderKey: row.orderKey });
     }
     const known = new Set(rows.map((row) => row.key));
-    const order = [
+    const keys = (list: unknown) => [
       ...new Set(
-        (group.order as unknown[]).filter(
+        (Array.isArray(list) ? (list as unknown[]) : []).filter(
           (key: unknown): key is string => typeof key === "string" && known.has(key),
         ),
       ),
     ];
-    const upper = [
-      ...new Set(
-        (group.upper as unknown[]).filter(
-          (key: unknown): key is string => typeof key === "string" && known.has(key),
-        ),
-      ),
-    ];
-    if (order.length > 0) groups.push({ id: group.id, rows, order, upper });
+    const order = keys(group.order);
+    const upper = keys(group.upper);
+    // Saved before set-aside existed: none.
+    const aside = keys(group.aside).filter((key) => !upper.includes(key));
+    if (order.length > 0) groups.push({ id: group.id, rows, order, upper, aside });
   }
   return { groups, pending: [] };
 }
