@@ -240,7 +240,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     );
   }
   yield* fs.writeFileString(
-    path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
+    path.join(resourcesDir, "resource-monitor/scient-resource-monitor.exe"),
     "monitor",
   );
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
@@ -1139,11 +1139,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             ...(platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
           ];
           const binaryNames: Record<string, string> = {
-            "resource-monitor": "t3-resource-monitor",
+            "resource-monitor": "scient-resource-monitor",
             "whisper-runtime": "whisper-server",
             "synctex-runtime": "synctex",
-            "kde-capture": "t3-kde-snap-shot",
-            "hyprland-capture": "t3-hyprland-snap-shot",
+            "kde-capture": "scient-kde-snap-shot",
+            "hyprland-capture": "scient-hyprland-snap-shot",
           };
           for (const tree of trees) {
             const directory = path.join(stageResourcesDir, tree);
@@ -1692,7 +1692,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
         const binaryPath = path.join(
           repoRoot,
-          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/scient-resource-monitor",
         );
         const stageResourcesDir = path.join(repoRoot, "stage");
         yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
@@ -1716,7 +1716,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.equal(
           yield* fs.readFileString(
-            path.join(stageResourcesDir, "resource-monitor/t3-resource-monitor"),
+            path.join(stageResourcesDir, "resource-monitor/scient-resource-monitor"),
           ),
           "cached monitor",
         );
@@ -1948,7 +1948,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               repoRoot,
               `native/${backend}-snap-shot/target`,
               target,
-              `release/t3-${backend}-snap-shot`,
+              `release/scient-${backend}-snap-shot`,
             );
             const stageResourcesDir = path.join(repoRoot, "stage", backend, arch);
             const spawner = Layer.succeed(
@@ -1982,7 +1982,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             }).pipe(Effect.provide(spawner));
             const installed = path.join(
               stageResourcesDir,
-              `${backend}-capture/t3-${backend}-snap-shot`,
+              `${backend}-capture/scient-${backend}-snap-shot`,
             );
             assert.equal(yield* fs.readFileString(installed), `helper-${arch}`);
             assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
@@ -2254,7 +2254,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "--arch",
         "x64",
         "--output",
-        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
+        path.join("/stage/resources", "browser-secret", "scient-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
@@ -2429,7 +2429,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* fs.writeFileString(nativePath, "native-binary");
         const resourceMonitorPath = path.join(
           fixture.packagedAppDir,
-          "resources/resource-monitor/t3-resource-monitor.exe",
+          "resources/resource-monitor/scient-resource-monitor.exe",
         );
         yield* fs.remove(resourceMonitorPath);
         yield* fs.makeDirectory(resourceMonitorPath);
@@ -2442,7 +2442,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(resourceMonitorError, WindowsPackagedPayloadValidationError);
         assert.equal(resourceMonitorError.reason, "resource-monitor-missing");
         assert.deepStrictEqual(resourceMonitorError.missingFiles, [
-          "resource-monitor/t3-resource-monitor.exe",
+          "resource-monitor/scient-resource-monitor.exe",
         ]);
 
         yield* fs.remove(resourceMonitorPath, { recursive: true });
@@ -3007,8 +3007,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "arm64"), [
       "aarch64-pc-windows-msvc",
     ]);
-    assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
-    assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
+    assert.equal(resourceMonitorExecutableName("mac"), "scient-resource-monitor");
+    assert.equal(resourceMonitorExecutableName("win"), "scient-resource-monitor.exe");
   });
 
   it("packages the WSL server and production dependencies as one compressed runtime", () => {

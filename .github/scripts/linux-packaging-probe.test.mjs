@@ -14,11 +14,11 @@ import {
 const require = NodeModule.createRequire(new URL("../../scripts/package.json", import.meta.url));
 const { createPackage, uncacheAll } = await import(require.resolve("@electron/asar"));
 const binaries = [
-  "resource-monitor/t3-resource-monitor",
+  "resource-monitor/scient-resource-monitor",
   "whisper-runtime/whisper-server",
   "synctex-runtime/synctex",
-  "kde-capture/t3-kde-snap-shot",
-  "hyprland-capture/t3-hyprland-snap-shot",
+  "kde-capture/scient-kde-snap-shot",
+  "hyprland-capture/scient-hyprland-snap-shot",
 ];
 const icon = "apps/desktop/prod-resources/icon.png";
 

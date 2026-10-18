@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Release tooling tests use isolated temporary filesystem fixtures.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -17,6 +18,8 @@ import {
   resolveReleaseNoteSource,
   runScientReleasePreflight,
 } from "./scient-release-preflight.ts";
+
+const repoRoot = NodePath.join(import.meta.dirname, "..");
 
 describe("Scient release machinery", () => {
   it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
@@ -197,6 +200,98 @@ describe("Scient release machinery", () => {
 
     assert.include(serverAssetJob, "vp run --filter t3 build");
     assert.notInclude(serverAssetJob, "vp run --filter t3 build:bundle");
+  });
+
+  // The native helpers ship as scient-* (see UPSTREAM.md). Upstream files spell the
+  // names in place, so these assertions keep every lookup, build, release and
+  // packaging site on the same names.
+  it("names the native helpers for Scient at every lookup, build and packaging site", () => {
+    const monitorName = '"scient-resource-monitor.exe" : "scient-resource-monitor"';
+    const cargoBin = (name: string) => `[[bin]]\nname = "${name}"\npath = "src/main.rs"\n`;
+    const packagedRuntime = [
+      '"resource-monitor/scient-resource-monitor"',
+      '"kde-capture/scient-kde-snap-shot"',
+      '"hyprland-capture/scient-hyprland-snap-shot"',
+    ];
+    const sites: Record<string, ReadonlyArray<string>> = {
+      "apps/server/src/resourceTelemetry/ResourceMonitorBinary.ts": [monitorName],
+      "apps/desktop/src/backend/DesktopBackendConfiguration.ts": [monitorName],
+      "apps/desktop/src/preview/BrowserImport/LinuxBrowserSecret.ts": [
+        'join("browser-secret", "scient-browser-secret")',
+        'processArch,\n            "scient-browser-secret",',
+      ],
+      "apps/desktop/scripts/build-browser-secret.mjs": ['values.arch, "scient-browser-secret"'],
+      "apps/desktop/src/snapShot/KdeSnapShot.ts": [
+        'KDE_CAPTURE_EXECUTABLE = "scient-kde-snap-shot";',
+      ],
+      "apps/desktop/src/snapShot/HyprlandSnapShot.ts": [
+        'HYPRLAND_CAPTURE_EXECUTABLE = "scient-hyprland-snap-shot";',
+      ],
+      "scripts/build-desktop-artifact.ts": [
+        monitorName,
+        "`release/scient-${input.backend}-snap-shot`",
+        "path.join(destination, `scient-${input.backend}-snap-shot`)",
+        '"browser-secret", "scient-browser-secret"',
+        '["kde-capture/scient-kde-snap-shot", "hyprland-capture/scient-hyprland-snap-shot"]',
+        'missingFiles: ["resource-monitor/scient-resource-monitor.exe"]',
+      ],
+      "native/resource-monitor/Cargo.toml": [cargoBin("scient-resource-monitor")],
+      "native/kde-snap-shot/Cargo.toml": [cargoBin("scient-kde-snap-shot")],
+      "native/hyprland-snap-shot/Cargo.toml": [cargoBin("scient-hyprland-snap-shot")],
+      ".github/workflows/release.yml": [
+        "/release/scient-resource-monitor${{",
+        "/release/scient-kde-snap-shot\n",
+        "/release/scient-hyprland-snap-shot\n",
+        "binary=scient-resource-monitor.exe",
+        'cp "$dir"/scient-resource-monitor* ',
+      ],
+      ".github/scripts/linux-packaging-probe.test.mjs": packagedRuntime,
+      "scripts/qualify-linux-packaged-runtime.mjs": packagedRuntime,
+    };
+
+    for (const [file, expected] of Object.entries(sites)) {
+      const text = NodeFS.readFileSync(NodePath.join(repoRoot, file), "utf8");
+      for (const snippet of expected) assert.include(text, snippet, file);
+    }
+  });
+
+  it("leaves T3's helper names only in marked migration code", () => {
+    const legacyName =
+      /\bt3-(?:resource-monitor|browser-secret|kde-snap-shot|hyprland-snap-shot)\b/u;
+    const grep = NodeChildProcess.spawnSync(
+      "git",
+      [
+        "grep",
+        "-l",
+        "-z",
+        "-I",
+        "-E",
+        "t3-(resource-monitor|browser-secret|kde-snap-shot|hyprland-snap-shot)",
+        "--",
+        ":(exclude).repos",
+      ],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+    // git grep exits 1 when nothing matches.
+    assert.include([0, 1], grep.status, grep.stderr);
+    const files = grep.stdout
+      .split("\0")
+      .filter(
+        (file) =>
+          /\.(?:[cm]?[jt]sx?|json|ya?ml|toml|rs|c|sh|ps1)$/u.test(file) &&
+          !/(?:\/fixtures\/|\.test\.[cm]?[jt]sx?$)/u.test(file),
+      );
+
+    const offenders = files.filter((file) => {
+      let text = NodeFS.readFileSync(NodePath.join(repoRoot, file), "utf8").replace(
+        /SCIENT-FORK:START[\s\S]*?SCIENT-FORK:END/gu,
+        "",
+      );
+      // Each crate keeps T3's package name so its Cargo.lock entry still merges.
+      if (file.endsWith("Cargo.toml")) text = text.replace(/^name = "t3-[a-z-]+"$/mu, "");
+      return legacyName.test(text);
+    });
+    assert.deepStrictEqual(offenders, []);
   });
 
   it("installs workspace dependencies before running release assembly scripts", () => {
