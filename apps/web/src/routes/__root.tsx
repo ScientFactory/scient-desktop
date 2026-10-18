@@ -23,6 +23,9 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+// SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
+import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
+// SCIENT-FORK:END
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
@@ -198,6 +201,9 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost suspended />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -252,6 +258,9 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           <ProjectCloneToastCoordinator />

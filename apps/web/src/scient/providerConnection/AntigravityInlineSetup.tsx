@@ -534,7 +534,7 @@ export function AntigravityInlineSetup(props: {
       openingFailure ??
       (browserOpening?.status === "opened"
         ? "Complete the official Antigravity sign-in in your browser."
-        : browserOpening !== null || browser.startInFlight
+        : browserOpening !== null || browser.startedHere
           ? "Opening Google sign-in in your browser…"
           : "Open the Google sign-in page to continue.");
     const waitingForAuthorizationCode =
@@ -614,7 +614,7 @@ export function AntigravityInlineSetup(props: {
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
                   ? "Open sign-in help"
-                  : browserOpening === null && !browser.startInFlight
+                  : browserOpening === null && !browser.startedHere
                     ? "Open Google sign-in"
                     : "Reopen Google sign-in"}
               </Button>

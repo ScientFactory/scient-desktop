@@ -105,10 +105,10 @@ export function ScientAgentAccounts(props: {
       key: signInKey,
       providerName,
       previousOperationId: operation?.operationId ?? null,
-      start: () =>
+      start: (signInRequestId) =>
         startConnection({
           environmentId: props.environmentId,
-          input: { instanceId, method: ACCOUNT_METHOD, account: account.id },
+          input: { instanceId, method: ACCOUNT_METHOD, account: account.id, signInRequestId },
         }),
       operationOf: (started) =>
         started._tag === "Success"

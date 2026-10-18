@@ -3,11 +3,15 @@
  * once, whatever setup view is mounted when the page becomes available.
  *
  * Starting a sign-in can take a minute (Antigravity unpacks itself first), and
- * the view that started it may close or remount meanwhile. The start command's
- * response is what this client alone receives, so it decides the opening; other
- * clients and windows see the same operation but never open its page. State
- * lives here, keyed by environment, provider instance and operation, so a
- * remounted view shows what happened and never opens the page a second time.
+ * the view that started it may close or remount meanwhile, or the start reply
+ * may be lost to a brief disconnect. Before sending a start, the client records
+ * a random sign-in request id here and sends it along; the server stamps it on
+ * the operation it creates. The page opens when the start reply or a streamed
+ * provider snapshot shows an operation with an id this client holds, waiting
+ * on a primary sign-in page. Other clients see the id but do not hold it, so
+ * they never open the page. Ids held for a sign-in still starting survive a
+ * renderer reload in session storage; a full quit leaves the card's
+ * "Open sign-in page" action.
  */
 import type {
   EnvironmentId,
@@ -19,6 +23,7 @@ import type {
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { randomUUID } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
 
@@ -67,12 +72,28 @@ export async function openProviderAuthorizationPage(url: string): Promise<void> 
   window.open(url, "_blank", "popup,noopener,noreferrer");
 }
 
+interface PendingRequest {
+  readonly id: string;
+  readonly createdAt: number;
+}
+
+/**
+ * Longer than any provider's sign-in window plus its start (Antigravity allows
+ * five minutes after a start of up to a minute). The server operation carries no
+ * deadline, so an id whose operation never reports a terminal state ends here.
+ */
+const PENDING_REQUEST_LIFETIME_MS = 15 * 60_000;
+const STORAGE_KEY = "scient.providerSignIn.pendingRequests.v1";
 const MAX_RETAINED_OPENINGS = 64;
+
 const openings = new Map<string, ProviderSignInBrowserOpening>();
+const pending = new Map<string, ReadonlyArray<PendingRequest>>();
 const surfaces = new Map<string, number>();
 const startsInFlight = new Map<string, number>();
 const listeners = new Set<() => void>();
 let openPage: (url: string) => Promise<void> = openProviderAuthorizationPage;
+let now: () => number = Date.now;
+let pendingKeysSnapshot: ReadonlyArray<ProviderSignInKey> = [];
 
 const keyOf = (key: ProviderSignInKey) => `${key.environmentId}\u0000${key.instanceId}`;
 const openingKeyOf = (key: ProviderSignInKey, operationId: string) =>
@@ -86,6 +107,105 @@ function adjustCount(counts: Map<string, number>, id: string, delta: number) {
   const next = (counts.get(id) ?? 0) + delta;
   if (next > 0) counts.set(id, next);
   else counts.delete(id);
+}
+
+function sessionStore(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function isPendingRequest(value: unknown): value is PendingRequest {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    /^[A-Za-z0-9-]{8,64}$/.test(value.id) &&
+    "createdAt" in value &&
+    typeof value.createdAt === "number"
+  );
+}
+
+function refreshPendingKeys() {
+  pendingKeysSnapshot = [...pending.keys()].map((id) => {
+    const [environmentId, instanceId] = id.split("\u0000");
+    return {
+      environmentId: environmentId as EnvironmentId,
+      instanceId: instanceId as ProviderInstanceId,
+    };
+  });
+}
+
+function persistPending() {
+  const storage = sessionStore();
+  if (!storage) return;
+  try {
+    if (pending.size === 0) storage.removeItem(STORAGE_KEY);
+    else storage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(pending)));
+  } catch {
+    // Storage can be full or unavailable; the ids still work until a reload.
+  }
+}
+
+function hydratePending() {
+  pending.clear();
+  const raw = sessionStore()?.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [id, requests] of Object.entries(parsed)) {
+          if (!Array.isArray(requests)) continue;
+          const valid = requests.filter(isPendingRequest);
+          if (valid.length > 0) pending.set(id, valid);
+        }
+      }
+    } catch {
+      // A malformed entry only loses ids from before the reload.
+    }
+  }
+  refreshPendingKeys();
+  dropExpired();
+}
+
+function setPending(id: string, requests: ReadonlyArray<PendingRequest>) {
+  if (requests.length > 0) pending.set(id, requests);
+  else pending.delete(id);
+  refreshPendingKeys();
+  persistPending();
+}
+
+function dropExpired() {
+  const cutoff = now() - PENDING_REQUEST_LIFETIME_MS;
+  let changed = false;
+  for (const [id, requests] of pending) {
+    const live = requests.filter((request) => request.createdAt > cutoff);
+    if (live.length === requests.length) continue;
+    setPending(id, live);
+    changed = true;
+  }
+  if (changed) notify();
+}
+
+function holds(key: ProviderSignInKey, requestId: string | undefined): boolean {
+  return (
+    requestId !== undefined &&
+    (pending.get(keyOf(key)) ?? []).some((request) => request.id === requestId)
+  );
+}
+
+function release(key: ProviderSignInKey, requestId: string) {
+  const id = keyOf(key);
+  const requests = pending.get(id) ?? [];
+  if (!requests.some((request) => request.id === requestId)) return;
+  setPending(
+    id,
+    requests.filter((request) => request.id !== requestId),
+  );
+  notify();
 }
 
 function setOpening(id: string, opening: ProviderSignInBrowserOpening) {
@@ -126,64 +246,132 @@ async function openFor(input: {
   }
 }
 
-/**
- * Opens the page of a sign-in this client just started, from the start
- * command's response. Only a new operation that is waiting with a primary
- * sign-in page qualifies, and each operation opens at most once.
- */
-async function openStartedProviderSignIn(input: {
-  readonly key: ProviderSignInKey;
-  readonly previousOperationId: string | null;
-  readonly operation: ProviderConnectionOperation | null | undefined;
-  readonly providerName: string;
-}): Promise<void> {
-  const operation = input.operation;
-  if (
-    !operation ||
-    operation.operationId === input.previousOperationId ||
-    (operation.status !== "waiting_for_browser" &&
-      operation.status !== "waiting_for_device_code") ||
-    operation.authorizationUrlKind !== "primary" ||
-    !operation.authorizationUrl ||
-    openings.has(openingKeyOf(input.key, operation.operationId))
-  ) {
+function opensPage(
+  operation: ProviderConnectionOperation,
+): operation is ProviderConnectionOperation & {
+  readonly authorizationUrl: string;
+} {
+  return (
+    (operation.status === "waiting_for_browser" ||
+      operation.status === "waiting_for_device_code") &&
+    operation.authorizationUrlKind === "primary" &&
+    operation.authorizationUrl !== undefined
+  );
+}
+
+const TERMINAL_STATUSES = new Set<ProviderConnectionOperation["status"]>([
+  "connected",
+  "failed",
+  "cancelled",
+]);
+
+/** Acts on an operation that carries one of this client's request ids. */
+async function considerOwnOperation(
+  key: ProviderSignInKey,
+  operation: ProviderConnectionOperation,
+  providerName: string,
+): Promise<void> {
+  const requestId = operation.signInRequestId;
+  if (requestId === undefined || !holds(key, requestId)) return;
+  if (TERMINAL_STATUSES.has(operation.status)) {
+    release(key, requestId);
     return;
   }
+  if (!opensPage(operation)) return;
+  // Released before opening, so a reload while the page opens never opens it again.
+  release(key, requestId);
+  if (openings.has(openingKeyOf(key, operation.operationId))) return;
   await openFor({
-    key: input.key,
+    key,
     operationId: operation.operationId,
     url: operation.authorizationUrl,
-    providerName: input.providerName,
+    providerName,
   });
 }
 
 /**
- * Runs this client's start command and then opens the sign-in page it reports.
- * While the command runs, setup views know this client is the one starting.
+ * Feeds streamed provider snapshots of one environment in which this client
+ * holds a request id (`ProviderSignInPageCoordinator` does, once for the app).
+ */
+export function observeProviderSignInSnapshots(
+  environmentId: EnvironmentId,
+  providers: ReadonlyArray<ServerProvider>,
+): void {
+  dropExpired();
+  for (const provider of providers) {
+    const key = { environmentId, instanceId: provider.instanceId };
+    if (!pending.has(keyOf(key))) continue;
+    const providerName = provider.displayName?.trim() || String(provider.driver);
+    for (const operation of [
+      provider.connection?.operation,
+      provider.connection?.accountOperation,
+    ]) {
+      if (operation) void considerOwnOperation(key, operation, providerName);
+    }
+  }
+}
+
+function isServerRejection(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "ProviderConnectionError"
+  );
+}
+
+/**
+ * Runs this client's start command with a fresh sign-in request id and opens
+ * the sign-in page it leads to. A start the server rejected releases its id; an
+ * unknown outcome (a lost reply) keeps it, so the stream can still open the page.
  */
 export async function startProviderSignIn<T>(input: {
   readonly key: ProviderSignInKey;
   readonly providerName: string;
   readonly previousOperationId: string | null;
-  readonly start: () => Promise<T>;
+  readonly start: (signInRequestId: string) => Promise<T>;
   readonly operationOf: (result: T) => ProviderConnectionOperation | null | undefined;
 }): Promise<T> {
+  dropExpired();
   const id = keyOf(input.key);
+  const requestId = randomUUID();
+  setPending(id, [...(pending.get(id) ?? []), { id: requestId, createdAt: now() }]);
   adjustCount(startsInFlight, id, 1);
   notify();
   let result: T;
   try {
-    result = await input.start();
+    result = await input.start(requestId);
+  } catch (error) {
+    if (isServerRejection(error)) release(input.key, requestId);
+    throw error;
   } finally {
     adjustCount(startsInFlight, id, -1);
     notify();
   }
-  await openStartedProviderSignIn({
-    key: input.key,
-    previousOperationId: input.previousOperationId,
-    operation: input.operationOf(result),
-    providerName: input.providerName,
-  });
+  const operation = input.operationOf(result);
+  if (operation?.signInRequestId !== undefined) {
+    // A start this client joined to one already in flight shares that start's
+    // operation, so its own id has nothing left to identify.
+    if (operation.signInRequestId !== requestId) release(input.key, requestId);
+    await considerOwnOperation(input.key, operation, input.providerName);
+    return result;
+  }
+  // A server that does not stamp request ids: the reply alone identifies the
+  // operation, and only when it is new.
+  release(input.key, requestId);
+  if (
+    operation &&
+    operation.operationId !== input.previousOperationId &&
+    opensPage(operation) &&
+    !openings.has(openingKeyOf(input.key, operation.operationId))
+  ) {
+    await openFor({
+      key: input.key,
+      operationId: operation.operationId,
+      url: operation.authorizationUrl,
+      providerName: input.providerName,
+    });
+  }
   return result;
 }
 
@@ -194,11 +382,19 @@ function subscribe(listener: () => void) {
   };
 }
 
+const readPendingKeys = () => pendingKeysSnapshot;
+
+/** The provider instances for which this client holds a sign-in request id. */
+export function usePendingProviderSignInKeys(): ReadonlyArray<ProviderSignInKey> {
+  return useSyncExternalStore(subscribe, readPendingKeys, readPendingKeys);
+}
+
 /**
  * What this client did about the operation's sign-in page, for a setup view.
- * `opening` is `null` until it opens the page; with no start in flight here,
- * another client started the sign-in or its response never arrived. While
- * mounted, the view also receives opening failures instead of a toast.
+ * `opening` is `null` until it opens the page. `startedHere` says this client
+ * started the operation and is about to open it; when both are unset, another
+ * client started the sign-in, or this client lost track of it (a full quit).
+ * While mounted, the view also receives opening failures instead of a toast.
  */
 export function useProviderSignInBrowser(
   key: ProviderSignInKey,
@@ -206,7 +402,7 @@ export function useProviderSignInBrowser(
   providerName: string,
 ): {
   readonly opening: ProviderSignInBrowserOpening | null;
-  readonly startInFlight: boolean;
+  readonly startedHere: boolean;
   readonly reopen: () => Promise<void>;
 } {
   const { environmentId, instanceId } = key;
@@ -216,6 +412,7 @@ export function useProviderSignInBrowser(
     return () => adjustCount(surfaces, surface, -1);
   }, [environmentId, instanceId]);
   const operationId = operation?.operationId ?? null;
+  const requestId = operation?.signInRequestId;
   const url = operation?.authorizationUrl ?? null;
   // Each snapshot is the stored value itself, so memoized renders see every change.
   const readOpening = useCallback(
@@ -226,25 +423,44 @@ export function useProviderSignInBrowser(
     [environmentId, instanceId, operationId],
   );
   const opening = useSyncExternalStore(subscribe, readOpening, readOpening);
-  const readStartInFlight = useCallback(
-    () => startsInFlight.has(keyOf({ environmentId, instanceId })),
-    [environmentId, instanceId],
-  );
-  const startInFlight = useSyncExternalStore(subscribe, readStartInFlight, readStartInFlight);
+  const readStartedHere = useCallback(() => {
+    const signInKey = { environmentId, instanceId };
+    return requestId !== undefined
+      ? holds(signInKey, requestId)
+      : startsInFlight.has(keyOf(signInKey));
+  }, [environmentId, instanceId, requestId]);
+  const startedHere = useSyncExternalStore(subscribe, readStartedHere, readStartedHere);
   const reopen = useCallback(async () => {
     if (operationId === null || url === null) return;
     await openFor({ key: { environmentId, instanceId }, operationId, url, providerName });
   }, [environmentId, instanceId, operationId, providerName, url]);
-  return { opening, startInFlight, reopen };
+  return { opening, startedHere, reopen };
 }
 
-/** Test seam: replaces how pages open and forgets every opening. */
+hydratePending();
+
+/**
+ * Test seam: replaces how pages open and the clock, and forgets everything held
+ * in memory. With `reload`, request ids come back from session storage as after
+ * a renderer reload; otherwise session storage is cleared too.
+ */
 export function resetProviderSignInBrowserForTests(
-  open: (url: string) => Promise<void> = openProviderAuthorizationPage,
+  options: {
+    readonly open?: (url: string) => Promise<void>;
+    readonly now?: () => number;
+    readonly reload?: boolean;
+  } = {},
 ): void {
-  openPage = open;
+  openPage = options.open ?? openProviderAuthorizationPage;
+  now = options.now ?? Date.now;
   openings.clear();
   surfaces.clear();
   startsInFlight.clear();
+  if (options.reload) hydratePending();
+  else {
+    pending.clear();
+    sessionStore()?.removeItem(STORAGE_KEY);
+    refreshPendingKeys();
+  }
   notify();
 }

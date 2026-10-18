@@ -322,6 +322,7 @@ describe("actual picker provider setup", () => {
         instanceId: provider.instanceId,
         method: "scient_agent_account",
         account: "openai-codex",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     const waiting: ServerProvider = {
@@ -534,6 +535,7 @@ describe("composed picker Connect models overlay", () => {
         instanceId: ProviderInstanceId.make("scient_work"),
         method: "scient_agent_account",
         account: "account-39",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("");

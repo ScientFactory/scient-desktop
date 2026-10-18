@@ -140,7 +140,7 @@ export function CursorInlineSetup(props: {
     pageOpenFailure ??
     (browserOpening?.status === "opened"
       ? "Complete sign-in in your browser."
-      : browserOpening !== null || browser.startInFlight
+      : browserOpening !== null || browser.startedHere
         ? "Opening the sign-in page in your browser…"
         : "Open the sign-in page to continue.");
   const isAuthenticated = props.provider.auth.status === "authenticated";
@@ -401,7 +401,7 @@ export function CursorInlineSetup(props: {
               variant="ghost-muted"
             >
               <ExternalLinkIcon aria-hidden />{" "}
-              {browserOpening === null && !browser.startInFlight
+              {browserOpening === null && !browser.startedHere
                 ? "Open Cursor sign-in"
                 : "Reopen Cursor sign-in"}
             </Button>

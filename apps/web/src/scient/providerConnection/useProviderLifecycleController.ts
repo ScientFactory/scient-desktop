@@ -155,10 +155,10 @@ export function useProviderLifecycleController(input: {
         key: signInKey,
         providerName,
         previousOperationId: currentOperationId,
-        start: async () => {
+        start: async (signInRequestId) => {
           const result = await startProviderConnection({
             environmentId: input.environmentId,
-            input: { instanceId, method, ...(mode ? { mode } : {}) },
+            input: { instanceId, method, signInRequestId, ...(mode ? { mode } : {}) },
           });
           const value = resultValue(result, "Scient could not start provider sign in.");
           return providerFromResult(value.providers, instanceId);

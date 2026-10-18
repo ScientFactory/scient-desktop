@@ -14,7 +14,11 @@ import { page } from "vitest/browser";
 
 import { toastManager } from "../../components/ui/toast";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
-import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
+import {
+  observeProviderSignInSnapshots,
+  resetProviderSignInBrowserForTests,
+  startProviderSignIn,
+} from "./providerSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const INSTANCE_ID = ProviderInstanceId.make("antigravity");
@@ -27,8 +31,9 @@ const signInKey = {
   instanceId: INSTANCE_ID,
 };
 
-// The server's answer to this client's start command.
+// The server's answer to this client's start command; it stamps the request id it received.
 const serverStart = vi.fn<() => Promise<ServerProvider>>();
+let requestId: string | undefined;
 const openPage = vi.fn<(url: string) => Promise<void>>();
 let latest: ServerProvider;
 
@@ -39,7 +44,10 @@ const controller = {
       key: signInKey,
       providerName: "Antigravity",
       previousOperationId: latest.connection?.operation?.operationId ?? null,
-      start: serverStart,
+      start: (signInRequestId) => {
+        requestId = signInRequestId;
+        return serverStart();
+      },
       operationOf: (provider) => provider.connection?.operation,
     }),
   ),
@@ -81,12 +89,17 @@ function operation(patch: Partial<ProviderConnectionOperation> = {}): ProviderCo
   };
 }
 
+/** An operation created by this client's start request. */
+function mine(patch: Partial<ProviderConnectionOperation> = {}): ProviderConnectionOperation {
+  return operation({ ...patch, ...(requestId ? { signInRequestId: requestId } : {}) });
+}
+
 function starting(): ProviderConnectionOperation {
   const {
     authorizationUrl: _url,
     authorizationUrlKind: _kind,
     ...value
-  } = operation({ status: "starting", message: "Starting Antigravity." });
+  } = mine({ status: "starting", message: "Starting Antigravity." });
   return value;
 }
 
@@ -139,9 +152,10 @@ const text = () => host!.textContent ?? "";
 beforeEach(() => {
   vi.resetAllMocks();
   latest = snapshot();
+  requestId = undefined;
   openPage.mockResolvedValue(undefined);
-  resetProviderSignInBrowserForTests(openPage);
-  serverStart.mockResolvedValue(snapshot(operation()));
+  resetProviderSignInBrowserForTests({ open: openPage });
+  serverStart.mockImplementation(async () => snapshot(mine()));
   controller.cancelConnection.mockResolvedValue(snapshot());
   controller.submitAuthorizationCode.mockResolvedValue(snapshot());
 });
@@ -166,20 +180,55 @@ describe("Antigravity sign-in page", () => {
     expect(text()).toContain("This can take up to a minute.");
 
     closeView(snapshot(starting()));
-    start.resolve(snapshot(operation()));
+    start.resolve(snapshot(mine()));
     await vi.waitFor(() => expect(openPage.mock.calls).toEqual([[AUTHORIZATION_URL]]));
 
     // Back in the view, and through reconnects that redeliver the same snapshot.
-    renderProvider(snapshot(operation()));
-    renderProvider(snapshot(operation()));
+    renderProvider(snapshot(mine()));
+    renderProvider(snapshot(mine()));
     await expect
       .element(page.getByText("Complete the official Antigravity sign-in in your browser."))
       .toBeVisible();
-    closeView(snapshot(operation()));
-    renderProvider(snapshot(operation()));
+    closeView(snapshot(mine()));
+    renderProvider(snapshot(mine()));
     await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
     expect(openPage).toHaveBeenCalledTimes(1);
     expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  it("opens once from the stream when the start reply is lost and the view has closed", async () => {
+    serverStart.mockReturnValue(new Promise<never>(() => undefined));
+    renderProvider(snapshot());
+    await page.getByRole("button", { name: "Sign in with Google" }).click();
+    closeView(snapshot(starting()));
+
+    // What the app-level coordinator feeds from the provider stream.
+    observeProviderSignInSnapshots(signInKey.environmentId, [snapshot(mine())]);
+    observeProviderSignInSnapshots(signInKey.environmentId, [snapshot(mine())]);
+    await vi.waitFor(() => expect(openPage.mock.calls).toEqual([[AUTHORIZATION_URL]]));
+
+    renderProvider(snapshot(mine()));
+    await expect
+      .element(page.getByText("Complete the official Antigravity sign-in in your browser."))
+      .toBeVisible();
+    expect(openPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens once after a renderer reload during the slow start", async () => {
+    serverStart.mockReturnValue(new Promise<never>(() => undefined));
+    renderProvider(snapshot());
+    await page.getByRole("button", { name: "Sign in with Google" }).click();
+    closeView(snapshot(starting()));
+
+    resetProviderSignInBrowserForTests({ open: openPage, reload: true });
+    renderProvider(snapshot(starting()));
+    await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
+    observeProviderSignInSnapshots(signInKey.environmentId, [snapshot(mine())]);
+    renderProvider(snapshot(mine()));
+    await vi.waitFor(() => expect(openPage).toHaveBeenCalledTimes(1));
+    await expect
+      .element(page.getByText("Complete the official Antigravity sign-in in your browser."))
+      .toBeVisible();
   });
 
   it("does not open another client's sign-in, or claim that a page is open", async () => {
@@ -201,8 +250,8 @@ describe("Antigravity sign-in page", () => {
     const toastAdd = vi.spyOn(toastManager, "add");
     openPage.mockRejectedValueOnce(PRIVATE_BROWSER_FAILURE);
     serverStart.mockImplementation(async () => {
-      renderProvider(snapshot(operation()));
-      return snapshot(operation());
+      renderProvider(snapshot(mine()));
+      return snapshot(mine());
     });
     renderProvider(snapshot());
 
@@ -227,11 +276,11 @@ describe("Antigravity sign-in page", () => {
 
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     closeView(snapshot(starting()));
-    start.resolve(snapshot(operation()));
+    start.resolve(snapshot(mine()));
     await vi.waitFor(() => expect(toastAdd).toHaveBeenCalledTimes(1));
     expect(JSON.stringify(toastAdd.mock.calls[0]![0])).not.toContain("private");
 
-    renderProvider(snapshot(operation()));
+    renderProvider(snapshot(mine()));
     await expect.element(page.getByRole("alert")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Reopen Google sign-in" })).toBeEnabled();
   });
