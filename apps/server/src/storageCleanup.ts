@@ -2,6 +2,7 @@ import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -884,10 +885,23 @@ const make = Effect.gen(function* () {
               return "thread activity or shared worktree changed since check";
           }
           // Sessions can outlive their run and can be shared across app threads.
-          const sessionRows = yield* sql<{ payload_json: string }>`
+          // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded
+          // stopped after its physical close timed out can still run its process, and
+          // isLive reports it; ask every stored session, then read only live payloads.
+          const liveIds = (yield* Effect.filter(
+            yield* sql<{ provider_session_id: string }>`
+              SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions
+            `,
+            (row) => providerSessions.isLive(ProviderSessionId.make(row.provider_session_id)),
+          )).map((row) => row.provider_session_id);
+          const sessionRows =
+            liveIds.length === 0
+              ? []
+              : yield* sql<{ payload_json: string }>`
             SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
+            WHERE provider_session_id IN ${sql.in(liveIds)}
           `;
+          // SCIENT-FORK:END retiring-session-worktree-retention
           const sessions = yield* Effect.forEach(sessionRows, (row) =>
             decodeCleanupSession(row.payload_json),
           );

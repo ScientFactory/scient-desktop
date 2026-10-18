@@ -158,6 +158,9 @@ for those.
 While the update runs, hover the control to see each environment's progress.
 When it finishes, one summary lists what was updated and each failure. When
 this desktop app installs last, the summary appears after it restarts.
+**Retry** updates a failed server to the version you confirmed, and only while
+that server is still eligible for it. A server that was offline when its turn
+came offers Retry again once it reconnects.
 
 The confirmation identifies the servers that will restart and whether they can
 resume interrupted threads. Continuation still requires that server's supported
