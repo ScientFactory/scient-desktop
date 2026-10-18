@@ -968,8 +968,14 @@ async function main(argv) {
 }
 
 if (NodePath.resolve(process.argv[1] ?? "") === NodeURL.fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2).filter((arg) => arg !== "--")).catch((error) => {
-    console.error(`[dev-app] ${error instanceof Error ? error.message : String(error)}`);
+  const argv = process.argv.slice(2).filter((arg) => arg !== "--");
+  main(argv).catch((error) => {
+    const message = `[dev-app] ${error instanceof Error ? error.message : String(error)}`;
+    console.error(message);
+    // The runner's own console is hidden; its failures belong in the app log.
+    if (argv[0] === "runner")
+      appendLog(`${message}
+`);
     process.exitCode = 1;
   });
 }

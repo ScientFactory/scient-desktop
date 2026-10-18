@@ -72,6 +72,17 @@ export function selfOwner(purpose) {
   return { pid: process.pid, start: self.start, purpose, at: new Date().toISOString() };
 }
 
+const SHELLS = new Set([
+  "bash.exe",
+  "sh.exe",
+  "cmd.exe",
+  "powershell.exe",
+  "pwsh.exe",
+  "zsh",
+  "bash",
+  "sh",
+]);
+
 /**
  * Processes whose executable or command line lies under one of `roots`
  * (excluding this process). `null` when the process list cannot be read.
@@ -89,6 +100,8 @@ export function findProcessesUnder(roots, { spawnSync = NodeChildProcess.spawnSy
       .map((line) => line.split("\t"))
       .filter(([pid, executable = "", commandLine = ""]) => {
         if (Number(pid) === process.pid) return false;
+        // A shell whose command merely mentions a path does not run from it.
+        if (SHELLS.has(NodePath.win32.basename(executable).toLowerCase())) return false;
         const text = `${executable}\n${commandLine}`.toLowerCase();
         return needles.some((needle) => text.includes(needle));
       })
@@ -100,6 +113,7 @@ export function findProcessesUnder(roots, { spawnSync = NodeChildProcess.spawnSy
     .split("\n")
     .map((line) => /^\s*(\d+)\s+(.*)$/u.exec(line))
     .filter((match) => match !== null && Number(match[1]) !== process.pid)
+    .filter((match) => !SHELLS.has(NodePath.basename(match[2].split(" ")[0]).replace(/^-/u, "")))
     .filter((match) => needles.some((needle) => match[2].toLowerCase().includes(needle)))
     .map((match) => ({ pid: Number(match[1]), executable: "", commandLine: match[2] }));
 }
@@ -165,7 +179,8 @@ public static class ScientDevJob {
     try {
       long creation, exit, kernel, user;
       if (!GetProcessTimes(process, out creation, out exit, out kernel, out user)) return "unknown";
-      if (creation != expectedCreation) return "other";
+      // CIM reports creation to the microsecond; a reused PID cannot start within 1 us.
+      if (Math.Abs(creation - expectedCreation) >= 10) return "other";
       if (!TerminateProcess(process, 1)) return "unknown";
       WaitForSingleObject(process, 10000);
       return "killed";
