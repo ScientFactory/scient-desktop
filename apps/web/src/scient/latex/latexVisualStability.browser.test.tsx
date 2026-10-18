@@ -614,6 +614,45 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
   expect(Math.abs(scroller(editor).scrollTop - 300)).toBeLessThan(2);
 }, 30000);
 
+it("keeps a scroll made before the reading line is taken again, corrects drift, and ignores clamping", async () => {
+  const editor = await open("visual-stability-scroll-then-layout");
+  await formulasRendered();
+  const scroll = scroller(editor);
+  // Content above everything grows, and pages settle, right after a scroll:
+  // in the same task (a restored position, the caret followed) or from the
+  // scroll event, before the next frame takes the new reading line.
+  const spacers: HTMLElement[] = [];
+  const growAndSettle = () => {
+    const spacer = document.createElement("div");
+    spacer.style.height = "80px";
+    editor.view.dom.before(spacer);
+    spacers.push(spacer);
+    editor.view.dom.dispatchEvent(new CustomEvent("scient-latex-layout"));
+  };
+  for (const during of ["task", "scroll event"]) {
+    scroll.scrollTop = 400;
+    await frames(3);
+    // Where the text is once scrolled, the growth above corrected away.
+    const expected = editor.view.dom.getBoundingClientRect().top - 1200;
+    if (during === "scroll event") scroll.addEventListener("scroll", growAndSettle, { once: true });
+    scroll.scrollTop += 1200;
+    if (during === "task") growAndSettle();
+    await frames(3);
+    expect(Math.abs(editor.view.dom.getBoundingClientRect().top - expected), during).toBeLessThan(
+      2,
+    );
+  }
+  // At the end, content shrinking above clamps the scroll range once the
+  // paper's frame follows it: the text read stays where it is rather than
+  // counting the clamp as a reading move.
+  scroll.scrollTop = scroll.scrollHeight;
+  await frames(3);
+  const end = editor.view.dom.getBoundingClientRect().top;
+  for (const spacer of spacers) spacer.remove();
+  await frames(3);
+  expect(Math.abs(editor.view.dom.getBoundingClientRect().top - end)).toBeLessThan(2);
+}, 30000);
+
 it("renumbers a reference in an unchanged title when labels change places", async () => {
   const document = (first: string, second: string) => String.raw`\documentclass{article}
 \usepackage{amsthm}
