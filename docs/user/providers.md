@@ -147,14 +147,17 @@ directly when the provider has one sign-in method that only needs a browser page
 (Codex's ChatGPT browser sign-in, Cursor, and Antigravity's Google account). The row shows
 **Starting** and then **Signing in**; select it for the details. A provider that asks you to choose
 a method, or shows a code or a pairing, opens its setup card instead, as does a flow that turns out
-to need something from you. When the provider runs on another computer, the card opens too, so you
-can paste the sign-in's return address there.
+to need something from you. When the provider may run on another computer, which is the case for
+every environment except the desktop app's own, the card opens too, so you can paste the sign-in's
+return address there.
 
 Scient opens a provider's sign-in page once, on the device where you started sign-in, even if you
 close the setup card, reload the window or briefly lose the connection while the provider starts.
 Other windows and devices show the sign-in in
 progress and offer to open the page, but never open it themselves. If the browser cannot open, the
-setup card says so, or a notification offers **Open sign-in page** when the card is closed.
+setup card says so, or a notification offers **Open sign-in page** when the card is closed. In a
+browser tab, a sign-in page that opens after a long start is often blocked as a popup; Scient then
+says so, and **Open sign-in page** opens it.
 
 Scient shows a code field only when the active provider operation says it can accept one. A submitted
 code goes to that live process and is not saved as provider state.

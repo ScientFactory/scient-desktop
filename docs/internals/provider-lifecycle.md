@@ -165,7 +165,20 @@ its start, or 15 minutes after it was made; held ids live in session storage, so
 a renderer reload during a slow start still opens the page, while a full quit
 leaves the card's open action. Against a server that does not stamp ids, the
 reply alone identifies a new operation. A remounted view or a reconnect does not
-open the page again. While a setup view for the instance
+open the page again. A window opened from another starts with a copy of its
+session storage, so before an automatic opening a window claims the operation in
+local storage, under a Web Lock where available; only the window that records the
+claim opens the page. Once the manager has published an accepted operation, the
+rest of its startup runs in a manager-owned fiber: the start request waits for it,
+but a reload or disconnect only detaches that request, while cancel, the provider's
+own failure or deadline, and manager teardown end the startup.
+
+In a browser tab, a page opened long after the user's click is usually blocked as
+a popup. Scient opens without `noopener` so it can see that, cuts the opener link
+afterwards, and records a blocked page as failed: the card and the notification
+say the browser blocked it and offer to open it, which works because that is the
+user's own click. The desktop app opens pages through the system browser and is
+not affected. While a setup view for the instance
 is mounted it shows an opening failure; otherwise a notification offers to open the
 page. Providers that open their own browser publish `manual_fallback` URLs, which
 open only on request. Scient Agent's account sign-ins use the same module. The
@@ -177,9 +190,11 @@ exactly one method that only needs a page Scient opens (`codex_browser`,
 `cursor_browser`, `antigravity_google`); a choice of methods, a device code, a
 pairing or configured credentials open the setup card. A started flow that turns out
 to wait on something other than that page also opens the card, as does any
-one-click start for an environment whose server is not on this device: the
-provider's browser return goes to `127.0.0.1` on the browser's device, so the
-card's paste field for the return URL must be visible.
+one-click start for an environment whose server is not known to be on this device:
+the provider's browser return goes to `127.0.0.1` on the browser's device, so the
+card's paste field for the return URL must be visible. Only the desktop app's own
+backends count as on this device; a browser tab on localhost may be reaching a
+remote server through a tunnel.
 
 ## Independent lifecycle state
 
