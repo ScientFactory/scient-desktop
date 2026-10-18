@@ -2030,3 +2030,81 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
     }),
   );
 });
+
+describe("ProviderConnectionManager failure stage", () => {
+  it.effect("announces a slow start and marks failures that came after the sign-in", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      let starts = 0;
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        startingMessage: "Starting the provider. This can take up to a minute.",
+        start: () => {
+          starts += 1;
+          return starts === 1
+            ? Effect.fail(
+                new ProviderConnectionActionError({
+                  message: "Signed in, but no session could start.",
+                  afterSignIn: true,
+                }),
+              )
+            : starts === 2
+              ? Effect.fail(new ProviderConnectionActionError({ message: "Sign-in declined." }))
+              : Effect.succeed({
+                  initialStatus: "waiting_for_browser",
+                  waitForCompletion: Deferred.await(completed),
+                  cancel: Effect.void,
+                });
+        },
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      const start = manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+
+      yield* start.pipe(Effect.flip);
+      yield* start.pipe(Effect.flip);
+      yield* start;
+      yield* Deferred.fail(
+        completed,
+        new ProviderConnectionActionError({ message: "Session failed.", afterSignIn: true }),
+      );
+      const transitions = yield* yieldUntil(
+        Ref.get(transitionsRef),
+        (items) => items.filter((item) => item?.status === "failed").length === 3,
+      );
+
+      assert.strictEqual(
+        transitions[0]?.message,
+        "Starting the provider. This can take up to a minute.",
+      );
+      assert.deepStrictEqual(
+        transitions
+          .filter((item) => item?.status === "failed")
+          .map((item) => item?.failedAfterSignIn ?? false),
+        [true, false, true],
+      );
+    }),
+  );
+
+  it.effect("marks a sign-in Scient could not verify as failed after the sign-in", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Effect.void,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+      assert.strictEqual(transitions[0]?.message, "Starting secure provider sign in.");
+      assert.strictEqual(transitions.at(-1)?.failedAfterSignIn, true);
+    }),
+  );
+});

@@ -95,6 +95,11 @@ export const ProviderConnectionOperation = Schema.Struct({
   account: Schema.optionalKey(ProviderConnectionAccountId),
   /** What the provider asks the user to do or paste, in its own words. */
   instructions: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  /**
+   * A failed operation whose provider accepted the account sign-in: the failure came while
+   * starting a session or verifying the account, so the sign-in itself did finish.
+   */
+  failedAfterSignIn: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 

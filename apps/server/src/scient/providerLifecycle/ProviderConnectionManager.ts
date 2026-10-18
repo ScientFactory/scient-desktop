@@ -91,6 +91,7 @@ function operation(input: {
   readonly userCode?: string;
   readonly account?: string | undefined;
   readonly instructions?: string | undefined;
+  readonly failedAfterSignIn?: boolean | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -110,6 +111,7 @@ function operation(input: {
     ...(input.userCode ? { userCode: input.userCode } : {}),
     ...(input.account ? { account: input.account } : {}),
     ...(input.instructions ? { instructions: input.instructions } : {}),
+    ...(input.failedAfterSignIn === true ? { failedAfterSignIn: true } : {}),
   };
 }
 
@@ -389,7 +391,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           account: input.account,
           status: "starting",
           startedAt,
-          message: "Starting secure provider sign in.",
+          message: actions.startingMessage ?? "Starting secure provider sign in.",
         }),
       });
 
@@ -398,7 +400,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         Effect.result,
         Effect.catchCause(() =>
           Effect.succeed(
-            Result.fail({
+            Result.fail<ProviderConnectionActionFailure>({
               message: "The provider sign-in flow stopped unexpectedly.",
             }),
           ),
@@ -426,6 +428,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               startedAt,
               finishedAt,
               message: attemptResult.failure.message,
+              failedAfterSignIn: attemptResult.failure.afterSignIn,
             }),
           }),
         );
@@ -576,6 +579,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   completion = Result.fail({
                     message:
                       "The provider finished sign in, but Scient could not verify the connected account.",
+                    afterSignIn: true,
                   });
                 }
               }
@@ -593,6 +597,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     completion._tag === "Success"
                       ? "Provider account connected."
                       : completion.failure.message,
+                  failedAfterSignIn:
+                    completion._tag === "Failure" ? completion.failure.afterSignIn : undefined,
                 }),
               });
               yield* cleanupIfCurrent(input.instanceId, operationId, "complete");
