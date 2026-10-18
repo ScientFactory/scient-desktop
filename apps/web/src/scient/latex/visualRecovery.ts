@@ -379,12 +379,23 @@ export function parkVisualFieldDrafts(key: string, retire = false): LatexVisualR
  * as source when it converts and as readable text when it does not, so ordinary
  * editing cannot clear the only copy of it.
  */
-export function parkUninstalledTypingDraft(key: string): LatexVisualRecovery | null {
-  const typing = readTypingDraft(key);
-  const identity = typingDraftIdentity(key);
+export function parkUninstalledTypingDraft(
+  key: string,
+  // The snapshot the editor read and tried to put back. Storage may hold
+  // another view's newer one by now; that one is not this editor's to move.
+  captured?: { readonly draft: TypingDraft; readonly identity: string },
+): LatexVisualRecovery | null {
+  const typing = captured?.draft ?? readTypingDraft(key);
+  const identity = captured?.identity ?? typingDraftIdentity(key);
   if (!typing || identity === null) return readStoredRecovery(key);
   const entry = typingEntry(typing, identity);
-  if (!park(key, entry)) return offered(entry, LIVE_TYPING + identity, false);
+  if (!park(key, entry)) {
+    if (typingDraftIdentity(key) === identity) return offered(entry, LIVE_TYPING + identity, false);
+    // Its stored copy is gone: offered from the editor's memory, and the user
+    // is told this document's recovery copy could not be stored.
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return offered(entry, UNSTORED + serialize(entry), false);
+  }
   discardTypingDraft(key, identity);
   return readStoredRecovery(key);
 }
