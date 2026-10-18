@@ -136,7 +136,11 @@ export function SidebarOtherUpdates({
     return () => window.clearTimeout(timer);
   }, [finishedKey, forget]);
 
-  if (circle === null) return null;
+  if (circle === null) {
+    // The card unmounts with the circle, without reporting that it closed.
+    if (open) setOpen(false);
+    return null;
+  }
   const canUpdateAll =
     !runActive && rows.some(({ item, state }) => state.status === "idle" && !item.manual);
   const runUpdateAll = async () => {
