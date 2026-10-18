@@ -508,7 +508,12 @@ function ensureMacLauncher(config) {
 
 async function stopApp(config) {
   const launch = readJsonFile(paths.launchPath);
-  if (launch && (await askApp(launch, "quit"))) {
+  const answer = launch ? await askApp(launch, "quit") : null;
+  if (answer) {
+    // Launches started from Finder or the Start menu return before readiness;
+    // the app's own answer records it before the next switch reads it.
+    const profile = answer.ready ? readProfile(paths.profilesDir, launch.profileId) : null;
+    if (profile?.meta.lastRunSha === launch.sha) markProfileReady(profile, launch.sha);
     log("asked the app to quit");
     await waitUntil(async () => (await askApp(launch, "status", 1_000)) === null, QUIT_TIMEOUT_MS);
   }
