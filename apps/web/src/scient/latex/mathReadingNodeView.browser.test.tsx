@@ -450,7 +450,7 @@ it("clicking beside a display returns to prose without initializing math", async
   await expect.poll(() => source).toBe(original);
 });
 
-it("equation tags return to the single-row CSS position after an external row change", async () => {
+it("equation tags return to the single-row position after an external row change", async () => {
   const aligned = String.raw`\begin{align}x&=y\\z&=w\end{align}`;
   await mount(`Before.\n\n${aligned}`);
   await expect.poll(() => host.querySelectorAll("[data-latex-equation-row]").length).toBe(2);
@@ -464,17 +464,25 @@ it("equation tags return to the single-row CSS position after an external row ch
   const next = source.replace(aligned, String.raw`\begin{equation}u=v\end{equation}`);
   replace(next);
   await expect.poll(() => host.querySelectorAll("[data-latex-equation-row]").length).toBe(1);
-  await expect
-    .poll(() => host.querySelector<HTMLElement>("[data-latex-equation-row]")?.style.top)
-    .toBe("");
-  const row = host.querySelector<HTMLElement>("[data-latex-equation-row]")!;
-  const formula = row.closest<HTMLElement>(".scient-latex-visual-display-math")!;
-  const labelBounds = row.getBoundingClientRect();
-  const formulaBounds = formula.getBoundingClientRect();
-  expect(
-    Math.abs(
-      labelBounds.top + labelBounds.height / 2 - formulaBounds.top - formulaBounds.height / 2,
-    ),
-  ).toBeLessThan(1);
+  // The tag sits on the formula's baseline, as amsmath sets it: where a freshly
+  // opened single equation puts it, not where the first aligned row was.
+  const offset = () => {
+    const row = host.querySelector<HTMLElement>("[data-latex-equation-row]")!;
+    const formula = row.closest<HTMLElement>(".scient-latex-visual-display-math")!;
+    return row.getBoundingClientRect().top - formula.getBoundingClientRect().top;
+  };
+  for (let paint = 0; paint < 4; paint++) await frame();
+  const changed = offset();
   expect(source).toBe(next);
+  root.unmount();
+  host.remove();
+  await mount(`Before.\n\n${String.raw`\begin{equation}u=v\end{equation}`}`);
+  await expect.poll(() => host.querySelectorAll("[data-latex-equation-row]").length).toBe(1);
+  // Edited the same way: the field is open in both.
+  await userEvent.click(readers()[0]!.querySelector<HTMLElement>(".scient-latex-mathfield")!);
+  await expect
+    .poll(() => host.querySelector<MathfieldElement>("math-field")?.hasFocus())
+    .toBe(true);
+  for (let paint = 0; paint < 4; paint++) await frame();
+  expect(Math.abs(changed - offset())).toBeLessThan(1);
 });
