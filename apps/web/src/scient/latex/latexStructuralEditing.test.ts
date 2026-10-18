@@ -60,6 +60,39 @@ describe("bounded structural source validation", () => {
       )?.source,
     ).toBe(source);
   });
+  it("validates a split locally beside a paragraph whose spaces sit inside a wrapper", () => {
+    const source = document(
+      "\\textbf{ Lead} start.\r\n\r\nMiddle words.\r\n\r\nAfter \\emph{end }\r\n\r\nFar.",
+    );
+    const projection = projectLatexVisualDocument(source);
+    const [lead, middle, after, far] = projection.content.content!;
+    const block = projection.blocks[1]!;
+    const content = {
+      ...projection.content,
+      content: [lead!, paragraph("Middle"), paragraph("words."), after!, far!],
+    };
+    const edit = {
+      source,
+      patches: [
+        {
+          start: block.from,
+          end: block.to,
+          expected: block.source,
+          replacement: "Middle\r\n\r\nwords.",
+        },
+      ],
+    };
+    expect(middle).toBeDefined();
+    const changed = projectLatexSourceEdit(edit, content, source, projection)!;
+    expect(changed.source).toBe(
+      document(
+        "\\textbf{ Lead} start.\r\n\r\nMiddle\r\n\r\nwords.\r\n\r\nAfter \\emph{end }\r\n\r\nFar.",
+      ),
+    );
+    // Validated in its window: the untouched far block keeps its owner instead
+    // of being renumbered by a whole-document parse.
+    expect(changed.projection.blocks.at(-1)!.id).toBe(projection.blocks.at(-1)!.id);
+  });
   it("splits formatted prose, keeps untouched source bytes and distinct block owners, and undoes exactly", () => {
     const source = document(
       "Before~this.\r\n\r\n\\textbf{One~two three~four.}\r\n\r\nAfter~this.\r\n\r\nKeep~last.",
