@@ -1221,6 +1221,11 @@ tr[data-latex-longtable-band] {
 .node-latexDisplayMath[data-short-display] {
   margin-block: 0 0.6em;
 }
+/* The editing view mounts inside the reading view with the same class; the
+   display glue belongs to the outer block only. */
+.node-latexDisplayMath .node-latexDisplayMath {
+  margin: 0;
+}
 .scient-latex-visual-display-math {
   display: flow-root;
   position: relative;
