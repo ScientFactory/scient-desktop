@@ -1288,6 +1288,8 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document
   > .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
   content-visibility: visible;
+  /* Menus and popovers inside it position against the page, not the block. */
+  contain: none;
 }
 @media print {
   .scient-latex-visual-document > * {
