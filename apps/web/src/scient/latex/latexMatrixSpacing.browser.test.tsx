@@ -279,7 +279,8 @@ Before.
   math.insert("7");
   await frame();
   await expect.poll(() => finish?.()).toBe(true);
-  await expect.poll(() => published).toContain("[0.12 em]");
+  // Slow CI runners have exceeded the 1 s default here; no edit is lost.
+  await expect.poll(() => published, { timeout: 5000 }).toContain("[0.12 em]");
   expect(published).toContain("7");
   // Separate this structural edit from insertion/typing, as a user pause does.
   const editor = (host.querySelector(".tiptap") as HTMLElement & { editor: Editor }).editor;
