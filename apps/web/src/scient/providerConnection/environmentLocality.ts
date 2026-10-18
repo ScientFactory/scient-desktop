@@ -2,24 +2,25 @@ import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { useEnvironments } from "../../state/environments";
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /**
  * Whether the environment's server runs on the device showing this window.
  * Browser sign-ins that return to `127.0.0.1` only complete on that device; on
  * any other, the user pastes the return URL into the setup card instead.
  */
-function isConnectionTargetOnThisDevice(target: ConnectionTarget): boolean {
-  if (isDesktopLocalConnectionTarget(target)) return true;
-  if (target._tag !== "PrimaryConnectionTarget") return false;
-  // The desktop app's primary environment is its own backend; a browser tab's is
-  // whatever served it.
-  return window.desktopBridge !== undefined || LOOPBACK_HOSTS.has(window.location.hostname);
+export function isConnectionTargetOnThisDevice(target: ConnectionTarget): boolean {
+  // Only the desktop app knows its own backends. A browser tab on localhost can
+  // be reaching a remote server through a tunnel, so it never counts.
+  if (window.desktopBridge === undefined || isLocalEnvironmentDisabled()) return false;
+  return target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
 }
 
-/** {@link isConnectionTargetOnThisDevice} for an environment; false while it is unknown. */
+/**
+ * {@link isConnectionTargetOnThisDevice} for an environment; false when it is
+ * unknown, so the caller shows what the remote case needs.
+ */
 export function useEnvironmentIsOnThisDevice(environmentId: EnvironmentId): boolean {
   const { environments } = useEnvironments();
   const environment = environments.find((candidate) => candidate.environmentId === environmentId);
