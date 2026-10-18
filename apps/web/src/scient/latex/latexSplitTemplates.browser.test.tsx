@@ -252,6 +252,21 @@ it.each([
       host.removeEventListener("pointerdown", pointer, true);
     };
     host.addEventListener("pointerdown", pointer, true);
+    const probe = (event: MouseEvent) =>
+      console.error(
+        "PROBE",
+        event.type,
+        performance.now().toFixed(1),
+        event.clientX,
+        event.clientY,
+        event.detail,
+        scroll.scrollTop,
+        (event.target as Element)?.nodeName,
+        document.elementFromPoint(event.clientX, event.clientY)?.textContent?.slice(0, 40),
+      );
+    for (const type of ["mousedown", "mouseup", "dblclick"])
+      host.addEventListener(type, probe as EventListener, true);
+    console.error("PROBE before", name, word, scroll.scrollTop, JSON.stringify(hit.position));
     const cell = hit.element.closest<HTMLElement>("[data-table-cell]");
     if (cell) {
       const bounds = hit.element.getBoundingClientRect(),
@@ -303,6 +318,13 @@ it.each([
     }
     await expect.poll(() => state.reveals.length).toBe(1);
     const mapped = state.reveals[0]!;
+    console.error(
+      "PROBE after",
+      name,
+      scroll.scrollTop,
+      JSON.stringify(state.reveals),
+      document.getSelection()?.toString(),
+    );
     expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
     const field = document.activeElement;
     expect(

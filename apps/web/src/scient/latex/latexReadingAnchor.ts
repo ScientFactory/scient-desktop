@@ -231,6 +231,12 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             const scrolled = scroll.scrollTop - anchor.scrollTop;
             if (Math.abs(scrolled) > 0.5) {
               const drift = top - box.top - (anchor.offset - scrolled);
+              console.error("PROBE anchor scrolled-branch", performance.now().toFixed(1), {
+                scrolled,
+                drift,
+                scrollTop: scroll.scrollTop,
+                was: anchor.scrollTop,
+              });
               if (scrolled > 0 && Math.abs(drift) > 0.5) {
                 scroll.scrollTop += drift;
                 own = scroll.scrollTop;
@@ -240,6 +246,10 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             }
             const delta = top - box.top - anchor.offset;
             if (Math.abs(delta) <= 0.5) return;
+            console.error("PROBE anchor correct", performance.now().toFixed(1), {
+              delta,
+              scrollTop: scroll.scrollTop,
+            });
             scroll.scrollTop += delta;
             anchor.scrollTop = scroll.scrollTop;
             own = scroll.scrollTop;
@@ -275,6 +285,12 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
           };
           const scrolled = () => {
             const scroll = scroller();
+            console.error(
+              "PROBE scroll event",
+              performance.now().toFixed(1),
+              scroll?.scrollTop,
+              own,
+            );
             if (own !== null && scroll && Math.abs(scroll.scrollTop - own) < 1) {
               own = null;
               return;
