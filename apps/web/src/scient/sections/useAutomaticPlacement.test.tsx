@@ -170,6 +170,39 @@ it("places a dropped thread from an offline machine by its last known activity",
   render();
   expect(order()).toEqual(["local:x", "remote:r"]);
 });
+it("keeps live review deadlines running while an offline machine's deadline waits", async () => {
+  const groups = (active: string[]) => [
+    {
+      id: "general",
+      rows: ["remote:r", "local:l", "local:x"].map((key) => ({
+        key,
+        orderKey: key,
+        eligible: active.includes(key),
+      })),
+    },
+  ];
+  input = { ...input, groups: groups(["remote:r", "local:l"]) };
+  render();
+  // Read r, then leave: its deadline is 3000.
+  input = { ...input, groups: groups(["local:l"]), openKey: "remote:r" };
+  render();
+  input = { ...input, openKey: null };
+  render();
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  // Read l, then leave: its deadline is 4000.
+  input = { ...input, groups: groups([]), openKey: "local:l" };
+  render();
+  input = { ...input, openKey: null };
+  render();
+  // r's machine goes offline before its deadline.
+  input = { ...input, frozenEnvironmentIds: ["remote"] };
+  render();
+  // Past r's deadline, l's must still be armed.
+  await act(() => vi.advanceTimersByTimeAsync(2100));
+  expect(vi.getTimerCount()).toBeGreaterThan(0);
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(value.state.groups[0]!.upper).toEqual(["remote:r"]);
+});
 it("continues working with corrupt or unavailable local storage", () => {
   act(() => renderer.unmount());
   storage.set("scient:sidebar:placement-order:test", "{broken");

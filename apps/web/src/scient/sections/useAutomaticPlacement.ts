@@ -135,14 +135,17 @@ export function useAutomaticPlacement(input: {
 
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
-    const deadlines = state.pending.flatMap((entry) => (entry.dueAt === null ? [] : [entry.dueAt]));
+    // A frozen row's deadline waits for its environment, so it never arms the timer.
+    const deadlines = state.pending.flatMap((entry) =>
+      entry.dueAt === null || isFrozen(entry.key) ? [] : [entry.dueAt],
+    );
     if (deadlines.length === 0) return;
     const timer = window.setTimeout(
       () => setClock(Date.now()),
       Math.max(0, Math.min(...deadlines) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [enabled, input.ready, paused, state.pending]);
+  }, [enabled, input.ready, isFrozen, paused, state.pending]);
 
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
