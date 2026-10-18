@@ -55,12 +55,20 @@ function yieldColdDevelopmentApp(files: readonly ApprovedColdFile[]): void {
     coldStart,
     files: [...files],
   });
-  const args = [
-    NodePath.join(root, "scripts", "local-dev-app.mjs"),
-    "start",
-    `--cold-handoff=${receipt.path}`,
-  ];
-  if (role === "stable") args.push("--stable");
+  // The stable app starts through its installed controller (scripts/dev-app),
+  // which owns the reviewed commit and profile; a candidate through its checkout.
+  const args =
+    role === "stable"
+      ? [
+          NodePath.join(stateRoot, "controller", "scripts", "dev-app", "controller.mjs"),
+          "start",
+          `--cold-handoff=${receipt.path}`,
+        ]
+      : [
+          NodePath.join(root, "scripts", "local-dev-app.mjs"),
+          "start",
+          `--cold-handoff=${receipt.path}`,
+        ];
   const result = NodeChildProcess.spawnSync(nodePath, args, {
     cwd: root,
     encoding: "utf8",
