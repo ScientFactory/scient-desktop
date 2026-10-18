@@ -116,6 +116,7 @@
         "extractedIntentSend.vitest.config.ts",
         // Documented standalone Chromium selection qualification configuration.
         "latexSelection.vitest.config.ts",
+        "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx",
         // The Visual performance benchmark: its production build configuration,

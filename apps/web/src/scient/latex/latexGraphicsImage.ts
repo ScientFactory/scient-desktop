@@ -1,7 +1,7 @@
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
 /** Physical graphicx bounds: image resolution matters when trims use TeX lengths. */
-export function latexGraphicsPhysicalSize(bytes: Uint8Array) {
+function latexGraphicsPhysicalSize(bytes: Uint8Array) {
   const pixels = readImageDimensions(bytes);
   if (!pixels) return null;
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
