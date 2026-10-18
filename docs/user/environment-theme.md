@@ -40,8 +40,8 @@ Close the editor to show the latest selected theme.
 ## Publishing themes
 
 A machine publishes themes by writing files into the `themes` directory of the server state
-directory: `~/.scient-next/userdata/themes/` by default, or `~/.t3/userdata/themes/` for a
-server Scient started over SSH. The filename is the theme id — `nightfall.json`
+directory: `~/.scient-next/userdata/themes/` by default, including for a server Scient
+started over SSH. The filename is the theme id — `nightfall.json`
 appears as `nightfall` — and stays stable while the machine rewrites the colors underneath, so
 selections and defaults keep pointing at it.
 

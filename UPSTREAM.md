@@ -1348,7 +1348,26 @@ not restore T3 publication authority or a dependency on `t3@<Scient version>`.
 The server archive ships a `scient` command beside the retained `t3` one, and
 user instructions name `scient`. SSH launches run only the pinned Scient server
 release through that command (`packages/ssh/src/tunnel.ts`); they must not fall
-back to `t3@latest`, `t3@nightly`, or a `t3` already on the remote PATH. The
+back to `t3@latest`, `t3@nightly`, or a `t3` already on the remote PATH.
+SSH launches also use Scient's remote home `~/.scient-next`, never T3's
+`~/.t3`: the launcher adopts only a server whose runtime record is in that
+home, and pairing, stop, log and archive-runtime paths live there too. A launch
+that finds no `~/.scient-next` but a `~/.t3` database stops before creating
+anything; the desktop then runs a separate SSH step with its own budget that
+copies an earlier Scient home's `userdata` out of `~/.t3` once
+(`packages/ssh/src/scientRemoteHome.ts`), and launches again. It copies only
+when the migration ledger records a Scient-only migration, after stopping the
+server this launcher started there (once its process identity is confirmed),
+while holding that home's ownership lock, through SQLite's backup API, and
+never through symbolic links. A host's preparation runs as a job the SSH
+environment manager owns (`packages/ssh/src/scientSshPreparation.ts`); saved
+connections pass the `boundedWait` ensure option so a retry waits for a running
+preparation only up to a bound below the renderer's attempt deadline, while
+adding a host still waits for the whole preparation. The steps after that wait
+(readiness, pairing) are not bounded by it.
+Worktrees, projects and scratch folders stay in place because the database and
+Git refer to them by absolute path; the data in `~/.t3` is left in place. Upstream
+merges must not restore `~/.t3` paths in these scripts. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
 
