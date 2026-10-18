@@ -6,6 +6,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   createCoalescedRestartScheduler,
+  createWatchedFileStamps,
   developmentLauncherIsActive,
   findOwnedDevelopmentChildProcess,
   findOwnedDevelopmentProcesses,
@@ -255,5 +256,25 @@ describe("macOS development app process ownership", () => {
       ),
       "Scient (Dev) Stable",
     );
+  });
+});
+
+describe("createWatchedFileStamps", () => {
+  it("ignores events that leave a watched file's size and mtime unchanged", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "watched-stamps-"));
+    roots.push(root);
+    const bundlePath = NodePath.join(root, "main.cjs");
+    NodeFS.writeFileSync(bundlePath, "first");
+    const stamps = createWatchedFileStamps([bundlePath]);
+
+    NodeFS.readFileSync(bundlePath);
+    assert.isFalse(stamps.changed(bundlePath));
+
+    NodeFS.writeFileSync(bundlePath, "second build");
+    assert.isTrue(stamps.changed(bundlePath));
+    assert.isFalse(stamps.changed(bundlePath));
+
+    NodeFS.rmSync(bundlePath);
+    assert.isTrue(stamps.changed(bundlePath));
   });
 });

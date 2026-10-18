@@ -15,6 +15,7 @@ import {
 } from "./dev-app-bundle.mjs";
 import {
   createCoalescedRestartScheduler,
+  createWatchedFileStamps,
   developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   inspectProcessCommand,
@@ -464,6 +465,13 @@ const restartScheduler = createCoalescedRestartScheduler({
 });
 
 function startWatchers() {
+  // SCIENT-FORK:START — restart only for real rewrites; see createWatchedFileStamps.
+  const watchedFileStamps = createWatchedFileStamps(
+    watchedDirectories.flatMap(({ directory, files }) =>
+      [...files].map((file) => NodePath.join(desktopDir, directory, file)),
+    ),
+  );
+  // SCIENT-FORK:END
   for (const { directory, files } of watchedDirectories) {
     const watcher = NodeFS.watch(
       NodePath.join(desktopDir, directory),
@@ -472,6 +480,9 @@ function startWatchers() {
         if (typeof filename !== "string" || !files.has(filename)) {
           return;
         }
+        // SCIENT-FORK:START
+        if (!watchedFileStamps.changed(NodePath.join(desktopDir, directory, filename))) return;
+        // SCIENT-FORK:END
 
         restartScheduler.request();
       },

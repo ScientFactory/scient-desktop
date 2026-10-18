@@ -70,6 +70,10 @@ const buildCmd = Command.make(
   "build",
   {
     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    // SCIENT-FORK:START — desktop development (t3#build:dev) renders from Vite; without
+    // dist/client the server still falls back to apps/web/dist (resolveStaticDir).
+    skipWebClient: Flag.Boolean("skip-web-client").pipe(Flag.withDefault(false)),
+    // SCIENT-FORK:END
   },
   (config) =>
     Effect.gen(function* () {
@@ -91,7 +95,11 @@ const buildCmd = Command.make(
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
-      if (yield* fs.exists(webDist)) {
+      // SCIENT-FORK:START
+      if (config.skipWebClient) {
+        yield* Effect.log("[cli] Skipped the web client copy (development build).");
+      } else if (yield* fs.exists(webDist)) {
+        // SCIENT-FORK:END
         yield* fs.copy(webDist, clientTarget);
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
