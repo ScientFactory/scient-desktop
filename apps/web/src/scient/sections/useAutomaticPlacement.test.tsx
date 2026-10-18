@@ -145,6 +145,31 @@ it("sets aside an active thread dropped from another section without re-forming 
   expect(order()).toEqual(["x", "a", "y", "d"]);
   expect(value.state.groups[0]!.aside).toEqual(["d"]);
 });
+it("places a dropped thread from an offline machine by its last known activity", () => {
+  const row = (key: string, eligible: boolean, orderKey = key) => ({ key, eligible, orderKey });
+  const groups = (r: ReturnType<typeof row>) => [
+    { id: "general", rows: [row("local:x", false), r] },
+  ];
+  input = { ...input, groups: groups(row("remote:r", true)) };
+  render();
+  expect(order()).toEqual(["remote:r", "local:x"]);
+  // Offline: its stale copy says inactive, which is not believed.
+  input = { ...input, groups: groups(row("remote:r", false)), frozenEnvironmentIds: ["remote"] };
+  render();
+  act(() =>
+    value.onManualPlacement(
+      "general",
+      ["local:x", "remote:r"],
+      "remote:r",
+      new Map([["remote:r", "z"]]),
+    ),
+  );
+  expect(value.state.groups[0]!.aside).toEqual(["remote:r"]);
+  // Back online and still active, it stays where it was dropped.
+  input = { ...input, groups: groups(row("remote:r", true, "z")), frozenEnvironmentIds: [] };
+  render();
+  expect(order()).toEqual(["local:x", "remote:r"]);
+});
 it("continues working with corrupt or unavailable local storage", () => {
   act(() => renderer.unmount());
   storage.set("scient:sidebar:placement-order:test", "{broken");

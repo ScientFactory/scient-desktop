@@ -177,11 +177,16 @@ export function useAutomaticPlacement(input: {
         movedRow ?? current.groups.flatMap((group) => group.rows).find((row) => row.key === key);
       if (moved && source?.id !== groupId)
         moves.current.set(key, { before: source?.id ?? null, after: groupId, row: moved });
+      // A frozen row is placed by its last known eligibility, not its stale copy's.
+      const saved = current.isFrozen(key)
+        ? current.state.groups.flatMap((group) => group.rows).find((row) => row.key === key)
+        : undefined;
+      const placed = moved && saved ? { ...moved, eligible: saved.eligible } : moved;
       const inputs = current.groups.map((group) => ({
         ...group,
         rows: [
           ...group.rows.filter((row) => row.key !== key),
-          ...(group.id === groupId && moved ? [moved] : []),
+          ...(group.id === groupId && placed ? [placed] : []),
         ].map((row) =>
           orderKeys.has(row.key) ? { ...row, orderKey: orderKeys.get(row.key)! } : row,
         ),
