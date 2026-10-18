@@ -31,9 +31,11 @@ describe("transactional document input checkpoints", () => {
       conflict: false,
     };
     expect(await indexedDbMarkdownDrafts.replace(sourceKey, undefined, sourceCopy)).toBe(true);
+    const stored = await indexedDbMarkdownDrafts.read(sourceKey);
+    expect(stored).toMatchObject(sourceCopy);
     await indexedDbDocumentInputs.replace(inputKey, undefined, initial());
     await indexedDbDocumentInputs.replace(inputKey, "first");
-    expect(await indexedDbMarkdownDrafts.read(sourceKey)).toEqual(sourceCopy);
+    expect(await indexedDbMarkdownDrafts.read(sourceKey)).toEqual(stored);
     await indexedDbMarkdownDrafts.replace(sourceKey, "source-owner", undefined);
   });
   it("updates only changed blocks and retains the exact baseline and untouched writing", async () => {
