@@ -439,11 +439,21 @@ async function startApp(config, { coldHandoff } = {}) {
   // The Finder app that handed a file over waits for this command and must
   // exit before the managed app can take over; readiness is not awaited here.
   if (coldHandoff) return;
+  let ended = false;
   const ready = await waitUntil(
-    async () => (await askApp(launch, "status"))?.ready === true,
+    async () => {
+      if ((await askApp(launch, "status"))?.ready === true) return true;
+      // Windows: the job host records when the launch's runner has exited.
+      ended = readJsonFile(paths.jobEmptyPath)?.tokenHash === launch.tokenHash;
+      return ended;
+    },
     READY_TIMEOUT_MS,
     2_000,
   );
+  if (ended) {
+    printLogs(30);
+    fail(`${APP_NAME} exited while starting; the log above shows why.`);
+  }
   if (!ready) {
     fail(
       `${APP_NAME} did not become ready in time; it is left running. See pnpm dev:app:stable logs.`,
@@ -684,7 +694,10 @@ async function runner(tokenHash) {
         windowsHide: true,
         env: {
           ...process.env,
-          [pathKey]: `${binDir}${NodePath.delimiter}${process.env[pathKey] ?? ""}`,
+          // The scheduled task does not inherit the user's terminal PATH.
+          [pathKey]: [binDir, NodePath.dirname(process.execPath), process.env[pathKey] ?? ""].join(
+            NodePath.delimiter,
+          ),
           ...launchEnvironment(readController(), launch),
         },
       },
