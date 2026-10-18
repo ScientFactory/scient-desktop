@@ -267,9 +267,15 @@ it("typing, splitting and joining keep content above still without app scrolling
   const editor = await open("visual-stability-typing");
   await formulasRendered();
   const scroll = scroller(editor);
-  scroll.scrollTop = (scroll.scrollHeight - scroll.clientHeight) * 0.4;
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  const found = target(editor);
+  // Page gaps and paragraphs crossing pages can fill the middle of one scroll
+  // position; step past them to a long paragraph with a block visible above it.
+  let found: ReturnType<typeof target> = null;
+  for (const fraction of [0.4, 0.43, 0.46, 0.49, 0.52]) {
+    scroll.scrollTop = (scroll.scrollHeight - scroll.clientHeight) * fraction;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    found = target(editor);
+    if (found) break;
+  }
   expect(found).not.toBeNull();
   const { above, paragraph, caret } = found!;
   editor.view.dispatch(
