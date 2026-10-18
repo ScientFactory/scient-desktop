@@ -74,9 +74,34 @@ function ProgressRing() {
 
 const MUTED = "shrink-0 text-muted-foreground tabular-nums";
 
+/** The question an action asks before it stops running threads, announced when it appears. */
+function AskText({
+  id,
+  asking,
+  stops,
+  className,
+}: {
+  readonly id: string;
+  readonly asking: boolean;
+  readonly stops: number;
+  readonly className: string;
+}) {
+  return (
+    <span
+      aria-live="polite"
+      className={asking ? className : "sr-only"}
+      data-other-update-ask={asking || undefined}
+      id={id}
+    >
+      {asking ? stopsThreadsLabel(stops) : null}
+    </span>
+  );
+}
+
 /**
- * An action that stops running threads asks once, inline, before it runs. The question is
- * announced and describes the button, so it reaches screen readers before the second press.
+ * An action that stops running threads asks once before it runs. The question describes the
+ * button, so it reaches screen readers before the second press. Given `askId`, the caller shows
+ * the question elsewhere; otherwise it sits beside the button.
  */
 function AskingAction({
   label,
@@ -84,6 +109,7 @@ function AskingAction({
   asking,
   onAsk,
   onRun,
+  askId,
   emphasis = false,
 }: {
   readonly label: string;
@@ -91,21 +117,18 @@ function AskingAction({
   readonly asking: boolean;
   readonly onAsk: () => void;
   readonly onRun: () => void;
+  readonly askId?: string;
   readonly emphasis?: boolean;
 }) {
-  const askId = useId();
+  const ownAskId = useId();
+  const describedBy = askId ?? ownAskId;
   return (
     <span className="flex min-w-0 items-center gap-2.5">
-      <span
-        aria-live="polite"
-        className={asking ? MUTED : "sr-only"}
-        data-other-update-ask={asking || undefined}
-        id={askId}
-      >
-        {asking ? stopsThreadsLabel(stops) : null}
-      </span>
+      {askId === undefined ? (
+        <AskText asking={asking} className={MUTED} id={ownAskId} stops={stops} />
+      ) : null}
       <UpdateTextButton
-        aria-describedby={asking ? askId : undefined}
+        aria-describedby={asking ? describedBy : undefined}
         emphasis={emphasis}
         onClick={stops > 0 && !asking ? onAsk : onRun}
       >
@@ -120,11 +143,14 @@ function RowEnd({
   busy,
   stops,
   asking,
+  askId,
   onAsk,
   onUpdate,
   onRetry,
 }: {
   readonly row: OtherUpdateRow;
+  /** Where the row shows its question, on its own line below the row. */
+  readonly askId: string;
   /** A server whose machine is still updating a provider; it updates once that is done. */
   readonly busy: boolean;
   readonly stops: number;
@@ -139,7 +165,14 @@ function RowEnd({
       return busy ? (
         <span className={muted}>waiting</span>
       ) : (
-        <AskingAction asking={asking} label="Update" stops={stops} onAsk={onAsk} onRun={onUpdate} />
+        <AskingAction
+          askId={askId}
+          asking={asking}
+          label="Update"
+          stops={stops}
+          onAsk={onAsk}
+          onRun={onUpdate}
+        />
       );
     case "updating":
       return <span className={muted}>{otherUpdateProgressLabel(row.state.progress)}</span>;
@@ -149,13 +182,60 @@ function RowEnd({
       return row.state.retry && busy ? (
         <span className={muted}>waiting</span>
       ) : row.state.retry ? (
-        <AskingAction asking={asking} label="Retry" stops={stops} onAsk={onAsk} onRun={onRetry} />
+        <AskingAction
+          askId={askId}
+          asking={asking}
+          label="Retry"
+          stops={stops}
+          onAsk={onAsk}
+          onRun={onRetry}
+        />
       ) : (
         <span className="shrink-0 text-destructive">failed</span>
       );
     case "done":
       return <span className={muted}>done</span>;
   }
+}
+
+/** A card row; its question gets a line of its own, so the action keeps the shared right edge. */
+function OtherUpdateRowItem({
+  row,
+  busy,
+  stops,
+  asking,
+  onAsk,
+  onUpdate,
+  onRetry,
+}: Omit<Parameters<typeof RowEnd>[0], "askId">) {
+  const askId = useId();
+  const secondary = [row.item.machine, otherUpdateVersionLabel(row.item)]
+    .filter((part) => part !== null)
+    .join(" · ");
+  return (
+    <li className="flex min-w-0 flex-col" data-other-update-row>
+      <div className="flex min-h-5 items-center justify-between gap-3">
+        <span className="min-w-0 truncate">{row.item.name}</span>
+        <RowEnd
+          askId={askId}
+          asking={asking}
+          busy={busy}
+          row={row}
+          stops={stops}
+          onAsk={onAsk}
+          onRetry={onRetry}
+          onUpdate={onUpdate}
+        />
+      </div>
+      {secondary ? (
+        <span className="truncate text-muted-foreground tabular-nums">{secondary}</span>
+      ) : null}
+      {row.state.status === "failed" ? (
+        <span className="break-words text-destructive">{row.state.reason}</span>
+      ) : null}
+      <AskText asking={asking} className="text-muted-foreground" id={askId} stops={stops} />
+    </li>
+  );
 }
 
 /**
@@ -280,39 +360,24 @@ export function SidebarOtherUpdates({
       <PopoverPopup align="end" initialFocus={false} padding="compact" side="top" width="sm">
         <div className="flex flex-col gap-2.5 text-xs">
           <ul className="flex flex-col gap-2">
-            {rows.map((row) => {
-              const secondary = [row.item.machine, otherUpdateVersionLabel(row.item)]
-                .filter((part) => part !== null)
-                .join(" · ");
-              return (
-                <li className="flex min-w-0 flex-col" data-other-update-row key={row.item.key}>
-                  <div className="flex min-h-5 items-center justify-between gap-3">
-                    <span className="min-w-0 truncate">{row.item.name}</span>
-                    <RowEnd
-                      asking={asking === row.item.key}
-                      row={row}
-                      busy={busy(row.item)}
-                      stops={stoppedThreads(row.item)}
-                      onAsk={() => setAsking(row.item.key)}
-                      onRetry={() => {
-                        setAsking(null);
-                        updates.retry(row);
-                      }}
-                      onUpdate={() => {
-                        setAsking(null);
-                        updates.update(row.item);
-                      }}
-                    />
-                  </div>
-                  {secondary ? (
-                    <span className="truncate text-muted-foreground tabular-nums">{secondary}</span>
-                  ) : null}
-                  {row.state.status === "failed" ? (
-                    <span className="break-words text-destructive">{row.state.reason}</span>
-                  ) : null}
-                </li>
-              );
-            })}
+            {rows.map((row) => (
+              <OtherUpdateRowItem
+                asking={asking === row.item.key}
+                busy={busy(row.item)}
+                key={row.item.key}
+                row={row}
+                stops={stoppedThreads(row.item)}
+                onAsk={() => setAsking(row.item.key)}
+                onRetry={() => {
+                  setAsking(null);
+                  updates.retry(row);
+                }}
+                onUpdate={() => {
+                  setAsking(null);
+                  updates.update(row.item);
+                }}
+              />
+            ))}
           </ul>
           {canUpdateAll ? (
             <div className="flex justify-end">

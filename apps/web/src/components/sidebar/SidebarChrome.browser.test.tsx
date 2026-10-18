@@ -445,6 +445,51 @@ it("asks once inline before Update all stops running threads", async () => {
   expect(document.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
+it("keeps an asking row's Update on the shared right edge without truncating its name", async () => {
+  const fixtureValue = everythingFixture();
+  fixture.everything = {
+    ...fixtureValue,
+    otherServers: fixtureValue.otherServers.map((server) => ({ ...server, label: "lab-gpu" })),
+  };
+  fixture.remoteThreads = [
+    { activeRunId: "run-1", activityRunStatus: "running", status: "running" },
+    { activeRunId: "run-2", activityRunStatus: "running", status: "queued" },
+    { activeRunId: null, status: "running" },
+  ];
+  await mountFooter(216, idleUpdateState);
+  await page.getByRole("button", { name: "Other updates available" }).click();
+  const rowUpdate = page.getByRole("button", { name: "Update", exact: true });
+  await rowUpdate.click();
+  await expect.element(page.getByText("Stops 3 running threads")).toBeVisible();
+
+  const card = document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
+  const row = card.querySelector<HTMLElement>("[data-other-update-row]")!;
+  const ask = page.getByText("Stops 3 running threads").element();
+  // The question has its own line under the row, and still describes the button.
+  expect(row.contains(ask)).toBe(true);
+  expect(ask.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+    (rowUpdate.element() as HTMLElement).getBoundingClientRect().bottom,
+  );
+  expect(rowUpdate.element().getAttribute("aria-describedby")).toBe(ask.id);
+  expect(ask.getAttribute("aria-live")).toBe("polite");
+
+  const cardBounds = card.getBoundingClientRect();
+  const rowBounds = (rowUpdate.element() as HTMLElement).getBoundingClientRect();
+  const allBounds = (
+    page.getByRole("button", { name: "Update all" }).element() as HTMLElement
+  ).getBoundingClientRect();
+  expect(rowBounds.right).toBeLessThanOrEqual(cardBounds.right);
+  expect(Math.abs(rowBounds.right - allBounds.right)).toBeLessThanOrEqual(0.5);
+  const name = row.querySelector<HTMLElement>("span")!;
+  expect(name.textContent).toBe("lab-gpu server");
+  expect(name.scrollWidth).toBeLessThanOrEqual(name.clientWidth);
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-row-ask.png`,
+    });
+  }
+});
+
 it.each(["Later", "Restart"] as const)(
   "counts down above the Restart pill, and %s decides the restart",
   async (choice) => {
