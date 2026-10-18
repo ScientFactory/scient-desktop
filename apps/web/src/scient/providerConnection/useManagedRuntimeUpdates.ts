@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { isProviderUpdateActive } from "~/components/ProviderUpdateLaunchNotification.logic";
 import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments } from "~/state/environments";
@@ -70,7 +69,6 @@ function readRun(key: string): ManagedRuntimeUpdateRun | undefined {
 }
 
 interface InFlightUpdate {
-  readonly environmentId: EnvironmentId;
   /** Active, failed, or staged to switch when the provider is idle. */
   readonly handedOff: Promise<void>;
 }
@@ -227,47 +225,11 @@ function reportManagedRuntimeUpdates(
   })();
 }
 
-function updatesInFlightOnMachine(provider: ServerProvider): boolean {
-  const operation = provider.connection?.runtime?.operation;
-  const runtimeUpdating =
-    operation?.action === "update" &&
-    !operation.waitingForIdle &&
-    operation.status !== "succeeded" &&
-    operation.status !== "failed" &&
-    operation.status !== "cancelled";
-  return isProviderUpdateActive(provider) || runtimeUpdating;
-}
-
-/** Bounds a wait for another update, so a stuck one cannot hold a server update forever. */
-const MACHINE_UPDATES_SETTLE_LIMIT_MS = 30 * 60_000;
-
-/**
- * Resolves once no provider or managed runtime update is starting or running on the machine,
- * wherever it started, so a server restart cannot cut one off. A runtime staged to switch when
- * idle no longer needs the server; a removed or unreachable machine resolves too.
- */
-export async function waitForMachineUpdatesToSettle(environmentId: EnvironmentId): Promise<void> {
-  await Promise.all(
-    [...inFlightUpdates.values()]
-      .filter((flight) => flight.environmentId === environmentId)
-      .map((flight) => flight.handedOff),
+/** This client's runs on a machine, read when a server update is about to start. */
+export function managedRuntimeRunsOn(environmentId: EnvironmentId): ManagedRuntimeUpdateRun[] {
+  return [...appAtomRegistry.get(managedRuntimeUpdateRunsAtom).values()].filter(
+    (run) => run.target.environmentId === environmentId,
   );
-  await new Promise<void>((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(limit);
-      stop();
-      resolve();
-    };
-    const limit = setTimeout(finish, MACHINE_UPDATES_SETTLE_LIMIT_MS);
-    const stop = watchEnvironmentProviders(environmentId, (snapshot) => {
-      if (snapshot.status !== "connected" || !snapshot.providers.some(updatesInFlightOnMachine)) {
-        queueMicrotask(finish);
-      }
-    });
-  });
 }
 
 export type ManagedRuntimeUpdateRunOutcome =
@@ -351,10 +313,7 @@ export function useManagedRuntimeUpdates() {
       }
       const handedOff = deferred();
       const settled = deferred();
-      const flight: InFlightUpdate = {
-        environmentId: target.environmentId,
-        handedOff: handedOff.promise,
-      };
+      const flight: InFlightUpdate = { handedOff: handedOff.promise };
       inFlightUpdates.set(key, flight);
       void settled.promise.then(() => {
         if (inFlightUpdates.get(key) === flight) inFlightUpdates.delete(key);

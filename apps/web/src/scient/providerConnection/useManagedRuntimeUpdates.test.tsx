@@ -72,8 +72,8 @@ import {
   connectedProviderEnvironments,
   managedRuntimeProviderMachines,
   managedRuntimeRunOutcomes,
+  managedRuntimeRunsOn,
   useManagedRuntimeUpdates,
-  waitForMachineUpdatesToSettle,
 } from "./useManagedRuntimeUpdates";
 
 const lab = EnvironmentId.make("lab");
@@ -263,6 +263,15 @@ describe("useManagedRuntimeUpdates", () => {
     expect(testState.toasts.at(-1)).toMatchObject({ type: "success" });
   });
 
+  it("exposes a machine's runs to the server busy rule", async () => {
+    await act(async () => {
+      void current!.update(current!.targets);
+    });
+    expect(managedRuntimeRunsOn(lab)).toMatchObject([{ outcome: { status: "pending" } }]);
+    expect(managedRuntimeRunsOn(EnvironmentId.make("elsewhere"))).toEqual([]);
+    await act(async () => publish(null));
+  });
+
   it("fails an update whose machine is removed", async () => {
     let runs: Runs = [];
     await act(async () => {
@@ -303,42 +312,6 @@ describe("useManagedRuntimeUpdates", () => {
     expect(managedRuntimeRunOutcomes(runs)).toEqual([
       { status: "failed", line: "lab · Codex: No catalog." },
     ]);
-  });
-});
-
-describe("waitForMachineUpdatesToSettle", () => {
-  it("holds a server restart until the machine's provider updates finish or hand off", async () => {
-    publish(
-      connected([
-        codex({
-          updateState: {
-            status: "running",
-            startedAt: null,
-            finishedAt: null,
-            message: null,
-            output: null,
-          },
-        }),
-      ]),
-    );
-    let ready = false;
-    await act(async () => {
-      void waitForMachineUpdatesToSettle(lab).then(() => {
-        ready = true;
-      });
-    });
-    expect(ready).toBe(false);
-    await act(async () => publish(connected([codex({ operation: { status: "downloading" } })])));
-    expect(ready).toBe(false);
-    await act(async () =>
-      publish(connected([codex({ operation: { status: "activating", waitingForIdle: true } })])),
-    );
-    expect(ready).toBe(true);
-  });
-
-  it("does not wait for a removed machine", async () => {
-    publish(null);
-    await expect(waitForMachineUpdatesToSettle(lab)).resolves.toBeUndefined();
   });
 });
 

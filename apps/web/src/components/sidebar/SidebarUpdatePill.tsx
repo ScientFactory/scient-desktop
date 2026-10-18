@@ -53,6 +53,7 @@ import { shouldRunUpdateEverything } from "./updateEverything.logic";
 // SCIENT-FORK:START — other machines and providers have their own circle beside the pill.
 import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic";
 import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
+import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
 import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
@@ -447,7 +448,8 @@ function SidebarUpdateControl() {
     showUpdateIconState && state
       ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
       : null;
-  const updateOthers = () => everything.run({});
+  const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
+    everything.run({ admitServer });
   if (!isElectron) {
     return (
       <SidebarOtherUpdates servers={everything.otherServers} standalone updateAll={updateOthers} />

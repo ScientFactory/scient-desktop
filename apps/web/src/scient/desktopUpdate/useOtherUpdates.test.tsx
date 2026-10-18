@@ -22,7 +22,11 @@ const testState = vi.hoisted(() => ({
   updateProvider: vi.fn<(request: unknown) => Promise<unknown>>(),
   updateServer: vi.fn<(target: unknown, options: unknown) => Promise<unknown>>(),
   updateManaged: vi.fn<(targets: ReadonlyArray<unknown>) => Promise<unknown[]>>(),
-  threads: [] as Array<{ status: string }>,
+  threads: [] as Array<{
+    activeRunId: string | null;
+    activityRunStatus?: string | null;
+    status: string;
+  }>,
   run: null as unknown,
   setRun: vi.fn((update: (run: unknown) => unknown) => {
     testState.run = update(testState.run);
@@ -93,7 +97,21 @@ vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOri
     runs: new Map(),
     update: testState.updateManaged,
   }),
-  waitForMachineUpdatesToSettle: async () => {},
+}));
+vi.mock("~/state/presentation", () => ({
+  environmentPresentations: {
+    // The busy rule reads the machine's current providers when a server update is dispatched.
+    presentationAtom: (id: string) =>
+      Atom.make(() => {
+        const environment = (
+          testState.environments as Array<{
+            environmentId: string;
+            serverConfig: { providers: ServerProvider[] };
+          }>
+        ).find((candidate) => candidate.environmentId === id);
+        return environment ? { serverConfig: environment.serverConfig } : null;
+      }),
+  },
 }));
 
 import { useOtherUpdates } from "./useOtherUpdates";
@@ -285,7 +303,13 @@ describe("useOtherUpdates", () => {
 
   it("counts the running threads a server update would stop", async () => {
     testState.environments = [remote([])];
-    testState.threads = [{ status: "running" }, { status: "idle" }, { status: "starting" }];
+    testState.threads = [
+      // A running turn with a follow-up queued behind it.
+      { activeRunId: "run-1", activityRunStatus: "running", status: "queued" },
+      { activeRunId: null, activityRunStatus: null, status: "idle" },
+      // An older server without activity runs.
+      { activeRunId: null, status: "starting" },
+    ];
     await render([serverUpdate]);
     expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(2);
     // Threads that resume after the restart are not stopped.
@@ -300,6 +324,45 @@ describe("useOtherUpdates", () => {
       },
     ]);
     expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(0);
+  });
+
+  it("holds a server while its machine updates a provider, then offers it again", async () => {
+    const running = {
+      ...codexCli(),
+      updateState: {
+        status: "running" as const,
+        startedAt: null,
+        finishedAt: null,
+        message: null,
+        output: null,
+      },
+    };
+    testState.environments = [remote([running])];
+    await render([serverUpdate]);
+    const server = () => current!.rows.find(({ item }) => item.kind === "server")!;
+    expect(current!.busy(server().item)).toBe(true);
+    // Dispatch reads the machine at the click, so nothing restarts it now.
+    await act(async () => current!.update(server().item));
+    expect(testState.updateServer).not.toHaveBeenCalled();
+
+    testState.environments = [remote([])];
+    testState.updateServer.mockResolvedValueOnce({ status: "updated" });
+    await render([serverUpdate]);
+    expect(current!.busy(server().item)).toBe(false);
+    await act(async () => current!.update(server().item));
+    expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
+  });
+
+  it("holds a server while this card starts a provider update on its machine", async () => {
+    testState.environments = [remote([codexCli()])];
+    testState.updateProvider.mockImplementationOnce(() => new Promise(() => {}));
+    await render([serverUpdate]);
+    const row = (kind: string) => current!.rows.find(({ item }) => item.kind === kind)!;
+    await act(async () => current!.update(row("provider").item));
+    await render([serverUpdate]);
+    expect(current!.busy(row("server").item)).toBe(true);
+    await act(async () => current!.update(row("server").item));
+    expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
   it("drops a removed machine's rows", async () => {

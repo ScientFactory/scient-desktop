@@ -21,7 +21,11 @@ const fixture = vi.hoisted(() => ({
   everything: null as ReturnType<typeof useUpdateEverything> | null,
   navigate: vi.fn(),
   /** Threads on the remote machine the circle's server update would restart. */
-  remoteThreads: [] as Array<{ status: string }>,
+  remoteThreads: [] as Array<{
+    activeRunId: string | null;
+    activityRunStatus?: string | null;
+    status: string;
+  }>,
   preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
   environments: [] as Array<{
@@ -412,12 +416,21 @@ it("lists other updates with text actions and updates them without a confirmatio
 
 it("asks once inline before Update all stops running threads", async () => {
   fixture.everything = everythingFixture();
-  fixture.remoteThreads = [{ status: "running" }, { status: "running" }, { status: "idle" }];
+  fixture.remoteThreads = [
+    // A running turn with a follow-up queued behind it, and one on an older server.
+    { activeRunId: "run-1", activityRunStatus: "running", status: "queued" },
+    { activeRunId: null, status: "running" },
+    { activeRunId: null, activityRunStatus: null, status: "idle" },
+  ];
   await mountFooter(216, idleUpdateState);
   await page.getByRole("button", { name: "Other updates available" }).click();
   const updateAll = page.getByRole("button", { name: "Update all" });
   await updateAll.click();
   await expect.element(page.getByText("Stops 2 running threads")).toBeVisible();
+  // The question is announced and describes the button before the second press.
+  const ask = page.getByText("Stops 2 running threads").element();
+  expect(ask.getAttribute("aria-live")).toBe("polite");
+  expect(updateAll.element().getAttribute("aria-describedby")).toBe(ask.id);
   // Asking does not start anything.
   expect(document.querySelector('[data-other-updates="updating"]')).toBeNull();
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {

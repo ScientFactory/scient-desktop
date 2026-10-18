@@ -19,6 +19,8 @@ import {
   collectProviderUpdateItems,
   deriveOtherUpdateRowState,
   isSelfUpdatingSshRemote,
+  isThreadRunning,
+  machineHasUpdatesRunning,
   isUpdateRunActive,
   managedUpdateLive,
   otherUpdateProgressLabel,
@@ -582,5 +584,71 @@ describe("isUpdateRunActive", () => {
     expect(isUpdateRunActive(settled)).toBe(false);
     expect(isUpdateRunActive({ ...settled, phase: "providers" })).toBe(true);
     expect(isUpdateRunActive({ ...settled, localVersion: "0.6.21" })).toBe(true);
+  });
+});
+
+describe("machineHasUpdatesRunning", () => {
+  const updating = (status: "queued" | "running" | "succeeded" | "failed") =>
+    behindCli(true, {
+      updateState: { status, startedAt: null, finishedAt: null, message: null, output: null },
+    });
+  const managedRun = (patch: { operationId?: string | null; waitingMessage?: string | null }) => ({
+    target: {
+      environmentId: lab,
+      environmentLabel: "lab",
+      instanceId: ProviderInstanceId.make("omp"),
+      driver: ProviderDriverKind.make("omp"),
+      availableVersion: "2.1.0",
+    },
+    operationId: patch.operationId === undefined ? "op-1" : patch.operationId,
+    observed: true,
+    outcome: { status: "pending" as const },
+    waitingMessage: patch.waitingMessage ?? null,
+  });
+  const busy = (input: Partial<Parameters<typeof machineHasUpdatesRunning>[0]>) =>
+    machineHasUpdatesRunning({ providers: [], managedRuns: [], startsPending: false, ...input });
+
+  it("holds a server while a provider CLI update is queued or running", () => {
+    expect(busy({ providers: [updating("queued")] })).toBe(true);
+    expect(busy({ providers: [updating("running")] })).toBe(true);
+    expect(busy({ providers: [updating("succeeded"), updating("failed")] })).toBe(false);
+  });
+
+  it("holds a server while a managed runtime update starts or runs, not once staged", () => {
+    expect(busy({ providers: [managed({ status: "preparing" })] })).toBe(true);
+    expect(busy({ providers: [managed({ status: "downloading" })] })).toBe(true);
+    expect(busy({ providers: [managed({ status: "activating", waitingForIdle: true })] })).toBe(
+      false,
+    );
+    expect(busy({ providers: [managed({ status: "succeeded" })] })).toBe(false);
+    expect(busy({ managedRuns: [managedRun({ operationId: null })] })).toBe(true);
+    expect(busy({ managedRuns: [managedRun({})] })).toBe(true);
+    expect(busy({ managedRuns: [managedRun({ waitingMessage: "Waiting for a turn." })] })).toBe(
+      false,
+    );
+  });
+
+  it("holds a server while this card is starting a provider update there", () => {
+    expect(busy({ startsPending: true })).toBe(true);
+    expect(busy({})).toBe(false);
+  });
+});
+
+describe("isThreadRunning", () => {
+  it("counts a running turn even while a follow-up is queued behind it", () => {
+    expect(
+      isThreadRunning({ activeRunId: "run-1", activityRunStatus: "running", status: "queued" }),
+    ).toBe(true);
+    expect(isThreadRunning({ activeRunId: null, activityRunStatus: null, status: "queued" })).toBe(
+      false,
+    );
+    expect(
+      isThreadRunning({ activeRunId: "run-1", activityRunStatus: "waiting", status: "waiting" }),
+    ).toBe(false);
+  });
+
+  it("falls back to the latest run on servers without activity runs", () => {
+    expect(isThreadRunning({ activeRunId: null, status: "running" })).toBe(true);
+    expect(isThreadRunning({ activeRunId: null, status: "idle" })).toBe(false);
   });
 });

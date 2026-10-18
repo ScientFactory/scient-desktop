@@ -12,6 +12,7 @@ import {
 import {
   collectProviderUpdateCandidates,
   hasOneClickUpdateProviderCandidate,
+  isProviderUpdateActive,
 } from "~/components/ProviderUpdateLaunchNotification.logic";
 import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
 import {
@@ -546,4 +547,46 @@ export function otherUpdateVersionLabel(item: OtherUpdateItem): string | null {
 
 export function stopsThreadsLabel(count: number): string {
   return `Stops ${count} running thread${count === 1 ? "" : "s"}`;
+}
+
+/** A provider whose CLI or managed runtime update is starting or running there. */
+export function isProviderUpdating(provider: ServerProvider): boolean {
+  const runtimeUpdate = activeRuntimeUpdate(provider);
+  return (
+    isProviderUpdateActive(provider) || (runtimeUpdate !== null && !runtimeUpdate.waitingForIdle)
+  );
+}
+
+/**
+ * A machine whose server must not restart yet: a provider or managed runtime update is starting
+ * or running there, wherever it started. A runtime staged to switch when idle no longer needs it.
+ */
+export function machineHasUpdatesRunning(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly managedRuns: ReadonlyArray<ManagedRuntimeUpdateRun>;
+  readonly startsPending: boolean;
+}): boolean {
+  return (
+    input.startsPending ||
+    input.providers.some(isProviderUpdating) ||
+    input.managedRuns.some((run) => run.outcome.status === "pending" && run.waitingMessage === null)
+  );
+}
+
+const RUNNING_THREAD_STATUSES = new Set(["preparing", "starting", "running"]);
+
+/**
+ * A thread with a turn running. Its activity run stays set while a follow-up is queued behind
+ * it; older servers omit that, so their latest run's status stands in.
+ */
+export function isThreadRunning(thread: {
+  readonly activeRunId: string | null;
+  readonly activityRunStatus?: string | null | undefined;
+  readonly status: string;
+}): boolean {
+  return thread.activityRunStatus === undefined
+    ? RUNNING_THREAD_STATUSES.has(thread.status)
+    : thread.activeRunId !== null &&
+        thread.activityRunStatus !== null &&
+        RUNNING_THREAD_STATUSES.has(thread.activityRunStatus);
 }

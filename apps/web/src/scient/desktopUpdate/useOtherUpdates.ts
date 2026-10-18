@@ -6,11 +6,12 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import * as Equal from "effect/Equal";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { getProviderUpdateRunToastView } from "~/components/ProviderUpdateLaunchNotification.logic";
-import { useServerUpdate } from "~/components/ServerUpdateAction";
+import { type ServerUpdateTarget, useServerUpdate } from "~/components/ServerUpdateAction";
 import {
   useQualifiedUpdateRunServers,
   useUpdateEverythingRun,
@@ -18,19 +19,22 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments } from "~/state/environments";
+import { environmentPresentations } from "~/state/presentation";
 import { serverEnvironment } from "~/state/server";
 import { environmentThreadShells } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { managedRuntimeUpdateTargetKey } from "~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic";
 import {
   connectedProviderEnvironments,
+  managedRuntimeRunsOn,
   useManagedRuntimeUpdates,
-  waitForMachineUpdatesToSettle,
 } from "~/scient/providerConnection/useManagedRuntimeUpdates";
 import {
   buildOtherUpdateRows,
   collectProviderUpdateItems,
   failedUpdateRunServer,
+  isThreadRunning,
+  machineHasUpdatesRunning,
   managedUpdateLive,
   otherUpdatesCircleState,
   providerUpdateLive,
@@ -69,25 +73,62 @@ const serverUpdateStatesAtom = Atom.family((environmentIds: string) =>
   ).pipe(Atom.withLabel(`scient-other-updates-server-states:${environmentIds}`)),
 );
 
-const isRunningThread = (status: string) =>
-  status === "preparing" || status === "starting" || status === "running";
-
-const runningThreadCountsAtom = Atom.family((environmentIds: string) =>
+const runningThreadCountAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(
     (get) =>
-      new Map(
-        environmentIdsOf(environmentIds).map(
-          (environmentId) =>
-            [
-              environmentId,
-              get(environmentThreadShells.environmentThreadsAtom(environmentId)).filter((thread) =>
-                isRunningThread(thread.status),
-              ).length,
-            ] as const,
-        ),
-      ),
-  ).pipe(Atom.withLabel(`scient-other-updates-running-threads:${environmentIds}`)),
+      get(environmentThreadShells.environmentThreadsAtom(environmentId)).filter(isThreadRunning)
+        .length,
+  ).pipe(Atom.withLabel(`scient-other-updates-running-threads:${environmentId}`)),
 );
+
+/** Per-machine counts that only notify readers when a count changes. */
+const runningThreadCountsAtom = Atom.family((environmentIds: string) =>
+  Atom.make((get) =>
+    environmentIdsOf(environmentIds).map(
+      (environmentId) => [environmentId, get(runningThreadCountAtom(environmentId))] as const,
+    ),
+  ).pipe(
+    Atom.withEquality(Equal.equals),
+    Atom.withLabel(`scient-other-updates-running-threads:${environmentIds}`),
+  ),
+);
+
+function stopsThreads(target: ServerUpdateTarget): boolean {
+  return !(target.threadContinuation && target.continueThreadsAfterServerUpdate);
+}
+
+/** Running threads a server update would stop now: those that cannot resume after it. */
+export function stoppedThreadsNow(target: ServerUpdateTarget): number {
+  return stopsThreads(target)
+    ? appAtomRegistry.get(runningThreadCountAtom(target.environmentId))
+    : 0;
+}
+
+function startsPendingOn(
+  tracked: ReadonlyMap<string, TrackedOtherUpdate>,
+  environmentId: EnvironmentId,
+): boolean {
+  return [...tracked.values()].some(
+    ({ item, action }) =>
+      item.kind !== "server" &&
+      item.environmentId === environmentId &&
+      action?.status === "pending",
+  );
+}
+
+/**
+ * Whether a server update must not start on this machine right now, read at the moment of
+ * dispatch: a provider or managed runtime update is starting or running there.
+ */
+export function isMachineUpdating(environmentId: EnvironmentId): boolean {
+  return machineHasUpdatesRunning({
+    providers:
+      appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.serverConfig
+        ?.providers ?? [],
+    managedRuns: managedRuntimeRunsOn(environmentId),
+    startsPending: startsPendingOn(appAtomRegistry.get(trackedOtherUpdatesAtom), environmentId),
+  });
+}
 
 const IDLE_SERVER_STATE: ServerUpdateState = { status: "idle" };
 
@@ -173,7 +214,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
     .toSorted()
     .join("\n");
   const serverStates = useAtomValue(serverUpdateStatesAtom(serverIdsKey));
-  const runningThreads = useAtomValue(runningThreadCountsAtom(serverIdsKey));
+  const runningThreads = new Map(useAtomValue(runningThreadCountsAtom(serverIdsKey)));
   const providersByMachine = new Map(machines.map((machine) => [machine.environmentId, machine]));
   const providerOf = (environmentId: EnvironmentId, instanceId: ServerProvider["instanceId"]) =>
     providersByMachine
@@ -235,10 +276,11 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
         return;
       }
       case "server": {
+        // Read at the click: a restart would cut off a provider update running there.
+        if (isMachineUpdating(item.environmentId)) return;
         // The card's own update replaces whatever a pass recorded for this server.
         forgetUpdateRunServer(item.environmentId);
         track(item, { status: "pending" });
-        await waitForMachineUpdatesToSettle(item.environmentId);
         const outcome = await updateServer(item.target);
         track(
           item,
@@ -253,6 +295,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
       void update(row.item);
       return;
     }
+    if (isMachineUpdating(row.item.environmentId)) return;
     if (failedUpdateRunServer(run, row.item.environmentId) !== null) {
       retryUpdateRunServer(row.item.environmentId, qualifiedServers, updateServer);
       return;
@@ -271,10 +314,20 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
 
   /** Running threads a server update would stop: those that cannot resume after it. */
   const stoppedThreads = (item: OtherUpdateItem): number =>
-    item.kind === "server" &&
-    !(item.target.threadContinuation && item.target.continueThreadsAfterServerUpdate)
+    item.kind === "server" && stopsThreads(item.target)
       ? (runningThreads.get(item.environmentId) ?? 0)
       : 0;
+
+  /** A server that must wait: its machine is still updating a provider or runtime. */
+  const busy = (item: OtherUpdateItem): boolean =>
+    item.kind === "server" &&
+    machineHasUpdatesRunning({
+      providers: providersByMachine.get(item.environmentId)?.providers ?? [],
+      managedRuns: [...managed.runs.values()].filter(
+        (managedRun) => managedRun.target.environmentId === item.environmentId,
+      ),
+      startsPending: startsPendingOn(tracked, item.environmentId),
+    });
 
   return {
     rows,
@@ -283,5 +336,6 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
     retry,
     forget,
     stoppedThreads,
+    busy,
   };
 }

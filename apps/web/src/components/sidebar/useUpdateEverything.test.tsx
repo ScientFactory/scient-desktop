@@ -118,6 +118,14 @@ const managedState = vi.hoisted(() => ({
       >
     >(),
 }));
+// A machine's current providers, which the server busy rule reads at dispatch.
+const machineProviders = vi.hoisted(() => new Map<string, ReadonlyArray<unknown>>());
+vi.mock("~/state/presentation", () => ({
+  environmentPresentations: {
+    presentationAtom: (id: string) =>
+      Atom.make(() => ({ serverConfig: { providers: machineProviders.get(id) ?? [] } })),
+  },
+}));
 vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("~/scient/providerConnection/useManagedRuntimeUpdates")
@@ -128,7 +136,6 @@ vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOri
     runs: new Map(),
     update: managedState.update,
   }),
-  waitForMachineUpdatesToSettle: async () => {},
 }));
 // SCIENT-FORK:END
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
@@ -221,6 +228,7 @@ beforeEach(() => {
   testState.updateProviders.mockReset().mockResolvedValue([]);
   // SCIENT-FORK:START — managed runtimes are part of the pass.
   managedState.targets = [];
+  machineProviders.clear();
   managedState.update.mockReset().mockResolvedValue([]);
   // SCIENT-FORK:END
   testState.settleMachine.mockReset();
@@ -769,6 +777,84 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
     expect(current!.skipped).toEqual([
       { environmentId: "bearer", label: "bearer", reason: "needs a manual update" },
     ]);
+  });
+});
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — a server is not restarted while its machine updates a provider.
+describe("servers on machines still updating providers", () => {
+  const updatingProvider = {
+    instanceId: "codex",
+    driver: "codex",
+    enabled: true,
+    updateState: {
+      status: "running",
+      startedAt: null,
+      finishedAt: null,
+      message: null,
+      output: null,
+    },
+  };
+
+  async function runPass(options: Parameters<ReturnType<typeof useUpdateEverything>["run"]>[0]) {
+    const run = testState.runModule!;
+    testState.setRun.mockImplementation(run.setUpdateEverythingRun);
+    testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    await act(async () => {
+      await current!.run(options);
+    });
+    return run;
+  }
+
+  it("leaves a busy machine's server to the circle and updates the rest", async () => {
+    machineProviders.set("service", [updatingProvider]);
+    const run = await runPass({});
+    expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+      "desktop",
+    ]);
+    // Neither failed nor updated: the circle offers it again once the machine is idle.
+    expect(testState.showResult).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedServers: 1, failures: [] }),
+    );
+    expect(run.useUpdateEverythingRun()).toBeNull();
+  });
+
+  it("does not hold a server for a runtime staged to switch when idle", async () => {
+    machineProviders.set("service", [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        enabled: true,
+        connection: {
+          runtime: {
+            operation: {
+              operationId: "op",
+              action: "update",
+              status: "activating",
+              waitingForIdle: true,
+            },
+          },
+        },
+      },
+    ]);
+    await runPass({});
+    expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+      "service",
+      "desktop",
+    ]);
+  });
+
+  it("asks the caller again for each server when its restart is due", async () => {
+    await runPass({ admitServer: (target) => target.environmentId !== "desktop" });
+    expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+      "service",
+    ]);
+    expect(testState.showResult).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedServers: 1, failures: [] }),
+    );
   });
 });
 // SCIENT-FORK:END

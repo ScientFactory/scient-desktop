@@ -9,7 +9,6 @@ import {
   setUpdateEverythingRun,
   settleUpdateRunMachine,
 } from "~/components/sidebar/updateEverythingRun";
-import { waitForMachineUpdatesToSettle } from "~/scient/providerConnection/useManagedRuntimeUpdates";
 
 type ServerUpdate = (
   target: ServerUpdateTarget,
@@ -49,20 +48,46 @@ export function retryUpdateRunServer(
   });
   const started = found.retry;
   if (started === undefined) return false;
-  void waitForMachineUpdatesToSettle(environmentId)
-    .then(() => update(started.target, { quiet: false }))
-    .then((outcome) =>
-      settleUpdateRunMachine(
-        environmentId,
-        outcome.status === "updated"
-          ? started.providerFailure
-          : outcome.status === "failed"
-            ? outcome.message
-            : "Could not start the update",
-        { serverUpdated: outcome.status === "updated" },
-      ),
-    );
+  void update(started.target, { quiet: false }).then((outcome) =>
+    settleUpdateRunMachine(
+      environmentId,
+      outcome.status === "updated"
+        ? started.providerFailure
+        : outcome.status === "failed"
+          ? outcome.message
+          : "Could not start the update",
+      { serverUpdated: outcome.status === "updated" },
+    ),
+  );
   return true;
+}
+
+/**
+ * Leaves a pass's server to the circle without updating it, because its machine is busy or the
+ * user did not confirm what it would stop now. Its row offers the update again when it can run.
+ */
+export function releaseUpdateRunServer(
+  environmentId: EnvironmentId,
+  providerFailure: string | null,
+): void {
+  setUpdateEverythingRun(
+    (run) =>
+      run &&
+      closeFinishedUpdateRun({
+        ...run,
+        machines: run.machines.map((machine) =>
+          machine.environmentId === environmentId
+            ? {
+                ...machine,
+                server: null,
+                result: providerFailure === null ? "done" : "failed",
+                failure: providerFailure,
+                providerFailure,
+              }
+            : machine,
+        ),
+      }),
+  );
 }
 
 /** Drops a pass's settled record of a server, once the card updates that server itself. */

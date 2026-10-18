@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
 import { useUpdateEverythingRun } from "~/components/sidebar/updateEverythingRun";
 import {
   Popover,
@@ -23,7 +24,7 @@ import {
   type OtherUpdatesCircleState,
 } from "./otherUpdates.logic";
 import { UpdateTextButton } from "./UpdateTextButton";
-import { useOtherUpdates } from "./useOtherUpdates";
+import { stoppedThreadsNow, useOtherUpdates } from "./useOtherUpdates";
 
 /** How long the finished check stays before the circle steps aside. */
 const OTHER_UPDATES_DONE_VISIBLE_MS = 2_500;
@@ -73,7 +74,10 @@ function ProgressRing() {
 
 const MUTED = "shrink-0 text-muted-foreground tabular-nums";
 
-/** An action that stops running threads asks once, inline, before it runs. */
+/**
+ * An action that stops running threads asks once, inline, before it runs. The question is
+ * announced and describes the button, so it reaches screen readers before the second press.
+ */
 function AskingAction({
   label,
   stops,
@@ -89,14 +93,22 @@ function AskingAction({
   readonly onRun: () => void;
   readonly emphasis?: boolean;
 }) {
+  const askId = useId();
   return (
     <span className="flex min-w-0 items-center gap-2.5">
-      {asking ? (
-        <span className={MUTED} data-other-update-ask>
-          {stopsThreadsLabel(stops)}
-        </span>
-      ) : null}
-      <UpdateTextButton emphasis={emphasis} onClick={stops > 0 && !asking ? onAsk : onRun}>
+      <span
+        aria-live="polite"
+        className={asking ? MUTED : "sr-only"}
+        data-other-update-ask={asking || undefined}
+        id={askId}
+      >
+        {asking ? stopsThreadsLabel(stops) : null}
+      </span>
+      <UpdateTextButton
+        aria-describedby={asking ? askId : undefined}
+        emphasis={emphasis}
+        onClick={stops > 0 && !asking ? onAsk : onRun}
+      >
         {label}
       </UpdateTextButton>
     </span>
@@ -105,6 +117,7 @@ function AskingAction({
 
 function RowEnd({
   row,
+  busy,
   stops,
   asking,
   onAsk,
@@ -112,6 +125,8 @@ function RowEnd({
   onRetry,
 }: {
   readonly row: OtherUpdateRow;
+  /** A server whose machine is still updating a provider; it updates once that is done. */
+  readonly busy: boolean;
   readonly stops: number;
   readonly asking: boolean;
   readonly onAsk: () => void;
@@ -121,7 +136,9 @@ function RowEnd({
   const muted = MUTED;
   switch (row.state.status) {
     case "idle":
-      return (
+      return busy ? (
+        <span className={muted}>waiting</span>
+      ) : (
         <AskingAction asking={asking} label="Update" stops={stops} onAsk={onAsk} onRun={onUpdate} />
       );
     case "updating":
@@ -129,7 +146,9 @@ function RowEnd({
     case "waiting":
       return <span className={muted}>waiting for idle</span>;
     case "failed":
-      return row.state.retry ? (
+      return row.state.retry && busy ? (
+        <span className={muted}>waiting</span>
+      ) : row.state.retry ? (
         <AskingAction asking={asking} label="Retry" stops={stops} onAsk={onAsk} onRun={onRetry} />
       ) : (
         <span className="shrink-0 text-destructive">failed</span>
@@ -151,8 +170,11 @@ export function SidebarOtherUpdates({
   standalone = false,
 }: {
   readonly servers: ReadonlyArray<OtherServerUpdate>;
-  /** A pass without this app, so it needs no confirmation. */
-  readonly updateAll: () => Promise<void>;
+  /**
+   * A pass without this app, so it needs no confirmation. `admitServer` is asked again for
+   * each server when its restart is due.
+   */
+  readonly updateAll: (admitServer: (target: ServerUpdateTarget) => boolean) => Promise<void>;
   readonly standalone?: boolean;
 }) {
   const updates = useOtherUpdates(servers);
@@ -162,7 +184,7 @@ export function SidebarOtherUpdates({
   const [open, setOpen] = useState(false);
   /** The row key, or "all", whose action is asking before it stops running threads. */
   const [asking, setAsking] = useState<string | null>(null);
-  const { rows, circle, forget, stoppedThreads } = updates;
+  const { rows, circle, forget, stoppedThreads, busy } = updates;
   const doneKeys = rows.flatMap(({ item, state }) => (state.status === "done" ? [item.key] : []));
   const finishedKey = circle === "done" && !open ? doneKeys.join("\n") : null;
 
@@ -180,12 +202,23 @@ export function SidebarOtherUpdates({
     if (open) setOpen(false);
     return null;
   }
-  const idleRows = rows.filter(({ state }) => state.status === "idle");
-  const canUpdateAll = !runActive && idleRows.length > 0;
-  const updateAllStops = idleRows.reduce((count, { item }) => count + stoppedThreads(item), 0);
+  // What Update all would update now: rows offering an action, without machines still busy.
+  const passRows = rows.filter(
+    ({ item, state }) =>
+      !busy(item) && (state.status === "idle" || (state.status === "failed" && state.retry)),
+  );
+  const canUpdateAll = !runActive && passRows.length > 0;
+  const passServers = passRows.flatMap(({ item }) => (item.kind === "server" ? [item] : []));
+  const updateAllStops = passServers.reduce((count, item) => count + stoppedThreads(item), 0);
   const runUpdateAll = async () => {
+    // Each server restarts only if it would stop no more threads than the user saw now.
+    const confirmed = new Map(
+      passServers.map((item) => [item.environmentId, stoppedThreads(item)] as const),
+    );
+    const admitServer = (target: ServerUpdateTarget) =>
+      stoppedThreadsNow(target) <= (confirmed.get(target.environmentId) ?? 0);
     setAsking(null);
-    const result = await settlePromise(updateAll);
+    const result = await settlePromise(() => updateAll(admitServer));
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
@@ -258,6 +291,7 @@ export function SidebarOtherUpdates({
                     <RowEnd
                       asking={asking === row.item.key}
                       row={row}
+                      busy={busy(row.item)}
                       stops={stoppedThreads(row.item)}
                       onAsk={() => setAsking(row.item.key)}
                       onRetry={() => {

@@ -47,8 +47,10 @@ import {
   managedRuntimeProviderMachines,
   managedRuntimeRunOutcomes,
   useManagedRuntimeUpdates,
-  waitForMachineUpdatesToSettle,
 } from "~/scient/providerConnection/useManagedRuntimeUpdates";
+import { isMachineUpdating } from "~/scient/desktopUpdate/useOtherUpdates";
+import { releaseUpdateRunServer } from "~/scient/desktopUpdate/updateRunServers";
+import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
@@ -165,9 +167,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     run: async ({
       downloadLocal,
       installLocal,
+      // SCIENT-FORK:START — the circle admits each server again when its restart is due.
+      admitServer,
     }: {
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
+      admitServer?: (target: ServerUpdateTarget) => boolean;
+      // SCIENT-FORK:END
     }) => {
       const localFailures: Array<string> = [];
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
@@ -275,9 +281,21 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               finishedServers.push(finished);
               return Promise.resolve(finished);
             });
-            const runs = current.map(async (server) => {
-              // A restart would cut off a provider or runtime update still running there.
-              await waitForMachineUpdatesToSettle(server.environmentId);
+            // A server whose machine is still updating a provider, or that the caller no longer
+            // admits, is left to the sidebar's circle, which offers it again when it can restart.
+            const admitted = current.filter(
+              (server) =>
+                !isMachineUpdating(server.environmentId) && (admitServer?.(server) ?? true),
+            );
+            for (const server of current) {
+              if (!admitted.includes(server)) {
+                releaseUpdateRunServer(
+                  server.environmentId,
+                  providerFailures.get(server.environmentId) ?? null,
+                );
+              }
+            }
+            const runs = admitted.map(async (server) => {
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,
@@ -294,7 +312,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               return finished;
             });
             await Promise.all(
-              current.map((server, index) =>
+              admitted.map((server, index) =>
                 waitForServerUpdateHandoff(server.environmentId, runs[index]!),
               ),
             );
