@@ -222,7 +222,10 @@ export class LatexSourceStep extends ReplaceStep {
     readonly history: LatexSourceHistory,
     readonly reversed = false,
   ) {
-    super(from, to, slice);
+    // History merges a later step into an earlier one through the later
+    // step's merge, which this class cannot override; a structure step is
+    // never merged, so an empty annotation keeps its source edit.
+    super(from, to, slice, from === to && slice.size === 0);
   }
   get edit(): LatexSourceEdit | null {
     return this.reversed ? this.history.inverse : this.history.edit;
