@@ -2,10 +2,10 @@ import { Image } from "expo-image";
 import { Defs, LinearGradient, Path, Rect, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { getProviderClient } from "../lib/providerClients";
 
 type ProviderIconProps = {
@@ -66,6 +66,7 @@ function AcpRegistryProviderIcon(props: {
 export function ProviderIcon(props: ProviderIconProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
+  const gradientId = useId();
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
 
@@ -99,18 +100,43 @@ export function ProviderIcon(props: ProviderIconProps) {
       isDarkMode ? fill.dark : fill.light;
     return (
       <Svg width={size} height={size} viewBox={packageIcon.viewBox} fill="none">
-        {packageIcon.paths.map((path) => (
+        <Defs>
+          {packageIcon.paths.map((path, index) =>
+            path.gradient ? (
+              <LinearGradient
+                key={path.d}
+                id={`${gradientId}-${index}`}
+                x1={path.gradient.x1}
+                y1={path.gradient.y1}
+                x2={path.gradient.x2}
+                y2={path.gradient.y2}
+                gradientUnits="userSpaceOnUse"
+              >
+                {path.gradient.stops.map((stop) => (
+                  <Stop key={stop.offset} offset={stop.offset} stopColor={stop.color} />
+                ))}
+              </LinearGradient>
+            ) : null,
+          )}
+        </Defs>
+        {packageIcon.paths.map((path, index) => (
           <Path
             key={path.d}
             d={path.d}
             fillRule={path.fillRule}
-            fill={themeFill(path.fill ?? packageIcon.fill)}
+            fill={
+              path.gradient
+                ? `url(#${gradientId}-${index})`
+                : themeFill(path.fill ?? packageIcon.fill)
+            }
           />
         ))}
       </Svg>
     );
   }
 
+  // SCIENT-FORK:START scient-provider-icons
+  // Scient-supported drivers that have no upstream package icon.
   if (props.provider === "pi") {
     // Pi's colour mark, drawn from the pi.dev favicon paths.
     return (
@@ -161,7 +187,8 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  // codex (and unknown drivers)
+  // SCIENT-FORK:END scient-provider-icons
+
   return (
     <Svg width={size} height={size} viewBox="100 100 411 411" fill="none">
       <Path
@@ -174,13 +201,6 @@ export function ProviderIcon(props: ProviderIconProps) {
   );
 }
 
-/**
- * `ProviderIcon` plus the web sidebar's account badge: an accent-color
- * initials bubble in the bottom-right corner, drawn when `showBadge` is set
- * (accent color present, or several instances share this driver). The glyph
- * dims to 60% opacity while the badge stays fully saturated, matching
- * `apps/web/src/components/chat/ProviderInstanceIcon.tsx`.
- */
 export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;

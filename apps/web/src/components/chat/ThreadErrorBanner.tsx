@@ -55,11 +55,6 @@ export function getTruncationNoticeKey(
   return item ? `${threadKey}\u0000truncation\u0000${item.id}` : null;
 }
 
-// Session-scoped (module-level so it survives ChatView remounts, e.g. route
-// changes between threads). Mirrors the branch-mismatch banner: a dismissal
-// is remembered per thread key plus message, so navigating away to a thread
-// with no error cannot resurrect the banner, while a different error message
-// on the same thread still appears.
 const sessionDismissedThreadErrorBannerKeys = new Set<string>();
 
 export function dismissThreadErrorBannerForSession(bannerKey: string | null): void {

@@ -49,10 +49,6 @@ import {
 
 const ShortText = (max: number) => TrimmedNonEmptyString.check(Schema.isMaxLength(max));
 
-// ---------------------------------------------------------------------------
-// File identity
-// ---------------------------------------------------------------------------
-
 export const SCIC_FILE_EXTENSION = ".scic";
 export const SCIENT_CONVERSATION_MARKDOWN_FORMAT = "scient-conversation-markdown";
 export const SCIENT_MARKDOWN_DOCUMENT_FORMAT = "scient-markdown-document";
@@ -76,10 +72,6 @@ export const SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH = "/api/scient/conversation-
 
 /** The scope every conversation import endpoint requires of the caller. */
 export const SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE = AuthOrchestrationOperateScope;
-
-// ---------------------------------------------------------------------------
-// Identities
-// ---------------------------------------------------------------------------
 
 /** One staged import on one server. Issued by `createUpload`; never reused. */
 export const ConversationImportId = TrimmedNonEmptyString.check(
@@ -109,9 +101,7 @@ export const ConversationImportResourceId = TrimmedNonEmptyString.check(
 );
 export type ConversationImportResourceId = typeof ConversationImportResourceId.Type;
 
-// ---------------------------------------------------------------------------
 // What a validated package says about itself
-// ---------------------------------------------------------------------------
 
 export const ConversationImportFormatVersion = Schema.Struct({
   major: PositiveInt,
@@ -202,10 +192,6 @@ export const ConversationImportRejection = Schema.Struct({
   entry: Schema.NullOr(ShortText(512)),
 });
 export type ConversationImportRejection = typeof ConversationImportRejection.Type;
-
-// ---------------------------------------------------------------------------
-// HTTP contract
-// ---------------------------------------------------------------------------
 
 export const ScientConversationImportCreateUploadRequest = Schema.Struct({
   /** Display name only; the server never uses it as a path. */
@@ -382,9 +368,7 @@ export class ScientConversationImportError extends Schema.TaggedError<ScientConv
   }
 }
 
-// ---------------------------------------------------------------------------
 // Desktop: files the operating system opened with Scient
-// ---------------------------------------------------------------------------
 
 /**
  * A `.scic` the desktop received from the operating system (double-click,

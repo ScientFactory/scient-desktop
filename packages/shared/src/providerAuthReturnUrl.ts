@@ -8,7 +8,6 @@ const DESKTOP_RETURN_PROTOCOLS = [
 ];
 // SCIENT-FORK:END
 
-/** Only return to a local client, never an arbitrary OAuth-supplied URL. */
 export function providerAuthReturnUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {

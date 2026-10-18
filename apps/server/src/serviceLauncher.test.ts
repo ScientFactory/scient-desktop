@@ -205,9 +205,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
       const running = launcher.run();
       const stopping = launcher.stop("SIGTERM");
-      // An explicit stop leaves the marker that tells a child shutting down
-      // mid-update that no replacement server is coming. It is present as
-      // soon as stop() returns its promise, before queued transitions run.
       assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
       yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
@@ -319,8 +316,6 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  // Migrations on a large database can keep a trial busy for minutes before it
-  // reports prepared. Only a trial that stays stuck past the window rolls back.
   it.effect.each([
     { prepares: true, status: "committed", activeVersion: "1.1.0" },
     { prepares: false, status: "rolled-back", activeVersion: "1.0.0" },
@@ -335,8 +330,6 @@ if (context.update?.status === "pending") {
         const databasePath = path.join(root, "userdata", "state.sqlite");
         yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
         yield* fs.writeFileString(databasePath, "before trial");
-        // The trial stands in for slow migrations: it reports prepared only
-        // when the test tells it to.
         const childSource = `
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status !== "pending") process.exit(0);
@@ -375,12 +368,10 @@ setInterval(() => {}, 1_000);
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
         );
-        // Each run ends when the final active child exits on its own.
         const running = launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
           () => Promise.resolve(),
         );
-        // The prepared timer is armed once the trial has spawned.
         yield* Effect.promise(() =>
           vi.waitFor(() => assert.equal(vi.getTimerCount(), 1), { timeout: 10_000 }),
         );
@@ -617,7 +608,6 @@ setInterval(() => {}, 1_000);
         yield* Effect.promise(() => readServiceState(statePath)),
         {
           backupSpaceProbe: {
-            // Answer only once the server that asked has disconnected.
             readFreeBytes: () => {
               const child = spawnedChildren.at(-1)!;
               return new Promise((resolve) => {
@@ -657,12 +647,9 @@ setInterval(() => {}, 1_000);
           }),
         );
 
-      // A full copy fits: no clone needed.
       assert.isUndefined(yield* check(11 * 1024 ** 3, false));
-      // A clone needs 10% headroom for the trial's writes, at least 1 GiB.
       assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
       assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
-      // A filesystem that cannot clone needs room for the full copy.
       const blocker = yield* check(8 * 1024 ** 3, false);
       assert.include(blocker ?? "", "Not enough free disk space");
       assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
@@ -695,18 +682,14 @@ setInterval(() => {}, 1_000);
       const databasePath = path.join(root, "userdata", "state.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "database");
-      // With no free space, the result shows which requirement applied.
       const blocker = yield* Effect.promise(() =>
         databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
       );
-      // A tiny database: 1.0 GB is the clone minimum, 0.0 GB the full copy. The
-      // macOS temp directory is on APFS, so the clone requirement applies there.
       assert.include(
         blocker ?? "",
         // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
         process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
       );
-      // Linux probes leave nothing behind in the backup directory.
       assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );

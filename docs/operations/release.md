@@ -231,7 +231,9 @@ Electron Builder derives the active GitHub repository from the release run.
 Stable releases publish `latest*.yml` and their installers/blockmaps from
 `ScientFactory/scient-desktop`.
 
-Scient does not publish T3's npm package. Each release instead contains
+Scient does not publish T3's npm package: upstream's npm launcher sources are
+not carried, and the inherited `apps/server/scripts/cli.ts publish` command is
+not called by any Scient workflow. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
 that immutable GitHub asset at the exact desktop version. The tarball is built
 from the same source SHA and includes native resource monitors from the matrix.

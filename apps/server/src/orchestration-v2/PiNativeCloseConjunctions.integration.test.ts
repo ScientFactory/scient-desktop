@@ -111,7 +111,7 @@ it.live.each(
 
     return {
       caseTitle: shutdown
-        ? "ends pending native subscription normally and fences positive ACK across shutdown"
+        ? "interrupts pending native subscription and fences positive ACK across shutdown"
         : `keeps ${scenario.key} native ownership truthful across administrative close and reuse`,
       scenario,
       shutdown,
@@ -399,7 +399,12 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
               Effect.timeout("10 seconds"),
               Effect.exit,
             );
-            assert.isTrue(Exit.isSuccess(subscriptionExit), "Shutdown must end normally");
+            // A clean end without a root terminal fails the run; shutdown interrupts
+            // instead, leaving the pending run to restart recovery.
+            assert.isTrue(
+              Exit.isFailure(subscriptionExit) && Cause.hasInterruptsOnly(subscriptionExit.cause),
+              "Shutdown must interrupt the subscription",
+            );
             for (const owned of processes) {
               const exit = yield* Deferred.await(owned.exit).pipe(Effect.timeout("10 seconds"));
               assert.isTrue(Exit.isSuccess(exit));
@@ -419,7 +424,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
               assert.isTrue(Option.isNone(owner.live));
               assert.isTrue(Option.isNone(owner.closeState));
             }
-            const after = yield* snapshot("shutdown-normal-eof-and-both-native-exits");
+            const after = yield* snapshot("shutdown-interrupt-and-both-native-exits");
             const pending = after.projection.providerTurns.find((row) => row.id === turn.id)!;
             assert.exists(pending);
             assert.equal(pending.nativeAcceptance, "unknown");

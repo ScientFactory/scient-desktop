@@ -206,7 +206,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),
       Layer.mock(DesktopWslBackend.DesktopWslBackend, { reconcile: Effect.void }),
       Layer.mock(DesktopShellEnvironment.DesktopShellEnvironment, {
-        installIntoProcess: Effect.void,
+        installIntoProcess: Effect.succeed(true),
       }),
       Layer.mock(DesktopLifecycle.DesktopLifecycle, { register: Effect.void }),
       Layer.mock(DesktopClerk.DesktopClerk, {

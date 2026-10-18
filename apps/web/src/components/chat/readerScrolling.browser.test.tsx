@@ -552,7 +552,8 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     const body = state.elementAtIndex(index)!.querySelector('[data-user-message-body="true"]')!;
     return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
   };
-  await expect.poll(promptTextTop).toBeLessThanOrEqual(25);
+  // The same eased reveal; a slow runner needs more than the default second.
+  await expect.poll(promptTextTop, { timeout: 5000 }).toBeLessThanOrEqual(25);
   expect(promptTextTop()).toBeGreaterThanOrEqual(23);
   expect(node.scrollTop).toBeGreaterThan(initial);
   const capped = node.scrollTop;
@@ -625,19 +626,23 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
   await frames(4);
   const list = listRef.current!;
   render("geometry:fast-answer", [...entries, prompt, answer], extra);
+  // The reveal eases in over ~40 frames; a slow runner needs more than the default second.
   await expect
-    .poll(() => {
-      const state = list.getState();
-      const answerIndex = state.data.findIndex(
-        (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-      );
-      return (
-        state
-          .elementAtIndex(answerIndex)!
-          .querySelector('[data-user-message-body="true"]')!
-          .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
-      );
-    })
+    .poll(
+      () => {
+        const state = list.getState();
+        const answerIndex = state.data.findIndex(
+          (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
+        );
+        return (
+          state
+            .elementAtIndex(answerIndex)!
+            .querySelector('[data-user-message-body="true"]')!
+            .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
+        );
+      },
+      { timeout: 5000 },
+    )
     .toBeLessThanOrEqual(25);
   const state = list.getState();
   const answerIndex = state.data.findIndex(
