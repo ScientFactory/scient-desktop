@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -9,7 +10,6 @@ import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import {
   providerSettingsLifecyclePresentation,
   type ProviderSettingsLifecyclePresentation,
@@ -19,16 +19,21 @@ import {
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
 } from "./providerConnectionPresentation";
+import { oneClickSignInMethod } from "./providerSignInBrowser";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 export type ProviderSettingsPrimaryAction =
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
   | { readonly kind: "managed-runtime"; readonly action: "install" | "update" }
-  | { readonly kind: "codex-browser-sign-in" }
+  | { readonly kind: "browser-sign-in"; readonly method: ProviderConnectionMethod }
   | { readonly kind: "external-update" }
   | { readonly kind: "none" };
 
-/** Keep provider-specific fast paths explicit and small. */
+/**
+ * A row starts sign-in itself only for a provider with exactly one method that
+ * signs in through a page Scient opens; any choice, code or pairing opens the
+ * provider's setup view instead.
+ */
 export function resolveProviderSettingsPrimaryAction(input: {
   readonly provider: ServerProvider;
   readonly presentation: ProviderSettingsLifecyclePresentation;
@@ -44,11 +49,10 @@ export function resolveProviderSettingsPrimaryAction(input: {
       return input.canRunExternalUpdate
         ? { kind: "external-update" }
         : { kind: "open", runtimeAction: null };
-    case "sign-in":
-      return input.provider.driver === "codex" &&
-        input.provider.connection?.methods.includes("codex_browser")
-        ? { kind: "codex-browser-sign-in" }
-        : { kind: "open", runtimeAction: null };
+    case "sign-in": {
+      const method = oneClickSignInMethod(input.provider);
+      return method ? { kind: "browser-sign-in", method } : { kind: "open", runtimeAction: null };
+    }
     case "continue":
     case "manage":
       return { kind: "open", runtimeAction: null };
@@ -96,6 +100,7 @@ function resolveProviderSettingsHeaderAction(
 
 export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycleActionProps) {
   const action = resolveProviderSettingsHeaderAction(props.provider);
+  const signInMethod = action === "sign-in" ? oneClickSignInMethod(props.provider) : null;
   const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
   const operationActive = presentation.kind === "installing" || presentation.kind === "signing-in";
   const externalUpdateActive =
@@ -114,26 +119,28 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
       labeled={progressLabel === null && action === "manage"}
     >
       {progressLabel !== null ? (
-        <Button
-          aria-label={`${progressLabel} ${props.displayName}`}
-          onClick={() => props.onManage()}
-          size="compact"
-          type="button"
-          variant="ghost-primary"
-        >
-          <LoaderIcon aria-hidden className="animate-spin" />
-          <span role="status" className="inline-flex items-baseline gap-1.5">
-            {progressLabel}
-            {operationActive && presentation.downloadPercent !== undefined ? (
-              <span
-                aria-label={`Download progress ${presentation.downloadPercent}%`}
-                className="text-[11px] font-normal tabular-nums text-muted-foreground"
-              >
-                {presentation.downloadPercent}%
-              </span>
-            ) : null}
-          </span>
-        </Button>
+        <ProgressDetail detail={operationActive ? presentation.detail : null}>
+          <Button
+            aria-label={`${progressLabel} ${props.displayName}`}
+            onClick={() => props.onManage()}
+            size="compact"
+            type="button"
+            variant="ghost-primary"
+          >
+            <LoaderIcon aria-hidden className="animate-spin" />
+            <span role="status" className="inline-flex items-baseline gap-1.5">
+              {progressLabel}
+              {operationActive && presentation.downloadPercent !== undefined ? (
+                <span
+                  aria-label={`Download progress ${presentation.downloadPercent}%`}
+                  className="text-[11px] font-normal tabular-nums text-muted-foreground"
+                >
+                  {presentation.downloadPercent}%
+                </span>
+              ) : null}
+            </span>
+          </Button>
+        </ProgressDetail>
       ) : action === "install" ? (
         <ManagedRuntimeActionButton
           action="install"
@@ -143,11 +150,12 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
           provider={props.provider}
         />
       ) : action === "sign-in" ? (
-        props.provider.driver === "codex" &&
-        props.provider.connection?.methods.includes("codex_browser") ? (
-          <CodexBrowserSignInButton
+        signInMethod ? (
+          <BrowserSignInButton
             displayName={props.displayName}
             environmentId={props.environmentId}
+            method={signInMethod}
+            onManage={props.onManage}
             provider={props.provider}
           />
         ) : (
@@ -196,10 +204,23 @@ function ProviderSettingsActions(props: {
   );
 }
 
-function CodexBrowserSignInButton(props: {
+/** The operation's progress text, such as a slow start, for a row that shows only a label. */
+function ProgressDetail(props: { readonly detail: string | null; readonly children: ReactNode }) {
+  if (!props.detail) return props.children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex">{props.children}</span>} />
+      <TooltipPopup side="top">{props.detail}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function BrowserSignInButton(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly method: ProviderConnectionMethod;
+  readonly onManage: () => void;
 }) {
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
@@ -210,7 +231,20 @@ function CodexBrowserSignInButton(props: {
   const signIn = async () => {
     setPending(true);
     try {
-      await startCodexBrowserSignIn(controller);
+      // The controller opens the sign-in page for this client once it is ready.
+      const provider = await controller.startConnection(props.method);
+      const operation = provider.connection?.operation;
+      // A flow that waits on something other than the page Scient opened, such
+      // as a code to paste, continues in the setup view.
+      if (
+        isActiveProviderConnectionOperation(operation) &&
+        !(
+          operation?.status === "waiting_for_browser" &&
+          operation.authorizationUrlKind === "primary"
+        )
+      ) {
+        props.onManage();
+      }
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -233,7 +267,7 @@ function CodexBrowserSignInButton(props: {
       variant="ghost-primary"
     >
       {pending ? <LoaderIcon className="animate-spin" /> : <LogInIcon />}
-      {pending ? "Signing in" : "Sign in"}
+      {pending ? "Starting" : "Sign in"}
     </Button>
   );
 }

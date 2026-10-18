@@ -263,7 +263,7 @@ export function providerSettingsLifecyclePresentation(
     const canRetrySignIn = (provider.connection?.methods.length ?? 0) > 0;
     return {
       kind: "failed",
-      statusLabel: "Sign-in failed",
+      statusLabel: connectionOperation.failedAfterSignIn ? "Setup failed" : "Sign-in failed",
       detail: connectionOperation.message,
       ...(canRetrySignIn
         ? action({ kind: "sign-in", label: "Retry" })
@@ -274,7 +274,12 @@ export function providerSettingsLifecyclePresentation(
   if (connectionOperation && isActiveProviderConnectionOperation(connectionOperation)) {
     return {
       kind: "signing-in",
-      statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",
+      statusLabel:
+        connectionOperation.status === "verifying"
+          ? "Verifying"
+          : connectionOperation.status === "starting"
+            ? "Starting"
+            : "Signing in",
       detail: connectionOperation.message,
       ...action({ kind: "continue", label: "Continue" }),
       busy: true,
