@@ -75,6 +75,37 @@ it("sets aside an active thread dropped below inactive ones; arrivals still take
   expect(state.groups[0]!.aside).toEqual([]);
   expect(order(update(state, ["a", "b"]))).toEqual(["b", "a", "x", "c"]);
 });
+it("classifies a drop made on another device like a local one", () => {
+  // `a` carries the order key another window wrote; `keys` is the resulting canonical order.
+  const moved = (keys: string[], eligible: string[], aKey: string) =>
+    reconcileWith(keys, eligible, (key) => (key === "a" ? aKey : key));
+  let reconcileState = update(EMPTY_PLACEMENT, ["a"]);
+  function reconcileWith(keys: string[], eligible: string[], orderKey: (key: string) => string) {
+    reconcileState = reconcilePlacement(
+      reconcileState,
+      [
+        {
+          id: "general",
+          rows: keys.map((key) => ({
+            key,
+            eligible: eligible.includes(key),
+            orderKey: orderKey(key),
+          })),
+        },
+      ],
+      null,
+      0,
+    );
+    return reconcileState;
+  }
+  // Another window drags working a below inactive x, b and c: it is set aside here too.
+  expect(moved(["x", "b", "c", "a"], ["a"], "z").groups[0]!.aside).toEqual(["a"]);
+  expect(order(moved(["x", "b", "c", "a"], ["a", "b"], "z"))).toEqual(["b", "x", "c", "a"]);
+  // Dragged back to the top elsewhere, it rejoins the block.
+  const back = moved(["a", "b", "x", "c"], ["a", "b"], "0").groups[0]!;
+  expect(back.upper).toEqual(["a", "b"]);
+  expect(back.aside).toEqual([]);
+});
 it("keeps an active thread reordered within the block in it", () => {
   let state = drop(update(EMPTY_PLACEMENT, ["a", "b"]), ["b", "a", "x", "c"], "b", ["a", "b"]);
   expect(state.groups[0]!.aside).toEqual([]);
@@ -178,6 +209,27 @@ it("holds an unsynchronized environment's rows at their last known state", () =>
     withSection.groups,
   );
   expect(reconcilePlacement(withSection, [], null, 5).groups).toEqual([]);
+  // ...unless its thread is now listed elsewhere: it is never held in two places.
+  const listedElsewhere = reconcilePlacement(
+    withSection,
+    [{ id: "general", rows: [{ key: "remote:t", eligible: true, orderKey: null }] }],
+    null,
+    5,
+    remoteFrozen,
+  );
+  expect(listedElsewhere.groups.map((group) => group.id)).toEqual(["general"]);
+  // A frozen thread's review deadline waits: it does not depart while its machine is away.
+  let held = reconcilePlacement(EMPTY_PLACEMENT, general(["remote:r"]), null, 0);
+  held = reconcilePlacement(held, general([]), "remote:r", 1);
+  held = reconcilePlacement(held, general([]), null, 2);
+  expect(held.pending).toEqual([{ key: "remote:r", dueAt: 3002 }]);
+  const away = reconcilePlacement(held, general(["local:b"]), null, 9000, remoteFrozen);
+  expect(away.groups[0]!.upper).toContain("remote:r");
+  expect(away.pending).toEqual([{ key: "remote:r", dueAt: 3002 }]);
+  // Back online, the elapsed deadline applies.
+  expect(reconcilePlacement(away, general(["local:b"]), null, 9001).groups[0]!.upper).toEqual([
+    "local:b",
+  ]);
   // Once live again its rows are judged from current data.
   expect(order(reconcilePlacement(missing, general(["local:b"]), null, 30))).toEqual([
     "local:b",

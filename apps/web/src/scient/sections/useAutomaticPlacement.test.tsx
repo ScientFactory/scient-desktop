@@ -128,6 +128,23 @@ it("commits a manual cross-section drop with fresh membership and honours its po
   act(() => value.onInteractionChange(false));
   expect(value.state.groups[1]!.order).toEqual(["c", "a"]);
 });
+it("sets aside an active thread dropped from another section without re-forming the destination", () => {
+  const row = (key: string, eligible: boolean) => ({ key, eligible, orderKey: key });
+  input = {
+    ...input,
+    groups: [
+      { id: "general", rows: [row("x", false), row("a", true), row("y", false)] },
+      { id: "other", rows: [row("d", true)] },
+    ],
+  };
+  render();
+  // x is deliberately held above active a.
+  act(() => value.onManualPlacement("general", ["x", "a", "y"], "x", new Map()));
+  expect(order()).toEqual(["x", "a", "y"]);
+  act(() => value.onManualPlacement("general", ["x", "a", "y", "d"], "d", new Map()));
+  expect(order()).toEqual(["x", "a", "y", "d"]);
+  expect(value.state.groups[0]!.aside).toEqual(["d"]);
+});
 it("continues working with corrupt or unavailable local storage", () => {
   act(() => renderer.unmount());
   storage.set("scient:sidebar:placement-order:test", "{broken");

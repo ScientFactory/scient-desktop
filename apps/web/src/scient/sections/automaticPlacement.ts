@@ -56,6 +56,24 @@ function atBoundary(order: readonly string[], upper: ReadonlySet<string>, key: s
 }
 
 /**
+ * Classify a dropped row: an active one within or just below the block stays in it; lower,
+ * below inactive rows, it is set aside, and later arrivals no longer join beneath it.
+ */
+function placeDropped(
+  order: readonly string[],
+  upper: Set<string>,
+  aside: Set<string>,
+  key: string,
+  eligible: boolean,
+) {
+  upper.delete(key);
+  aside.delete(key);
+  if (!eligible) return;
+  const lastUpper = order.findLastIndex((id) => upper.has(id));
+  (order.indexOf(key) <= lastUpper + 1 ? upper : aside).add(key);
+}
+
+/**
  * Reconcile complete membership. Filtering/collapse never enters this model. Rows of an
  * environment without a live thread list (`isFrozen`) keep their last known state: they are
  * neither re-judged from a stale copy nor forgotten while missing.
@@ -103,6 +121,11 @@ export function reconcilePlacement(
         order = manualOrderForPlacement(order, keys, row.key);
         ordered.add(row.key);
       }
+      if (isFrozen(row.key)) {
+        // No transitions; a review deadline waits until the environment is live again.
+        if (pending.has(row.key)) retainedPending.set(row.key, pending.get(row.key) ?? null);
+        continue;
+      }
       if (row.eligible) {
         if (!upper.has(row.key) && !aside.has(row.key)) {
           order = atBoundary(order, upper, row.key);
@@ -123,12 +146,12 @@ export function reconcilePlacement(
           }
         }
       }
-      // Server-backed manual movement from another view/window is also deliberate.
+      // Server-backed manual movement from another view/window is a drop like a local one.
       if (old !== undefined && old.orderKey !== row.orderKey) {
         order = manualOrderForPlacement(order, keys, row.key);
         retainedPending.delete(row.key);
         departures.delete(row.key);
-        if (!row.eligible) upper.delete(row.key);
+        placeDropped(order, upper, aside, row.key, row.eligible);
       }
     }
     // Prepend a simultaneous departure batch without reversing its visible order.
@@ -145,13 +168,29 @@ export function reconcilePlacement(
       aside: order.filter((key) => aside.has(key)),
     };
   });
-  // A frozen environment's whole section can be missing too; keep it as it was.
-  const carried = state.groups.filter(
-    (group) =>
-      !input.some((entry) => entry.id === group.id) &&
-      group.rows.length > 0 &&
-      group.rows.every((row) => isFrozen(row.key)),
-  );
+  // A frozen environment's whole section can be missing too; keep it as it was, minus
+  // rows now listed elsewhere.
+  const carried = state.groups.flatMap((group) => {
+    if (
+      input.some((entry) => entry.id === group.id) ||
+      !group.rows.every((row) => isFrozen(row.key))
+    )
+      return [];
+    const rows = group.rows.filter((row) => !listed.has(row.key));
+    const kept = new Set(rows.map((row) => row.key));
+    const keep = (keys: readonly string[]) => keys.filter((key) => kept.has(key));
+    return rows.length === 0
+      ? []
+      : [
+          {
+            ...group,
+            rows,
+            order: keep(group.order),
+            upper: keep(group.upper),
+            aside: keep(group.aside),
+          },
+        ];
+  });
   const next = {
     groups: [...groups, ...carried],
     pending: [...retainedPending].map(([key, dueAt]) => ({ key, dueAt })),
@@ -181,14 +220,7 @@ export function manuallyPlaceThread(
     const order = manualOrderForPlacement(group.order, displayedOrder, key);
     const upper = new Set(group.upper);
     const aside = new Set(group.aside);
-    upper.delete(key);
-    aside.delete(key);
-    if (rows.find((row) => row.key === key)?.eligible) {
-      // Within or just below the active block it stays in it; lower, below inactive
-      // threads, it is set aside and later arrivals no longer join beneath it.
-      const lastUpper = order.findLastIndex((id) => upper.has(id));
-      (order.indexOf(key) <= lastUpper + 1 ? upper : aside).add(key);
-    }
+    placeDropped(order, upper, aside, key, rows.find((row) => row.key === key)?.eligible === true);
     return {
       ...group,
       rows,

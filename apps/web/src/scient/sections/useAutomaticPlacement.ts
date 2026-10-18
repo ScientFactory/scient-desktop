@@ -186,9 +186,14 @@ export function useAutomaticPlacement(input: {
           orderKeys.has(row.key) ? { ...row, orderKey: orderKeys.get(row.key)! } : row,
         ),
       }));
+      // The drop alone places the moved row: reconciling without it (and before the new
+      // keys) keeps it from counting as an arrival and its re-keyed neighbours as remote drops.
       const reconciled = reconcilePlacement(
         current.state,
-        inputs,
+        current.groups.map((group) => ({
+          ...group,
+          rows: group.rows.filter((row) => row.key !== key),
+        })),
         current.openKey,
         Date.now(),
         current.isFrozen,
