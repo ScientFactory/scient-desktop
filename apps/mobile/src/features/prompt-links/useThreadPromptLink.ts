@@ -1,9 +1,9 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 // SCIENT-FORK:START — registered app identity and local draft-link policy.
 import { parseScientThreadLinkPrompt as parseThreadLinkPrompt } from "@t3tools/shared/scientPromptLinks";
 // SCIENT-FORK:END
 import { useEffect, useRef } from "react";
-import { Alert } from "react-native";
 
 import { applyLinkedPromptToThreadDraft } from "./prompt-link-actions";
 import {
@@ -14,10 +14,6 @@ import {
 
 const THREAD_LINK_KEYS = ["prompt"];
 
-/**
- * Applies the `prompt` of a `t3code://threads/<environmentId>/<threadId>?prompt=…` link to that
- * thread's composer draft, once per link. Used by `ThreadRouteScreen`.
- */
 export function useThreadPromptLink(
   params: Readonly<Record<string, unknown>> | undefined,
   threadDraftKey: string | null,
@@ -35,7 +31,7 @@ export function useThreadPromptLink(
     navigation.setParams(clearedPromptLinkParams(THREAD_LINK_KEYS));
     const parsed = parseThreadLinkPrompt(search);
     if (!parsed.ok) {
-      Alert.alert("Could not open link", parsed.error);
+      Dialog.alert("Could not open link", parsed.error);
       return;
     }
     if (parsed.value === null) return;

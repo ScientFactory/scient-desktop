@@ -9,7 +9,6 @@ interface Subscription {
 
 interface Target {
   readonly subscriptions: Set<Subscription>;
-  /** Subscribers that joined after the first delivery and still await their initial entry. */
   waiting: Set<Subscription> | null;
   last: ResizeObserverEntry | null;
 }
@@ -118,8 +117,6 @@ export function observeResize(
       continue;
     }
     target.subscriptions.add(subscription);
-    // An initial entry still pending reaches every subscriber; after it, only
-    // observing afresh makes the browser report the current size again.
     if (!target.last) continue;
     (target.waiting ??= new Set()).add(subscription);
     shared.unobserve(element);
@@ -137,7 +134,6 @@ export function observeResize(
     if (targets.size > 0) {
       for (const element of unobserved) shared.unobserve(element);
     } else {
-      // A fresh observer next time also picks up a ResizeObserver a test stubbed since.
       shared.disconnect();
       groups.delete(box);
     }

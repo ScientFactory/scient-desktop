@@ -1,4 +1,3 @@
-// This policy is independent of Shell so lifecycle and authorization can be tested without a desktop.
 export const CLIENT_NAMES = ["scient.SnapShot", "scient-next-dev.SnapShot"];
 
 export function isWaylandSession(meta) {

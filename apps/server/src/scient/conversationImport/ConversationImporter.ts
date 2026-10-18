@@ -167,10 +167,6 @@ import {
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 
-// ---------------------------------------------------------------------------
-// Staging policy
-// ---------------------------------------------------------------------------
-
 /** Under `<stateDir>/scient/`, beside the export files. */
 export const CONVERSATION_IMPORT_STAGING_DIRECTORY = "conversation-imports";
 export const CONVERSATION_IMPORT_STAGING_TTL_MS = 60 * 60_000;
@@ -201,10 +197,6 @@ export function conversationImportRecordCount(snapshot: ConversationSnapshotV1):
     snapshot.questionAnswers.length
   );
 }
-
-// ---------------------------------------------------------------------------
-// Validated import input
-// ---------------------------------------------------------------------------
 
 /**
  * Recomputes a snapshot's content digest the way the exporter computed it:
@@ -699,10 +691,6 @@ export function conversationImportProvenance(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Committed imports
-// ---------------------------------------------------------------------------
-
 /**
  * The confirm an attempt is bound to. The importer's journal records it, and
  * flushes it, before publishing any file or dispatching the command.
@@ -752,10 +740,6 @@ export function sameConversationImportDestination(
   return stableStringify(encodeDestination(left)) === stableStringify(encodeDestination(right));
 }
 
-// ---------------------------------------------------------------------------
-// Lease
-// ---------------------------------------------------------------------------
-
 export class ConversationImportStagingError extends Schema.TaggedError<ConversationImportStagingError>()(
   "ConversationImportStagingError",
   {
@@ -802,10 +786,6 @@ export interface ConversationImportLease {
     readonly destinationPath: string;
   }) => Effect.Effect<void, ConversationImportStagingError>;
 }
-
-// ---------------------------------------------------------------------------
-// Importer
-// ---------------------------------------------------------------------------
 
 export class ConversationImporterError extends Schema.TaggedError<ConversationImporterError>()(
   "ConversationImporterError",

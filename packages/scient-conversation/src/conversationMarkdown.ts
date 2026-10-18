@@ -1,27 +1,30 @@
+// oxlint-disable-next-line t3code/no-low-value-comments -- the format example opens with YAML front matter, not a divider.
 /**
  * Scient conversation Markdown v1: the grammar of an exported conversation,
  * its writer primitives, and a parser that recovers message boundaries.
  *
- *     ---
- *     scient: conversation
- *     scient-format: 1
- *     scient-export: 7f3c9a2e41b8
- *     title: Export and import design
- *     exported: 2026-09-28T09:12:00.000Z
- *     ---
+ * ```markdown
+ * ---
+ * scient: conversation
+ * scient-format: 1
+ * scient-export: 7f3c9a2e41b8
+ * title: Export and import design
+ * exported: 2026-09-28T09:12:00.000Z
+ * ---
  *
- *     <!-- scient:message export=7f3c9a2e41b8 n=1 role=user time=2026-09-27T14:05:00.000Z -->
- *     ## You · 27 Sep 2026, 14:05 UTC
+ * <!-- scient:message export=7f3c9a2e41b8 n=1 role=user time=2026-09-27T14:05:00.000Z -->
+ * ## You · 27 Sep 2026, 14:05 UTC
  *
- *     Please investigate …
+ * Please investigate …
  *
- *     <!-- scient:message export=7f3c9a2e41b8 n=2 role=assistant time=… turn=1 -->
- *     ## Assistant · 27 Sep 2026, 14:06 UTC
+ * <!-- scient:message export=7f3c9a2e41b8 n=2 role=assistant time=… turn=1 -->
+ * ## Assistant · 27 Sep 2026, 14:06 UTC
  *
- *     Here is what I found …
+ * Here is what I found …
  *
- *     <!-- scient:part export=7f3c9a2e41b8 kind=work-log -->
- *     <details>…</details>
+ * <!-- scient:part export=7f3c9a2e41b8 kind=work-log -->
+ * <details>…</details>
+ * ```
  *
  * Markers carry structure only. Boundaries come only from top-level marker
  * comments carrying the file's own export value; speaker headings are for
@@ -139,10 +142,6 @@ export function formatSpeakerHeading(input: {
 }): string {
   return `## ${SPEAKER_LABELS[input.role]} · ${formatSpeakerTime(input.time, input.timeZone)}`;
 }
-
-// ---------------------------------------------------------------------------
-// Reader
-// ---------------------------------------------------------------------------
 
 export interface ParsedMarkdownPart {
   readonly kind: MarkdownPartKind;

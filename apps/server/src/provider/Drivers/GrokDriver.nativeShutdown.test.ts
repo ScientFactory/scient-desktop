@@ -45,6 +45,7 @@ import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { layerProviderRuntimeTestServices } from "../../orchestration-v2/testkit/ProviderRuntimeTestServices.ts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -451,6 +452,14 @@ const managerLayer = Effect.fn("GrokShutdown.managerLayer")(function* (h: Harnes
     revoked,
     layer: ProviderSessionManager.layerWithOptions({ idleTimeoutMs: 60_000 }).pipe(
       Layer.provide(dependencies),
+      Layer.provide(
+        layerProviderRuntimeTestServices(
+          Layer.merge(
+            Layer.succeed(EventSink.EventSinkV2, sink),
+            Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
+          ),
+        ),
+      ),
     ),
   };
 });

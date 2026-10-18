@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { createContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { remarkScientMathRefinements, type ScientMathRefinementOptions } from "./remarkScientMath";
@@ -57,6 +57,12 @@ export function useScientMathRemarkPlugins(
     [basePlugins, needsAuthoredIntent, sourceText],
   );
 }
+
+/**
+ * The message as authored, before delimiter normalization. It changes on every streamed
+ * token, so it sits apart from the chat Markdown renderer context and only math reads it.
+ */
+export const ScientAuthoredMathTextContext = createContext("");
 
 /** A rendered Markdown node's source position, as react-markdown reports it. */
 interface MarkdownSourcePositionNode {

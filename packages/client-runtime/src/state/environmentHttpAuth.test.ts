@@ -12,6 +12,7 @@ import {
   OrchestrationV2ShellSnapshotJson,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
@@ -41,6 +42,7 @@ import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
@@ -48,6 +50,7 @@ import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts"
 
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
+const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
 
 const TARGET = new RelayConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -93,6 +96,12 @@ const THREAD = {
   snapshotSequence: 2,
   projection: v2Projection,
 } satisfies OrchestrationV2ThreadDetailSnapshot;
+const TRANSCRIPT = {
+  threadId: v2Projection.thread.id,
+  title: v2Projection.thread.title,
+  updatedAt: v2Projection.updatedAt,
+  items: v2Projection.visibleTurnItems,
+} satisfies OrchestrationV2ThreadTranscript;
 const BOUNDED_THREAD = {
   ...THREAD,
   historyCursor: "older-page",
@@ -259,7 +268,6 @@ const LOADERS: ReadonlyArray<{
     path: "/api/orchestration/shell",
     response: SHELL,
     expected: SHELL,
-    // Pull request links decode separately; the rows match the response on their own.
     load: (input: HttpInput) =>
       fetchEnvironmentShellSnapshot(input).pipe(
         Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
@@ -276,6 +284,15 @@ const LOADERS: ReadonlyArray<{
         ...input,
         threadId: THREAD.projection.thread.id,
       }),
+  },
+  {
+    name: "thread transcript",
+    method: "GET",
+    path: `/api/orchestration/threads/${TRANSCRIPT.threadId}/transcript`,
+    response: encodeThreadTranscript(TRANSCRIPT),
+    expected: TRANSCRIPT,
+    load: (input: HttpInput) =>
+      fetchEnvironmentThreadTranscript({ ...input, threadId: TRANSCRIPT.threadId }),
   },
   {
     name: "bounded thread snapshot",
@@ -458,6 +475,12 @@ describe("authenticated environment HTTP requests", () => {
   const MCP_THREAD_LOADERS: ReadonlyArray<
     Pick<(typeof LOADERS)[number], "name" | "response" | "load">
   > = [
+    {
+      name: "thread transcript",
+      response: encodeThreadTranscript(TRANSCRIPT),
+      load: (input: HttpInput) =>
+        fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
+    },
     {
       name: "thread snapshot",
       response: encodeThreadSnapshot(THREAD),

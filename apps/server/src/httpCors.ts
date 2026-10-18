@@ -14,7 +14,6 @@ export const browserApiCorsAllowedHeaders = [
   ORCHESTRATION_PROTOCOL_HEADER,
   THREAD_SNAPSHOT_FORMAT_HEADER,
 ] as const;
-/** Origins of the Electron renderer, packaged and dev. */
 // SCIENT-FORK:START desktop-renderer-identity
 export const DESKTOP_RENDERER_ORIGINS = [
   `${SCIENT_DESKTOP_IDENTITY.productionScheme}://app`,

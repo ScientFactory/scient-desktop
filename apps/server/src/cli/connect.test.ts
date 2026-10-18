@@ -25,6 +25,7 @@ const unreachableBootService = BootService.BootService.of({
   install: () => Effect.die("D4 service guard was bypassed"),
   uninstall: Effect.die("D4 service guard was bypassed"),
   restart: Effect.die("D4 service guard was bypassed"),
+  withStopped: () => Effect.die("D4 service guard was bypassed"),
   status: Effect.die("D4 service guard was bypassed"),
 });
 
