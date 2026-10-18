@@ -15,6 +15,7 @@ import type {
 import {
   buildOtherUpdateRows,
   collectOtherServerUpdates,
+  failedUpdateRunServer,
   collectProviderUpdateItems,
   deriveOtherUpdateRowState,
   isSelfUpdatingSshRemote,
@@ -26,6 +27,7 @@ import {
   providerUpdateLive,
   serverUpdateItem,
   serverUpdateLive,
+  stopsThreadsLabel,
   trackUpdatingRows,
   type OtherUpdateItem,
   type OtherUpdateRow,
@@ -142,42 +144,58 @@ function row(item: OtherUpdateItem, state: OtherUpdateRow["state"]): OtherUpdate
   return { item, state };
 }
 
+function passRun(
+  patch: Partial<UpdateEverythingRun["machines"][number]> = {},
+  phase: UpdateEverythingRun["phase"] = "servers",
+): UpdateEverythingRun {
+  return {
+    localVersion: null,
+    phase,
+    restartAt: null,
+    machines: [
+      {
+        environmentId: lab,
+        label: "lab-gpu",
+        updatesProviders: false,
+        server: serverTarget,
+        handedOffVersion: null,
+        startedAt: 0,
+        result: null,
+        failure: null,
+        providerFailure: null,
+        ...patch,
+      },
+    ],
+  };
+}
+
 describe("items", () => {
-  it("lists provider CLIs and managed runtimes, naming the machine only when remote", () => {
+  it("lists one-click provider CLIs and managed runtimes, naming the machine only when remote", () => {
     const items = collectProviderUpdateItems([
       { environmentId: local, label: "This Mac", isLocal: true, providers: [behindCli(true)] },
       {
         environmentId: lab,
         label: "lab-gpu",
         isLocal: false,
-        providers: [behindCli(false), managed()],
+        providers: [behindCli(true), managed()],
       },
     ]);
     expect(
-      items.map(({ kind, name, machine, fromVersion, toVersion, manual }) => ({
+      items.map(({ kind, name, machine, fromVersion, toVersion }) => ({
         kind,
         name,
         machine,
         fromVersion,
         toVersion,
-        manual,
       })),
     ).toEqual([
-      {
-        kind: "provider",
-        name: "Codex",
-        machine: null,
-        fromVersion: "1.0.0",
-        toVersion: "1.1.0",
-        manual: false,
-      },
+      { kind: "provider", name: "Codex", machine: null, fromVersion: "1.0.0", toVersion: "1.1.0" },
       {
         kind: "provider",
         name: "Codex",
         machine: "lab-gpu",
         fromVersion: "1.0.0",
         toVersion: "1.1.0",
-        manual: true,
       },
       {
         kind: "managed",
@@ -185,10 +203,18 @@ describe("items", () => {
         machine: "lab-gpu",
         fromVersion: "2.0.0",
         toVersion: "2.1.0",
-        manual: false,
       },
     ]);
     expect(otherUpdateVersionLabel(items[0]!)).toBe("1.0.0 → 1.1.0");
+  });
+
+  it("leaves updates Scient cannot run itself to Settings", () => {
+    expect(
+      collectProviderUpdateItems([
+        { environmentId: lab, label: "lab", isLocal: false, providers: [behindCli(false)] },
+      ]),
+    ).toEqual([]);
+    expect(otherUpdatesCircleState([])).toBeNull();
   });
 
   it("keeps a managed runtime listed while its update runs", () => {
@@ -204,46 +230,23 @@ describe("items", () => {
     ).toEqual(["managed"]);
   });
 
-  it("lists qualified servers with an action and owner-only servers as manual", () => {
-    const updates = collectOtherServerUpdates({
-      machines: [
-        machine(lab, { selfUpdate: "boot-service" }),
-        machine(EnvironmentId.make("bare"), { selfUpdate: null }),
-        machine(EnvironmentId.make("old-app"), { selfUpdate: "desktop-managed" }),
-        machine(EnvironmentId.make("ssh"), { selfUpdate: null }),
-        machine(EnvironmentId.make("nightly"), {
-          selfUpdate: null,
-          serverVersion: "0.6.20-nightly.20261001.1",
-        }),
-        machine(EnvironmentId.make("current"), { selfUpdate: null, serverVersion: "0.6.21" }),
-      ],
-      behind: [
-        serverTarget,
-        {
-          ...serverTarget,
-          environmentId: EnvironmentId.make("respawn"),
-          serverLabel: "respawn",
-          selfUpdate: "respawn",
-        },
-      ],
-      qualified: [serverTarget],
-      targetVersion: "0.6.21",
-      selfUpdating: new Set([EnvironmentId.make("ssh")]),
-    });
-    expect(updates.map(({ label, app, target }) => [label, app, target !== null])).toEqual([
-      ["lab-gpu", false, true],
-      ["respawn", false, false],
-      ["bare", false, false],
-      ["old-app", true, false],
-    ]);
-    expect(serverUpdateItem(updates[0]!)).toMatchObject({
+  it("lists the servers a pass may update with the version each runs", () => {
+    const [update] = collectOtherServerUpdates(
+      [machine(lab, { selfUpdate: "boot-service" })],
+      [serverTarget],
+    );
+    expect(serverUpdateItem(update!)).toMatchObject({
       name: "lab-gpu server",
       machine: null,
       fromVersion: "0.6.20",
       toVersion: "0.6.21",
-      manual: false,
+      target: serverTarget,
     });
-    expect(serverUpdateItem(updates[3]!)).toMatchObject({ name: "old-app app", manual: true });
+    const [app] = collectOtherServerUpdates(
+      [],
+      [{ ...serverTarget, selfUpdate: "desktop-managed" }],
+    );
+    expect(serverUpdateItem(app!)).toMatchObject({ name: "lab-gpu app", fromVersion: null });
   });
 
   it("recognizes an SSH remote launched from this app's package", () => {
@@ -272,11 +275,12 @@ describe("items", () => {
 
 describe("live state", () => {
   it("reports a real percentage for managed downloads, otherwise the phase", () => {
-    const downloading = managedUpdateLive(
-      managed({ status: "downloading", downloadedBytes: 42, totalBytes: 100 }),
-      undefined,
-    );
-    expect(downloading).toEqual({ status: "active", progress: { percent: 42 } });
+    expect(
+      managedUpdateLive(
+        managed({ status: "downloading", downloadedBytes: 42, totalBytes: 100 }),
+        undefined,
+      ),
+    ).toEqual({ status: "active", progress: { percent: 42 } });
     expect(otherUpdateProgressLabel({ percent: 42 })).toBe("42%");
     expect(managedUpdateLive(managed({ status: "verifying" }), undefined)).toEqual({
       status: "active",
@@ -284,9 +288,7 @@ describe("live state", () => {
     });
     expect(
       managedUpdateLive(managed({ status: "activating", waitingForIdle: true }), undefined),
-    ).toEqual({
-      status: "waiting",
-    });
+    ).toEqual({ status: "waiting" });
     expect(
       providerUpdateLive(
         behindCli(true, {
@@ -299,10 +301,7 @@ describe("live state", () => {
           },
         }),
       ),
-    ).toEqual({
-      status: "active",
-      progress: { phase: "installing" },
-    });
+    ).toEqual({ status: "active", progress: { phase: "installing" } });
     expect(
       serverUpdateLive({
         status: "running",
@@ -349,11 +348,20 @@ describe("rows", () => {
     toVersion: "0.6.21",
     target: serverTarget,
   });
+  const newerServer = serverUpdateItem({
+    environmentId: lab,
+    label: "lab-gpu",
+    app: false,
+    fromVersion: "0.6.20",
+    toVersion: "0.6.22",
+    target: { ...serverTarget, targetVersion: "0.6.22" },
+  });
   const base = {
     listed: true,
     live: { status: "idle" } as const,
     tracked: undefined,
     runProgress: null,
+    runFailure: null,
     qualifiedServers: [serverTarget],
   };
 
@@ -366,15 +374,17 @@ describe("rows", () => {
         tracked: { item: cli!, action: { status: "pending" } },
       }),
     ).toEqual({ status: "updating", progress: { phase: "installing" } });
+    // A server waits for its machine's provider updates before it restarts.
     expect(
-      deriveOtherUpdateRowState({ ...base, item: server, runProgress: { phase: "queued" } }),
+      deriveOtherUpdateRowState({
+        ...base,
+        item: server,
+        tracked: { item: server, action: { status: "pending" } },
+      }),
     ).toEqual({ status: "updating", progress: { phase: "queued" } });
     expect(deriveOtherUpdateRowState({ ...base, item: cli!, live: { status: "waiting" } })).toEqual(
-      {
-        status: "waiting",
-      },
+      { status: "waiting" },
     );
-    // Seen updating and now gone from the list: finished.
     expect(
       deriveOtherUpdateRowState({
         ...base,
@@ -383,7 +393,6 @@ describe("rows", () => {
         tracked: { item: cli!, action: null },
       }),
     ).toEqual({ status: "done" });
-    // Gone without being seen updating: nothing to report.
     expect(deriveOtherUpdateRowState({ ...base, item: cli!, listed: false })).toBeNull();
     expect(
       deriveOtherUpdateRowState({
@@ -414,22 +423,90 @@ describe("rows", () => {
         qualifiedServers: [],
       }),
     ).toEqual({ status: "failed", reason: "Did not resume.", retry: false });
+  });
+
+  it("offers a newer server update after a failure for an older one", () => {
+    // The card's own failure is bound to the target it attempted.
     expect(
       deriveOtherUpdateRowState({
         ...base,
-        item: server,
-        live: failed,
-        qualifiedServers: [{ ...serverTarget, selfUpdate: "desktop-managed" }],
-      }),
-    ).toMatchObject({ status: "failed", retry: false });
-    // A failure for an older version than the one now offered is history.
-    expect(
-      deriveOtherUpdateRowState({
-        ...base,
-        item: server,
-        live: { ...failed, targetVersion: "0.6.19" },
+        item: newerServer,
+        tracked: { item: server, action: { status: "failed", reason: "Did not resume." } },
+        qualifiedServers: [newerServer.kind === "server" ? newerServer.target : serverTarget],
       }),
     ).toEqual({ status: "idle" });
+    expect(
+      deriveOtherUpdateRowState({
+        ...base,
+        item: server,
+        live: { status: "failed", reason: "Old.", targetVersion: "0.6.19" },
+      }),
+    ).toEqual({ status: "idle" });
+    // Another mechanism is a new update too.
+    const appServer = serverUpdateItem({
+      environmentId: lab,
+      label: "lab-gpu",
+      app: true,
+      fromVersion: "0.6.20",
+      toVersion: "0.6.21",
+      target: { ...serverTarget, selfUpdate: "desktop-managed" },
+    });
+    expect(
+      deriveOtherUpdateRowState({
+        ...base,
+        item: appServer,
+        tracked: { item: server, action: { status: "failed", reason: "x" } },
+      }),
+    ).toEqual({ status: "idle" });
+  });
+
+  it("reports a pass's withdrawn server as failed, never done, with eligible Retry", () => {
+    const withdrawn = passRun({
+      result: "failed",
+      failure: "Not updated; it was no longer eligible when servers updated.",
+    });
+    expect(failedUpdateRunServer(withdrawn, lab)).toEqual({
+      reason: "Not updated; it was no longer eligible when servers updated.",
+      target: serverTarget,
+    });
+    const states = (qualified: ServerUpdateTarget[]) =>
+      buildOtherUpdateRows({
+        items: [],
+        tracked: new Map([[server.key, { item: server, action: null }]]),
+        liveOf: () => ({ status: "idle" }),
+        run: withdrawn,
+        qualifiedServers: qualified,
+        environments: new Set([lab]),
+      }).map(({ state }) => state);
+    expect(states([])).toEqual([
+      {
+        status: "failed",
+        reason: "Not updated; it was no longer eligible when servers updated.",
+        retry: false,
+      },
+    ]);
+    expect(states([serverTarget])).toMatchObject([{ status: "failed", retry: true }]);
+    // A server the pass updated keeps no record of its server failure.
+    expect(failedUpdateRunServer(passRun({ result: "failed", server: null }), lab)).toBeNull();
+  });
+
+  it("drops rows of a removed machine but keeps a disconnected one's failure", () => {
+    const tracked = new Map([
+      [server.key, { item: server, action: { status: "failed" as const, reason: "x" } }],
+    ]);
+    const rows = (environments: ReadonlySet<EnvironmentId>) =>
+      buildOtherUpdateRows({
+        items: [],
+        tracked,
+        liveOf: () => ({ status: "idle" }),
+        run: null,
+        qualifiedServers: [],
+        environments,
+      });
+    expect(rows(new Set([lab]))).toMatchObject([{ state: { status: "failed", retry: false } }]);
+    expect(rows(new Set())).toEqual([]);
+    // Its tracking is then forgotten.
+    expect([...trackUpdatingRows(tracked, rows(new Set()), new Set())!.keys()]).toEqual([]);
   });
 
   it("keeps finished rows until forgotten and tracks rows seen updating", () => {
@@ -442,6 +519,7 @@ describe("rows", () => {
           : { status: "idle" },
       run: null,
       qualifiedServers: [],
+      environments: new Set([lab]),
     });
     expect(rows.map(({ item, state }) => [item.key, state.status])).toEqual([
       [cli!.key, "updating"],
@@ -450,12 +528,9 @@ describe("rows", () => {
     const tracked = trackUpdatingRows(new Map(), rows, new Set([cli!.key]));
     expect([...tracked!.keys()]).toEqual([cli!.key]);
     expect(trackUpdatingRows(tracked!, rows, new Set([cli!.key]))).toBeNull();
-    // A tracked item that no longer has a row is forgotten.
-    expect([...trackUpdatingRows(tracked!, [], new Set())!.keys()]).toEqual([]);
   });
 
   it("summarizes the circle", () => {
-    expect(otherUpdatesCircleState([])).toBeNull();
     expect(otherUpdatesCircleState([row(cli!, { status: "done" })])).toBe("done");
     expect(
       otherUpdatesCircleState([row(cli!, { status: "done" }), row(server, { status: "waiting" })]),
@@ -475,25 +550,6 @@ describe("rows", () => {
   });
 
   it("queues a pass's servers until they start and follows them after a relaunch", () => {
-    const run = (patch: Partial<UpdateEverythingRun["machines"][number]>): UpdateEverythingRun => ({
-      localVersion: null,
-      phase: "providers",
-      restartAt: null,
-      machines: [
-        {
-          environmentId: lab,
-          label: "lab-gpu",
-          updatesProviders: true,
-          server: serverTarget,
-          handedOffVersion: null,
-          startedAt: 0,
-          result: null,
-          failure: null,
-          providerFailure: null,
-          ...patch,
-        },
-      ],
-    });
     const states = (value: UpdateEverythingRun) =>
       buildOtherUpdateRows({
         items: [cli!, server],
@@ -501,36 +557,26 @@ describe("rows", () => {
         liveOf: () => ({ status: "idle" }),
         run: value,
         qualifiedServers: [serverTarget],
+        environments: new Set([lab]),
       }).map(({ state }) => state);
-    expect(states(run({}))).toEqual([
+    expect(states(passRun({ updatesProviders: true }, "providers"))).toEqual([
       { status: "updating", progress: { phase: "queued" } },
       { status: "updating", progress: { phase: "queued" } },
     ]);
-    expect(
-      states(run({ server: null, handedOffVersion: "0.6.21", updatesProviders: false }))[1],
-    ).toEqual({ status: "updating", progress: { phase: "restarting" } });
+    expect(states(passRun({ server: null, handedOffVersion: "0.6.21" }))[1]).toEqual({
+      status: "updating",
+      progress: { phase: "restarting" },
+    });
+  });
+
+  it("names the running threads a server update would stop", () => {
+    expect(stopsThreadsLabel(1)).toBe("Stops 1 running thread");
+    expect(stopsThreadsLabel(2)).toBe("Stops 2 running threads");
   });
 });
 
 describe("isUpdateRunActive", () => {
-  const settled: UpdateEverythingRun = {
-    localVersion: null,
-    phase: "servers",
-    restartAt: null,
-    machines: [
-      {
-        environmentId: lab,
-        label: "lab",
-        updatesProviders: false,
-        server: serverTarget,
-        handedOffVersion: null,
-        startedAt: 0,
-        result: "failed",
-        failure: "x",
-        providerFailure: null,
-      },
-    ],
-  };
+  const settled = passRun({ result: "failed", failure: "x" });
   it("treats a finished pass that kept its failures as idle", () => {
     expect(isUpdateRunActive(null)).toBe(false);
     expect(isUpdateRunActive(settled)).toBe(false);

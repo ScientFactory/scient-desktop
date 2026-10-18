@@ -17,6 +17,7 @@ import {
   isUpdateRunActive,
   otherUpdateProgressLabel,
   otherUpdateVersionLabel,
+  stopsThreadsLabel,
   type OtherServerUpdate,
   type OtherUpdateRow,
   type OtherUpdatesCircleState,
@@ -70,22 +71,58 @@ function ProgressRing() {
   );
 }
 
+const MUTED = "shrink-0 text-muted-foreground tabular-nums";
+
+/** An action that stops running threads asks once, inline, before it runs. */
+function AskingAction({
+  label,
+  stops,
+  asking,
+  onAsk,
+  onRun,
+  emphasis = false,
+}: {
+  readonly label: string;
+  readonly stops: number;
+  readonly asking: boolean;
+  readonly onAsk: () => void;
+  readonly onRun: () => void;
+  readonly emphasis?: boolean;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-2.5">
+      {asking ? (
+        <span className={MUTED} data-other-update-ask>
+          {stopsThreadsLabel(stops)}
+        </span>
+      ) : null}
+      <UpdateTextButton emphasis={emphasis} onClick={stops > 0 && !asking ? onAsk : onRun}>
+        {label}
+      </UpdateTextButton>
+    </span>
+  );
+}
+
 function RowEnd({
   row,
+  stops,
+  asking,
+  onAsk,
   onUpdate,
   onRetry,
 }: {
   readonly row: OtherUpdateRow;
+  readonly stops: number;
+  readonly asking: boolean;
+  readonly onAsk: () => void;
   readonly onUpdate: () => void;
   readonly onRetry: () => void;
 }) {
-  const muted = "shrink-0 text-muted-foreground tabular-nums";
+  const muted = MUTED;
   switch (row.state.status) {
     case "idle":
-      return row.item.manual ? (
-        <span className={muted}>manual</span>
-      ) : (
-        <UpdateTextButton onClick={onUpdate}>Update</UpdateTextButton>
+      return (
+        <AskingAction asking={asking} label="Update" stops={stops} onAsk={onAsk} onRun={onUpdate} />
       );
     case "updating":
       return <span className={muted}>{otherUpdateProgressLabel(row.state.progress)}</span>;
@@ -93,7 +130,7 @@ function RowEnd({
       return <span className={muted}>waiting for idle</span>;
     case "failed":
       return row.state.retry ? (
-        <UpdateTextButton onClick={onRetry}>Retry</UpdateTextButton>
+        <AskingAction asking={asking} label="Retry" stops={stops} onAsk={onAsk} onRun={onRetry} />
       ) : (
         <span className="shrink-0 text-destructive">failed</span>
       );
@@ -104,7 +141,7 @@ function RowEnd({
 
 /**
  * The footer circle for updates other than this app's own: other machines' servers and apps,
- * provider CLIs and Scient-managed runtimes. It stays until they are updated; its card lists
+ * one-click provider CLIs and Scient-managed runtimes. It stays until they are updated; its card lists
  * each one and updates them in place, since none of them restarts this app. `standalone`
  * gives it its own footer item when this app's update pill is absent.
  */
@@ -123,7 +160,9 @@ export function SidebarOtherUpdates({
   const [handle] = useState(() => PopoverCreateHandle());
   const triggerId = useId();
   const [open, setOpen] = useState(false);
-  const { rows, circle, forget } = updates;
+  /** The row key, or "all", whose action is asking before it stops running threads. */
+  const [asking, setAsking] = useState<string | null>(null);
+  const { rows, circle, forget, stoppedThreads } = updates;
   const doneKeys = rows.flatMap(({ item, state }) => (state.status === "done" ? [item.key] : []));
   const finishedKey = circle === "done" && !open ? doneKeys.join("\n") : null;
 
@@ -141,9 +180,11 @@ export function SidebarOtherUpdates({
     if (open) setOpen(false);
     return null;
   }
-  const canUpdateAll =
-    !runActive && rows.some(({ item, state }) => state.status === "idle" && !item.manual);
+  const idleRows = rows.filter(({ state }) => state.status === "idle");
+  const canUpdateAll = !runActive && idleRows.length > 0;
+  const updateAllStops = idleRows.reduce((count, { item }) => count + stoppedThreads(item), 0);
   const runUpdateAll = async () => {
+    setAsking(null);
     const result = await settlePromise(updateAll);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
@@ -162,7 +203,10 @@ export function SidebarOtherUpdates({
       handle={handle}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) forget(doneKeys);
+        if (!next) {
+          setAsking(null);
+          forget(doneKeys);
+        }
       }}
     >
       <PopoverTrigger
@@ -212,9 +256,18 @@ export function SidebarOtherUpdates({
                   <div className="flex min-h-5 items-center justify-between gap-3">
                     <span className="min-w-0 truncate">{row.item.name}</span>
                     <RowEnd
+                      asking={asking === row.item.key}
                       row={row}
-                      onRetry={() => updates.retry(row)}
-                      onUpdate={() => updates.update(row.item)}
+                      stops={stoppedThreads(row.item)}
+                      onAsk={() => setAsking(row.item.key)}
+                      onRetry={() => {
+                        setAsking(null);
+                        updates.retry(row);
+                      }}
+                      onUpdate={() => {
+                        setAsking(null);
+                        updates.update(row.item);
+                      }}
                     />
                   </div>
                   {secondary ? (
@@ -229,9 +282,14 @@ export function SidebarOtherUpdates({
           </ul>
           {canUpdateAll ? (
             <div className="flex justify-end">
-              <UpdateTextButton emphasis onClick={() => void runUpdateAll()}>
-                Update all
-              </UpdateTextButton>
+              <AskingAction
+                asking={asking === "all"}
+                emphasis
+                label="Update all"
+                stops={updateAllStops}
+                onAsk={() => setAsking("all")}
+                onRun={() => void runUpdateAll()}
+              />
             </div>
           ) : null}
         </div>

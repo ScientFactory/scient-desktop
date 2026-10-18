@@ -7,14 +7,20 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
+import { isProviderUpdateActive } from "~/components/ProviderUpdateLaunchNotification.logic";
+import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments } from "~/state/environments";
-import { serverEnvironment } from "~/state/server";
+import { watchEnvironmentProviders } from "./environmentUpdateWatch";
 import {
   collectManagedRuntimeUpdateCandidates,
+  getManagedRuntimeUpdateResultToastView,
+  getManagedRuntimeUpdateRunningToastView,
+  getManagedRuntimeUpdateWaitingToastView,
   managedRuntimeUpdateStartFailure,
   managedRuntimeUpdateTargetKey,
   managedRuntimeUpdateTargets,
+  resolveManagedRuntimeUpdateOutcome,
   settleManagedRuntimeUpdateRuns,
   startedManagedRuntimeUpdate,
   type ManagedRuntimeUpdateRun,
@@ -63,53 +69,204 @@ function readRun(key: string): ManagedRuntimeUpdateRun | undefined {
   return appAtomRegistry.get(managedRuntimeUpdateRunsAtom).get(key);
 }
 
+interface InFlightUpdate {
+  readonly environmentId: EnvironmentId;
+  /** Active, failed, or staged to switch when the provider is idle. */
+  readonly handedOff: Promise<void>;
+}
+
+/** One start per runtime: later callers join the update already starting or running, until it is active or failed. */
+const inFlightUpdates = new Map<string, InFlightUpdate>();
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function lostContact(run: ManagedRuntimeUpdateRun): ManagedRuntimeUpdateRun {
+  return {
+    ...run,
+    waitingMessage: null,
+    outcome: resolveManagedRuntimeUpdateOutcome({
+      provider: undefined,
+      operationId: run.operationId ?? "",
+      observed: run.observed,
+      expectedVersion: run.target.availableVersion,
+    }),
+  };
+}
+
 /**
- * Follows a started update in its machine's provider snapshots. Resolves once the runtime is
- * active or failed, or once the server has staged it to switch when the provider is idle: the
- * switch then needs nothing more from the client.
+ * Follows a started update in its machine's provider snapshots until the runtime is active or
+ * failed. A machine that is removed, or stays out of contact past the grace period, fails it.
  */
 function followManagedRuntimeUpdate(
   key: string,
-  environmentId: EnvironmentId,
-  operationId: string,
-): Promise<void> {
-  return new Promise((resolve) => {
-    let finished = false;
+  run: ManagedRuntimeUpdateRun,
+  handedOff: () => void,
+  settled: () => void,
+): void {
+  const operationId = run.operationId;
+  const stop = watchEnvironmentProviders(run.target.environmentId, (snapshot) => {
+    const current = readRun(key);
+    if (current?.operationId !== operationId || current.outcome.status !== "pending") {
+      // The first snapshot can arrive before `stop` is assigned.
+      queueMicrotask(() => stop());
+      settled();
+      return;
+    }
+    const next =
+      snapshot.status === "connected"
+        ? settleManagedRuntimeUpdateRuns(
+            [current],
+            [{ environmentId: current.target.environmentId, providers: snapshot.providers }],
+          )[0]!
+        : lostContact(current);
+    if (
+      next.outcome.status !== current.outcome.status ||
+      next.observed !== current.observed ||
+      next.waitingMessage !== current.waitingMessage
+    ) {
+      writeRun(key, next);
+    }
+    if (next.outcome.status !== "pending") {
+      queueMicrotask(() => stop());
+      settled();
+    } else if (next.waitingMessage !== null) {
+      handedOff();
+    }
+  });
+}
+
+/** Shows a started batch's progress, then its result; `afterHandoff` only for staged runtimes. */
+function reportManagedRuntimeUpdates(
+  started: ReadonlyArray<{ readonly key: string; readonly flight: InFlightUpdate }>,
+  afterHandoff: boolean,
+): void {
+  void (async () => {
+    if (afterHandoff) await Promise.all(started.map(({ flight }) => flight.handedOff));
+    const keys = started
+      .map(({ key }) => key)
+      .filter((key) => !afterHandoff || readRun(key)?.outcome.status === "pending");
+    if (keys.length === 0) return;
+    const runs = () => keys.flatMap((key) => readRun(key) ?? []);
+    const progressView = () => {
+      const current = runs();
+      const waiting = current.find(({ waitingMessage }) => waitingMessage !== null);
+      const targets = current.map(({ target }) => target);
+      return waiting
+        ? getManagedRuntimeUpdateWaitingToastView(targets, waiting.waitingMessage!)
+        : getManagedRuntimeUpdateRunningToastView(targets);
+    };
+    const pending = () => runs().some(({ outcome }) => outcome.status === "pending");
+    let progressId: string | null = null;
+    let shownTitle: string | null = null;
+    const showProgress = () => {
+      const view = progressView();
+      if (view.title === shownTitle) return;
+      shownTitle = view.title;
+      if (progressId === null) {
+        progressId = toastManager.add({
+          type: view.type,
+          title: view.title,
+          description: view.description,
+          timeout: 0,
+          actionProps: hiddenToastActionProps,
+          data: { hideCopyButton: true },
+        });
+      } else {
+        toastManager.update(progressId, { title: view.title, description: view.description });
+      }
+    };
+    if (pending()) {
+      showProgress();
+      await new Promise<void>((resolve) => {
+        const unsubscribe = appAtomRegistry.subscribe(
+          managedRuntimeUpdateRunsAtom,
+          () => {
+            if (pending()) {
+              showProgress();
+              return;
+            }
+            queueMicrotask(() => unsubscribe());
+            resolve();
+          },
+          { immediate: true },
+        );
+      });
+    }
+    if (progressId !== null) toastManager.close(progressId);
+    const view = getManagedRuntimeUpdateResultToastView(
+      runs().flatMap(({ target, outcome }) =>
+        outcome.status === "pending" ? [] : [{ target, outcome }],
+      ),
+    );
+    if (view === null) return;
+    if (view.type === "success") {
+      toastManager.add({
+        type: view.type,
+        title: view.title,
+        description: view.description,
+        timeout: 0,
+        actionProps: hiddenToastActionProps,
+        data: {
+          hideCopyButton: true,
+          ...(view.dismissAfterVisibleMs !== undefined
+            ? { dismissAfterVisibleMs: view.dismissAfterVisibleMs }
+            : {}),
+        },
+      });
+      return;
+    }
+    toastManager.add(
+      stackedThreadToast({ type: view.type, title: view.title, description: view.description }),
+    );
+  })();
+}
+
+function updatesInFlightOnMachine(provider: ServerProvider): boolean {
+  const operation = provider.connection?.runtime?.operation;
+  const runtimeUpdating =
+    operation?.action === "update" &&
+    !operation.waitingForIdle &&
+    operation.status !== "succeeded" &&
+    operation.status !== "failed" &&
+    operation.status !== "cancelled";
+  return isProviderUpdateActive(provider) || runtimeUpdating;
+}
+
+/** Bounds a wait for another update, so a stuck one cannot hold a server update forever. */
+const MACHINE_UPDATES_SETTLE_LIMIT_MS = 30 * 60_000;
+
+/**
+ * Resolves once no provider or managed runtime update is starting or running on the machine,
+ * wherever it started, so a server restart cannot cut one off. A runtime staged to switch when
+ * idle no longer needs the server; a removed or unreachable machine resolves too.
+ */
+export async function waitForMachineUpdatesToSettle(environmentId: EnvironmentId): Promise<void> {
+  await Promise.all(
+    [...inFlightUpdates.values()]
+      .filter((flight) => flight.environmentId === environmentId)
+      .map((flight) => flight.handedOff),
+  );
+  await new Promise<void>((resolve) => {
+    let done = false;
     const finish = () => {
-      if (finished) return;
-      finished = true;
-      queueMicrotask(() => unsubscribe());
+      if (done) return;
+      done = true;
+      clearTimeout(limit);
+      stop();
       resolve();
     };
-    const unsubscribe = appAtomRegistry.subscribe(
-      serverEnvironment.configValueAtom(environmentId),
-      (config) => {
-        const current = readRun(key);
-        if (current?.operationId !== operationId || current.outcome.status !== "pending") {
-          finish();
-          return;
-        }
-        // A missing snapshot is no news; a provider missing from a snapshot is.
-        if (config === null) return;
-        const [next] = settleManagedRuntimeUpdateRuns(
-          [current],
-          [{ environmentId, providers: config.providers }],
-        );
-        if (
-          next!.outcome.status !== current.outcome.status ||
-          next!.observed !== current.observed ||
-          next!.waitingMessage !== current.waitingMessage
-        ) {
-          writeRun(key, next!);
-        }
-        if (next!.outcome.status !== "pending") {
-          finish();
-        } else if (next!.waitingMessage !== null) {
-          resolve();
-        }
-      },
-      { immediate: true },
-    );
+    const limit = setTimeout(finish, MACHINE_UPDATES_SETTLE_LIMIT_MS);
+    const stop = watchEnvironmentProviders(environmentId, (snapshot) => {
+      if (snapshot.status !== "connected" || !snapshot.providers.some(updatesInFlightOnMachine)) {
+        queueMicrotask(finish);
+      }
+    });
   });
 }
 
@@ -164,8 +321,9 @@ export function managedRuntimeProviderMachines(
 
 /**
  * Reviewed Scient-managed runtime updates on every connected machine. `update` starts them one
- * at a time, since each machine's runtime manager serializes a driver, and resolves with their
- * runs once each is active, failed, or staged to switch when idle.
+ * at a time, since each machine's runtime manager serializes a driver, joins any already in
+ * flight, and resolves with their runs once each is active, failed, or staged to switch when
+ * idle. A pass reports its own summary, so `inPass` leaves only staged runtimes to report here.
  */
 export function useManagedRuntimeUpdates() {
   const { environments } = useEnvironments();
@@ -178,13 +336,34 @@ export function useManagedRuntimeUpdates() {
 
   const update = async (
     requested: ReadonlyArray<ManagedRuntimeUpdateTarget>,
+    { inPass = false }: { readonly inPass?: boolean } = {},
   ): Promise<ManagedRuntimeUpdateRun[]> => {
-    const followed: Array<Promise<void>> = [];
     const keys: string[] = [];
+    const joined: Array<Promise<void>> = [];
+    const started: Array<{ key: string; flight: InFlightUpdate }> = [];
     for (const target of requested) {
       const key = managedRuntimeUpdateTargetKey(target);
       keys.push(key);
-      if (readRun(key)?.outcome.status === "pending") continue;
+      const existing = inFlightUpdates.get(key);
+      if (existing) {
+        joined.push(existing.handedOff);
+        continue;
+      }
+      const handedOff = deferred();
+      const settled = deferred();
+      const flight: InFlightUpdate = {
+        environmentId: target.environmentId,
+        handedOff: handedOff.promise,
+      };
+      inFlightUpdates.set(key, flight);
+      void settled.promise.then(() => {
+        if (inFlightUpdates.get(key) === flight) inFlightUpdates.delete(key);
+      });
+      const finish = () => {
+        handedOff.resolve();
+        settled.resolve();
+      };
+      started.push({ key, flight });
       const starting: ManagedRuntimeUpdateRun = {
         target,
         operationId: null,
@@ -193,24 +372,27 @@ export function useManagedRuntimeUpdates() {
         waitingMessage: null,
       };
       writeRun(key, starting);
-      const started = await startRuntimeAction({
-        environmentId: target.environmentId,
-        instanceId: target.instanceId,
-        action: "update",
-      }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
-        operationId: null,
-        outcome: managedRuntimeUpdateStartFailure(error),
-      }));
-      writeRun(key, { ...starting, ...started });
-      if (started.operationId !== null && started.outcome.status === "pending") {
-        followed.push(followManagedRuntimeUpdate(key, target.environmentId, started.operationId));
+      const run: ManagedRuntimeUpdateRun = {
+        ...starting,
+        ...(await startRuntimeAction({
+          environmentId: target.environmentId,
+          instanceId: target.instanceId,
+          action: "update",
+        }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
+          operationId: null,
+          outcome: managedRuntimeUpdateStartFailure(error),
+        }))),
+      };
+      writeRun(key, run);
+      if (run.operationId !== null && run.outcome.status === "pending") {
+        followManagedRuntimeUpdate(key, run, handedOff.resolve, finish);
+      } else {
+        finish();
       }
     }
-    await Promise.all(followed);
-    return keys.flatMap((key) => {
-      const run = readRun(key);
-      return run ? [run] : [];
-    });
+    if (started.length > 0) reportManagedRuntimeUpdates(started, inPass);
+    await Promise.all([...joined, ...started.map(({ flight }) => flight.handedOff)]);
+    return keys.flatMap((key) => readRun(key) ?? []);
   };
 
   return { candidates, targets, runs, update };

@@ -8,12 +8,10 @@ import {
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 
 import {
   collectProviderUpdateCandidates,
   hasOneClickUpdateProviderCandidate,
-  isProviderUpdateActive,
 } from "~/components/ProviderUpdateLaunchNotification.logic";
 import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
 import {
@@ -26,11 +24,7 @@ import {
   type ManagedRuntimeUpdateRun,
   type ManagedRuntimeUpdateTarget,
 } from "~/scient/providerConnection/ManagedRuntimeUpdateNotification.logic";
-import {
-  resolveServerSelfUpdateCapability,
-  resolveVersionMismatch,
-  supportsDesktopAppUpdate,
-} from "~/versionSkew";
+import { resolveServerSelfUpdateCapability } from "~/versionSkew";
 
 /**
  * An SSH remote this app launches from its own pinned server package. It cannot update itself;
@@ -68,8 +62,6 @@ interface OtherUpdateItemBase {
   readonly machine: string | null;
   readonly fromVersion: string | null;
   readonly toVersion: string | null;
-  /** Updated outside Scient, so the card offers no action. */
-  readonly manual: boolean;
 }
 
 export type OtherUpdateItem =
@@ -82,7 +74,7 @@ export type OtherUpdateItem =
       readonly kind: "managed";
       readonly target: ManagedRuntimeUpdateTarget;
     })
-  | (OtherUpdateItemBase & { readonly kind: "server"; readonly target: ServerUpdateTarget | null });
+  | (OtherUpdateItemBase & { readonly kind: "server"; readonly target: ServerUpdateTarget });
 
 export interface OtherUpdatesMachine {
   readonly environmentId: EnvironmentId;
@@ -110,16 +102,18 @@ function activeRuntimeUpdate(provider: ServerProvider): ProviderRuntimeOperation
 }
 
 /**
- * Provider CLI advisories and Scient-managed runtimes on each machine, one row per driver. A
- * provider stays listed while it updates, wherever that update started.
+ * Provider CLIs Scient can update in one step and Scient-managed runtimes on each machine, one
+ * row per driver. A provider stays listed while it updates, wherever that update started.
+ * Updates Scient cannot run itself stay in Settings.
  */
 export function collectProviderUpdateItems(
   machines: ReadonlyArray<OtherUpdatesMachine>,
 ): OtherUpdateItem[] {
   return machines.flatMap((machine) => {
     const machineName = machine.isLocal ? null : machine.label;
-    const items: OtherUpdateItem[] = collectProviderUpdateCandidates(machine.providers).map(
-      (candidate) => ({
+    const items: OtherUpdateItem[] = collectProviderUpdateCandidates(machine.providers)
+      .filter((candidate) => hasOneClickUpdateProviderCandidate(candidate, machine.providers))
+      .map((candidate) => ({
         kind: "provider",
         key: `provider:${machine.environmentId}:${candidate.driver}`,
         environmentId: machine.environmentId,
@@ -127,13 +121,9 @@ export function collectProviderUpdateItems(
         machine: machineName,
         fromVersion: candidate.version,
         toVersion: candidate.versionAdvisory.latestVersion,
-        manual:
-          !isProviderUpdateActive(candidate) &&
-          !hasOneClickUpdateProviderCandidate(candidate, machine.providers),
         driver: candidate.driver,
         instanceId: candidate.instanceId,
-      }),
-    );
+      }));
     const managedDrivers = new Set<ProviderDriverKind>();
     for (const provider of machine.providers) {
       const runtime = provider.connection?.runtime;
@@ -154,7 +144,6 @@ export function collectProviderUpdateItems(
         machine: machineName,
         fromVersion: runtime.managedVersion,
         toVersion,
-        manual: false,
         target: {
           environmentId: machine.environmentId,
           environmentLabel: machine.label,
@@ -175,77 +164,28 @@ export interface OtherServerUpdate {
   readonly app: boolean;
   readonly fromVersion: string | null;
   readonly toVersion: string;
-  /** Null when the server needs an update outside this card. */
-  readonly target: ServerUpdateTarget | null;
+  readonly target: ServerUpdateTarget;
 }
 
-/**
- * Servers behind this app: those a pass may update, and those only their owner can, which the
- * card names without an action. Servers already updating, unreachable, on another channel, or
- * waiting for a published Scient server are left out, as are SSH remotes that follow this app.
- */
-export function collectOtherServerUpdates(input: {
-  readonly machines: ReadonlyArray<UpdateEverythingMachine>;
-  readonly behind: ReadonlyArray<ServerUpdateTarget>;
-  readonly qualified: ReadonlyArray<ServerUpdateTarget>;
-  readonly targetVersion: string;
-  readonly selfUpdating: ReadonlySet<EnvironmentId>;
-}): OtherServerUpdate[] {
+/** The servers a pass may update now, with the version each runs. */
+export function collectOtherServerUpdates(
+  machines: ReadonlyArray<Pick<UpdateEverythingMachine, "environmentId" | "serverConfig">>,
+  qualified: ReadonlyArray<ServerUpdateTarget>,
+): OtherServerUpdate[] {
   const versions = new Map(
-    input.machines.map((machine) => [
+    machines.map((machine) => [
       machine.environmentId,
       machine.serverConfig?.environment.serverVersion ?? null,
     ]),
   );
-  const entry = (target: ServerUpdateTarget, actionable: boolean): OtherServerUpdate => ({
+  return qualified.map((target) => ({
     environmentId: target.environmentId,
     label: target.serverLabel,
     app: target.selfUpdate === "desktop-managed",
     fromVersion: versions.get(target.environmentId) ?? null,
     toVersion: target.targetVersion,
-    target: actionable ? target : null,
-  });
-  const updates = [
-    ...input.qualified.map((target) => entry(target, true)),
-    ...input.behind
-      .filter((target) => target.selfUpdate === "respawn")
-      .map((target) => entry(target, false)),
-  ];
-  for (const machine of input.machines) {
-    const config = machine.serverConfig;
-    if (
-      config === null ||
-      machine.hostedByThisApp ||
-      !machine.connected ||
-      !machine.canMaintain ||
-      machine.updateState.status === "running" ||
-      input.selfUpdating.has(machine.environmentId) ||
-      resolveVersionMismatch(config.environment.serverVersion, input.targetVersion) === null
-    ) {
-      continue;
-    }
-    const selfUpdate = resolveServerSelfUpdateCapability(config);
-    const app = selfUpdate === "desktop-managed";
-    if (selfUpdate === null) {
-      if (
-        cliReleaseChannelOf(config.environment.serverVersion) !==
-        cliReleaseChannelOf(input.targetVersion)
-      ) {
-        continue;
-      }
-    } else if (!app || supportsDesktopAppUpdate(config)) {
-      continue;
-    }
-    updates.push({
-      environmentId: machine.environmentId,
-      label: machine.label,
-      app,
-      fromVersion: config.environment.serverVersion,
-      toVersion: input.targetVersion,
-      target: null,
-    });
-  }
-  return updates;
+    target,
+  }));
 }
 
 export function serverUpdateItem(update: OtherServerUpdate): OtherUpdateItem {
@@ -257,7 +197,6 @@ export function serverUpdateItem(update: OtherServerUpdate): OtherUpdateItem {
     machine: null,
     fromVersion: update.fromVersion,
     toVersion: update.toVersion,
-    manual: update.target === null,
     target: update.target,
   };
 }
@@ -379,16 +318,14 @@ function updateRunProgress(
     if (machine.handedOffVersion !== null) return { phase: "restarting" };
     return machine.server !== null ? { phase: "queued" } : null;
   }
-  return item.kind === "provider" &&
-    !item.manual &&
-    run.phase === "providers" &&
-    machine.updatesProviders
+  return item.kind === "provider" && run.phase === "providers" && machine.updatesProviders
     ? { phase: "queued" }
     : null;
 }
 
 /** An item seen updating or started here, so it can report "done" once it leaves the list. */
 export interface TrackedOtherUpdate {
+  /** The item as last seen updating or as started; a server's target is the attempted one. */
   readonly item: OtherUpdateItem;
   /** A provider or server update this card started and has not heard back from. */
   readonly action:
@@ -410,24 +347,65 @@ export interface OtherUpdateRow {
 const STARTING_PROGRESS: Record<OtherUpdateItem["kind"], OtherUpdateProgress> = {
   provider: { phase: "installing" },
   managed: { phase: "downloading" },
-  server: { phase: "downloading" },
+  // A server waits for its machine's provider updates before it restarts.
+  server: { phase: "queued" },
 };
+
+interface ServerFailure {
+  readonly reason: string;
+  readonly target: ServerUpdateTarget;
+}
+
+/** A pass's server that failed or was withdrawn before its update, with its confirmed target. */
+export function failedUpdateRunServer(
+  run: UpdateEverythingRun | null,
+  environmentId: EnvironmentId,
+): ServerFailure | null {
+  const machine = run?.machines.find(
+    (candidate) =>
+      candidate.environmentId === environmentId &&
+      candidate.result === "failed" &&
+      candidate.server !== null,
+  );
+  return machine?.server
+    ? { reason: machine.failure ?? "Server update failed.", target: machine.server }
+    : null;
+}
 
 /**
  * The server target a Retry sends: the attempted version and mechanism, while that is still
  * qualified now, with its current flags. A changed version or mechanism is a new update.
  */
 export function serverRetryTarget(
-  attempted: OtherUpdateItem,
-  failedVersion: string | undefined,
+  attempted: ServerUpdateTarget,
   qualified: ReadonlyArray<ServerUpdateTarget>,
 ): ServerUpdateTarget | null {
-  if (attempted.kind !== "server" || attempted.target === null) return null;
-  const confirmed =
-    failedVersion === undefined
-      ? attempted.target
-      : { ...attempted.target, targetVersion: failedVersion };
-  return currentConfirmedServerTargets([confirmed], qualified)[0] ?? null;
+  return currentConfirmedServerTargets([attempted], qualified)[0] ?? null;
+}
+
+/** The latest failure for a server row, bound to the version and mechanism it attempted. */
+function serverFailure(input: {
+  readonly item: Extract<OtherUpdateItem, { kind: "server" }>;
+  readonly live: OtherUpdateLive;
+  readonly tracked: TrackedOtherUpdate | undefined;
+  readonly runFailure: ServerFailure | null;
+}): ServerFailure | null {
+  if (input.runFailure !== null) return input.runFailure;
+  const attempted =
+    input.tracked?.item.kind === "server" ? input.tracked.item.target : input.item.target;
+  if (input.tracked?.action?.status === "failed") {
+    return { reason: input.tracked.action.reason, target: attempted };
+  }
+  if (input.live.status === "failed") {
+    return {
+      reason: input.live.reason,
+      target: {
+        ...attempted,
+        targetVersion: input.live.targetVersion ?? attempted.targetVersion,
+      },
+    };
+  }
+  return null;
 }
 
 export function deriveOtherUpdateRowState(input: {
@@ -436,6 +414,7 @@ export function deriveOtherUpdateRowState(input: {
   readonly live: OtherUpdateLive;
   readonly tracked: TrackedOtherUpdate | undefined;
   readonly runProgress: OtherUpdateProgress | null;
+  readonly runFailure: ServerFailure | null;
   readonly qualifiedServers: ReadonlyArray<ServerUpdateTarget>;
 }): OtherUpdateRowState | null {
   const { item, listed, live, tracked } = input;
@@ -446,44 +425,46 @@ export function deriveOtherUpdateRowState(input: {
   if (input.runProgress !== null) return { status: "updating", progress: input.runProgress };
   if (live.status === "waiting") return { status: "waiting" };
 
-  const failure =
-    tracked?.action?.status === "failed"
-      ? { reason: tracked.action.reason, targetVersion: undefined }
-      : live.status === "failed"
-        ? live
-        : null;
-  if (failure !== null) {
-    if (item.kind === "server") {
-      // A failure for another version than the one now offered is history, not this update.
-      const stale =
-        listed &&
-        failure.targetVersion !== undefined &&
-        item.target !== null &&
-        item.target.targetVersion !== failure.targetVersion;
-      if (!stale) {
-        const attempted = tracked?.item ?? item;
-        return {
-          status: "failed",
-          reason: failure.reason,
-          retry:
-            serverRetryTarget(attempted, failure.targetVersion, input.qualifiedServers) !== null,
-        };
-      }
-    } else {
-      // A provider that left the list for another reason no longer needs this update.
-      return listed ? { status: "failed", reason: failure.reason, retry: !item.manual } : null;
+  if (item.kind === "server") {
+    const failure = serverFailure({ item, live, tracked, runFailure: input.runFailure });
+    // A newer version or another mechanism on offer is a new update, not this failure.
+    const superseded =
+      failure !== null &&
+      listed &&
+      (item.target.targetVersion !== failure.target.targetVersion ||
+        item.target.selfUpdate !== failure.target.selfUpdate);
+    if (failure !== null && !superseded) {
+      return {
+        status: "failed",
+        reason: failure.reason,
+        retry: serverRetryTarget(failure.target, input.qualifiedServers) !== null,
+      };
     }
+  } else {
+    const reason =
+      tracked?.action?.status === "failed"
+        ? tracked.action.reason
+        : live.status === "failed"
+          ? live.reason
+          : null;
+    // A provider that left the list for another reason no longer needs this update.
+    if (reason !== null) return listed ? { status: "failed", reason, retry: true } : null;
   }
   if (tracked !== undefined && (!listed || live.status === "succeeded")) return { status: "done" };
   return listed ? { status: "idle" } : null;
 }
 
+/**
+ * Rows for the listed items and for tracked ones that left the list. A machine removed from
+ * this app drops its rows; a disconnected one keeps them, so Retry returns when it reconnects.
+ */
 export function buildOtherUpdateRows(input: {
   readonly items: ReadonlyArray<OtherUpdateItem>;
   readonly tracked: ReadonlyMap<string, TrackedOtherUpdate>;
   readonly liveOf: (item: OtherUpdateItem) => OtherUpdateLive;
   readonly run: UpdateEverythingRun | null;
   readonly qualifiedServers: ReadonlyArray<ServerUpdateTarget>;
+  readonly environments: ReadonlySet<EnvironmentId>;
 }): OtherUpdateRow[] {
   const listed = new Set(input.items.map((item) => item.key));
   const items = [
@@ -491,12 +472,15 @@ export function buildOtherUpdateRows(input: {
     ...[...input.tracked.values()].map(({ item }) => item).filter((item) => !listed.has(item.key)),
   ];
   return items.flatMap((item) => {
+    if (!input.environments.has(item.environmentId)) return [];
     const state = deriveOtherUpdateRowState({
       item,
       listed: listed.has(item.key),
       live: input.liveOf(item),
       tracked: input.tracked.get(item.key),
       runProgress: updateRunProgress(item, input.run),
+      runFailure:
+        item.kind === "server" ? failedUpdateRunServer(input.run, item.environmentId) : null,
       qualifiedServers: input.qualifiedServers,
     });
     return state === null ? [] : [{ item, state }];
@@ -558,4 +542,8 @@ export function otherUpdateVersionLabel(item: OtherUpdateItem): string | null {
     return `${item.fromVersion} → ${item.toVersion}`;
   }
   return item.toVersion ?? item.fromVersion;
+}
+
+export function stopsThreadsLabel(count: number): string {
+  return `Stops ${count} running thread${count === 1 ? "" : "s"}`;
 }

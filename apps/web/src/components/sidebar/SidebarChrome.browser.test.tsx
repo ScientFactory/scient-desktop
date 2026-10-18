@@ -20,6 +20,8 @@ const fixture = vi.hoisted(() => ({
   /** Replaces the remote half of the update button when set. */
   everything: null as ReturnType<typeof useUpdateEverything> | null,
   navigate: vi.fn(),
+  /** Threads on the remote machine the circle's server update would restart. */
+  remoteThreads: [] as Array<{ status: string }>,
   preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
   environments: [] as Array<{
@@ -70,6 +72,21 @@ vi.mock("@tanstack/react-router", async (original) => ({
   useRouter: () => ({ preloadRoute: fixture.preload }),
   useLocation: () => false,
 }));
+vi.mock("../../state/threads", async (original) => {
+  const actual = await original<typeof import("../../state/threads")>();
+  const { Atom } = await import("effect/reactivity");
+  const remoteThreads = Atom.make(() => fixture.remoteThreads);
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      environmentThreadsAtom: (environmentId: string) =>
+        environmentId === "sidebar-geometry-alvin"
+          ? remoteThreads
+          : actual.environmentThreadShells.environmentThreadsAtom(environmentId as never),
+    },
+  };
+});
 vi.mock("../../scient/conversationImport/requests", () => ({
   requestConversationImport: fixture.importConversation,
 }));
@@ -80,6 +97,7 @@ afterEach(() => {
   root?.unmount();
   host?.remove();
   fixture.everything = null;
+  fixture.remoteThreads = [];
   setUpdateEverythingRun(() => null);
   vi.clearAllMocks();
 });
@@ -125,6 +143,33 @@ async function mountFooter(width: number, state: DesktopUpdateState) {
         environment: {
           environmentId,
           label: "This app",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: state.currentVersion,
+          capabilities: { repositoryIdentity: true, pullRequests: true },
+        },
+        settings: { continueThreadsAfterServerUpdate: false },
+        providers: [],
+      },
+    },
+    // A remote machine for the circle's server rows.
+    {
+      environmentId: EnvironmentId.make("sidebar-geometry-alvin"),
+      label: "alvin",
+      connection: { phase: "connected", error: null, traceId: null },
+      entry: {
+        target: new PrimaryConnectionTarget({
+          environmentId: EnvironmentId.make("sidebar-geometry-alvin"),
+          label: "alvin",
+          httpBaseUrl: "http://localhost:5734",
+          wsBaseUrl: "ws://localhost:5734",
+        }),
+        enabled: true,
+        profile: Option.none(),
+      },
+      serverConfig: {
+        environment: {
+          environmentId: EnvironmentId.make("sidebar-geometry-alvin"),
+          label: "alvin",
           platform: { os: "linux", arch: "x64" },
           serverVersion: state.currentVersion,
           capabilities: { repositoryIdentity: true, pullRequests: true },
@@ -339,6 +384,11 @@ it("lists other updates with text actions and updates them without a confirmatio
   }
   expect(Number(getComputedStyle(updateAll.element()).fontWeight)).toBeGreaterThanOrEqual(600);
   expect(Number(getComputedStyle(rowUpdate.element()).fontWeight)).toBeLessThan(600);
+  // Hover is visible on the light card, and still subtle.
+  await userEvent.hover(updateAll);
+  await expect
+    .poll(() => getComputedStyle(updateAll.element()).backgroundColor)
+    .not.toBe("rgba(0, 0, 0, 0)");
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
     await page.screenshot({
       path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
@@ -358,6 +408,28 @@ it("lists other updates with text actions and updates them without a confirmatio
   expect(bounds.left + bounds.width / 2 + 12).toBeLessThan(app.getBoundingClientRect().left);
   await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
   expectFooterInOrder();
+});
+
+it("asks once inline before Update all stops running threads", async () => {
+  fixture.everything = everythingFixture();
+  fixture.remoteThreads = [{ status: "running" }, { status: "running" }, { status: "idle" }];
+  await mountFooter(216, idleUpdateState);
+  await page.getByRole("button", { name: "Other updates available" }).click();
+  const updateAll = page.getByRole("button", { name: "Update all" });
+  await updateAll.click();
+  await expect.element(page.getByText("Stops 2 running threads")).toBeVisible();
+  // Asking does not start anything.
+  expect(document.querySelector('[data-other-updates="updating"]')).toBeNull();
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-ask.png`,
+    });
+  }
+  await updateAll.click();
+  await expect
+    .element(page.getByRole("button", { name: "Other updates in progress" }))
+    .toBeVisible();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
 it.each(["Later", "Restart"] as const)(

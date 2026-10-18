@@ -22,6 +22,12 @@ const testState = vi.hoisted(() => ({
   updateProvider: vi.fn<(request: unknown) => Promise<unknown>>(),
   updateServer: vi.fn<(target: unknown, options: unknown) => Promise<unknown>>(),
   updateManaged: vi.fn<(targets: ReadonlyArray<unknown>) => Promise<unknown[]>>(),
+  threads: [] as Array<{ status: string }>,
+  run: null as unknown,
+  setRun: vi.fn((update: (run: unknown) => unknown) => {
+    testState.run = update(testState.run);
+  }),
+  toasts: [] as Array<{ type: string; title: string }>,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -58,8 +64,24 @@ vi.mock("~/components/ServerUpdateAction", () => ({
   useServerUpdate: () => testState.updateServer,
 }));
 vi.mock("~/components/sidebar/updateEverythingRun", () => ({
-  useUpdateEverythingRun: () => null,
+  useUpdateEverythingRun: () => testState.run,
   useQualifiedUpdateRunServers: () => [serverTarget],
+  setUpdateEverythingRun: testState.setRun,
+  settleUpdateRunMachine: vi.fn(),
+}));
+vi.mock("~/state/threads", () => ({
+  environmentThreadShells: {
+    environmentThreadsAtom: () => Atom.make(() => testState.threads),
+  },
+}));
+vi.mock("~/components/ui/toast", () => ({
+  stackedThreadToast: (options: object) => options,
+  toastManager: {
+    add: (options: { type: string; title: string }) => {
+      testState.toasts.push({ type: options.type, title: options.title });
+      return "toast";
+    },
+  },
 }));
 vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOriginal) => ({
   ...(await importOriginal<
@@ -71,6 +93,7 @@ vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOri
     runs: new Map(),
     update: testState.updateManaged,
   }),
+  waitForMachineUpdatesToSettle: async () => {},
 }));
 
 import { useOtherUpdates } from "./useOtherUpdates";
@@ -177,6 +200,10 @@ beforeEach(() => {
   testState.updateProvider.mockReset();
   testState.updateServer.mockReset();
   testState.updateManaged.mockReset().mockResolvedValue([]);
+  testState.threads = [];
+  testState.run = null;
+  testState.toasts = [];
+  testState.setRun.mockClear();
   current = undefined;
 });
 
@@ -232,6 +259,7 @@ describe("useOtherUpdates", () => {
   });
 
   it("reports a finished server as done until forgotten, then the circle leaves", async () => {
+    testState.environments = [remote([])];
     let finish = (_outcome: ServerUpdateOutcome) => {};
     testState.updateServer.mockImplementationOnce(
       () =>
@@ -242,7 +270,7 @@ describe("useOtherUpdates", () => {
     await render([serverUpdate]);
     expect(states()).toEqual([["lab-gpu server", { status: "idle" }]]);
     await act(async () => current!.update(current!.rows[0]!.item));
-    expect(testState.updateServer).toHaveBeenCalledWith(serverTarget, { quiet: true });
+    expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
     await act(async () => finish({ status: "updated" }));
     // Back on the new version, the server is no longer behind.
     await render([]);
@@ -255,10 +283,66 @@ describe("useOtherUpdates", () => {
     expect(current!.circle).toBeNull();
   });
 
-  it("lists a manual item without acting on it", async () => {
-    await render([{ ...serverUpdate, target: null }]);
-    expect(current!.rows[0]).toMatchObject({ item: { manual: true }, state: { status: "idle" } });
+  it("counts the running threads a server update would stop", async () => {
+    testState.environments = [remote([])];
+    testState.threads = [{ status: "running" }, { status: "idle" }, { status: "starting" }];
+    await render([serverUpdate]);
+    expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(2);
+    // Threads that resume after the restart are not stopped.
+    await render([
+      {
+        ...serverUpdate,
+        target: {
+          ...serverTarget,
+          threadContinuation: true,
+          continueThreadsAfterServerUpdate: true,
+        },
+      },
+    ]);
+    expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(0);
+  });
+
+  it("drops a removed machine's rows", async () => {
+    await render([serverUpdate]);
+    expect(current!.rows).toEqual([]);
+    expect(current!.circle).toBeNull();
+  });
+
+  it("reports a provider update started here", async () => {
+    testState.environments = [remote([codexCli()])];
+    testState.updateProvider.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("npm exited 1"))),
+    );
+    await render();
     await act(async () => current!.update(current!.rows[0]!.item));
-    expect(testState.updateServer).not.toHaveBeenCalled();
+    expect(testState.toasts).toEqual([{ type: "error", title: "Provider update failed" }]);
+  });
+
+  it("retries a pass's withdrawn server through the pass, keeping its confirmed target", async () => {
+    testState.environments = [remote([])];
+    testState.run = {
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId: lab,
+          label: "lab-gpu",
+          updatesProviders: false,
+          server: serverTarget,
+          handedOffVersion: null,
+          startedAt: 0,
+          result: "failed",
+          failure: "Not updated; it was no longer eligible when servers updated.",
+          providerFailure: null,
+        },
+      ],
+    };
+    testState.updateServer.mockResolvedValueOnce({ status: "updated" });
+    await render([serverUpdate]);
+    expect(current!.rows[0]!.state).toMatchObject({ status: "failed", retry: true });
+    await act(async () => current!.retry(current!.rows[0]!));
+    expect(testState.updateServer).toHaveBeenCalledWith(serverTarget, { quiet: false });
+    expect(testState.run).toMatchObject({ machines: [{ result: null, failure: null }] });
   });
 });

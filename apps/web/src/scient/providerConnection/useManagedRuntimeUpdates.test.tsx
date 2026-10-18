@@ -10,6 +10,11 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+interface TestPresentation {
+  readonly connection: { readonly phase: string };
+  readonly serverConfig: { readonly providers: ServerProvider[] } | null;
+}
+
 const testState = vi.hoisted(() => ({
   registry: undefined as AtomRegistry.AtomRegistry | undefined,
   environments: [] as Array<{
@@ -18,8 +23,9 @@ const testState = vi.hoisted(() => ({
     connection: { phase: string };
     serverConfig: { providers: ServerProvider[] } | null;
   }>,
-  configs: new Map<string, Atom.Writable<{ providers: ServerProvider[] } | null>>(),
+  presentations: new Map<string, Atom.Writable<TestPresentation | null>>(),
   startRuntimeAction: vi.fn<(input: unknown) => Promise<ServerProvider>>(),
+  toasts: [] as Array<{ type: string; title: string }>,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -40,18 +46,34 @@ vi.mock("~/rpc/atomRegistry", () => ({
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: testState.environments }),
 }));
-vi.mock("~/state/server", () => ({
-  serverEnvironment: { configValueAtom: (id: string) => testState.configs.get(id)! },
+vi.mock("~/state/presentation", () => ({
+  environmentPresentations: {
+    presentationAtom: (id: string) => testState.presentations.get(id)!,
+  },
+}));
+vi.mock("~/components/ui/toast", () => ({
+  hiddenToastActionProps: { children: null },
+  stackedThreadToast: (options: object) => options,
+  toastManager: {
+    add: (options: { type: string; title: string }) => {
+      testState.toasts.push({ type: options.type, title: options.title });
+      return `toast-${testState.toasts.length}`;
+    },
+    update: () => {},
+    close: () => {},
+  },
 }));
 vi.mock("./useProviderLifecycleController", () => ({
   useStartProviderRuntimeAction: () => testState.startRuntimeAction,
 }));
 
+import { ENVIRONMENT_CONTACT_GRACE_MS } from "./environmentUpdateWatch";
 import {
   connectedProviderEnvironments,
   managedRuntimeProviderMachines,
   managedRuntimeRunOutcomes,
   useManagedRuntimeUpdates,
+  waitForMachineUpdatesToSettle,
 } from "./useManagedRuntimeUpdates";
 
 const lab = EnvironmentId.make("lab");
@@ -60,8 +82,8 @@ type Runs = Awaited<ReturnType<ReturnType<typeof useManagedRuntimeUpdates>["upda
 function codex(
   patch: {
     readonly managedVersion?: string;
-    readonly source?: "scient_managed" | "system";
     readonly operation?: Partial<ProviderRuntimeOperation> | null;
+    readonly updateState?: ServerProvider["updateState"];
   } = {},
 ): ServerProvider {
   return {
@@ -76,12 +98,13 @@ function codex(
     models: [],
     slashCommands: [],
     skills: [],
+    ...(patch.updateState ? { updateState: patch.updateState } : {}),
     connection: {
       methods: [],
       canDisconnect: true,
       operation: null,
       runtime: {
-        source: patch.source ?? "scient_managed",
+        source: "scient_managed",
         supportTier: "fully_assisted",
         target: "linux-x64",
         actions: ["update", "repair", "remove"],
@@ -115,13 +138,18 @@ function Probe() {
   return null;
 }
 
-function publish(providers: ServerProvider[]) {
-  testState.registry!.set(testState.configs.get(lab)!, { providers });
+function publish(presentation: TestPresentation | null) {
+  testState.registry!.set(testState.presentations.get(lab)!, presentation);
 }
+const connected = (providers: ServerProvider[]): TestPresentation => ({
+  connection: { phase: "connected" },
+  serverConfig: { providers },
+});
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.registry = AtomRegistry.make();
+  testState.toasts = [];
   testState.environments = [
     {
       environmentId: lab,
@@ -130,8 +158,8 @@ beforeEach(async () => {
       serverConfig: { providers: [codex()] },
     },
   ];
-  testState.configs = new Map([
-    [lab, Atom.make<{ providers: ServerProvider[] } | null>({ providers: [codex()] })],
+  testState.presentations = new Map([
+    [lab, Atom.make<TestPresentation | null>(connected([codex()]))],
   ]);
   testState.startRuntimeAction
     .mockReset()
@@ -143,6 +171,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await act(() => renderer?.unmount());
   testState.registry?.dispose();
   vi.unstubAllGlobals();
@@ -161,12 +190,12 @@ describe("useManagedRuntimeUpdates", () => {
     ]);
   });
 
-  it("hands off a runtime staged to switch when idle, then records its result", async () => {
-    let settled = false;
+  it("hands off a staged runtime, then reports its later failure", async () => {
+    let handedOff = false;
     let runs: Runs = [];
     await act(async () => {
-      void current!.update(current!.targets).then((result) => {
-        settled = true;
+      void current!.update(current!.targets, { inPass: true }).then((result) => {
+        handedOff = true;
         runs = result;
       });
     });
@@ -175,28 +204,93 @@ describe("useManagedRuntimeUpdates", () => {
       instanceId: "codex",
       action: "update",
     });
-    expect(settled).toBe(false);
+    expect(handedOff).toBe(false);
 
     await act(async () => {
-      publish([
-        codex({
-          operation: { status: "activating", waitingForIdle: true, message: "Waiting for a turn." },
-        }),
-      ]);
+      publish(
+        connected([
+          codex({
+            operation: {
+              status: "activating",
+              waitingForIdle: true,
+              message: "Waiting for a turn.",
+            },
+          }),
+        ]),
+      );
     });
-    expect(settled).toBe(true);
+    expect(handedOff).toBe(true);
     expect(runs[0]).toMatchObject({
       outcome: { status: "pending" },
       waitingMessage: "Waiting for a turn.",
     });
 
     await act(async () => {
-      publish([codex({ managedVersion: "0.157.1", operation: { status: "succeeded" } })]);
+      publish(connected([codex({ operation: { status: "failed", message: "Test failed." } })]));
     });
     await act(() => renderer!.update(<Probe />));
     expect([...current!.runs.values()][0]).toMatchObject({
-      outcome: { status: "succeeded", version: "0.157.1" },
+      outcome: { status: "failed", message: "Test failed." },
     });
+    // The pass summarizes what settled before the handoff; this one is reported on its own.
+    expect(testState.toasts.at(-1)).toMatchObject({ type: "error" });
+  });
+
+  it("joins an update already starting instead of resolving early", async () => {
+    let finishStart = (_provider: ServerProvider) => {};
+    testState.startRuntimeAction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    const settled: string[] = [];
+    await act(async () => {
+      void current!.update(current!.targets).then(() => settled.push("row"));
+      void current!.update(current!.targets, { inPass: true }).then(() => settled.push("pass"));
+    });
+    expect(testState.startRuntimeAction).toHaveBeenCalledOnce();
+    expect(settled).toEqual([]);
+
+    await act(async () => finishStart(codex({ operation: { status: "preparing" } })));
+    expect(settled).toEqual([]);
+    await act(async () => {
+      publish(
+        connected([codex({ managedVersion: "0.157.1", operation: { status: "succeeded" } })]),
+      );
+    });
+    expect(settled.toSorted()).toEqual(["pass", "row"]);
+    expect(testState.toasts.at(-1)).toMatchObject({ type: "success" });
+  });
+
+  it("fails an update whose machine is removed", async () => {
+    let runs: Runs = [];
+    await act(async () => {
+      void current!.update(current!.targets).then((result) => {
+        runs = result;
+      });
+    });
+    await act(async () => publish(null));
+    expect(runs).toMatchObject([{ outcome: { status: "failed" } }]);
+  });
+
+  it("waits out a short disconnection and fails one that lasts", async () => {
+    vi.useFakeTimers();
+    let runs: Runs = [];
+    await act(async () => {
+      void current!.update(current!.targets).then((result) => {
+        runs = result;
+      });
+    });
+    await act(async () => publish({ connection: { phase: "reconnecting" }, serverConfig: null }));
+    await act(async () => vi.advanceTimersByTime(ENVIRONMENT_CONTACT_GRACE_MS - 1));
+    await act(async () => publish(connected([codex({ operation: { status: "installing" } })])));
+    await act(async () => vi.advanceTimersByTime(ENVIRONMENT_CONTACT_GRACE_MS));
+    expect(runs).toEqual([]);
+
+    await act(async () => publish({ connection: { phase: "offline" }, serverConfig: null }));
+    await act(async () => vi.advanceTimersByTime(ENVIRONMENT_CONTACT_GRACE_MS));
+    expect(runs).toMatchObject([{ outcome: { status: "failed" } }]);
   });
 
   it("settles a failed start without following it", async () => {
@@ -209,6 +303,42 @@ describe("useManagedRuntimeUpdates", () => {
     expect(managedRuntimeRunOutcomes(runs)).toEqual([
       { status: "failed", line: "lab · Codex: No catalog." },
     ]);
+  });
+});
+
+describe("waitForMachineUpdatesToSettle", () => {
+  it("holds a server restart until the machine's provider updates finish or hand off", async () => {
+    publish(
+      connected([
+        codex({
+          updateState: {
+            status: "running",
+            startedAt: null,
+            finishedAt: null,
+            message: null,
+            output: null,
+          },
+        }),
+      ]),
+    );
+    let ready = false;
+    await act(async () => {
+      void waitForMachineUpdatesToSettle(lab).then(() => {
+        ready = true;
+      });
+    });
+    expect(ready).toBe(false);
+    await act(async () => publish(connected([codex({ operation: { status: "downloading" } })])));
+    expect(ready).toBe(false);
+    await act(async () =>
+      publish(connected([codex({ operation: { status: "activating", waitingForIdle: true } })])),
+    );
+    expect(ready).toBe(true);
+  });
+
+  it("does not wait for a removed machine", async () => {
+    publish(null);
+    await expect(waitForMachineUpdatesToSettle(lab)).resolves.toBeUndefined();
   });
 });
 

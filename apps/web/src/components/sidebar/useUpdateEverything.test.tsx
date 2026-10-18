@@ -11,12 +11,12 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
-import { offerEligibleUpdateRetry } from "~/scient/desktopUpdate/updateEverythingRetry";
 import {
-  describeUpdateCapsule,
-  type UpdateEverythingMachine,
-  type UpdateRunMachine,
-} from "./updateEverything.logic";
+  failedUpdateRunServer,
+  serverRetryTarget,
+} from "~/scient/desktopUpdate/otherUpdates.logic";
+import { retryUpdateRunServer } from "~/scient/desktopUpdate/updateRunServers";
+import type { UpdateEverythingMachine, UpdateRunMachine } from "./updateEverything.logic";
 
 type TestEnvironment = {
   environmentId: EnvironmentId;
@@ -128,6 +128,7 @@ vi.mock("~/scient/providerConnection/useManagedRuntimeUpdates", async (importOri
     runs: new Map(),
     update: managedState.update,
   }),
+  waitForMachineUpdatesToSettle: async () => {},
 }));
 // SCIENT-FORK:END
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
@@ -396,6 +397,32 @@ it("retires an unmounted held pass without disabling a newly confirmed pass", as
   ]);
 });
 
+/** Whether the sidebar circle offers Retry for a server the pass failed or withdrew. */
+function circleOffersRetry(run: typeof import("./updateEverythingRun"), id: string): boolean {
+  const failure = failedUpdateRunServer(run.useUpdateEverythingRun(), EnvironmentId.make(id));
+  return (
+    failure !== null &&
+    serverRetryTarget(failure.target, run.useQualifiedUpdateRunServers()) !== null
+  );
+}
+
+/** The circle's Retry for each server, letting its machine-settle wait resolve. */
+async function retryFromCircle(
+  run: typeof import("./updateEverythingRun"),
+  ids: ReadonlyArray<string>,
+  update: (
+    target: ServerUpdateTarget,
+    options: { readonly quiet: boolean },
+  ) => Promise<ServerUpdateOutcome>,
+) {
+  await act(async () => {
+    for (const id of ids) {
+      retryUpdateRunServer(EnvironmentId.make(id), run.useQualifiedUpdateRunServers(), update);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 function failedRunMachine(target: ServerUpdateTarget): UpdateRunMachine {
   return {
     environmentId: target.environmentId,
@@ -414,6 +441,8 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
   "does not retry a failed server whose target lost its %s, and still retries an eligible one",
   async (change) => {
     const run = testState.runModule!;
+    testState.setRun.mockImplementation(run.setUpdateEverythingRun);
+    testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
     await act(() => {
       renderer = create(<Probe />);
     });
@@ -460,9 +489,7 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
     const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
       async () => ({ status: "updated" }),
     );
-    await act(async () => {
-      run.retryFailedUpdateRunServers(update);
-    });
+    await retryFromCircle(run, ["service", "desktop"], update);
 
     if (change === "owner") {
       expect(update).not.toHaveBeenCalled();
@@ -476,16 +503,18 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
             targetVersion: "0.6.2",
             continueThreadsAfterServerUpdate: true,
           }),
-          { quiet: true },
+          { quiet: false },
         ],
       ]);
     }
     const machines = run.useUpdateEverythingRun()?.machines ?? [];
+    // The ineligible server keeps its confirmed target and failure, without Retry.
     expect(machines.find((machine) => machine.environmentId === "service")).toMatchObject({
       server: savedService,
       result: "failed",
-      failure: "Not retried; it is not currently eligible for this update.",
+      failure: "Server update failed",
     });
+    expect(circleOffersRetry(run, "service")).toBe(false);
   },
 );
 
@@ -529,7 +558,7 @@ it("does not notify eligibility readers when its owner re-renders unchanged", as
 });
 // SCIENT-FORK:END
 
-// SCIENT-FORK:START — a withdrawn server keeps its confirmed target, so Retry returns once
+// SCIENT-FORK:START — a withdrawn server keeps its confirmed target, so the circle offers Retry once
 // that target is eligible again, and never sends a stale one.
 describe("a server withdrawn when its step starts", () => {
   /** Runs a pass whose service goes offline during the provider step, recording the real run. */
@@ -549,20 +578,6 @@ describe("a server withdrawn when its step starts", () => {
     return { run, service: service! };
   }
 
-  function capsuleAction(run: typeof import("./updateEverythingRun")) {
-    const current = run.useUpdateEverythingRun()!;
-    return offerEligibleUpdateRetry(
-      describeUpdateCapsule(
-        current,
-        current.machines.map((machine) => ({ machine, status: machine.result ?? "waiting" })),
-        null,
-        0,
-      ),
-      current.machines,
-      run.useQualifiedUpdateRunServers(),
-    ).action;
-  }
-
   it("offers Retry once it is back online and retries its current eligible target", async () => {
     const { run, service } = await passWithOfflineService();
     expect(run.useUpdateEverythingRun()?.machines).toMatchObject([
@@ -575,20 +590,18 @@ describe("a server withdrawn when its step starts", () => {
       { environmentId: "desktop", result: "done", server: null },
     ]);
     // While it stays offline, nothing is retried.
-    expect(capsuleAction(run)).toBe("dismiss");
+    expect(circleOffersRetry(run, "service")).toBe(false);
     const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
       async () => ({ status: "updated" }),
     );
-    await act(async () => {
-      run.retryFailedUpdateRunServers(update);
-    });
+    await retryFromCircle(run, ["service"], update);
     expect(update).not.toHaveBeenCalled();
     expect(run.useUpdateEverythingRun()?.machines[0]).toMatchObject({
       result: "failed",
-      failure: "Not retried; it is not currently eligible for this update.",
+      failure: "Not updated; it was no longer eligible when servers updated.",
       server: { environmentId: "service", targetVersion: "0.6.2" },
     });
-    expect(capsuleAction(run)).toBe("dismiss");
+    expect(circleOffersRetry(run, "service")).toBe(false);
 
     // Back online with a changed flag: Retry returns and takes the current flags.
     testState.environments = [
@@ -602,10 +615,8 @@ describe("a server withdrawn when its step starts", () => {
       testState.environments[1]!,
     ];
     await act(() => renderer!.update(<Probe />));
-    expect(capsuleAction(run)).toBe("retry");
-    await act(async () => {
-      run.retryFailedUpdateRunServers(update);
-    });
+    expect(circleOffersRetry(run, "service")).toBe(true);
+    await retryFromCircle(run, ["service"], update);
     expect(update.mock.calls).toEqual([
       [
         expect.objectContaining({
@@ -614,7 +625,7 @@ describe("a server withdrawn when its step starts", () => {
           targetVersion: "0.6.2",
           continueThreadsAfterServerUpdate: false,
         }),
-        { quiet: true },
+        { quiet: false },
       ],
     ]);
   });
@@ -643,13 +654,11 @@ describe("a server withdrawn when its step starts", () => {
       expect(run.useQualifiedUpdateRunServers()).toContainEqual(
         expect.objectContaining({ environmentId: "service" }),
       );
-      expect(capsuleAction(run)).toBe("dismiss");
+      expect(circleOffersRetry(run, "service")).toBe(false);
       const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
         async () => ({ status: "updated" }),
       );
-      await act(async () => {
-        run.retryFailedUpdateRunServers(update);
-      });
+      await retryFromCircle(run, ["service"], update);
       expect(update).not.toHaveBeenCalled();
     },
   );
@@ -700,7 +709,7 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
     await act(() => {
       run = current!.run({});
     });
-    expect(managedState.update).toHaveBeenCalledWith([managedTarget]);
+    expect(managedState.update).toHaveBeenCalledWith([managedTarget], { inPass: true });
     expect(testState.updateServer).not.toHaveBeenCalled();
     await act(async () => {
       finishManaged([managedRun({ status: "pending" }, "Waiting for 1 running turn.")]);
