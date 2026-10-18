@@ -101,16 +101,6 @@ describe("recovering unsaved work", () => {
     vi.unstubAllGlobals();
   });
 
-  // Runs once while the tree renders, after the editor has read its startup
-  // state and before any of its effects: what another view does in that gap.
-  let afterEditorRender: (() => void) | null = null;
-  function AfterEditorRender() {
-    const run = afterEditorRender;
-    afterEditorRender = null;
-    run?.();
-    return null;
-  }
-
   const settle = (ms = 20) => act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
   const acknowledged = () => settle(SAVE_DELAY + 60);
   async function mount(source: string, revision: number) {
@@ -146,28 +136,25 @@ describe("recovering unsaved work", () => {
         };
       }, []);
       return (
-        <>
-          <LatexVisualEditor
-            draftKey={KEY}
-            fileRevision={`r${value.revision}`}
-            source={value.source}
-            sourceSnapshot={owner.snapshot}
-            disabled={false}
-            singleFileDocument={singleFileDocument}
-            onEditingChange={() => {}}
-            onOpenSource={() => {}}
-            onEdit={(request) => {
-              const outcome = owner.edit(request, shown.source === request.edit.source);
-              if (!outcome.accepted) return outcome;
-              const next = outcome.snapshot.source;
-              writes(request.edit.source, next);
-              show({ source: next, revision: shown.revision });
-              coordinator.change(next);
-              return outcome;
-            }}
-          />
-          <AfterEditorRender />
-        </>
+        <LatexVisualEditor
+          draftKey={KEY}
+          fileRevision={`r${value.revision}`}
+          source={value.source}
+          sourceSnapshot={owner.snapshot}
+          disabled={false}
+          singleFileDocument={singleFileDocument}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+          onEdit={(request) => {
+            const outcome = owner.edit(request, shown.source === request.edit.source);
+            if (!outcome.accepted) return outcome;
+            const next = outcome.snapshot.source;
+            writes(request.edit.source, next);
+            show({ source: next, revision: shown.revision });
+            coordinator.change(next);
+            return outcome;
+          }}
+        />
       );
     }
     await act(async () => {
@@ -579,20 +566,52 @@ describe("recovering unsaved work", () => {
     expect(disk.source).toBe(tex("Old base plus typed"));
   });
 
+  /** Another view stores `theirs` right after this editor reads the typing
+   * slot, which it does once while opening, and before it installs that read. */
+  function storeAfterOpeningRead(theirs: string) {
+    const read = localStorage.getItem.bind(localStorage);
+    const spy = vi.spyOn(localStorage, "getItem").mockImplementation((slot) => {
+      const value = read(slot);
+      if (slot === TYPING_SLOT && value !== null && value !== theirs) {
+        spy.mockRestore();
+        localStorage.setItem(TYPING_SLOT, theirs);
+      }
+      return value;
+    });
+    return spy;
+  }
+
   it("owns only the snapshot it put back, not one another view stored before it was installed", async () => {
     const base = tex("Old base");
     storeTypingDraft(base, [paragraph("Old base plus typed")]);
-    // Another view stores different typing after this editor has read the
-    // snapshot and before it installs it.
     const theirs = JSON.stringify({
       baseSource: base,
       content: { type: "doc", content: [paragraph("Written in the other view")] },
     });
-    afterEditorRender = () => localStorage.setItem(TYPING_SLOT, theirs);
+    const spy = storeAfterOpeningRead(theirs);
     await mount(base, 1);
+    spy.mockRestore();
     await settle(400);
     // Ours was put back, converted and published; theirs is still stored.
     expect(shown.source).toBe(tex("Old base plus typed"));
+    expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
+  });
+
+  it("keeps the snapshot it could not put back, not one another view stored meanwhile", async () => {
+    const base = tex("Old base");
+    storeTypingDraft(base, [
+      { type: "unknownNode", content: [{ type: "text", text: "Words I typed" }] },
+    ]);
+    const theirs = JSON.stringify({
+      baseSource: base,
+      content: { type: "doc", content: [paragraph("Written in the other view")] },
+    });
+    const spy = storeAfterOpeningRead(theirs);
+    await mount(base, 1);
+    spy.mockRestore();
+    await settle(400);
+    // Ours is kept for review; theirs stays in the live slot for its own view.
+    expect(parked()).toMatchObject({ origin: "typing", text: "Words I typed" });
     expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
   });
 

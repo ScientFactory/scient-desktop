@@ -7420,7 +7420,7 @@ function LatexVisualEditorReady(
     } catch {
       // Not loadable into this editor: keep it as readable text in the
       // recovery line, where ordinary editing cannot clear it.
-      setRecovery(parkUninstalledTypingDraft(props.draftKey));
+      setRecovery(parkUninstalledTypingDraft(props.draftKey, typingRecovery));
     } finally {
       applying.current = false;
     }
