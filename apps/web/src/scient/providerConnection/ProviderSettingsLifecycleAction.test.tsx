@@ -37,6 +37,8 @@ vi.mock("./useProviderLifecycleController", () => ({
   }),
 }));
 
+vi.mock("./environmentLocality", () => ({ useEnvironmentIsOnThisDevice: () => true }));
+
 vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: commands.toast },
   stackedThreadToast: (value: unknown) => value,

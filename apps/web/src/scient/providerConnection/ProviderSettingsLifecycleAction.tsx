@@ -19,6 +19,7 @@ import {
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
 } from "./providerConnectionPresentation";
+import { useEnvironmentIsOnThisDevice } from "./environmentLocality";
 import { oneClickSignInMethod } from "./providerSignInBrowser";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -227,9 +228,13 @@ function BrowserSignInButton(props: {
     provider: props.provider,
   });
   const [pending, setPending] = useState(false);
+  const onThisDevice = useEnvironmentIsOnThisDevice(props.environmentId);
 
   const signIn = async () => {
     setPending(true);
+    // On another device the browser cannot reach the provider's 127.0.0.1 return
+    // address, so the setup card is shown for pasting the return URL.
+    if (!onThisDevice) props.onManage();
     try {
       // The controller opens the sign-in page for this client once it is ready.
       const provider = await controller.startConnection(props.method);
@@ -237,6 +242,7 @@ function BrowserSignInButton(props: {
       // A flow that waits on something other than the page Scient opened, such
       // as a code to paste, continues in the setup view.
       if (
+        onThisDevice &&
         isActiveProviderConnectionOperation(operation) &&
         !(
           operation?.status === "waiting_for_browser" &&

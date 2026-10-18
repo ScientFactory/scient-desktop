@@ -16,6 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { page } from "vitest/browser";
 
 const commands = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn(), connect: vi.fn() }));
+const locality = vi.hoisted(() => ({ onThisDevice: true }));
+
+vi.mock("./environmentLocality", () => ({
+  useEnvironmentIsOnThisDevice: () => locality.onThisDevice,
+}));
 
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({
@@ -180,6 +185,7 @@ function renderSurface(surface: (typeof SURFACES)[number], provider: ServerProvi
 
 beforeEach(() => {
   vi.clearAllMocks();
+  locality.onThisDevice = true;
   commands.plan.mockResolvedValue({
     action: "install",
     target: "darwin-arm64",
@@ -349,6 +355,23 @@ describe("row sign-in", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     expect(onManage).toHaveBeenCalledTimes(1);
     expect(commands.connect).not.toHaveBeenCalled();
+  });
+
+  it("also opens the setup view on another device, for pasting the return URL", async () => {
+    locality.onThisDevice = false;
+    const onManage = vi.fn();
+    commands.connect.mockResolvedValue(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({ authorizationUrlKind: "primary", authorizationResponseKind: "callback_url" }),
+      ),
+    );
+    renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => commands.connect.mock.calls).toEqual([["antigravity_google"]]);
+    await commands.connect.mock.results[0]!.value;
+    expect(onManage).toHaveBeenCalledTimes(1);
   });
 
   it("continues in the setup view when the started flow asks for something", async () => {
