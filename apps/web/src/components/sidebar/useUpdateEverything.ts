@@ -39,7 +39,10 @@ import {
   unsupportedBulkServerMachines,
 } from "./updateEverything.logic";
 import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
-import { isSelfUpdatingSshRemote } from "~/scient/desktopUpdate/otherUpdates.logic";
+import {
+  collectOtherServerUpdates,
+  isSelfUpdatingSshRemote,
+} from "~/scient/desktopUpdate/otherUpdates.logic";
 import {
   managedRuntimeProviderMachines,
   managedRuntimeRunOutcomes,
@@ -122,6 +125,14 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   ];
   // Reviewed Scient-managed runtimes update with the providers.
   const managedRuntimes = useManagedRuntimeUpdates();
+  // The sidebar's circle lists each server, including those only their owner can update.
+  const otherServers = collectOtherServerUpdates({
+    machines,
+    behind: behindServers,
+    qualified: servers,
+    targetVersion,
+    selfUpdating,
+  });
   // SCIENT-FORK:END
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
   const providers = useProviderUpdates();
@@ -153,6 +164,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     lines,
     restarts,
     skipped,
+    // SCIENT-FORK:START — the sidebar's circle for other machines and providers.
+    otherServers,
+    // SCIENT-FORK:END
     run: async ({
       downloadLocal,
       installLocal,

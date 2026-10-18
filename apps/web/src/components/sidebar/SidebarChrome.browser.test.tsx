@@ -220,14 +220,33 @@ const idleUpdateState: DesktopUpdateState = {
   availableVersion: null,
 };
 
+// SCIENT-FORK:START — other machines and providers have their own 20px circle and card.
+const alvin = EnvironmentId.make("sidebar-geometry-alvin");
+const alvinServer = {
+  environmentId: alvin,
+  serverLabel: "alvin",
+  selfUpdate: "boot-service" as const,
+  targetVersion: "0.6.21",
+};
+
 function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   return {
     hasUpdates: true,
-    summary: "Update 1 server and 2 providers",
-    lines: ["alvin: server to 0.6.21, Codex, Claude"],
+    summary: "Update 1 server",
+    lines: ["alvin: server to 0.6.21"],
     restarts: [],
     skipped: [],
-    // The run stays in progress, so the footer keeps showing it.
+    otherServers: [
+      {
+        environmentId: alvin,
+        label: "alvin",
+        app: false,
+        fromVersion: "0.6.20",
+        toVersion: "0.6.21",
+        target: alvinServer,
+      },
+    ],
+    // The pass stays in progress, so the circle keeps showing it.
     run: () => {
       setUpdateEverythingRun(() => ({
         localVersion: null,
@@ -235,10 +254,10 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
         restartAt: null,
         machines: [
           {
-            environmentId: EnvironmentId.make("sidebar-geometry-alvin"),
+            environmentId: alvin,
             label: "alvin",
-            updatesProviders: true,
-            server: null,
+            updatesProviders: false,
+            server: alvinServer,
             handedOffVersion: null,
             startedAt: Date.now(),
             result: null,
@@ -252,21 +271,7 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   };
 }
 
-it("fits the Update label for other machines and providers inside the minimum sidebar", async () => {
-  fixture.everything = everythingFixture();
-  await mountFooter(216, idleUpdateState);
-  const pill = page.getByRole("button", { name: /^Update: / });
-  await expect.element(pill).toBeVisible();
-
-  const button = pill.element() as HTMLButtonElement;
-  expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
-  const rect = button.getBoundingClientRect();
-  expect(rect.width).toBeGreaterThan(64);
-  const icon = button.querySelector("svg")!.getBoundingClientRect();
-  const text = button.querySelector("span.tabular-nums")!.getBoundingClientRect();
-  expect(icon.left - rect.left).toBeGreaterThanOrEqual(5);
-  expect(Math.abs(icon.left - rect.left - (rect.right - text.right))).toBeLessThanOrEqual(1);
-
+function expectFooterInOrder() {
   const footer = host!
     .querySelector<HTMLElement>('[data-sidebar="footer"]')!
     .getBoundingClientRect();
@@ -277,46 +282,83 @@ it("fits the Update label for other machines and providers inside the minimum si
     const bounds = visible.getBoundingClientRect();
     expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
     expect(bounds.right).toBeLessThanOrEqual(footer.right);
+    // Labels never truncate; the circle's progress ring is drawn around it on purpose.
+    if (!visible.matches("[data-other-updates]")) {
+      expect(visible.scrollWidth).toBeLessThanOrEqual(visible.clientWidth);
+    }
     previousRight = bounds.right;
   }
-  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-    await page.screenshot({
-      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-update.png`,
-      element: host!,
-    });
-  }
-});
+}
 
-it("keeps a running update pass inside the minimum sidebar", async () => {
+it.each([
+  ["idle", "Check for updates"],
+  ["downloaded", "Restart"],
+] as const)(
+  "keeps the other-updates circle at 20px beside the %s app control",
+  async (status, appLabel) => {
+    fixture.everything = everythingFixture();
+    await mountFooter(216, status === "idle" ? idleUpdateState : updateState);
+    const circle = page.getByRole("button", { name: "Other updates available" });
+    await expect.element(circle).toBeVisible();
+    const app = page.getByRole("button", { name: new RegExp(`^${appLabel}`) });
+    await expect.element(app).toBeVisible();
+
+    const bounds = (circle.element() as HTMLElement).getBoundingClientRect();
+    expect([bounds.width, bounds.height]).toEqual([20, 20]);
+    const appBounds = (app.element() as HTMLElement).getBoundingClientRect();
+    expect(appBounds.left - bounds.right).toBe(6);
+    expect(
+      Math.abs(appBounds.top + appBounds.height / 2 - (bounds.top + bounds.height / 2)),
+    ).toBeLessThanOrEqual(0.5);
+    expectFooterInOrder();
+    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-${status}.png`,
+        element: host!,
+      });
+    }
+  },
+);
+
+it("lists other updates with text actions and updates them without a confirmation", async () => {
   fixture.everything = everythingFixture();
   await mountFooter(216, idleUpdateState);
-  await page.getByRole("button", { name: /^Update: / }).click();
-  await page.getByRole("button", { name: "Update", exact: true }).click();
-  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
-  // A running pass replaces the pill with the progress capsule.
-  const progress = page.getByRole("button", { name: "0 of 1 updated" });
-  await expect.element(progress).toBeVisible();
+  await page.getByRole("button", { name: "Other updates available" }).click();
+  const updateAll = page.getByRole("button", { name: "Update all" });
+  await expect.element(updateAll).toBeVisible();
+  const row = document.querySelector<HTMLElement>("[data-other-update-row]")!;
+  expect(row.textContent).toContain("alvin server");
+  expect(row.textContent).toContain("0.6.20 → 0.6.21");
 
-  const capsule = (progress.element() as HTMLElement).parentElement!;
-  const bounds = capsule.getBoundingClientRect();
-  const footer = host!
-    .querySelector<HTMLElement>('[data-sidebar="footer"]')!
-    .getBoundingClientRect();
-  expect(bounds.left).toBeGreaterThanOrEqual(footer.left);
-  expect(bounds.right).toBeLessThanOrEqual(footer.right);
-  for (const visible of [...host!.querySelectorAll("button")].filter(
-    (candidate) => candidate.getClientRects().length && !capsule.contains(candidate),
-  )) {
-    const other = visible.getBoundingClientRect();
-    expect(other.right <= bounds.left || other.left >= bounds.right).toBe(true);
+  const rowUpdate = page.getByRole("button", { name: "Update", exact: true });
+  for (const action of [rowUpdate, updateAll]) {
+    const style = getComputedStyle(action.element());
+    expect(style.borderTopWidth).toBe("0px");
+    expect(style.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(style.textDecorationLine).toBe("underline");
   }
+  expect(Number(getComputedStyle(updateAll.element()).fontWeight)).toBeGreaterThanOrEqual(600);
+  expect(Number(getComputedStyle(rowUpdate.element()).fontWeight)).toBeLessThan(600);
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
     await page.screenshot({
-      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-updating.png`,
-      element: host!,
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
     });
   }
+
+  await updateAll.click();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  const updating = page.getByRole("button", { name: "Other updates in progress" });
+  await expect.element(updating).toBeVisible();
+  const bounds = (updating.element() as HTMLElement).getBoundingClientRect();
+  expect([bounds.width, bounds.height]).toEqual([20, 20]);
+  const ring = (updating.element() as HTMLElement).querySelector("svg")!.getBoundingClientRect();
+  const app = page.getByRole("button", { name: /^Check for updates/ }).element();
+  expect(ring.width).toBe(24);
+  expect(ring.right).toBeLessThan(app.getBoundingClientRect().left);
+  await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
+  expectFooterInOrder();
 });
+// SCIENT-FORK:END
 
 it("keeps all four utilities equally spaced and inset while updates are idle", async () => {
   await mountFooter(216, {

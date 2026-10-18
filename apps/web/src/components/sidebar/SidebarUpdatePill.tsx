@@ -39,9 +39,8 @@ import {
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
-import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
-import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
+import type { UpdateEverythingRun } from "./updateEverything.logic";
 import {
   clearSavedUpdateEverythingResult,
   saveUpdateEverythingResult,
@@ -50,6 +49,10 @@ import {
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 // SCIENT-FORK:START — explicit Restart does not acquire another confirmation.
 import { shouldRunUpdateEverything } from "./updateEverything.logic";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — other machines and providers have their own circle beside the pill.
+import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic";
+import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
 // SCIENT-FORK:END
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -235,9 +238,16 @@ function SidebarUpdateControl() {
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
-  const runsEverything = shouldRunUpdateEverything(everything.hasUpdates, isDownloading, action);
+  // SCIENT-FORK:START — the pill is this app's own update. Other updates join it only in a pass
+  // that downloads this app, never in a running one, and only such a pass holds the pill.
   const run = useUpdateEverythingRun();
-  const isRunningEverything = run !== null;
+  const runsEverything = shouldRunUpdateEverything(
+    everything.hasUpdates && !isUpdateRunActive(run),
+    isDownloading,
+    action,
+  );
+  const isRunningEverything = run !== null && run.localVersion !== null;
+  // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -245,8 +255,10 @@ function SidebarUpdateControl() {
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
-    showsEverything: runsEverything,
-    run,
+    // SCIENT-FORK:START — the pill presents this app's own update state only.
+    showsEverything: false,
+    run: null,
+    // SCIENT-FORK:END
     isDownloading,
     showCheckIcon,
   });
@@ -329,8 +341,22 @@ function SidebarUpdateControl() {
     }
 
     if (action === "install") {
-      // SCIENT-FORK:START — Restart is explicit; no second confirmation.
-      void installFromFooter(bridge);
+      // SCIENT-FORK:START — Restart is explicit; no second confirmation. A running pass for
+      // other machines is saved first, so its summary and restarting servers follow the relaunch.
+      if (isUpdateRunActive(run)) {
+        saveUpdateEverythingResult({
+          localVersion: localUpdateVersion,
+          updatedServers: 0,
+          updatedProviders: 0,
+          failures: [],
+          restarting: [],
+        });
+        void installFromFooter(bridge).then((installed) => {
+          if (!installed) clearSavedUpdateEverythingResult();
+        });
+      } else {
+        void installFromFooter(bridge);
+      }
       // SCIENT-FORK:END
       return;
     }
@@ -402,17 +428,19 @@ function SidebarUpdateControl() {
     );
   };
 
-  // SCIENT-FORK:START — compact labels; remote orchestration preserves local updater state.
-  // A running pass shows the update capsule below, so the pill never labels a run.
-  const updateLabel = runsEverything
-    ? "Update"
-    : showUpdateIconState && state
+  // SCIENT-FORK:START — compact labels for this app's own update. Other machines and providers
+  // have their own circle, which is all a browser shows.
+  const updateLabel =
+    showUpdateIconState && state
       ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
       : null;
-  // The shared "Update" label for other machines and providers sizes the pill.
-  const sizesToLabel = iconStatus === "everything";
+  const updateOthers = () => everything.run({});
+  if (!isElectron) {
+    return (
+      <SidebarOtherUpdates servers={everything.otherServers} standalone updateAll={updateOthers} />
+    );
+  }
   // SCIENT-FORK:END
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
 
   const statusIcon = (
     <DesktopUpdateStatusIcon
@@ -436,43 +464,6 @@ function SidebarUpdateControl() {
     />
   );
 
-  if (run !== null) {
-    const local: UpdateRunLocalState =
-      run.localVersion === null
-        ? null
-        : state?.status === "downloading"
-          ? { status: "downloading", percent: state.downloadPercent }
-          : { status: "waiting" };
-    return (
-      <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
-        <SidebarUpdateCapsule
-          run={run}
-          local={local}
-          icon={statusIcon}
-          {...(run.localVersion === null && action === "install" && window.desktopBridge
-            ? {
-                onRestart: async () => {
-                  saveUpdateEverythingResult({
-                    localVersion: localUpdateVersion,
-                    updatedServers: 0,
-                    updatedProviders: 0,
-                    failures: [],
-                    restarting: [],
-                  });
-                  // SCIENT-FORK:START — the footer's single installer owner.
-                  if (!(await installFromFooter(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
-                  // SCIENT-FORK:END
-                },
-              }
-            : {})}
-        />
-        {confirmDialog}
-      </SidebarMenuItem>
-    );
-  }
-
   const updateButton = (
     <button
       type="button"
@@ -491,9 +482,7 @@ function SidebarUpdateControl() {
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
-              // This app's states fit the fixed width; "Update" for other machines
-              // and providers grows to its label with even insets.
-              sizesToLabel ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
+              "w-16 gap-0.5 px-0.5",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(
@@ -562,9 +551,14 @@ function SidebarUpdateControl() {
 
   return (
     <SidebarMenuItem
-      className="ml-auto shrink-0"
+      // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
+      className="ml-auto flex shrink-0 items-center"
+      // SCIENT-FORK:END
       data-update-active={showUpdateDetails || undefined}
     >
+      {/* SCIENT-FORK:START */}
+      <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
+      {/* SCIENT-FORK:END */}
       <Popover
         handle={releaseNotesPopoverHandle}
         onOpenChange={(open, details) => {
