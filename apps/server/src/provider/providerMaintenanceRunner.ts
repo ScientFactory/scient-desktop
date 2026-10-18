@@ -595,6 +595,24 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               })
             : error,
         ),
+        // SCIENT-FORK:START — an update interrupted before it finishes, including while it waits
+        // for the installer lock, records a terminal state instead of staying queued or running.
+        Effect.onInterrupt(() =>
+          nowIso.pipe(
+            Effect.flatMap((finishedAt) =>
+              setUpdateState(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt: null,
+                  finishedAt,
+                  message: "Provider update was interrupted. Try again.",
+                }),
+              ),
+            ),
+            Effect.ignore,
+          ),
+        ),
+        // SCIENT-FORK:END
         Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
       );
   });

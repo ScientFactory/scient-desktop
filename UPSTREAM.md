@@ -177,6 +177,10 @@ where a server is left for later while its machine still updates a provider or r
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
 available" toasts to the circle; the browser client keeps them.
+Because a server waits while a provider update is queued, a marked seam in
+`apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
+one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
+the same gap, so this fix is worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.

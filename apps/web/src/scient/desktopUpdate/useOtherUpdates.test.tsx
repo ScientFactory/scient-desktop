@@ -353,6 +353,31 @@ describe("useOtherUpdates", () => {
     expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
   });
 
+  it("releases a server once an interrupted queued provider update ends", async () => {
+    const withUpdateState = (status: "queued" | "failed") => ({
+      ...codexCli(),
+      updateState: {
+        status,
+        startedAt: null,
+        finishedAt: status === "failed" ? "2026-10-18T10:05:00.000Z" : null,
+        message: status === "failed" ? "Provider update was interrupted. Try again." : null,
+        output: null,
+      },
+    });
+    testState.environments = [remote([withUpdateState("queued")])];
+    await render([serverUpdate]);
+    const server = () => current!.rows.find(({ item }) => item.kind === "server")!;
+    expect(current!.busy(server().item)).toBe(true);
+
+    // The server records the interrupted update as failed rather than leaving it queued.
+    testState.environments = [remote([withUpdateState("failed")])];
+    testState.updateServer.mockResolvedValueOnce({ status: "updated" });
+    await render([serverUpdate]);
+    expect(current!.busy(server().item)).toBe(false);
+    await act(async () => current!.update(server().item));
+    expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
+  });
+
   it("holds a server while this card starts a provider update on its machine", async () => {
     testState.environments = [remote([codexCli()])];
     testState.updateProvider.mockImplementationOnce(() => new Promise(() => {}));

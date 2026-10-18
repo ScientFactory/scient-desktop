@@ -858,6 +858,78 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  // SCIENT-FORK:START — an interrupted queued update must not stay queued.
+  it.effect("ends an update interrupted while it waits for the installer lock", () => {
+    const firstStartedLatch: { resolve: () => void } = { resolve: () => {} };
+    const releaseFirstLatch: { resolve: () => void } = { resolve: () => {} };
+    const firstStarted = new Promise<void>((resolve) => {
+      firstStartedLatch.resolve = resolve;
+    });
+    const releaseFirst = new Promise<void>((resolve) => {
+      releaseFirstLatch.resolve = resolve;
+    });
+    const calls: Array<string> = [];
+    const statusOf = (providers: ReadonlyArray<ServerProvider>) =>
+      providers.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)?.updateState;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+              updateExecutable: "npm",
+              updateArgs:
+                provider === OPENCODE_DRIVER
+                  ? ["install", "-g", "opencode-ai@latest"]
+                  : ["install", "-g", "@openai/codex@latest"],
+              updateLockKey: "npm-global",
+            }),
+          ),
+      });
+
+      const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => firstStarted);
+      const second = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (statusOf(yield* registry.getProviders)?.status === "queued") break;
+        yield* Effect.yieldNow;
+      }
+      assert.strictEqual(statusOf(yield* registry.getProviders)?.status, "queued");
+
+      // The client's connection drops while the update still waits for the lock.
+      yield* Fiber.interrupt(second);
+      const interrupted = statusOf(yield* registry.getProviders);
+      assert.strictEqual(interrupted?.status, "failed");
+      assert.notStrictEqual(interrupted?.finishedAt, null);
+
+      releaseFirstLatch.resolve();
+      yield* Fiber.join(first);
+      assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
+      assert.strictEqual(statusOf(yield* registry.getProviders)?.status, "failed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.0.0"),
+          layerMockSpawner((_command, args) => {
+            calls.push(args.join(" "));
+            firstStartedLatch.resolve();
+            return {
+              stdout: "updated",
+              exitCode: Effect.promise(() => releaseFirst).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            };
+          }),
+        ),
+      ),
+    );
+  });
+  // SCIENT-FORK:END
+
   it.effect("accepts arbitrary driver-provided update lock keys", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
