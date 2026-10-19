@@ -38,7 +38,9 @@ import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usag
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
-const HEALTH_CHECK_TIMEOUT = "90 seconds";
+// SCIENT-FORK:START — Antigravity unpacks itself (~320 MiB) on every start; slow disks need minutes.
+const HEALTH_CHECK_TIMEOUT = "5 minutes";
+// SCIENT-FORK:END
 
 type SessionSetupResult = Pick<
   AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"],

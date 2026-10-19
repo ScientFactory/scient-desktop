@@ -191,7 +191,7 @@ longer want that credential method available.
 
 ## Troubleshooting
 
-Health checks, model refresh, and sign-out allow up to 90 seconds for the official
+Health checks, model refresh, and sign-out allow up to 5 minutes for the official
 runtime to start, which can be slow on some computers. Explicit refresh uses saved
 credentials and does not launch a login page. Automatic checks verify installation
 only. Google controls account eligibility and limits; Scient does not silently

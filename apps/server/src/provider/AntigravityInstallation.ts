@@ -47,7 +47,9 @@ import {
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
-const VALIDATION_TIMEOUT = "90 seconds";
+// SCIENT-FORK:START — Antigravity unpacks itself (~320 MiB) on every start; slow disks need minutes.
+const VALIDATION_TIMEOUT = "5 minutes";
+// SCIENT-FORK:END
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";

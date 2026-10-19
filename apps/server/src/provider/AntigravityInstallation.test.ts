@@ -752,7 +752,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         : undefined;
       if (testCase.timeout) {
         yield* Deferred.await(initializationStarted);
-        yield* TestClock.adjust("90 seconds");
+        yield* TestClock.adjust("5 minutes");
       }
       if (platform === "win32") {
         yield* Effect.raceFirst(
@@ -766,7 +766,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       );
       if (testCase.timeout) {
         expect((yield* terminalState(installation)).message).toBe(
-          "Antigravity didn't finish starting within 90 seconds while Scient was checking it. Starting it can take a while on some computers. Try again.",
+          "Antigravity didn't finish starting within 5 minutes while Scient was checking it. Starting it can take a while on some computers. Try again.",
         );
       }
       yield* Deferred.await(stagingReleased);
