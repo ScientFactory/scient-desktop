@@ -1,3 +1,4 @@
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -24,6 +25,8 @@ export function useAutomaticPlacement(input: {
   readonly openKey: string | null;
   readonly ready: boolean;
   readonly knownKeys?: readonly string[];
+  /** Environments without a live thread list; their rows keep their last known state. */
+  readonly frozenEnvironmentIds?: readonly string[];
 }) {
   const enabled = useAutomaticPlacementPreference((state) => state.enabled);
   const storageKey = `scient:sidebar:placement-order:${input.scope}`;
@@ -38,14 +41,20 @@ export function useAutomaticPlacement(input: {
     const keys = JSON.parse(knownSignature) as string[] | null;
     return keys === null ? null : new Set(keys);
   }, [knownSignature]);
+  const frozenSignature = JSON.stringify(input.frozenEnvironmentIds ?? []);
+  const isFrozen = useMemo(() => {
+    const frozen = new Set(JSON.parse(frozenSignature) as string[]);
+    return (key: string) =>
+      frozen.size > 0 && frozen.has(parseScopedThreadKey(key)?.environmentId ?? "");
+  }, [frozenSignature]);
   const state = !enabled || saved.key !== storageKey ? EMPTY_PLACEMENT : saved.state;
   const writes = useRef(new Map<string, { before: string | null; after: string }>());
   const moves = useRef(
     new Map<string, { before: string | null; after: string; row: PlacementRow }>(),
   );
-  const latest = useRef({ ...input, groups, state, storageKey, enabled });
+  const latest = useRef({ ...input, groups, state, storageKey, enabled, isFrozen });
   useLayoutEffect(() => {
-    latest.current = { ...input, groups, state, storageKey, enabled };
+    latest.current = { ...input, groups, state, storageKey, enabled, isFrozen };
   });
 
   // Reconcile synchronized external snapshots before paint. Transient renderer updates
@@ -105,7 +114,7 @@ export function useAutomaticPlacement(input: {
     setSaved((previous) => {
       const existing = previous.key === storageKey ? previous.state : load(storageKey);
       const next = enabled
-        ? reconcilePlacement(existing, synchronized, input.openKey, now)
+        ? reconcilePlacement(existing, synchronized, input.openKey, now, isFrozen)
         : EMPTY_PLACEMENT;
       return previous.key === storageKey && previous.state === next
         ? previous
@@ -117,6 +126,7 @@ export function useAutomaticPlacement(input: {
     groups,
     input.openKey,
     input.ready,
+    isFrozen,
     knownKeys,
     saved.key,
     paused,
@@ -125,14 +135,17 @@ export function useAutomaticPlacement(input: {
 
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
-    const deadlines = state.pending.flatMap((entry) => (entry.dueAt === null ? [] : [entry.dueAt]));
+    // A frozen row's deadline waits for its environment, so it never arms the timer.
+    const deadlines = state.pending.flatMap((entry) =>
+      entry.dueAt === null || isFrozen(entry.key) ? [] : [entry.dueAt],
+    );
     if (deadlines.length === 0) return;
     const timer = window.setTimeout(
       () => setClock(Date.now()),
       Math.max(0, Math.min(...deadlines) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [enabled, input.ready, paused, state.pending]);
+  }, [enabled, input.ready, isFrozen, paused, state.pending]);
 
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
@@ -167,19 +180,35 @@ export function useAutomaticPlacement(input: {
         movedRow ?? current.groups.flatMap((group) => group.rows).find((row) => row.key === key);
       if (moved && source?.id !== groupId)
         moves.current.set(key, { before: source?.id ?? null, after: groupId, row: moved });
+      // A frozen row is placed by its last known eligibility, not its stale copy's.
+      const saved = current.isFrozen(key)
+        ? current.state.groups.flatMap((group) => group.rows).find((row) => row.key === key)
+        : undefined;
+      const placed = moved && saved ? { ...moved, eligible: saved.eligible } : moved;
       const inputs = current.groups.map((group) => ({
         ...group,
         rows: [
           ...group.rows.filter((row) => row.key !== key),
-          ...(group.id === groupId && moved ? [moved] : []),
+          ...(group.id === groupId && placed ? [placed] : []),
         ].map((row) =>
           orderKeys.has(row.key) ? { ...row, orderKey: orderKeys.get(row.key)! } : row,
         ),
       }));
-      const reconciled = reconcilePlacement(current.state, inputs, current.openKey, Date.now());
+      // The drop alone places the moved row: reconciling without it (and before the new
+      // keys) keeps it from counting as an arrival and its re-keyed neighbours as remote drops.
+      const reconciled = reconcilePlacement(
+        current.state,
+        current.groups.map((group) => ({
+          ...group,
+          rows: group.rows.filter((row) => row.key !== key),
+        })),
+        current.openKey,
+        Date.now(),
+        current.isFrozen,
+      );
       setSaved({
         key: current.storageKey,
-        state: manuallyPlaceThread(reconciled, groupId, order, key, inputs),
+        state: manuallyPlaceThread(reconciled, groupId, order, key, inputs, current.isFrozen),
       });
     },
     [],

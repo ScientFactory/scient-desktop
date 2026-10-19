@@ -41,8 +41,14 @@ vi.mock("./pendingNewThreadSections", () => ({
   rememberSectionForNewThread: vi.fn(),
   useApplyPendingNewThreadSections: () => {},
 }));
-vi.mock("./loadedEnvironments", () => ({ loadedThreadEnvironmentsKeyAtom: {} }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => "" }));
+vi.mock("./loadedEnvironments", () => ({
+  loadedThreadEnvironmentsKeyAtom: {},
+  frozenPlacementEnvironmentsKeyAtom: { frozen: true },
+}));
+// Placement stays unready here (an incomplete catalog); its own hook tests cover it.
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: { readonly frozen?: boolean }) => (atom.frozen ? null : ""),
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     environments: [
@@ -50,6 +56,7 @@ vi.mock("../../state/environments", () => ({
       { environmentId: "remote", label: "Lab server" },
     ],
   }),
+  useEnvironmentMachines: () => new Map([["local", "laptop"]]),
 }));
 vi.mock("../../state/entities", () => ({ readThreadShell: () => ({ projectId: "project-a" }) }));
 vi.mock("./NewSectionPopover", () => ({
@@ -271,19 +278,20 @@ describe("environment-local catalogs", () => {
     expect(mocks.reorder).toHaveBeenCalledWith("remote", [GENERAL_SECTION_GROUP_ID, "c"]);
   });
 
-  it("names machines on section headers only when several environments' sections show", () => {
+  it("marks section headers with machines only when several environments' sections show", () => {
     mocks.catalogs = [{ environmentId: "local", sections: [section("a", 0)], generalIndex: 1 }];
     mount();
-    expect(sections.viewProps.environmentLabels).toBeNull();
+    expect(sections.viewProps.environmentMachines).toBeNull();
     mocks.catalogs = [
       { environmentId: "local", sections: [section("a", 0)], generalIndex: 1 },
       { environmentId: "remote", sections: [section("c", 0)], generalIndex: 1 },
     ];
     mount();
-    expect(sections.viewProps.environmentLabels).toEqual(
+    expect(sections.viewProps.environmentMachines).toEqual(
       new Map([
-        ["local", "Laptop"],
-        ["remote", "Lab server"],
+        ["local", { label: "Laptop", kind: "laptop" }],
+        // A machine that has not reported its kind shows the server icon, as thread rows do.
+        ["remote", { label: "Lab server", kind: "server" }],
       ]),
     );
   });
