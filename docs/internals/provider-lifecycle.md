@@ -146,69 +146,71 @@ rather than claiming a browser is open. Scient does not pre-start the agent.
 
 ## Opening sign-in pages
 
-The client that starts a sign-in opens its page, once, whatever is mounted when
-the page becomes available (`apps/web/src/scient/providerConnection/providerSignInBrowser.ts`).
-Before sending a start, the lifecycle controller records a random sign-in request
-id there and sends it as `signInRequestId`; the connection manager stamps it on
-every state of the operation it creates. When the start reply or a streamed
-provider snapshot shows an operation carrying an id this client holds, waiting on
-a `primary` URL, the client asks the server to claim the opening
-(`claimProviderSignInPage`) and opens the page only if the server grants it, so a
-reply lost to a brief disconnect does not lose the opening. Replies and snapshots
-count alike, and the client keeps no view of which operation is current: snapshots
-can lag behind a reply, so that is the server's call.
-`ProviderSignInPageCoordinator`, mounted once in the root route, lends the opener
-that command and, once it is registered, watches the provider snapshots of the
-environments where this client holds an id, so the first snapshot it sees can
-claim. The connection manager grants the claim once per operation,
-under the operation's transition lock, and only to the request id stamped on the
-current operation while it waits on that page; the grant carries that page's URL,
-which the client opens. Windows that share a copied session, a reload after a
-grant, a repeated report, and an operation replaced or cancelled before the claim are
-denied, and clients without the id never ask. A cancel the server processes after
-the grant opens nothing if the snapshot showing it arrives before the grant;
-otherwise the page opens, as if the user cancelled just after it opened. Opening the
-page by hand spends this window's id for it, and an automatic opening skips a
-page this window already opened, so a grant still on its way opens nothing more. Other clients' setup views offer to open the page and do
-not claim it is open. A server can only run one connection operation per
-instance, so a second start from another client is rejected and releases its id;
-a second start from the same client joins the in-flight command, shares its
-operation, and releases its own id. An id is released when the server answers the
-claim, when a reply or snapshot shows its operation ended, when the server rejects
-its start, or 15 minutes after it was made, never because a snapshot does not show
-its operation yet; an unknown answer keeps it for the next report. Held ids live
-in session storage, so a renderer reload before the claim still opens the page; a
-window that dies between the grant and the opening, or a full quit, leaves the
-card's open action. Against a server that does not stamp ids, the reply alone
-identifies a new operation. Once the manager has published an accepted operation, the
-rest of its startup runs in a manager-owned fiber: the start request waits for it,
-but a reload or disconnect only detaches that request, while cancel, the provider's
-own failure or deadline, and manager teardown end the startup.
+The window that starts a sign-in opens its page once, whatever setup view is
+mounted when the page becomes available. The code lives in
+`apps/web/src/scient/providerConnection/`: `providerSignInFlow.ts` runs the flow,
+`providerSignInRequests.ts` holds the request ids, `providerSignInOpenings.ts`
+records each opening and reports failures, `providerSignInPage.ts` opens a URL,
+and `useProviderSignInBrowser.ts` is the setup views' hook.
 
-In a browser tab, a page opened long after the user's click is usually blocked as
-a popup. Scient opens `about:blank` without `noopener` so it can see that, cuts the
-opener link, then follows a `noreferrer` link inside the new window, so the
-sign-in page receives no referrer; if that navigation fails, the blank window is
-closed and the opening fails with its open action. A blocked page is recorded as failed: the card and the notification
-say the browser blocked it and offer to open it, which works because that is the
-user's own click. The desktop app opens pages through the system browser and is
-not affected. While a setup view for the instance
-is mounted it shows an opening failure; otherwise a notification offers to open the
-page. Providers that open their own browser publish `manual_fallback` URLs, which
-open only on request. Scient Agent's account sign-ins use the same module. The
+1. **Request id.** Before a start, the window records a random id in session
+   storage and sends it as `signInRequestId`. The connection manager stamps it on
+   every state of the operation it creates.
+2. **Claim.** Whenever the start reply or a streamed provider snapshot shows an
+   operation stamped with a held id, waiting on a `primary` URL, the window sends
+   `claimProviderSignInPage`, one claim per operation at a time. Replies and
+   snapshots count alike; the client keeps no view of which operation is current.
+3. **Grant.** Under the operation's transition lock, the manager grants once per
+   operation, only while it is the current operation, waits on that page and
+   carries that id. The grant returns the page's URL, which the window opens if it
+   still holds the id. Windows sharing a copied session, a reload after a grant, a
+   repeated report, and an operation replaced or cancelled before the claim are
+   denied; clients without the id never ask.
+4. **Release.** An id is released by the claim's answer, by a reply or snapshot
+   showing its operation ended, by a rejected start, by the user opening the page
+   by hand, or 15 minutes after it was made. It is never released because a
+   snapshot does not show its operation yet. An unknown answer keeps it for the
+   next report.
+
+`ProviderSignInPageCoordinator`, mounted once in the root route, registers the
+claim command and then watches the provider snapshots of each environment in
+which the window holds an id. A second start from the same window joins the
+in-flight command and releases its own id; one from another client is rejected,
+because a server runs one connection operation per instance. A cancel the server
+processes after the grant opens nothing if the snapshot showing it arrives first;
+otherwise the page opens, as if the user cancelled just after it opened. A window
+that dies between the grant and the opening, or a full quit, leaves the card's
+open action. Other clients' setup views offer to open the page and never say it is
+open. Against a server that does not stamp ids, the reply alone identifies a new
+operation.
+
+Once the manager has published an accepted operation, the rest of its startup runs
+in a manager-owned fiber. The start request waits for it, but a reload or
+disconnect only detaches the request; cancel, the provider's own failure or
+deadline, and manager teardown end the startup.
+
+The desktop app opens pages through the system browser. In a browser tab, a page
+opened long after the click is usually blocked as a popup, so Scient opens
+`about:blank` without `noopener` to see that, cuts the opener link, and follows a
+`noreferrer` link inside the new window, so the sign-in page receives no referrer.
+If that navigation fails, the blank window is closed. A failed or blocked opening
+shows in a mounted setup view of the instance, or else as a notification; both
+offer to open the page, which a blocking browser allows because it is the user's
+own click. Providers that open their own browser publish `manual_fallback` URLs,
+which open only on request. Scient Agent's account sign-ins use the same flow. The
 generic connection dialog, for providers without assisted setup, keeps its own
 opening because no sign-in method uses it.
 
 The Settings and onboarding row starts sign-in directly when the provider has
 exactly one method that only needs a page Scient opens (`codex_browser`,
 `cursor_browser`, `antigravity_google`); a choice of methods, a device code, a
-pairing or configured credentials open the setup card. A started flow that turns out
-to wait on something other than that page also opens the card, as does any
-one-click start for an environment whose server is not known to be on this device:
-the provider's browser return goes to `127.0.0.1` on the browser's device, so the
-card's paste field for the return URL must be visible. Only the desktop app's own
-backends count as on this device; a browser tab on localhost may be reaching a
-remote server through a tunnel.
+pairing or configured credentials open the setup card. So does a started flow that
+waits on something other than that page, and any one-click start for an
+environment whose server is not known to be on this device: the provider's browser
+return goes to `127.0.0.1` on the browser's device, so the card's field for pasting
+the return URL must be visible. Only the desktop app's own backends count as on
+this device; a browser tab on localhost may be reaching a remote server through a
+tunnel.
 
 ## Independent lifecycle state
 
