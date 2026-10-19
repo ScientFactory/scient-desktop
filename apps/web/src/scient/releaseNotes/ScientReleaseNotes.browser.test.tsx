@@ -48,7 +48,11 @@ it.each(["light", "dark"])(
     root = createRoot(host);
     root.render(<ScientReleaseNotes />);
 
-    await page.getByRole("button", { name: "Read what is new in Scient version 0.6.23" }).click();
+    await page
+      .getByRole("button", {
+        name: `Read what is new in Scient version ${SCIENT_RELEASE_NOTES[0].version}`,
+      })
+      .click();
     const dialog = page.getByRole("dialog");
     await expect.element(dialog).toBeVisible();
     await expect.poll(() => document.activeElement?.textContent).toBe("What’s new in Scient");
@@ -68,9 +72,11 @@ it.each(["light", "dark"])(
     expect([...rows].map((row) => row.querySelector("p")?.textContent)).toEqual(
       SCIENT_RELEASE_NOTES[0].highlights.map(({ title }) => title),
     );
-    expect([...rows[0]!.querySelectorAll("p")].slice(1).map((p) => p.textContent)).toEqual(
-      SCIENT_RELEASE_NOTES[0].highlights[0].description.split("\n\n"),
-    );
+    for (const [index, row] of rows.entries()) {
+      expect([...row.querySelectorAll("p")].slice(1).map((p) => p.textContent)).toEqual(
+        SCIENT_RELEASE_NOTES[0].highlights[index]!.description.split("\n\n"),
+      );
+    }
     const viewport = document.querySelector<HTMLElement>(
       '[role="dialog"] [data-slot="scroll-area-viewport"]',
     )!;
@@ -88,10 +94,10 @@ it.each(["light", "dark"])(
 
     await dialog.getByRole("button", { name: "Release history", exact: true }).click();
     await dialog
-      .getByRole("button", { name: "Read release notes for Scient 0.6.22", exact: true })
+      .getByRole("button", { name: "Read release notes for Scient 0.6.23", exact: true })
       .click();
     await expect.poll(() => document.querySelectorAll('[role="dialog"] ol li').length).toBe(9);
-    await expect.element(dialog.getByText("Version 0.6.22 · October 2026")).toBeVisible();
+    await expect.element(dialog.getByText("Version 0.6.23 · October 2026")).toBeVisible();
     if (import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS}/previous-extended-${theme}.png`,
@@ -121,7 +127,7 @@ it("hides the release card in a collapsed sidebar and restores it when expanded"
   root.render(<ScientReleaseNotes />);
 
   const card = page.getByRole("button", {
-    name: "Read what is new in Scient version 0.6.23",
+    name: `Read what is new in Scient version ${SCIENT_RELEASE_NOTES[0].version}`,
     includeHidden: true,
   });
   await expect.element(card).not.toBeVisible();
