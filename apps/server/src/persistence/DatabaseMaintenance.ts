@@ -81,7 +81,9 @@ export class DatabaseMaintenance extends Context.Service<
         readonly databaseBytes: number;
         readonly reclaimableBytes: number;
         readonly incrementalVacuumEnabled: boolean;
+        // SCIENT-FORK:START — Scient keeps that database and always reports null.
         /** Size of the database from before 0.1.0 still kept beside it, or null. */
+        // SCIENT-FORK:END
         readonly legacyDatabaseBytes: number | null;
       },
       DatabaseMissingError | DatabaseInspectError
@@ -99,10 +101,12 @@ export class DatabaseMaintenance extends Context.Service<
       | DatabaseProjectionsInvalidError
       | DatabaseCompactError
     >;
+    // SCIENT-FORK:START — Scient's history import still reads that database, so removal refuses.
     /**
      * Deletes the database from before 0.1.0 kept beside this one. Versions
      * before 0.1.0 read only that file; this one stays intact.
      */
+    // SCIENT-FORK:END
     readonly removeLegacyDatabase: (
       databasePath: string,
     ) => Effect.Effect<void, DatabaseInUseError | LegacyDatabaseRemoveError>;
@@ -147,8 +151,9 @@ const lockExclusively = (databasePath: string) =>
     yield* sql`COMMIT`;
   });
 
-// SCIENT-FORK: see removeLegacyDatabase.
+// SCIENT-FORK:START — see removeLegacyDatabase.
 const scientOriginalDatabaseDeletable: boolean = false;
+// SCIENT-FORK:END
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

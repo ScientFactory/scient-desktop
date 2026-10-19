@@ -10051,7 +10051,7 @@ function ChatViewContent(props: ChatViewProps) {
       </AlertDialog>
       {/* SCIENT-FORK:END */}
       <LinkPullRequestDialogHost />
-      {/* SCIENT-FORK:START — useAcknowledgeAnswer is the only visit writer; upstream's
+      {/* SCIENT-FORK:START — useAcknowledgeAnswer is the automatic visit writer; upstream's
           ThreadVisitWatermark would mark a background window or an unloaded answer read. */}
       {/* SCIENT-FORK:END */}
       <ExpandedImageDialogHost threadKey={routeThreadKey} />

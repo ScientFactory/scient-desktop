@@ -7,9 +7,8 @@ import { ScientMarkdownEditorView } from "./view";
 import { ScientProseMirrorSession } from "./session";
 
 const strictQualification = process.env.SCIENT_MARKDOWN_PERF_STRICT === "1";
-// A CI shard runs headless Chromium beside this suite, so CI measures it in its own step.
-const sharedCiRunner =
-  process.env.CI === "true" && process.env.SCIENT_MARKDOWN_PERF_ISOLATED !== "1";
+// A CI web shard runs headless Chromium beside this suite, so CI measures it in its own step.
+const sharedCiRunner = process.env.SCIENT_MARKDOWN_PERF_SHARED_RUNNER === "1";
 
 function representativeDocument(minimumLength: number): string {
   const blocks: string[] = [];

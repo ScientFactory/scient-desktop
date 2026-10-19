@@ -885,7 +885,9 @@ runtime evidence:
 Run `SCIENT_MARKDOWN_PERF_STRICT=1 pnpm exec vp test run --project unit
 src/scient/markdownEditor/prosemirror/performance.test.ts` from `apps/web` in an isolated,
 otherwise idle qualification run. The normal parallel suite uses wider timing ceilings to detect
-algorithmic regressions without treating runner contention as interaction latency. The fixtures
+algorithmic regressions without treating runner contention as interaction latency. CI web shards
+run headless Chromium beside the unit project, so they skip this suite and shard 1 runs it alone
+with the wider ceilings. The fixtures
 cover 100/500 KiB documents, references, large tables and stable embedded-code surfaces.
 
 ## Change acceptance
