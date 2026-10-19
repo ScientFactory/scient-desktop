@@ -1,5 +1,5 @@
 import type { ChatFileAttachment, EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import {
@@ -72,7 +72,7 @@ export function useScientFileReadRecovery({
   // A copy on the device in hand: the one way to take a file Scient cannot
   // preview to another app when the viewer is not on the machine that holds it.
   const savingCopyRef = useRef(false);
-  const handleSaveCopy = useCallback(() => {
+  const handleSaveCopy = () => {
     if (!absolutePath || !environmentHttpBaseUrl || savingCopyRef.current) return;
     savingCopyRef.current = true;
     void saveEnvironmentFileCopy({
@@ -92,7 +92,7 @@ export function useScientFileReadRecovery({
       .finally(() => {
         savingCopyRef.current = false;
       });
-  }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
+  };
   const canSaveCopy =
     attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
 

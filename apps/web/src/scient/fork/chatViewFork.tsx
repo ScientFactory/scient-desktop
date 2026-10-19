@@ -1,3 +1,4 @@
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   ForkOptions,
@@ -5,14 +6,11 @@ import type {
   OrchestrationV2ProjectedTurnItem,
   RunId,
   ScopedThreadRef,
-  ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useState,
   useSyncExternalStore,
   type Dispatch,
@@ -78,7 +76,7 @@ type SetForkCommandTarget = Dispatch<SetStateAction<ForkCommandTarget | null>>;
 export function useChatViewForkCommand(input: {
   readonly activeThread: Thread | null | undefined;
   readonly navigate: Parameters<typeof useScientThreadFork>[0]["navigate"];
-  readonly serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
 }) {
   const { activeThread, navigate, serverConfigs } = input;
   const forkRecoverySupported =
@@ -103,28 +101,25 @@ export function useChatViewForkCommand(input: {
     activeThread !== undefined &&
     forkCommandTarget.threadId === activeThread.id &&
     forkCommandTarget.environmentId === activeThread.environmentId;
-  const forkSource = useMemo(
-    (): ForkSource | null =>
-      forkCommandTarget === null
-        ? null
-        : forkCommandTarget.kind === "running-turn"
-          ? { kind: "running-turn", runId: forkCommandTarget.runId }
-          : forkCommandTarget.kind === "assistant-response"
-            ? {
-                kind: forkCommandTarget.kind,
-                messageId: forkCommandTarget.messageId,
-                latest:
-                  forkCommandTarget.source === "latest-response" ||
-                  forkCommandTarget.source === "new-chat",
-              }
-            : {
-                kind: forkCommandTarget.kind,
-                messageId: forkCommandTarget.messageId,
-                prompt: forkCommandTarget.message.text,
-                attachments: forkCommandTarget.message.attachments ?? [],
-              },
-    [forkCommandTarget],
-  );
+  const forkSource: ForkSource | null =
+    forkCommandTarget === null
+      ? null
+      : forkCommandTarget.kind === "running-turn"
+        ? { kind: "running-turn", runId: forkCommandTarget.runId }
+        : forkCommandTarget.kind === "assistant-response"
+          ? {
+              kind: forkCommandTarget.kind,
+              messageId: forkCommandTarget.messageId,
+              latest:
+                forkCommandTarget.source === "latest-response" ||
+                forkCommandTarget.source === "new-chat",
+            }
+          : {
+              kind: forkCommandTarget.kind,
+              messageId: forkCommandTarget.messageId,
+              prompt: forkCommandTarget.message.text,
+              attachments: forkCommandTarget.message.attachments ?? [],
+            };
   useEffect(() => {
     if (forkDialogOpen && forkSource) void prepareFork(forkSource);
   }, [forkDialogOpen, forkSource, prepareFork]);
@@ -166,7 +161,7 @@ export function useClearForkCommandOnThreadChange(
 }
 
 /** The composer's fork command: the running turn while it works, else the latest answer. */
-export function useForkConversationCommand(input: {
+export function createForkConversationCommand(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly activeLatestRun: TimelineLatestRun | null;
   readonly activeRunningTurnId: RunId | null;
@@ -182,49 +177,36 @@ export function useForkConversationCommand(input: {
     activeThreadEnvironmentId,
     setForkCommandTarget,
   } = input;
-  const latestCompletedAssistantMessageId = useMemo(
-    () =>
-      findLatestCompletedAssistantMessageId({
-        timelineEntries,
-        latestRun: activeLatestRun,
-        runningRunId: activeRunningTurnId,
-      }),
-    [activeLatestRun, activeRunningTurnId, timelineEntries],
-  );
-  return useCallback(
-    (options?: { readonly preserveComposerDraft?: boolean }) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      // While the agent works, a fork carries its work in progress.
-      if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
-        setForkCommandTarget({
-          threadId: activeThreadId,
-          environmentId: activeThreadEnvironmentId,
-          kind: "running-turn",
-          runId: activeRunningTurnId,
-          source: "running-turn",
-        });
-        return;
-      }
+  const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
+    timelineEntries,
+    latestRun: activeLatestRun,
+    runningRunId: activeRunningTurnId,
+  });
+  return (options?: { readonly preserveComposerDraft?: boolean }) => {
+    if (!activeThreadId || !activeThreadEnvironmentId) return;
+    // While the agent works, a fork carries its work in progress.
+    if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
       setForkCommandTarget({
         threadId: activeThreadId,
         environmentId: activeThreadEnvironmentId,
-        kind: "assistant-response",
-        messageId: latestCompletedAssistantMessageId,
-        source: options?.preserveComposerDraft ? "new-chat" : "latest-response",
+        kind: "running-turn",
+        runId: activeRunningTurnId,
+        source: "running-turn",
       });
-    },
-    [
-      activeThreadId,
-      activeThreadEnvironmentId,
-      activeRunningTurnId,
-      latestCompletedAssistantMessageId,
-      setForkCommandTarget,
-    ],
-  );
+      return;
+    }
+    setForkCommandTarget({
+      threadId: activeThreadId,
+      environmentId: activeThreadEnvironmentId,
+      kind: "assistant-response",
+      messageId: latestCompletedAssistantMessageId,
+      source: options?.preserveComposerDraft ? "new-chat" : "latest-response",
+    });
+  };
 }
 
 /** A fork's inherited baseline and whether the open fork target can start a new worktree. */
-export function useForkTimelineBaseline(input: {
+export function deriveForkTimelineBaseline(input: {
   readonly turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   readonly activeThread: Thread | null | undefined;
   readonly serverVisibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
@@ -242,30 +224,24 @@ export function useForkTimelineBaseline(input: {
     forkCommandTarget,
     timelineEntries,
   } = input;
-  const forkCheckpointByAssistantMessageId = useMemo(
-    () =>
-      new Map(
-        turnDiffSummaries.flatMap((checkpoint) =>
-          checkpoint.assistantMessageId
-            ? [[checkpoint.assistantMessageId, checkpoint] as const]
-            : [],
-        ),
-      ),
-    [turnDiffSummaries],
+  const forkCheckpointByAssistantMessageId = new Map(
+    turnDiffSummaries.flatMap((checkpoint) =>
+      checkpoint.assistantMessageId ? [[checkpoint.assistantMessageId, checkpoint] as const] : [],
+    ),
   );
   const hasForkBaseline = activeThread?.lineage.relationshipToParent === "fork";
   const forkOriginThreadId =
     activeThread?.source.forkLineage?.originThreadId ??
     (hasForkBaseline ? (activeThread?.lineage.parentThreadId ?? undefined) : undefined);
-  const forkBaselineAssistantMessageId = useMemo(() => {
+  const forkBaselineAssistantMessageId = (() => {
     const recorded = activeThread?.source.forkLineage?.baselineAssistantMessageId;
     if (recorded != null) return recorded;
     const inherited = serverVisibleTurnItems.findLast(
       (row) => row.visibility === "inherited" && row.item.type === "assistant_message",
     )?.item;
     return inherited?.type === "assistant_message" ? inherited.messageId : null;
-  }, [activeThread?.source.forkLineage, serverVisibleTurnItems]);
-  const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
+  })();
+  const forkWorktreeAvailability: ForkWorktreeAvailability = (() => {
     if (!isGitRepo) {
       return { available: false, reason: "no-git-repository" };
     }
@@ -287,13 +263,7 @@ export function useForkTimelineBaseline(input: {
       return { available: true };
     }
     return { available: false, reason: "no-checkpoint" };
-  }, [
-    forkDialogOpen,
-    forkCommandTarget,
-    isGitRepo,
-    timelineEntries,
-    forkCheckpointByAssistantMessageId,
-  ]);
+  })();
   return {
     hasForkBaseline,
     forkOriginThreadId,
@@ -321,39 +291,33 @@ export function forkWorktreeAvailabilityFromOptions(
 }
 
 /** Timeline row actions that open the fork dialog for one response or prompt. */
-export function useForkMessageCommands(input: {
+export function createForkMessageCommands(input: {
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadEnvironmentId: EnvironmentId | null;
   readonly setForkCommandTarget: SetForkCommandTarget;
 }) {
   const { activeThreadId, activeThreadEnvironmentId, setForkCommandTarget } = input;
-  const onForkAssistantMessage = useCallback(
-    (sourceAssistantMessageId: MessageId) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      setForkCommandTarget({
-        threadId: activeThreadId,
-        environmentId: activeThreadEnvironmentId,
-        kind: "assistant-response",
-        messageId: sourceAssistantMessageId,
-        source: "this-response",
-      });
-    },
-    [activeThreadId, activeThreadEnvironmentId, setForkCommandTarget],
-  );
-  const onForkUserMessage = useCallback(
-    (message: ChatMessage) => {
-      if (!activeThreadId || !activeThreadEnvironmentId) return;
-      setForkCommandTarget({
-        threadId: activeThreadId,
-        environmentId: activeThreadEnvironmentId,
-        kind: "user-message",
-        messageId: message.id,
-        message,
-        source: "this-message",
-      });
-    },
-    [activeThreadId, activeThreadEnvironmentId, setForkCommandTarget],
-  );
+  const onForkAssistantMessage = (sourceAssistantMessageId: MessageId) => {
+    if (!activeThreadId || !activeThreadEnvironmentId) return;
+    setForkCommandTarget({
+      threadId: activeThreadId,
+      environmentId: activeThreadEnvironmentId,
+      kind: "assistant-response",
+      messageId: sourceAssistantMessageId,
+      source: "this-response",
+    });
+  };
+  const onForkUserMessage = (message: ChatMessage) => {
+    if (!activeThreadId || !activeThreadEnvironmentId) return;
+    setForkCommandTarget({
+      threadId: activeThreadId,
+      environmentId: activeThreadEnvironmentId,
+      kind: "user-message",
+      messageId: message.id,
+      message,
+      source: "this-message",
+    });
+  };
   return { onForkAssistantMessage, onForkUserMessage };
 }
 

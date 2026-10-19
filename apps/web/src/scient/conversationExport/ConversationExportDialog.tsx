@@ -148,81 +148,90 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
     if (exportRequest === null || registration === null) return;
     setBusy(true);
     setError(null);
+    let operationFailure: { error: unknown } | null = null;
     try {
-      if (registration.produce) {
-        const produced = await registration.produce({ threadRef, request: exportRequest });
-        // Save cancelled: the dialog stays open, as for every other format.
-        if (produced === null) return;
-        const open = produced.open;
-        const openAction =
-          open === undefined
-            ? {}
-            : {
-                actionProps: {
-                  children: "Open",
-                  // A sidebar export's conversation may not be the one on screen.
-                  onClick: () => showInOwningThread(navigate, threadRef, open),
-                },
-              };
-        toastManager.add(
-          produced.warnings.length > 0
-            ? {
-                type: "warning",
-                title: `${produced.title} with notes`,
-                description: produced.warnings.map((warning) => warning.message).join("\n"),
-                ...openAction,
-              }
-            : {
-                type: "success",
-                title: produced.title,
-                ...(produced.description === undefined
-                  ? {}
-                  : { description: produced.description }),
-                ...openAction,
-              },
-        );
-        closeRequest();
-        return;
-      }
-      const preparedRequest =
-        exportRequest.format === "docx"
-          ? {
-              ...exportRequest,
-              diagramCapture: await captureWordDiagrams(
-                await prepareConversationWordDiagrams(threadRef.environmentId, exportRequest),
-              ),
+      completeOperation: {
+        try {
+          if (registration.produce) {
+            const produced = await registration.produce({ threadRef, request: exportRequest });
+            // Save cancelled: the dialog stays open, as for every other format.
+            if (produced === null) break completeOperation;
+            const open = produced.open;
+            const openAction =
+              open === undefined
+                ? {}
+                : {
+                    actionProps: {
+                      children: "Open",
+                      // A sidebar export's conversation may not be the one on screen.
+                      onClick: () => showInOwningThread(navigate, threadRef, open),
+                    },
+                  };
+            toastManager.add(
+              produced.warnings.length > 0
+                ? {
+                    type: "warning",
+                    title: `${produced.title} with notes`,
+                    description: produced.warnings.map((warning) => warning.message).join("\n"),
+                    ...openAction,
+                  }
+                : {
+                    type: "success",
+                    title: produced.title,
+                    ...(produced.description === undefined
+                      ? {}
+                      : { description: produced.description }),
+                    ...openAction,
+                  },
+            );
+            closeRequest();
+            break completeOperation;
+          }
+          const preparedRequest =
+            exportRequest.format === "docx"
+              ? {
+                  ...exportRequest,
+                  diagramCapture: await captureWordDiagrams(
+                    await prepareConversationWordDiagrams(threadRef.environmentId, exportRequest),
+                  ),
+                }
+              : exportRequest;
+          const result = await exportConversation(threadRef.environmentId, preparedRequest);
+          if (result.file !== null) {
+            const saved = await saveConversationExport(threadRef.environmentId, result.file);
+            if (saved._tag === "cancelled") break completeOperation;
+            if (saved._tag === "failed") {
+              setError(saveFailureMessage(saved));
+              break completeOperation;
             }
-          : exportRequest;
-      const result = await exportConversation(threadRef.environmentId, preparedRequest);
-      if (result.file !== null) {
-        const saved = await saveConversationExport(threadRef.environmentId, result.file);
-        if (saved._tag === "cancelled") return;
-        if (saved._tag === "failed") {
-          setError(saveFailureMessage(saved));
-          return;
+            toastManager.add({
+              type: "success",
+              title: saved._tag === "saved" ? "Export saved" : "Download started",
+              description: saved._tag === "saved" ? saved.path : result.file.fileName,
+            });
+          }
+          if (result.warnings.length > 0) {
+            toastManager.add({
+              type: "warning",
+              title: "Exported with notes",
+              description: result.warnings.map((warning) => warning.message).join("\n"),
+            });
+          }
+          closeRequest();
+        } catch (cause) {
+          setError(exportErrorMessage(cause));
+          // A Pandoc that no longer starts makes Word unavailable with a reinstall
+          // offer; read availability again so the dialog shows it.
+          if (exportRequest.format === "docx") formatAvailable();
         }
-        toastManager.add({
-          type: "success",
-          title: saved._tag === "saved" ? "Export saved" : "Download started",
-          description: saved._tag === "saved" ? saved.path : result.file.fileName,
-        });
       }
-      if (result.warnings.length > 0) {
-        toastManager.add({
-          type: "warning",
-          title: "Exported with notes",
-          description: result.warnings.map((warning) => warning.message).join("\n"),
-        });
-      }
-      closeRequest();
-    } catch (cause) {
-      setError(exportErrorMessage(cause));
-      // A Pandoc that no longer starts makes Word unavailable with a reinstall
-      // offer; read availability again so the dialog shows it.
-      if (exportRequest.format === "docx") formatAvailable();
-    } finally {
-      setBusy(false);
+    } catch (error) {
+      operationFailure = { error };
     }
+
+    setBusy(false);
+
+    if (operationFailure !== null) throw operationFailure.error;
   };
 
   const UnavailableAction = registration?.UnavailableAction;

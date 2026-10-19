@@ -8,7 +8,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -90,12 +90,14 @@ export function ClaudeInlineSetup(props: {
   const [showAuthorizationCode, setShowAuthorizationCode] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
     setShowAuthorizationCode(false);
     setAuthorizationCode("");
-  }, [props.provider.instanceId]);
+  }
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
@@ -107,10 +109,14 @@ export function ClaudeInlineSetup(props: {
     ? connectionOperation
     : null;
 
-  useEffect(() => {
+  const [previousOperationId, setPreviousOperationId] = useState(
+    activeConnectionOperation?.operationId,
+  );
+  if (previousOperationId !== activeConnectionOperation?.operationId) {
+    setPreviousOperationId(activeConnectionOperation?.operationId);
     setShowAuthorizationCode(false);
     setAuthorizationCode("");
-  }, [activeConnectionOperation?.operationId]);
+  }
 
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
@@ -151,73 +157,98 @@ export function ClaudeInlineSetup(props: {
   const install = async () => {
     setLocalError(null);
     setPendingAction("install");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startReviewedClaudeRuntimeAction(props.controller, "install");
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Claude."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await startReviewedClaudeRuntimeAction(props.controller, "install");
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Claude."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const update = async () => {
     setLocalError(null);
     setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await updateClaudeRuntime(props.controller, props.provider);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Claude."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await updateClaudeRuntime(props.controller, props.provider);
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Claude."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const repair = async () => {
     setLocalError(null);
     setPendingAction("repair");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await startReviewedClaudeRuntimeAction(props.controller, "repair");
-      if (
-        provider.connection?.runtime?.operation?.action === "repair" &&
-        provider.connection.runtime.operation.status === "succeeded"
-      ) {
-        props.onRepairSucceeded?.();
+      try {
+        const provider = await startReviewedClaudeRuntimeAction(props.controller, "repair");
+        if (
+          provider.connection?.runtime?.operation?.action === "repair" &&
+          provider.connection.runtime.operation.status === "succeeded"
+        ) {
+          props.onRepairSucceeded?.();
+        }
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Claude."));
       }
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Claude."));
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
     setPendingAction("cancel-runtime");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not cancel Claude setup."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Claude setup."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const signIn = async (method: ClaudeSignInMethod | null = signInMethod) => {
     if (!method) return;
     setLocalError(null);
     setPendingAction("sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startClaudeSignIn(props.controller, method);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not start Claude sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await startClaudeSignIn(props.controller, method);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not start Claude sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const submitCode = async () => {
@@ -226,19 +257,24 @@ export function ClaudeInlineSetup(props: {
     setAuthorizationCode("");
     setLocalError(null);
     setPendingAction("submit-code");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.submitAuthorizationCode(activeConnectionOperation.operationId, code);
-      setShowAuthorizationCode(false);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(
-          error,
-          "Scient could not return the one-time code to Claude.",
-        ),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.submitAuthorizationCode(activeConnectionOperation.operationId, code);
+        setShowAuthorizationCode(false);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(
+            error,
+            "Scient could not return the one-time code to Claude.",
+          ),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const openManualFallback = async () => {
@@ -262,15 +298,20 @@ export function ClaudeInlineSetup(props: {
     setLocalError(null);
     setAuthorizationCode("");
     setPendingAction("cancel-sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelConnection(activeConnectionOperation.operationId);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not cancel Claude sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelConnection(activeConnectionOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Claude sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (

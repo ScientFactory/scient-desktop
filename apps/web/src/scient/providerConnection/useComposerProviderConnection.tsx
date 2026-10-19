@@ -6,7 +6,7 @@ import type {
   ProviderRuntimeSummary,
 } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 
 import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -58,13 +58,10 @@ export function useComposerProviderRuntimeUpdate(input: {
   const providerRuntimeUpdateSendDisabledReason = selectedProviderIsUpdating
     ? `${selectedProviderEntry?.displayName ?? "Provider"} is updating.`
     : null;
-  const getComposerModelDisabledReason = useCallback(
-    (instanceId: ProviderInstanceId, model: string) =>
-      instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
-        ? providerRuntimeUpdateSendDisabledReason
-        : getModelDisabledReason(instanceId, model),
-    [getModelDisabledReason, providerRuntimeUpdateSendDisabledReason, selectedInstanceId],
-  );
+  const getComposerModelDisabledReason = (instanceId: ProviderInstanceId, model: string) =>
+    instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
+      ? providerRuntimeUpdateSendDisabledReason
+      : getModelDisabledReason(instanceId, model);
   const selectedProviderNeedsConnection =
     selectedProviderEntry !== undefined &&
     shouldShowProviderLifecycleSetupInComposer(
@@ -146,22 +143,17 @@ export function useReconcileAntigravityComposerSelection(input: {
 }
 
 /** Inline setup inside the model picker for providers that can be set up. */
-export function useComposerProviderSetupRenderers(environmentId: EnvironmentId) {
-  const isProviderSetupAvailable = useCallback(
-    (entry: ProviderInstanceEntry) => entry.enabled && entry.isAvailable,
-    [],
-  );
-  const renderProviderSetup = useCallback(
-    (entry: ProviderInstanceEntry) => (
-      <ProviderLifecycleSetupSurface environmentId={environmentId} entry={entry} />
-    ),
-    [environmentId],
+export function createComposerProviderSetupRenderers(environmentId: EnvironmentId) {
+  const isProviderSetupAvailable = (entry: ProviderInstanceEntry) =>
+    entry.enabled && entry.isAvailable;
+  const renderProviderSetup = (entry: ProviderInstanceEntry) => (
+    <ProviderLifecycleSetupSurface environmentId={environmentId} entry={entry} />
   );
   return { isProviderSetupAvailable, renderProviderSetup };
 }
 
 /** The model picker footer that offers and tracks a managed runtime update. */
-export function useComposerProviderUpdateFooter(input: {
+export function createComposerProviderUpdateFooter(input: {
   readonly environmentId: EnvironmentId;
   readonly environmentUnavailable: { readonly label: string } | null;
   readonly runtimeUpdate: Pick<
@@ -181,37 +173,26 @@ export function useComposerProviderUpdateFooter(input: {
   // once the provider is idle, so a running turn does not block starting one.
   const providerUpdateDisabledReason =
     environmentUnavailable !== null ? "Available when this environment reconnects." : undefined;
-  return useCallback(
-    (entry: ProviderInstanceEntry) => (
-      <ComposerProviderUpdateFooter
-        key={entry.instanceId}
-        environmentId={environmentId}
-        entry={entry}
-        {...(preparingRuntimeUpdateInstanceId !== null &&
-        preparingRuntimeUpdateInstanceId !== entry.instanceId
-          ? { disabledReason: "Another provider update is being prepared." }
-          : providerUpdateDisabledReason
-            ? { disabledReason: providerUpdateDisabledReason }
-            : {})}
-        onPreparingChange={(isPreparing) => {
-          setPreparingRuntimeUpdateInstanceId(isPreparing ? entry.instanceId : null);
-        }}
-        onUpdateStarted={(provider) => {
-          const runtime = provider.connection?.runtime;
-          if (runtime) {
-            setLocalRuntimeUpdate({ baseProvider: entry.snapshot, value: runtime });
-          }
-        }}
-      />
-    ),
-    // The two state setters are stable; they are listed because they arrive as
-    // parameters here.
-    [
-      environmentId,
-      preparingRuntimeUpdateInstanceId,
-      providerUpdateDisabledReason,
-      setLocalRuntimeUpdate,
-      setPreparingRuntimeUpdateInstanceId,
-    ],
+  return (entry: ProviderInstanceEntry) => (
+    <ComposerProviderUpdateFooter
+      key={entry.instanceId}
+      environmentId={environmentId}
+      entry={entry}
+      {...(preparingRuntimeUpdateInstanceId !== null &&
+      preparingRuntimeUpdateInstanceId !== entry.instanceId
+        ? { disabledReason: "Another provider update is being prepared." }
+        : providerUpdateDisabledReason
+          ? { disabledReason: providerUpdateDisabledReason }
+          : {})}
+      onPreparingChange={(isPreparing) => {
+        setPreparingRuntimeUpdateInstanceId(isPreparing ? entry.instanceId : null);
+      }}
+      onUpdateStarted={(provider) => {
+        const runtime = provider.connection?.runtime;
+        if (runtime) {
+          setLocalRuntimeUpdate({ baseProvider: entry.snapshot, value: runtime });
+        }
+      }}
+    />
   );
 }

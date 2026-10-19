@@ -331,6 +331,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                         "status.showUntrackedFiles=all",
                         "worktree",
                         "remove",
+                        "--",
                         isolatedPath,
                       ]);
                       assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));

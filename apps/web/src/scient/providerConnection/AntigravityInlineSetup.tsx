@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   DEFAULT_PROVIDER_STARTING_MESSAGE,
   type ProviderRuntimeOperation,
@@ -15,7 +16,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -132,14 +133,22 @@ export function AntigravityInlineSetup(props: {
     [],
   );
 
-  useLayoutEffect(() => {
-    actionInvocation.current = null;
-    signInInvocation.current = null;
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
     setCopiedInstallCommand(false);
     setAuthorizationCode("");
     setAuthorizationResponseExpanded(false);
+  }
+
+  const invocationInstanceId = useRef(props.provider.instanceId);
+  useLayoutEffect(() => {
+    if (invocationInstanceId.current === props.provider.instanceId) return;
+    invocationInstanceId.current = props.provider.instanceId;
+    actionInvocation.current = null;
+    signInInvocation.current = null;
   }, [props.provider.instanceId]);
 
   const runtime = props.provider.connection?.runtime;
@@ -161,7 +170,7 @@ export function AntigravityInlineSetup(props: {
     props.displayName,
   );
 
-  const isCurrentSignIn = useCallback((invocation: SignInInvocation) => {
+  const isCurrentSignIn = useStableCallback((invocation: SignInInvocation) => {
     if (
       signInInvocation.current !== invocation ||
       currentProvider.current.instanceId !== invocation.instanceId
@@ -177,39 +186,45 @@ export function AntigravityInlineSetup(props: {
       !invocation.operationObserved &&
       (operation?.operationId ?? null) === invocation.previousOperationId
     );
-  }, []);
+  });
 
+  const observedConnection = {
+    operationId: connectionOperationId,
+    status: connectionOperation?.status,
+  };
   useLayoutEffect(() => {
     const invocation = signInInvocation.current;
     if (!invocation) return;
     if (
       invocation.operationId === null &&
-      connectionOperationId !== null &&
-      connectionOperationId !== invocation.previousOperationId
+      observedConnection.operationId !== null &&
+      observedConnection.operationId !== invocation.previousOperationId
     ) {
-      invocation.operationId = connectionOperationId;
+      invocation.operationId = observedConnection.operationId;
     }
-    if (invocation.operationId !== null && invocation.operationId === connectionOperationId) {
+    if (
+      invocation.operationId !== null &&
+      invocation.operationId === observedConnection.operationId
+    ) {
       invocation.operationObserved = true;
     }
     if (!isCurrentSignIn(invocation)) {
       signInInvocation.current = null;
       setPendingAction((action) => (action === "sign-in" ? null : action));
     }
-  }, [
-    props.provider.instanceId,
-    connectionOperationId,
-    connectionOperation?.status,
-    isCurrentSignIn,
-  ]);
+  }, [observedConnection, isCurrentSignIn]);
 
   const browserOpening =
     activeConnectionOperation?.status === "waiting_for_browser" ? browser.opening : null;
 
-  useEffect(() => {
+  const [previousAuthorizationOperationId, setPreviousAuthorizationOperationId] = useState(
+    activeConnectionOperation?.operationId,
+  );
+  if (previousAuthorizationOperationId !== activeConnectionOperation?.operationId) {
+    setPreviousAuthorizationOperationId(activeConnectionOperation?.operationId);
     setAuthorizationCode("");
     setAuthorizationResponseExpanded(false);
-  }, [activeConnectionOperation?.operationId]);
+  }
 
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
@@ -234,19 +249,24 @@ export function AntigravityInlineSetup(props: {
     actionInvocation.current = invocation;
     setLocalError(null);
     setPendingAction(action);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await operation();
-    } catch (error) {
-      if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
-        setLocalError(
-          providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
-        );
+      try {
+        await operation();
+      } catch (error) {
+        if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
+          setLocalError(
+            providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
+          );
+        }
       }
-    } finally {
-      if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
-        setPendingAction(null);
-      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
+      setPendingAction(null);
+    }
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const startSignIn = () => {
@@ -301,22 +321,27 @@ export function AntigravityInlineSetup(props: {
     if (!activeConnectionOperation || authorizationCode.trim().length === 0) return;
     setLocalError(null);
     setPendingAction("submit-code");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.submitAuthorizationCode(
-        activeConnectionOperation.operationId,
-        authorizationCode,
-      );
-      setAuthorizationCode("");
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(
-          error,
-          "Scient could not return the sign-in response to Antigravity.",
-        ),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.submitAuthorizationCode(
+          activeConnectionOperation.operationId,
+          authorizationCode,
+        );
+        setAuthorizationCode("");
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(
+            error,
+            "Scient could not return the sign-in response to Antigravity.",
+          ),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (

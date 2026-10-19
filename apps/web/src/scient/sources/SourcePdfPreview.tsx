@@ -1,7 +1,7 @@
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
 import { Button } from "../../components/ui/button";
@@ -28,20 +28,34 @@ export function SourcePdfPreview(props: {
 }) {
   const requestKey = `${props.environmentId}\0${props.root}\0${props.sourceId}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
-  const refresh = useCallback(() => setRequest((current) => current + 1), []);
+  const refresh = () => setRequest((current) => current + 1);
   const [asset, setAsset] = useState<SourcePreviewAssetState>({
     _tag: "Loading",
     requestKey,
     refresh,
   });
 
+  const [previousRequest, setPreviousRequest] = useState({ requestKey, request });
+  if (previousRequest.requestKey !== requestKey || previousRequest.request !== request) {
+    setPreviousRequest({ requestKey, request });
+    setAsset({ _tag: "Loading", requestKey, refresh });
+  }
+
+  const previewRequest = {
+    attachmentId: props.attachmentId,
+    environmentId: props.environmentId,
+    root: props.root,
+    sourceId: props.sourceId,
+    requestKey,
+    request,
+  };
   useEffect(() => {
     let current = true;
-    setAsset({ _tag: "Loading", requestKey, refresh });
-    void readScientSourceAttachmentPreview(props.environmentId, {
-      root: props.root,
-      sourceId: props.sourceId,
-      attachmentId: props.attachmentId,
+    const { attachmentId, environmentId, root, sourceId, requestKey } = previewRequest;
+    void readScientSourceAttachmentPreview(environmentId, {
+      root,
+      sourceId,
+      attachmentId,
     }).then(
       (result) => {
         if (current) {
@@ -62,37 +76,23 @@ export function SourcePdfPreview(props: {
     return () => {
       current = false;
     };
-  }, [
-    props.attachmentId,
-    props.environmentId,
-    props.root,
-    props.sourceId,
-    refresh,
-    request,
-    requestKey,
-  ]);
+  }, [previewRequest, refresh]);
 
   const currentAsset: SourcePreviewAssetState =
     asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey, refresh };
   const sourceRelativePath =
     currentAsset._tag === "Success" ? (currentAsset.sourcePath ?? null) : null;
 
-  const source = useMemo(
-    () =>
-      currentAsset._tag === "Success" && sourceRelativePath
-        ? workspacePdfSource({
-            environmentId: props.environmentId,
-            fileName: props.fileName,
-            workspaceRoot: props.root,
-            relativePath: sourceRelativePath,
-          })
-        : null,
-    [currentAsset._tag, props.environmentId, props.fileName, props.root, sourceRelativePath],
-  );
-  const resolver = useMemo<PdfSourceResolver>(
-    () => ({ useResolve: () => currentAsset }),
-    [currentAsset],
-  );
+  const source =
+    currentAsset._tag === "Success" && sourceRelativePath
+      ? workspacePdfSource({
+          environmentId: props.environmentId,
+          fileName: props.fileName,
+          workspaceRoot: props.root,
+          relativePath: sourceRelativePath,
+        })
+      : null;
+  const resolver: PdfSourceResolver = { useResolve: () => currentAsset };
   if (source === null) {
     return (
       <div className="scient-pdf-reader">

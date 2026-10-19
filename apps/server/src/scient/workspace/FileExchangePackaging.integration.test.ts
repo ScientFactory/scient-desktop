@@ -18,11 +18,13 @@ import {
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
 import { fileExchangeTestHelper } from "./fileExchange.testkit.ts";
+import { layerKnownWorkspacesAllowAll } from "./knownWorkspaces.testkit.ts";
 
 const compiled = await fileExchangeTestHelper();
 const bytes = (s: string) => Buffer.from(s);
 const configuredFiles = (root: string, helper: string | undefined) =>
   WorkspaceFileSystem.layer.pipe(
+    Layer.provide(layerKnownWorkspacesAllowAll),
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
     Layer.provide(

@@ -230,6 +230,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                         "status.showUntrackedFiles=all",
                         "worktree",
                         "remove",
+                        "--",
                         isolatedPath,
                       ]);
                       assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));

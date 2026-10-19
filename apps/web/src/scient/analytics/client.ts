@@ -11,7 +11,7 @@ import type {
   ScientAnalyticsUiEvent,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
 import { runtime } from "../../lib/runtime";
@@ -37,17 +37,17 @@ export function useScientAnalyticsView(
   const primary = usePrimaryEnvironmentId();
   const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
   const prepared = usePreparedConnection(environmentId);
-  const key = JSON.stringify(event);
+  const observationTarget = { prepared, key: JSON.stringify(event) };
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
   useEffect(() => {
-    if (Option.isNone(prepared)) return;
-    const observation = gate.observeView(prepared.value, () => read());
+    if (Option.isNone(observationTarget.prepared)) return;
+    const observation = gate.observeView(observationTarget.prepared.value, () => read());
     document.addEventListener("visibilitychange", observation.refresh);
     return () => {
       observation.dispose();
       document.removeEventListener("visibilitychange", observation.refresh);
     };
-  }, [prepared, key]);
+  }, [observationTarget]);
 }
 
 export function beginScientUiOperation(
@@ -78,15 +78,12 @@ export function useRecordScientAnalytics() {
   useEffect(() => {
     if (Option.isSome(prepared)) gate.prime(prepared.value);
   }, [prepared]);
-  return useCallback(
-    (event: ScientAnalyticsUiEvent) => {
-      recordScientAnalytics(
-        environmentId === null ? null : readPreparedConnection(environmentId),
-        event,
-      );
-    },
-    [environmentId],
-  );
+  return (event: ScientAnalyticsUiEvent) => {
+    recordScientAnalytics(
+      environmentId === null ? null : readPreparedConnection(environmentId),
+      event,
+    );
+  };
 }
 
 export function readScientAnalyticsStatus(

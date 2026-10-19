@@ -3,7 +3,7 @@
  * failed. A failure shows in a mounted setup view of the instance, or else as a
  * toast with an action to open the page.
  */
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { openProviderAuthorizationPage, SignInPageBlocked } from "./providerSignInPage";
@@ -92,13 +92,10 @@ export function useProviderSignInOpening(
     };
   }, [environmentId, instanceId]);
   // Each snapshot is the stored value itself, so memoized renders see every change.
-  const read = useCallback(
-    () =>
-      operationId === null
-        ? null
-        : (openings.get(openingKeyOf({ environmentId, instanceId }, operationId)) ?? null),
-    [environmentId, instanceId, operationId],
-  );
+  const read = () =>
+    operationId === null
+      ? null
+      : (openings.get(openingKeyOf({ environmentId, instanceId }, operationId)) ?? null);
   return useSyncExternalStore(subscribeToProviderSignIn, read, read);
 }
 

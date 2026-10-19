@@ -35,14 +35,20 @@ export function useApprovalResponse({
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
     setRespondingRequestIds((ids) => (ids.includes(requestId) ? ids : [...ids, requestId]));
-    try {
-      const result = await respond({ environmentId, input: { threadId, requestId, decision } });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
-        onResponseError(requestId, "Approval could not be sent. Try again.");
-      return result;
-    } finally {
+    const clear = () => {
       inFlight.current.delete(key);
       setRespondingRequestIds((ids) => ids.filter((id) => id !== requestId));
+    };
+    let result;
+    try {
+      result = await respond({ environmentId, input: { threadId, requestId, decision } });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
+        onResponseError(requestId, "Approval could not be sent. Try again.");
+    } catch (error) {
+      clear();
+      throw error;
     }
+    clear();
+    return result;
   };
 }

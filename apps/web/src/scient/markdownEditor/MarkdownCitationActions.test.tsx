@@ -3,7 +3,6 @@ import {
   act,
   createRef,
   StrictMode,
-  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -53,12 +52,12 @@ function Fixture({ initial = "My question. " }: { initial?: string }) {
     draftRef.current = draft;
   }, [draft]);
   const [mounted, setMounted] = useState(false);
-  const mountHost = useCallback((host: HTMLDivElement | null) => {
+  const mountHost = (host: HTMLDivElement | null) => {
     if (!host) return;
     controller.mount(host);
     setMounted(true);
     return () => controller.destroy();
-  }, []);
+  };
   return (
     <>
       <div className="scient-markdown-document-shell" ref={mountHost} />

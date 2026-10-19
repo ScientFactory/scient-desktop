@@ -18,7 +18,7 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { useProject, useThread, useThreadShell } from "../state/entities";
+import { useProject, useThread, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentScope } from "../state/session";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -113,7 +113,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const activeServerThread = useThread(active ? threadRef : null, {
     waitForShell: draftThread !== null,
   });
-  const serverThread = useThreadShell(threadRef);
+  const serverThread = useQuietThreadShell(threadRef);
   const serverThreadProjectId =
     activeServerThread?.projection.thread.projectId ?? serverThread?.projectId ?? null;
   const projectRef = serverThreadProjectId

@@ -16,6 +16,10 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { expect } from "vite-plus/test";
 
 import { makeAntigravityVoiceTranscriptCorrection } from "./AntigravityVoiceTranscriptCorrection.ts";
@@ -42,6 +46,55 @@ function removeExecutable(directory: string) {
 }
 
 it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
+  it.effect.each([
+    { model: "custom-claude-model", effort: undefined },
+    { model: "claude-sonnet-4-6", effort: "low" },
+  ])("selects Claude effort from advertised capabilities for $model", ({ model, effort }) =>
+    Effect.gen(function* () {
+      let spawnedArgs: ReadonlyArray<string> | undefined;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command)) return Effect.die("Expected one command.");
+        spawnedArgs = command.args;
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.encodeText(
+              Stream.make('{"structured_output":{"text":"Hello, Claude."}}'),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+      const service = yield* makeClaudeVoiceTranscriptCorrection(
+        decodeClaudeSettings({ binaryPath: process.execPath }),
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const result = yield* service.correct({
+        transcript: "helo claude",
+        modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), model),
+      });
+      expect(result).toEqual({ text: "Hello, Claude." });
+      expect(spawnedArgs).toBeDefined();
+      expect(
+        spawnedArgs?.slice(spawnedArgs.indexOf("--model"), spawnedArgs.indexOf("--model") + 2),
+      ).toEqual(["--model", model]);
+      if (effort === undefined) {
+        expect(spawnedArgs).not.toContain("--effort");
+      } else {
+        expect(
+          spawnedArgs?.slice(spawnedArgs.indexOf("--effort"), spawnedArgs.indexOf("--effort") + 2),
+        ).toEqual(["--effort", effort]);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("runs Codex through its isolated structured-output path", () =>
     Effect.gen(function* () {
       const mock = makeExecutable(

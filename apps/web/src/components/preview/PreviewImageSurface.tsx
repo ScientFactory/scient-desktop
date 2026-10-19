@@ -1,5 +1,7 @@
 "use client";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -51,7 +53,13 @@ export function PreviewImageSurface({
   const pendingZoomPointRef = useRef<{ readonly x: number; readonly y: number } | null>(null);
   const pendingZoomAnchorRef = useRef<ImageZoomAnchor | null>(null);
   const zoomRef = useRef(1);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, dispatchZoom] = useReducer(
+    (
+      _zoom: number,
+      action: { type: "source"; identity: string | null } | { type: "zoom"; value: number },
+    ) => (action.type === "source" ? 1 : action.value),
+    1,
+  );
   const [showZoomHint, setShowZoomHint] = useState(false);
   const [imageState, dispatchImage] = useReducer(
     reducePreviewImageTransition,
@@ -62,13 +70,13 @@ export function PreviewImageSurface({
     ? previewImageSourceIdentity(imageState.displayed)
     : null;
 
-  const dismissZoomHint = () => {
+  const dismissZoomHint = useStableCallback(() => {
     if (zoomHintTimerRef.current !== null) {
       window.clearTimeout(zoomHintTimerRef.current);
       zoomHintTimerRef.current = null;
     }
     setShowZoomHint(false);
-  };
+  });
 
   useEffect(
     () => () => {
@@ -87,7 +95,7 @@ export function PreviewImageSurface({
     pendingZoomPointRef.current = null;
     pendingZoomAnchorRef.current = null;
     zoomRef.current = 1;
-    setZoom(1);
+    dispatchZoom({ type: "source", identity: displayedIdentity });
     viewportRef.current?.scrollTo({ left: 0, top: 0 });
   }, [displayedIdentity]);
 
@@ -95,6 +103,9 @@ export function PreviewImageSurface({
     dispatchImage({ _tag: "source", source });
   }, [source]);
 
+  const changeZoom = useStableCallback((next: number) => {
+    dispatchZoom({ type: "zoom", value: next });
+  });
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -127,12 +138,12 @@ export function PreviewImageSurface({
           localY: point.y,
         };
         zoomRef.current = next;
-        setZoom(next);
+        changeZoom(next);
       });
     };
     viewport.addEventListener("wheel", handleWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", handleWheel);
-  }, []);
+  }, [changeZoom, dismissZoomHint]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;

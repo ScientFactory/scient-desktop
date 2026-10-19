@@ -30,6 +30,7 @@ import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
 import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const PYTHON = ComputeLanguageId.make("python");
@@ -97,6 +98,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         Layer.provide(NodeServices.layer),
       );
       const workspaceLayer = WorkspaceFileSystem.layer.pipe(
+        Layer.provide(layerKnownWorkspacesAllowAll),
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
         Layer.provide(NodeServices.layer),

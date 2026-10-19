@@ -1,5 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 
@@ -58,23 +59,26 @@ export function usePendingSurfaceDeparture(
     optionsRef.current = options;
   }, [pendingSurfaceIds, options]);
 
-  const clearNotice = useCallback(() => {
+  const clearNotice = useStableCallback(() => {
     if (noticeTimerRef.current !== null) clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = null;
     if (noticeIdRef.current !== null) toastManager.close(noticeIdRef.current);
     noticeIdRef.current = null;
-  }, []);
+  });
 
-  const settleDeparture = useCallback(
-    (
-      pendingSnapshot = pendingSurfaceIdsRef.current,
-      attentionSnapshot = optionsRef.current.attentionSurfaceIds,
-    ) => {
+  const settleDeparture = useStableCallback(
+    (pendingSnapshot?: ReadonlySet<string>, attentionSnapshot?: ReadonlySet<string>) => {
+      const pendingAtCall =
+        pendingSnapshot === undefined ? pendingSurfaceIdsRef.current : pendingSnapshot;
+      const attentionAtCall =
+        attentionSnapshot === undefined
+          ? optionsRef.current.attentionSurfaceIds
+          : attentionSnapshot;
       const departure = departureRef.current;
       if (departure === null) return;
       const options = optionsRef.current;
-      const pending = options.getPendingSurfaceIds?.() ?? pendingSnapshot;
-      const attention = options.getAttentionSurfaceIds?.() ?? attentionSnapshot;
+      const pending = options.getPendingSurfaceIds?.() ?? pendingAtCall;
+      const attention = options.getAttentionSurfaceIds?.() ?? attentionAtCall;
       // A clean refresh problem stays visible but owns no unpublished bytes.
       // Only attention on a still-pending file may cancel the requested action.
       const attentionId = departure.surfaceIds.find((id) => pending.has(id) && attention?.has(id));
@@ -89,10 +93,9 @@ export function usePendingSurfaceDeparture(
       clearNotice();
       departure.run();
     },
-    [clearNotice],
   );
 
-  const runAfterPendingSave = useCallback(
+  const runAfterPendingSave = useStableCallback(
     (surfaceIds: ReadonlyArray<string>, run: () => void) => {
       clearNotice();
       const options = optionsRef.current;
@@ -135,7 +138,6 @@ export function usePendingSurfaceDeparture(
       }
       return false;
     },
-    [clearNotice, settleDeparture],
   );
 
   useEffect(() => {
@@ -168,26 +170,23 @@ export function useActivePendingSurfaceDeparture(
   useLayoutEffect(() => {
     inputRef.current = input;
   }, [input]);
-  return useCallback(
-    (targetSurfaceId: string | null, run: () => void) => {
-      const input = inputRef.current;
-      const pendingSurfaceIds = input.getPendingSurfaceIds?.() ?? input.pendingSurfaceIds;
-      const blockedSurfaceIds =
-        targetSurfaceId === null
-          ? input.activeSurfaceId !== null && pendingSurfaceIds.has(input.activeSurfaceId)
-            ? [input.activeSurfaceId]
-            : []
-          : pendingSurfaceBlocksActivation({
-                activeSurfaceId: input.activeSurfaceId,
-                targetSurfaceId,
-                pendingSurfaceIds,
-              })
-            ? [input.activeSurfaceId!]
-            : [];
-      return runAfterPendingSave(blockedSurfaceIds, run);
-    },
-    [runAfterPendingSave],
-  );
+  return (targetSurfaceId: string | null, run: () => void) => {
+    const input = inputRef.current;
+    const pendingSurfaceIds = input.getPendingSurfaceIds?.() ?? input.pendingSurfaceIds;
+    const blockedSurfaceIds =
+      targetSurfaceId === null
+        ? input.activeSurfaceId !== null && pendingSurfaceIds.has(input.activeSurfaceId)
+          ? [input.activeSurfaceId]
+          : []
+        : pendingSurfaceBlocksActivation({
+              activeSurfaceId: input.activeSurfaceId,
+              targetSurfaceId,
+              pendingSurfaceIds,
+            })
+          ? [input.activeSurfaceId!]
+          : [];
+    return runAfterPendingSave(blockedSurfaceIds, run);
+  };
 }
 
 /** Holds route and window departure while any file surface still owns local bytes. */
@@ -202,9 +201,8 @@ export function usePendingSurfaceNavigationBlocker(
     optionsRef.current = options;
     pendingRef.current = pendingSurfaceIds;
   }, [options, pendingSurfaceIds]);
-  const readPending = useCallback(
+  const readPending = useStableCallback(
     () => optionsRef.current.getPendingSurfaceIds?.() ?? pendingRef.current,
-    [],
   );
   const navigation = useBlocker({
     shouldBlockFn: ({ current, next }) =>

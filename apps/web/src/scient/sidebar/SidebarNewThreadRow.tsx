@@ -1,6 +1,7 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { MessageSquareDashedIcon, SquarePenIcon } from "lucide-react";
-import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { SidebarMenuButton } from "../../components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
@@ -37,12 +38,19 @@ export function SidebarNewThreadRow(props: {
     if (startingScratchRef.current || onNewWithoutProject === null) return;
     startingScratchRef.current = true;
     setStartingScratch(true);
-    try {
-      await onNewWithoutProject();
-    } finally {
-      startingScratchRef.current = false;
-      setStartingScratch(false);
+    let operationFailure: { error: unknown } | null = null;
+    {
+      try {
+        await onNewWithoutProject();
+      } catch (error) {
+        operationFailure = { error };
+      }
     }
+
+    startingScratchRef.current = false;
+    setStartingScratch(false);
+
+    if (operationFailure !== null) throw operationFailure.error;
   };
   return (
     <div className="flex items-center gap-1 pt-1.5">
@@ -128,24 +136,21 @@ export function useSidebarNewThreadRowActions(input: {
     scratchTargetEnvironmentId,
     startScratchThread,
   } = input;
-  const handleNewThreadRowClick = useCallback(
-    (event: { readonly shiftKey: boolean }) => {
-      if (!event.shiftKey || projectGroupCount === 0) {
-        handleNewThreadClick();
-        return;
-      }
-      if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-    },
-    [handleNewThreadClick, isMobile, newThreadContext, projectGroupCount, setOpenMobile],
-  );
+  const handleNewThreadRowClick = useStableCallback((event: { readonly shiftKey: boolean }) => {
+    if (!event.shiftKey || projectGroupCount === 0) {
+      handleNewThreadClick();
+      return;
+    }
+    if (isMobile) setOpenMobile(false);
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+  });
 
-  const handleNewWithoutProject = useCallback(async () => {
+  const handleNewWithoutProject = async () => {
     if (scratchTargetEnvironmentId === null) return;
     if (isMobile) setOpenMobile(false);
     try {
@@ -159,6 +164,6 @@ export function useSidebarNewThreadRowActions(input: {
         }),
       );
     }
-  }, [isMobile, scratchTargetEnvironmentId, setOpenMobile, startScratchThread]);
+  };
   return { handleNewThreadRowClick, handleNewWithoutProject };
 }

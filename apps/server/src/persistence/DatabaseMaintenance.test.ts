@@ -31,6 +31,34 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
+    // SCIENT-FORK:START — Scient keeps the original database: it is never offered, and its
+    // removal refuses without touching it.
+    it.effect("keeps the original database and never offers to delete it", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+        const userdata = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-" });
+        const dbPath = path.join(userdata, "statev2.sqlite");
+        const legacy = path.join(userdata, "state.sqlite");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE retained_data (value TEXT)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE v1_data (value TEXT)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
+
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+        const refused = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        assert.equal(refused._tag, "LegacyDatabaseRemoveError");
+        assert.isTrue(yield* fs.exists(legacy));
+        assert.isTrue(yield* fs.exists(dbPath));
+      }).pipe(Effect.scoped),
+    );
+    // SCIENT-FORK:END
+
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

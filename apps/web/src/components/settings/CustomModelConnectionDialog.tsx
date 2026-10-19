@@ -60,26 +60,31 @@ export function CustomModelConnectionDialog({
   const submit = async () => {
     setBusy(true);
     setError(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await onSave({
-        revision,
-        connection: {
-          id: connection.id,
-          name: name.trim(),
-          protocol: connection.protocol,
-          baseUrl: connection.baseUrl,
-          models: connection.models,
-        },
-        ...(apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
-        ...(removeKey ? { removeKey: true } : {}),
-      });
-      setApiKey("");
-      onClose();
+      try {
+        await onSave({
+          revision,
+          connection: {
+            id: connection.id,
+            name: name.trim(),
+            protocol: connection.protocol,
+            baseUrl: connection.baseUrl,
+            models: connection.models,
+          },
+          ...(apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
+          ...(removeKey ? { removeKey: true } : {}),
+        });
+        setApiKey("");
+        onClose();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not save this connection.");
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save this connection.");
-    } finally {
-      setBusy(false);
+      actionFailure = { cause };
     }
+    setBusy(false);
+    if (actionFailure) throw actionFailure.cause;
   };
   return (
     <Dialog

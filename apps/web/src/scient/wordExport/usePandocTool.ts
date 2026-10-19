@@ -1,5 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId, ScientPandocToolStatus } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { installPandocTool, readPandocTool } from "./client";
 import { isActivePandocInstall, pandocToolView, type PandocToolView } from "./pandocToolModel";
@@ -9,6 +10,18 @@ const PANDOC_INSTALL_POLL_MS = 1_500;
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+async function readPandocStatus(
+  environmentId: EnvironmentId,
+  accept: (status: ScientPandocToolStatus) => void,
+  fail: (cause: unknown) => void,
+): Promise<void> {
+  try {
+    accept(await readPandocTool(environmentId));
+  } catch (cause) {
+    fail(cause);
+  }
 }
 
 export interface PandocToolController {
@@ -37,36 +50,39 @@ export function usePandocTool(
   const [error, setError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const onInstalledRef = useRef(onInstalled);
-  onInstalledRef.current = onInstalled;
+  useLayoutEffect(() => {
+    onInstalledRef.current = onInstalled;
+  });
   const wasInstalledRef = useRef<boolean | null>(null);
 
-  const accept = useCallback((next: ScientPandocToolStatus) => {
+  const accept = useStableCallback((next: ScientPandocToolStatus) => {
     if (wasInstalledRef.current === false && next.installed) onInstalledRef.current?.();
     wasInstalledRef.current = next.installed;
     setStatus(next);
-  }, []);
+  });
 
-  const read = useCallback(async () => {
-    try {
-      accept(await readPandocTool(environmentId));
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause, "Scient could not check Word export on this server."));
-    }
-  }, [accept, environmentId]);
+  const read = () =>
+    readPandocStatus(
+      environmentId,
+      (next) => {
+        accept(next);
+        setError(null);
+      },
+      (cause) =>
+        setError(errorMessage(cause, "Scient could not check Word export on this server.")),
+    );
 
   useEffect(() => {
     void read();
   }, [read]);
 
-  const active = isActivePandocInstall(status);
   useEffect(() => {
-    if (!active || error !== null) return;
+    if (!isActivePandocInstall(status) || error !== null) return;
     const timer = setTimeout(() => void read(), PANDOC_INSTALL_POLL_MS);
     return () => clearTimeout(timer);
-  }, [active, error, read, status]);
+  }, [error, read, status]);
 
-  const act = useCallback(() => {
+  const act = () => {
     if (error !== null || status === null) {
       void read();
       return;
@@ -85,9 +101,9 @@ export function usePandocTool(
         setRequesting(false);
       },
     );
-  }, [accept, environmentId, error, read, requesting, status]);
+  };
 
-  const refresh = useCallback(() => void read(), [read]);
+  const refresh = () => void read();
 
   return { status, view: pandocToolView({ status, requesting, error }), act, refresh };
 }

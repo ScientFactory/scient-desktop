@@ -16,13 +16,12 @@ export function ComputeResultPicker({ contextId }: { readonly contextId: Compute
   if (children.length === 0) return null;
   let fresh = 0;
   let batch = 0;
-  const choices = [
-    { contextId, label: "Session" },
-    ...children.map((binding) => ({
-      contextId: binding.contextId,
-      label: binding.batchRunId === undefined ? `Fresh run ${++fresh}` : `MATLAB batch ${++batch}`,
-    })),
-  ];
+  const choices = [{ contextId, label: "Session" }];
+  for (const binding of children) {
+    const label =
+      binding.batchRunId === undefined ? `Fresh run ${++fresh}` : `MATLAB batch ${++batch}`;
+    choices.push({ contextId: binding.contextId, label });
+  }
   return (
     <Menu>
       <MenuTrigger

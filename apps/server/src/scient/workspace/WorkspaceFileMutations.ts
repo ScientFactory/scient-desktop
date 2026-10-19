@@ -110,6 +110,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
   readonly retainedHooks?: RetainedMutationHooks;
   readonly exchangeHelper?: string | undefined;
+  /**
+   * The host's write denial for Git's own folders, checked at every resolution, including the
+   * one under the mutation lock, so a link swapped in after authorization cannot reach them.
+   */
+  readonly isProtectedPath?: (absolutePath: string) => Promise<boolean>;
 }) {
   const { fileSystem, path, workspacePaths, workspaceEntries, readFile } = deps;
   const writeSemaphoresRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -204,6 +209,35 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       relativeRealPath.startsWith(`..${path.sep}`) ||
       relativeRealPath === ".." ||
       path.isAbsolute(relativeRealPath)
+    ) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath.path,
+      });
+    }
+    // The path as named is checked too: a `.git/config` link resolves away the `.git`.
+    const namedTargetPath = path.join(
+      realWorkspaceRoot,
+      path.relative(input.cwd, target.absolutePath),
+    );
+    const isProtectedPath = deps.isProtectedPath;
+    if (
+      isProtectedPath !== undefined &&
+      (yield* Effect.tryPromise({
+        try: async () =>
+          (await isProtectedPath(realTargetPath.path)) || (await isProtectedPath(namedTargetPath)),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: realTargetPath.path,
+            operationPath: realTargetPath.path,
+            operation: "stat",
+            cause,
+          }),
+      }))
     ) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,

@@ -631,7 +631,7 @@ const make = Effect.gen(function* () {
       if (yield* fs.exists(worktreePath)) return "original path was recreated during isolation";
       yield* cleanupGit(
         repositoryRoot,
-        ["-c", "status.showUntrackedFiles=all", "worktree", "remove", isolatedPath],
+        ["-c", "status.showUntrackedFiles=all", "worktree", "remove", "--", isolatedPath],
         "git worktree remove",
       );
       return null;

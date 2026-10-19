@@ -231,6 +231,15 @@ If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
 running is left alone.
 
+Each desktop app keeps one session on the host for its SSH connection and reuses
+it when it reconnects. Revoke sessions you no longer use in **Settings →
+Connections** on the host, or on a headless host with `scient auth session list` and
+`scient auth session revoke <id>`. A desktop that can still sign in over SSH pairs
+again on its next connect.
+
+For Antigravity's Google callback on a remote host, see
+[remote sign-in](./providers-antigravity.md#sign-in-from-another-device).
+
 ## Use the desktop app only for remote environments
 
 If this computer should only control work running elsewhere, turn off **Local

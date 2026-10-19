@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
@@ -243,6 +243,35 @@ describe("desktop update UI helpers", () => {
     );
   });
 
+  it("uses the configured desktop update repository for release URLs", () => {
+    expect(getDesktopUpdateReleaseUrl("1.2.3", "JustYannicc/t3code")).toBe(
+      "https://github.com/JustYannicc/t3code/releases/tag/v1.2.3",
+    );
+    expect(getDesktopUpdateReleaseHistoryUrl("JustYannicc/t3code")).toBe(
+      "https://github.com/JustYannicc/t3code/releases",
+    );
+  });
+
+  it.each([
+    "",
+    "   ",
+    ".",
+    "../repo",
+    "owner/..",
+    "owner/repo/extra",
+    "owner#notes/repo",
+    "owner/repo#notes",
+    "owner?tab=notes/repo",
+    "owner/repo?tab=notes",
+  ])("falls back to Scient for an invalid configured repository: %s", (repository) => {
+    expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
+      "https://github.com/ScientFactory/scient-desktop/releases",
+    );
+    expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
+      "https://github.com/ScientFactory/scient-desktop/releases/tag/v1.2.3",
+    );
+  });
+
   it("builds the nightly release URL without dropping its version suffix", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931")).toBe(
       "https://github.com/ScientFactory/scient-desktop/releases/tag/v0.0.30-nightly.20260728.931",
@@ -253,7 +282,12 @@ describe("desktop update UI helpers", () => {
     expect(getDesktopUpdateReleaseUrl("0.6.23-beta.20261010.1")).toBe(
       "https://github.com/ScientFactory/scient-desktop-beta/releases/tag/v0.6.23-beta.20261010.1",
     );
-    expect(getDesktopUpdateReleaseHistoryUrl("beta")).toBe(
+    expect(
+      getDesktopUpdateReleaseUrl("0.6.23-beta.20261010.1", "ScientFactory/scient-desktop"),
+    ).toBe(
+      "https://github.com/ScientFactory/scient-desktop-beta/releases/tag/v0.6.23-beta.20261010.1",
+    );
+    expect(getDesktopUpdateReleaseHistoryUrl("beta", "ScientFactory/scient-desktop")).toBe(
       "https://github.com/ScientFactory/scient-desktop-beta/releases",
     );
   });
@@ -337,16 +371,29 @@ describe("desktop update UI helpers", () => {
     ).toContain("Install update and restart Scient?");
   });
 
-  it("uses the Scient-branded install confirmation copy", () => {
-    expect(
-      getDesktopUpdateInstallConfirmationMessage({
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-      }),
-    ).toBe(
-      "Install update 1.1.0 and restart Scient?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
-    );
-  });
+  // SCIENT-FORK:START - preserve Scient main's platform-specific updater copy.
+  it.each(["Win32", "MacIntel", "Linux x86_64"])(
+    "uses the Scient-branded install confirmation copy on %s",
+    (platform) => {
+      vi.stubGlobal("navigator", { platform });
+      try {
+        expect(
+          getDesktopUpdateInstallConfirmationMessage({
+            availableVersion: "1.1.0",
+            downloadedVersion: "1.1.0",
+          }),
+        ).toBe(
+          "Install update 1.1.0 and restart Scient?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing." +
+            (platform === "Win32"
+              ? "\n\nOn Windows, Scient may remain closed for several minutes while the update installs, and no installer window may appear. Scient will reopen automatically when installation finishes."
+              : ""),
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+  // SCIENT-FORK:END
 });
 
 describe("canCheckForUpdate", () => {

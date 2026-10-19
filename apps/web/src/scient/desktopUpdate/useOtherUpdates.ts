@@ -18,8 +18,7 @@ import {
 } from "~/components/sidebar/updateEverythingRun";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useEnvironments } from "~/state/environments";
-import { environmentPresentations } from "~/state/presentation";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { environmentThreadShells } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -37,7 +36,7 @@ import {
   machineHasUpdatesRunning,
   managedUpdateLive,
   otherUpdatesCircleState,
-  providerUpdateLive,
+  providerDriverUpdateLive,
   serverRetryTarget,
   serverUpdateItem,
   serverUpdateLive,
@@ -137,9 +136,7 @@ function startsPendingOn(
  */
 export function isMachineUpdating(environmentId: EnvironmentId): boolean {
   return machineHasUpdatesRunning({
-    providers:
-      appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.serverConfig
-        ?.providers ?? [],
+    providers: appAtomRegistry.get(serverEnvironment.providersValueAtom(environmentId)) ?? [],
     managedRuns: managedRuntimeRunsOn(environmentId),
     startsPending: startsPendingOn(appAtomRegistry.get(trackedOtherUpdatesAtom), environmentId),
   });
@@ -197,6 +194,7 @@ function providerUpdateFailure(
  */
 export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const run = useUpdateEverythingRun();
   const qualifiedServers = useQualifiedUpdateRunServers();
   const tracked = useAtomValue(trackedOtherUpdatesAtom);
@@ -214,10 +212,12 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
   const labels = new Map(
     environments.map((environment) => [environment.environmentId, environment.label]),
   );
-  const machines = connectedProviderEnvironments(environments).map((machine) => ({
-    ...machine,
-    isLocal: local.has(machine.environmentId),
-  }));
+  const machines = connectedProviderEnvironments(environments, providersByEnvironment).map(
+    (machine) => ({
+      ...machine,
+      isLocal: local.has(machine.environmentId),
+    }),
+  );
   const items = [...collectProviderUpdateItems(machines), ...servers.map(serverUpdateItem)];
   const serverIdsKey = [
     ...new Set(
@@ -245,7 +245,11 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
     liveOf: (item) => {
       switch (item.kind) {
         case "provider":
-          return providerUpdateLive(providerOf(item.environmentId, item.instanceId));
+          return providerDriverUpdateLive(
+            providersByMachine
+              .get(item.environmentId)
+              ?.providers.filter((provider) => provider.driver === item.driver) ?? [],
+          );
         case "managed":
           return managedUpdateLive(
             providerOf(item.environmentId, item.target.instanceId),

@@ -319,6 +319,7 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
                   Effect.map(([machineSnapshot, commands]) => ({
                     ...machineSnapshot,
                     ...commands,
+                    slashCommandsPending: false,
                   })),
                 ),
         } satisfies ProviderInstance;

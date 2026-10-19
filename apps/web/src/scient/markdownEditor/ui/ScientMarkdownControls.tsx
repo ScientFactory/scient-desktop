@@ -1,3 +1,5 @@
+import { useEffectEvent } from "react";
+
 import {
   AlignCenter,
   AlignLeft,
@@ -596,14 +598,15 @@ function TableSizeMenu({ controller }: { readonly controller: ScientMarkdownEdit
     visibleSizeRef.current = visibleSize;
   }, [visibleSize]);
 
-  useLayoutEffect(() => {
+  const focusExpandedTableCell = useEffectEvent((..._changes: readonly unknown[]) => {
     const pendingFocus = pendingFocusRef.current;
     if (!pendingFocus) return;
     const cell = cellRefs.current[tableSizePickerCellIndex(pendingFocus)];
     if (!cell) return;
     pendingFocusRef.current = null;
     cell.focus();
-  }, [visibleSize]);
+  });
+  useLayoutEffect(() => focusExpandedTableCell(visibleSize), [visibleSize]);
 
   useLayoutEffect(() => {
     const previousColumns = previousVisibleColumnsRef.current;
@@ -1476,24 +1479,38 @@ function SelectionToolbar({
     };
   }, [controller]);
 
-  useLayoutEffect(() => {
+  const measuredSelectionAnchor = useRef<ReturnType<typeof measureSelectionToolbarAnchor>>(null);
+  const synchronizeSelectionAnchor = useEffectEvent((..._changes: readonly unknown[]) => {
     if (selectingWithPointer) return;
-    if (!snapshot.editable || snapshot.selectionEmpty) {
-      setAnchor(null);
-      return;
-    }
-    setAnchor(controller.selectionToolbarAnchor());
-  }, [
-    controller,
-    selectingWithPointer,
-    snapshot.version,
-    snapshot.editable,
-    snapshot.selectionEmpty,
-  ]);
+    measuredSelectionAnchor.current = measureSelectionToolbarAnchor(
+      controller,
+      snapshot.editable,
+      snapshot.selectionEmpty,
+    );
+    setAnchor(measuredSelectionAnchor.current);
+  });
+  useLayoutEffect(
+    () =>
+      synchronizeSelectionAnchor(
+        controller,
+        selectingWithPointer,
+        snapshot.version,
+        snapshot.editable,
+        snapshot.selectionEmpty,
+      ),
+    [
+      controller,
+      selectingWithPointer,
+      snapshot.version,
+      snapshot.editable,
+      snapshot.selectionEmpty,
+    ],
+  );
 
   // Keep the toolbar glued to the selection while the document scrolls.
+  const hasAnchor = anchor !== null;
   useEffect(() => {
-    if (anchor === null) return;
+    if (!hasAnchor) return;
     const update = () => setAnchor(controller.selectionToolbarAnchor());
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
@@ -1501,7 +1518,7 @@ function SelectionToolbar({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [controller, anchor !== null]);
+  }, [controller, hasAnchor]);
 
   // Clamp horizontally and flip below the selection when there is no room above.
   useLayoutEffect(() => {
@@ -1896,4 +1913,12 @@ export function ScientMarkdownControls({
       ) : null}
     </>
   );
+}
+
+function measureSelectionToolbarAnchor(
+  controller: ScientMarkdownEditorView,
+  editable: boolean,
+  selectionEmpty: boolean,
+) {
+  return !editable || selectionEmpty ? null : controller.selectionToolbarAnchor();
 }

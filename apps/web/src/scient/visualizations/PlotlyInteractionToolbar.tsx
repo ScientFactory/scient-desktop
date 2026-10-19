@@ -6,7 +6,7 @@ import {
   SquareDashedMousePointerIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -18,6 +18,7 @@ import type { PlotlyViewController } from "./PlotlyView";
 interface PlotlyInteractionToolbarProps {
   readonly compact?: boolean;
   readonly controller: PlotlyViewController | null;
+  readonly initialMode: PlotlyInteractionMode | null;
   readonly disabled: boolean;
   readonly hasCartesian: boolean;
   readonly onError: (message: string) => void;
@@ -72,28 +73,33 @@ function ToolButton({
   );
 }
 
+export function readPlotlyInteractionMode(
+  controller: PlotlyViewController | null,
+): PlotlyInteractionMode | null {
+  try {
+    return controller?.getInteractionMode() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function PlotlyInteractionToolbar({
   compact = false,
   controller,
+  initialMode,
   disabled,
   hasCartesian,
   onError,
   scrollZoom,
 }: PlotlyInteractionToolbarProps) {
-  const [activeMode, setActiveMode] = useState<PlotlyInteractionMode | null>(null);
+  const [activeMode, setActiveMode] = useState<PlotlyInteractionMode | null>(initialMode);
   const [pending, setPending] = useState<PlotlyInteractionMode | "reset" | null>(null);
 
-  useEffect(() => {
-    if (controller == null) {
-      setActiveMode(null);
-      return;
-    }
-    try {
-      setActiveMode(controller.getInteractionMode());
-    } catch {
-      setActiveMode(null);
-    }
-  }, [controller]);
+  const [previousController, setPreviousController] = useState({ controller: controller });
+  if (previousController.controller !== controller) {
+    setPreviousController({ controller: controller });
+    setActiveMode(initialMode);
+  }
 
   const unavailable = disabled || controller == null || pending != null;
 

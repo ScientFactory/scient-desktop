@@ -9,7 +9,6 @@ import {
   isValidElement,
   use,
   useEffect,
-  useMemo,
   useState,
   type ReactNode,
   type SyntheticEvent,
@@ -28,7 +27,7 @@ import { isMermaidSyntaxError } from "../diagrams/mermaidRecovery";
 import { MermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { renderCachedScientMath } from "../math/ScientMath";
-import { useScientMathMarkdownText, useScientMathRemarkPlugins } from "../math/scientMathText";
+import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "../math/scientMathText";
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
@@ -479,35 +478,26 @@ export interface ScientDocumentPageProps {
 
 export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const { input, tracker } = props;
-  const markdown = useScientMathMarkdownText(input.markdown);
-  const remarkPlugins = useScientMathRemarkPlugins(
+  const markdown = scientMathMarkdownText(input.markdown);
+  const remarkPlugins = scientMathRemarkPluginsForMessage(
     // A chat bundle writes its hard breaks explicitly, so both parse as documents.
-    useMemo(() => [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")], []),
+    [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")],
     input.markdown,
   );
-  const direction = useMemo(
-    () => resolveMarkdownDirection(input.markdown, input.direction),
-    [input.direction, input.markdown],
-  );
-  const context = useMemo<DocumentPageContext>(
-    () => ({
-      assets: new Map(input.assets.map((asset) => [asset.id, asset])),
-      assetBaseUrl: props.inputUrl,
-      katex: props.katex,
-      tracker,
-    }),
-    [input.assets, props.inputUrl, props.katex, tracker],
-  );
-  const rehypePlugins = useMemo(
-    (): NonNullable<ReactMarkdownOptions["rehypePlugins"]> => [
-      rehypeRaw,
-      [rehypeReportUnsupportedHtml, { tracker }],
-      [rehypeSanitize, DOCUMENT_SANITIZE_SCHEMA],
-      [rehypeEnsureTitle, { title: input.title }],
-      [rehypeScientBidi, { direction, requestedDirection: input.direction }],
-    ],
-    [direction, input.direction, input.title, tracker],
-  );
+  const direction = resolveMarkdownDirection(input.markdown, input.direction);
+  const context = {
+    assets: new Map(input.assets.map((asset) => [asset.id, asset])),
+    assetBaseUrl: props.inputUrl,
+    katex: props.katex,
+    tracker,
+  };
+  const rehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
+    rehypeRaw,
+    [rehypeReportUnsupportedHtml, { tracker }],
+    [rehypeSanitize, DOCUMENT_SANITIZE_SCHEMA],
+    [rehypeEnsureTitle, { title: input.title }],
+    [rehypeScientBidi, { direction, requestedDirection: input.direction }],
+  ];
   const notes = [...input.warnings.map((warning) => warning.message), ...props.renderWarnings];
 
   return (

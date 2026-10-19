@@ -229,6 +229,23 @@ export function providerUpdateLive(provider: ServerProvider | undefined): OtherU
   }
 }
 
+/** A driver's active instance wins; otherwise its latest terminal result wins, as in the upstream pill. */
+export function providerDriverUpdateLive(
+  providers: ReadonlyArray<ServerProvider>,
+): OtherUpdateLive {
+  const active = providers.find(isProviderUpdateActive);
+  if (active) return providerUpdateLive(active);
+  const latest = providers.reduce<ServerProvider | undefined>((current, provider) => {
+    const status = provider.updateState?.status;
+    if (status !== "failed" && status !== "succeeded" && status !== "unchanged") return current;
+    return !current ||
+      (provider.updateState?.finishedAt ?? "") >= (current.updateState?.finishedAt ?? "")
+      ? provider
+      : current;
+  }, undefined);
+  return providerUpdateLive(latest);
+}
+
 function runtimeProgress(operation: ProviderRuntimeOperation): OtherUpdateProgress {
   if (
     operation.status === "downloading" &&

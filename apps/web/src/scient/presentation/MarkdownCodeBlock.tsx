@@ -2,7 +2,6 @@ import {
   Suspense,
   use,
   useEffect,
-  useMemo,
   useState,
   type ReactNode,
   type ElementType,
@@ -188,12 +187,10 @@ function UncachedHighlightedCode({
   preserveLines,
 }: HighlightedCodeProps & { cacheKey: string; preserveLines: boolean }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  const incrementalHighlight = useMemo(
-    () =>
-      preserveLines ? createIncrementalHighlightedDocument(highlighter, language, themeName) : null,
-    [highlighter, language, preserveLines, themeName],
-  );
-  const highlighted = useMemo(() => {
+  const incrementalHighlight = preserveLines
+    ? createIncrementalHighlightedDocument(highlighter, language, themeName)
+    : null;
+  const highlighted = (() => {
     try {
       if (incrementalHighlight) return incrementalHighlight(code);
       return preserveLines
@@ -208,7 +205,7 @@ function UncachedHighlightedCode({
         ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
         : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
     }
-  }, [code, highlighter, incrementalHighlight, language, preserveLines, themeName]);
+  })();
 
   useEffect(() => {
     if (!isStreaming) {

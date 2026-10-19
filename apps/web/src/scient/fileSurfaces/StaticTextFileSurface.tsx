@@ -1,12 +1,12 @@
 import type { File as FileInstance, PostRenderPhase } from "@pierre/diffs";
-import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { File, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrome";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { useCallback, useState, useMemo } from "react";
+import { useState } from "react";
 import type { ScopedThreadRef, FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { SourceCitationActions } from "./SourceCitationActions";
@@ -52,8 +52,8 @@ export function StaticTextFileSurface(props: {
   readonly wordWrap: boolean;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const baseline = useCallback(() => props.contents, [props.contents]);
-  const selectedLines = useMemo(() => {
+  const baseline = () => props.contents;
+  const selectedLines = (() => {
     if (!props.citationReveal?.sourceSelection) return null;
     const match = resolveSourceCitation(props.contents, props.citationReveal);
     return match
@@ -62,7 +62,7 @@ export function StaticTextFileSurface(props: {
           end: sourcePosition(props.contents, match.to - 1).line + 1,
         }
       : null;
-  }, [props.contents, props.citationReveal]);
+  })();
   return (
     <DiffWorkerPoolProvider>
       <div ref={setViewport} className="flex min-h-0 flex-1">

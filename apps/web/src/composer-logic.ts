@@ -4,10 +4,13 @@ import type {
   ComposerCitation,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START — composer citations include quotes from workspace files.
 import {
   serializeComposerCitation,
   withComposerCitationComment,
 } from "@t3tools/shared/composerCitations";
+// SCIENT-FORK:END
+import { isPathWord } from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -35,7 +38,7 @@ export function formatCitationForComposer(citation: ComposerCitation, comment = 
   return `${serializeComposerCitation(withComposerCitationComment(citation, comment))} `;
 }
 
-function composerRequiresModifier(
+export function composerRequiresModifier(
   sendShortcut: ClientSettings["sendShortcut"] | undefined,
   prompt: string,
 ) {
@@ -64,6 +67,7 @@ export function composerSubmissionIntentForKey(input: {
       composerFocus: true,
       draftThreadRoute: input.isDraftThread,
       turnRunning: input.isRunning === true,
+      composerRequiresModifier: composerRequiresModifier(input.sendShortcut, input.prompt ?? ""),
     },
   });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
@@ -293,6 +297,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
   if (token.startsWith("/")) {
+    if (isPathWord(text, tokenStart, cursor, isWhitespace)) return null;
     return {
       kind: "slash-command",
       query: token.slice(1),

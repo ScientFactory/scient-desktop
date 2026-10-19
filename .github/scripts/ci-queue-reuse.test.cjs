@@ -22,7 +22,6 @@ const JOBS = [
   "linux_packaging",
   "test",
   "test_web",
-  "test_web_layout",
   "test_server",
   "transfer-report",
   "rust",

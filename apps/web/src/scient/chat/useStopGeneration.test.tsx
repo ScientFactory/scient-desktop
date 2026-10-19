@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import {
@@ -61,10 +61,13 @@ let container: HTMLDivElement;
 let input: Parameters<typeof useStopGeneration>[0];
 let controller: ReturnType<typeof useStopGeneration>;
 function Probe() {
-  controller = useStopGeneration(input);
+  const current = useStopGeneration(input);
+  useLayoutEffect(() => {
+    controller = current;
+  });
   return (
-    <button onClick={() => void controller.onInterrupt()}>
-      {controller.isStopping ? "Stopping…" : "Stop"}
+    <button onClick={() => void current.onInterrupt()}>
+      {current.isStopping ? "Stopping…" : "Stop"}
     </button>
   );
 }

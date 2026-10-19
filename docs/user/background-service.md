@@ -81,3 +81,7 @@ database through a temporary copy, so it needs free space of about the
 database's size twice over: once in the system temporary directory (`TMPDIR`
 or `/tmp` on Linux and macOS) and once next to the database for its
 write-ahead log.
+
+If you upgraded from an older version, its original database (`state.sqlite`)
+is kept next to the current one. Scient still reads it to bring in older
+conversations, so `scient doctor` does not delete it.

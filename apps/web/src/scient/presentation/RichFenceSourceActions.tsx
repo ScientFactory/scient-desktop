@@ -1,5 +1,5 @@
 import { Code2Icon } from "lucide-react";
-import { useCallback, useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
 
 import { MenuItem } from "~/components/ui/menu";
 
@@ -87,24 +87,21 @@ function contextMenuPosition(event: ReactMouseEvent<HTMLElement>): {
  * Right-click/two-finger click is a secondary shortcut. The card keeps its
  * normal pointer behavior until an authoring surface supplies this capability.
  */
-export function useRichFenceContextMenu(
+export function createRichFenceContextMenu(
   authoringActions: ScientRichFenceAuthoringActions | undefined,
   onCopySource: () => void,
 ) {
-  return useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      const show = authoringActions?.showContextMenu;
-      if (!show) return;
-      event.preventDefault();
-      event.stopPropagation();
-      void show(contextMenuPosition(event)).then(
-        (action) => {
-          if (action === "edit-source") authoringActions.onEditSource();
-          else if (action === "copy-source") onCopySource();
-        },
-        () => undefined,
-      );
-    },
-    [authoringActions, onCopySource],
-  );
+  return (event: ReactMouseEvent<HTMLElement>) => {
+    const show = authoringActions?.showContextMenu;
+    if (!show) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void show(contextMenuPosition(event)).then(
+      (action) => {
+        if (action === "edit-source") authoringActions.onEditSource();
+        else if (action === "copy-source") onCopySource();
+      },
+      () => undefined,
+    );
+  };
 }

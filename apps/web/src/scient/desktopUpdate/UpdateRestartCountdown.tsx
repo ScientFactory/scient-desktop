@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import type { UpdateEverythingRun } from "~/components/sidebar/updateEverything.logic";
 import { postponeUpdateRestart } from "~/components/sidebar/updateEverythingRun";
@@ -6,14 +6,11 @@ import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { UpdateTextButton } from "./UpdateTextButton";
 
 function useSecondsUntil(deadline: number | null): number {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      if (deadline === null) return () => {};
-      const timer = window.setInterval(onChange, 1_000);
-      return () => window.clearInterval(timer);
-    },
-    [deadline],
-  );
+  const subscribe = (onChange: () => void) => {
+    if (deadline === null) return () => {};
+    const timer = window.setInterval(onChange, 1_000);
+    return () => window.clearInterval(timer);
+  };
   return useSyncExternalStore(subscribe, () =>
     deadline === null ? 0 : Math.max(0, Math.ceil((deadline - Date.now()) / 1_000)),
   );

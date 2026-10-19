@@ -3,7 +3,7 @@
  * views can show it starting from the click, before the server's starting
  * operation arrives.
  */
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import {
   notifyProviderSignIn,
@@ -33,10 +33,7 @@ export function isProviderSignInStartingHere(key: ProviderSignInKey): boolean {
 
 export function useProviderSignInStartingHere(key: ProviderSignInKey): boolean {
   const { environmentId, instanceId } = key;
-  const read = useCallback(
-    () => isProviderSignInStartingHere({ environmentId, instanceId }),
-    [environmentId, instanceId],
-  );
+  const read = () => isProviderSignInStartingHere({ environmentId, instanceId });
   return useSyncExternalStore(subscribeToProviderSignIn, read, read);
 }
 

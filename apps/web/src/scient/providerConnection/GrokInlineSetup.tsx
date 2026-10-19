@@ -12,7 +12,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -95,13 +95,15 @@ export function GrokInlineSetup(props: {
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
     setShowAuthorizationCode(false);
     setAuthorizationCode("");
     setLocalRuntime(null);
-  }, [props.provider.instanceId]);
+  }
 
   const serverRuntime = props.provider.connection?.runtime;
   const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
@@ -114,20 +116,23 @@ export function GrokInlineSetup(props: {
     ? connectionOperation
     : null;
 
-  useEffect(() => {
+  const [previousOperationId, setPreviousOperationId] = useState(
+    activeConnectionOperation?.operationId,
+  );
+  if (previousOperationId !== activeConnectionOperation?.operationId) {
+    setPreviousOperationId(activeConnectionOperation?.operationId);
     setShowAuthorizationCode(false);
     setAuthorizationCode("");
-  }, [activeConnectionOperation?.operationId]);
-  useEffect(() => {
-    const localOperation = localRuntime?.operation;
-    if (!localOperation || !serverRuntime) return;
+  }
+  const localOperation = localRuntime?.operation;
+  if (localOperation && serverRuntime) {
     const serverCaughtUp = serverRuntime.operation?.operationId === localOperation.operationId;
     const installFinished =
       localOperation.action === "install" && serverRuntime.source === "scient_managed";
     const removalFinished =
       localOperation.action === "remove" && serverRuntime.source !== "scient_managed";
     if (serverCaughtUp || installFinished || removalFinished) setLocalRuntime(null);
-  }, [localRuntime, serverRuntime]);
+  }
   const accountConnected =
     props.provider.auth.status === "authenticated" && props.provider.auth.type === "grok_account";
   const apiKeyReady =
@@ -145,14 +150,19 @@ export function GrokInlineSetup(props: {
   const run = async (action: Exclude<PendingAction, null>, operation: () => Promise<unknown>) => {
     setLocalError(null);
     setPendingAction(action);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await operation();
-    } catch (error) {
-      const verb = action === "external-update" ? "update" : action;
-      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${verb} Grok.`));
-    } finally {
-      setPendingAction(null);
+      try {
+        await operation();
+      } catch (error) {
+        const verb = action === "external-update" ? "update" : action;
+        setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${verb} Grok.`));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeAction = async (action: "install" | "repair") => {

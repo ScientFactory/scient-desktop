@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, StrictMode, useEffect, useMemo, useRef, useState } from "react";
+import { act, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -57,44 +57,41 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
           error === "conflict" ? "conflict" : error === "transient" ? "transient" : "terminal",
       }),
   );
-  const persistence = useMemo<MarkdownPersistenceLease>(
-    () => ({
-      target: {
-        environmentId: EnvironmentId.make("fixture"),
-        cwd: "/fixture",
-        relativePath: "notes.md",
-      },
-      documentId: "fixture-document",
-      owner: undefined,
-      beginMove: () => null,
-      getSnapshot: coordinator.getSnapshot,
-      getPendingInput: () => null,
-      canEditPendingInput: () => true,
-      claimPendingInput: () => true,
-      releasePendingInputClaim: () => {},
-      retainPendingInput: () => true,
-      subscribe: coordinator.subscribe,
-      change: (source, version) => {
-        const previous = coordinator.getSnapshot().draftSource;
-        const accepted = coordinator.change(source, version);
-        if (accepted && previous !== source) bindings.current.onDraftSourceChange?.(source);
-        return accepted;
-      },
-      applyEdit: coordinator.applyEdit.bind(coordinator),
-      noteFreshnessHint: (reason) => coordinator.noteFreshnessHint(reason),
-      flushNow: () => coordinator.flushNow(),
-      retry: () => coordinator.retry(),
-      refresh: () => coordinator.refresh(),
-      resolveWithLocal: (revision) => coordinator.resolveWithLocal(revision),
-      resolveWithDisk: () => coordinator.resolveWithDisk(),
-      restoreRecovery: () => coordinator.restoreRecovery(),
-      holdForRename: () => coordinator.holdForRename(),
-      registerExternalProjection: () => () => {},
-      resumeExternalUpdates: () => coordinator.resumeExternalUpdates(),
-      release: () => {},
-    }),
-    [coordinator],
-  );
+  const persistence: MarkdownPersistenceLease = {
+    target: {
+      environmentId: EnvironmentId.make("fixture"),
+      cwd: "/fixture",
+      relativePath: "notes.md",
+    },
+    documentId: "fixture-document",
+    owner: undefined,
+    beginMove: () => null,
+    getSnapshot: coordinator.getSnapshot,
+    getPendingInput: () => null,
+    canEditPendingInput: () => true,
+    claimPendingInput: () => true,
+    releasePendingInputClaim: () => {},
+    retainPendingInput: () => true,
+    subscribe: coordinator.subscribe,
+    change: (source, version) => {
+      const previous = coordinator.getSnapshot().draftSource;
+      const accepted = coordinator.change(source, version);
+      if (accepted && previous !== source) bindings.current.onDraftSourceChange?.(source);
+      return accepted;
+    },
+    applyEdit: coordinator.applyEdit.bind(coordinator),
+    noteFreshnessHint: (reason) => coordinator.noteFreshnessHint(reason),
+    flushNow: () => coordinator.flushNow(),
+    retry: () => coordinator.retry(),
+    refresh: () => coordinator.refresh(),
+    resolveWithLocal: (revision) => coordinator.resolveWithLocal(revision),
+    resolveWithDisk: () => coordinator.resolveWithDisk(),
+    restoreRecovery: () => coordinator.restoreRecovery(),
+    holdForRename: () => coordinator.holdForRename(),
+    registerExternalProjection: () => () => {},
+    resumeExternalUpdates: () => coordinator.resumeExternalUpdates(),
+    release: () => {},
+  };
   useEffect(() => {
     let previous = coordinator.getSnapshot();
     bindings.current.onPendingChange?.(previous.pending);

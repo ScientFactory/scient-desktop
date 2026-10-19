@@ -15,7 +15,7 @@ import {
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, useMemo, useSyncExternalStore } from "react";
+import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -165,36 +165,44 @@ vi.mock("../../state/entities", () => ({
       },
       () => state.environmentIds,
     );
-    return useMemo(() => new Map(ids.map((id) => [id, config()])), [ids]);
+    return new Map(ids.map((id) => [id, config()]));
   },
 }));
-vi.mock("../../state/environments", () => ({
-  // Connection state is a subscription too; a dropped environment keeps its config.
-  useEnvironments: () => {
-    const offline = useSyncExternalStore(
-      (listener) => {
-        connected.listeners.add(listener);
-        return () => connected.listeners.delete(listener);
-      },
-      () => state.offline,
-    );
-    const environments = useMemo(
-      () =>
-        [
-          { environmentId: local, label: "Local" },
-          { environmentId: remote, label: "Lab workstation" },
-        ].map((environment) => ({
-          ...environment,
-          connection: {
-            phase: offline.includes(environment.environmentId) ? "reconnecting" : "connected",
-          },
-        })),
-      [offline],
-    );
-    return { environments };
-  },
-  usePrimaryEnvironmentId: () => local,
-}));
+vi.mock("../../state/environments", async () => {
+  const entities = await import("../../state/entities");
+  return {
+    // Provider statuses derive from the server configs, as the real atom does; the mocked
+    // configs are full server configs.
+    useEnvironmentProviders: () =>
+      new Map(
+        [...entities.useServerConfigs()].map(([id, config]) => [
+          id,
+          (config as ServerConfig).providers,
+        ]),
+      ),
+    // Connection state is a subscription too; a dropped environment keeps its config.
+    useEnvironments: () => {
+      const offline = useSyncExternalStore(
+        (listener) => {
+          connected.listeners.add(listener);
+          return () => connected.listeners.delete(listener);
+        },
+        () => state.offline,
+      );
+      const environments = [
+        { environmentId: local, label: "Local" },
+        { environmentId: remote, label: "Lab workstation" },
+      ].map((environment) => ({
+        ...environment,
+        connection: {
+          phase: offline.includes(environment.environmentId) ? "reconnecting" : "connected",
+        },
+      }));
+      return { environments };
+    },
+    usePrimaryEnvironmentId: () => local,
+  };
+});
 
 const { ConversationImportDialogHost } = await import("./ConversationImportDialog");
 const {

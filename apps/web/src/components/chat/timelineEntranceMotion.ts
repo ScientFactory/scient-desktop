@@ -1,4 +1,3 @@
-import { useCallback, useMemo } from "react";
 import { DRAFT_HERO_TRANSITION_EASING } from "./draftHeroTransition";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { WorkingRowExit } from "./workingRowExit";
@@ -23,30 +22,27 @@ function markPlayed(key: string) {
  * A ref callback that plays an entrance on the element the first time `key`
  * mounts, unless the reader prefers reduced motion. A null key plays nothing.
  */
-function useEntranceMotion(
+function createEntranceMotion(
   key: string | null,
   keyframes: Keyframe[],
   options: KeyframeAnimationOptions,
 ) {
   // Pass module constants for the keyframes and options, so the callback is stable.
-  return useCallback(
-    (element: HTMLElement | null) => {
-      if (!element || key === null || playedEntrances.has(key)) return;
-      markPlayed(key);
-      if (
-        typeof element.animate !== "function" ||
-        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-      )
-        return;
-      element.animate(keyframes, {
-        // The composer's curve, so the send choreography moves as one.
-        easing: DRAFT_HERO_TRANSITION_EASING,
-        fill: "backwards",
-        ...options,
-      });
-    },
-    [key, keyframes, options],
-  );
+  return (element: HTMLElement | null) => {
+    if (!element || key === null || playedEntrances.has(key)) return;
+    markPlayed(key);
+    if (
+      typeof element.animate !== "function" ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    element.animate(keyframes, {
+      // The composer's curve, so the send choreography moves as one.
+      easing: DRAFT_HERO_TRANSITION_EASING,
+      fill: "backwards",
+      ...options,
+    });
+  };
 }
 
 // A thread's first prompt is revealed from the top down as the composer lands.
@@ -58,15 +54,15 @@ const PROMPT_ENTRANCE_KEYFRAMES: Keyframe[] = [
 const PROMPT_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 300, delay: 100 };
 
 /** A ref callback for a prompt's bubble: it plays the entrance while that prompt is entering. */
-export function usePromptEntrance(promptId: string, enteringPromptId: string | null) {
-  return useEntranceMotion(
+export function createPromptEntrance(promptId: string, enteringPromptId: string | null) {
+  return createEntranceMotion(
     enteringPromptId === promptId ? `prompt:${promptId}` : null,
     PROMPT_ENTRANCE_KEYFRAMES,
     PROMPT_ENTRANCE_TIMING,
   );
 }
 
-/** The send motion rows read from the timeline (see `useTimelineSendMotion`). */
+/** The send motion rows read from the timeline (see `deriveTimelineSendMotion`). */
 export interface TimelineSendMotion {
   /** A thread's first prompt while it is being placed: it plays its entrance. */
   readonly enteringPromptId: string | null;
@@ -78,7 +74,7 @@ export interface TimelineSendMotion {
   readonly currentActivityRowId: string | null;
 }
 
-export function useTimelineSendMotion(input: {
+export function deriveTimelineSendMotion(input: {
   rows: readonly MessagesTimelineRow[];
   /** Only a first prompt is placed with pending positioning (later ones are revealed). */
   timelinePositioningPending: boolean;
@@ -89,22 +85,16 @@ export function useTimelineSendMotion(input: {
 }): TimelineSendMotion {
   const { rows, workingRowExit } = input;
   const enteringPromptId = input.timelinePositioningPending ? input.anchorMessageId : null;
-  const thinkingFollowsAnswerId = useMemo(() => {
+  const thinkingFollowsAnswerId = (() => {
     const index = rows.findIndex((row) => row.kind === "thinking");
     const previous = index > 0 ? rows[index - 1] : undefined;
     return previous?.kind === "message" && previous.message.role === "assistant"
       ? previous.message.id
       : null;
-  }, [rows]);
+  })();
   const { activityInHeader } = input;
-  const currentActivityRowId = useMemo(
-    () => currentLiveActivityRowId(rows, activityInHeader),
-    [rows, activityInHeader],
-  );
-  return useMemo(
-    () => ({ enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId }),
-    [enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId],
-  );
+  const currentActivityRowId = currentLiveActivityRowId(rows, activityInHeader);
+  return { enteringPromptId, thinkingFollowsAnswerId, workingRowExit, currentActivityRowId };
 }
 
 /** The composer's move between the draft hero and the thread: quick, continuous. */

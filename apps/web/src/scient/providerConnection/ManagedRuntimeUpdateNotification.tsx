@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { DownloadIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import type { ProviderUpdateToastId } from "~/components/ProviderUpdateLaunchNotification";
 import { useLocalEnvironmentUpdateGroups } from "~/components/ProviderUpdateLaunchNotification.environments";
@@ -26,6 +26,10 @@ import { useStartProviderRuntimeAction } from "./useProviderLifecycleController"
 
 const seenManagedRuntimeUpdateKeys = new Set<string>();
 let nextManagedRuntimeUpdateId = 0;
+
+function allocateManagedRuntimeUpdateId() {
+  return ++nextManagedRuntimeUpdateId;
+}
 
 type ActiveManagedRuntimeToast =
   | { readonly kind: "prompt"; readonly key: string; readonly toastId: ProviderUpdateToastId }
@@ -60,11 +64,8 @@ export function ManagedRuntimeUpdateNotification() {
   const startRuntimeAction = useStartProviderRuntimeAction();
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
-  const candidates = useMemo(() => collectManagedRuntimeUpdateCandidates(groups), [groups]);
-  const notificationKey = useMemo(
-    () => managedRuntimeUpdateNotificationKey(candidates),
-    [candidates],
-  );
+  const candidates = collectManagedRuntimeUpdateCandidates(groups);
+  const notificationKey = managedRuntimeUpdateNotificationKey(candidates);
   const activeToastRef = useRef<ActiveManagedRuntimeToast | null>(null);
   const groupsRef = useRef(groups);
   const startUpdatesRef = useRef<
@@ -73,28 +74,28 @@ export function ManagedRuntimeUpdateNotification() {
 
   // Replacing or closing our own toast is a state change, not a user dismissal:
   // release ownership before closing so its onClose cannot record one.
-  const releaseActiveToast = useCallback(() => {
+  const releaseActiveToast = () => {
     const active = activeToastRef.current;
     activeToastRef.current = null;
     if (active !== null) toastManager.close(active.toastId);
-  }, []);
+  };
 
-  const openProviderSettings = useCallback(
-    (targets: ReadonlyArray<ManagedRuntimeUpdateTarget>, toastId?: ProviderUpdateToastId) => {
-      if (toastId !== undefined && activeToastRef.current?.toastId !== toastId) {
-        toastManager.close(toastId);
-      } else if (activeToastRef.current?.kind === "prompt") {
-        releaseActiveToast();
-      }
-      const search = managedRuntimeSettingsSearch(targets);
-      void navigate({ to: "/settings/providers", ...(search ? { search } : {}) });
-    },
-    [navigate, releaseActiveToast],
-  );
+  const openProviderSettings = (
+    targets: ReadonlyArray<ManagedRuntimeUpdateTarget>,
+    toastId?: ProviderUpdateToastId,
+  ) => {
+    if (toastId !== undefined && activeToastRef.current?.toastId !== toastId) {
+      toastManager.close(toastId);
+    } else if (activeToastRef.current?.kind === "prompt") {
+      releaseActiveToast();
+    }
+    const search = managedRuntimeSettingsSearch(targets);
+    void navigate({ to: "/settings/providers", ...(search ? { search } : {}) });
+  };
 
   useEffect(() => releaseActiveToast, [releaseActiveToast]);
 
-  const settleActiveUpdate = useCallback(() => {
+  const settleActiveUpdate = () => {
     const active = activeToastRef.current;
     if (active?.kind !== "updating") return;
     const runs = settleManagedRuntimeUpdateRuns(active.runs, groupsRef.current);
@@ -167,69 +168,66 @@ export function ManagedRuntimeUpdateNotification() {
         },
       }),
     );
-  }, [openProviderSettings, releaseActiveToast]);
+  };
 
-  const startUpdates = useCallback(
-    (key: string, targets: ReadonlyArray<ManagedRuntimeUpdateTarget>) => {
-      const view = getManagedRuntimeUpdateRunningToastView(targets);
-      releaseActiveToast();
-      const updateId = ++nextManagedRuntimeUpdateId;
-      activeToastRef.current = {
-        kind: "updating",
-        key,
-        updateId,
-        toastId: toastManager.add({
-          type: view.type,
-          title: view.title,
-          description: view.description,
-          timeout: 0,
-          actionProps: hiddenToastActionProps,
-          data: { hideCopyButton: true },
-        }),
-        runs: targets.map((target) => ({
-          target,
+  const startUpdates = (key: string, targets: ReadonlyArray<ManagedRuntimeUpdateTarget>) => {
+    const view = getManagedRuntimeUpdateRunningToastView(targets);
+    releaseActiveToast();
+    const updateId = allocateManagedRuntimeUpdateId();
+    activeToastRef.current = {
+      kind: "updating",
+      key,
+      updateId,
+      toastId: toastManager.add({
+        type: view.type,
+        title: view.title,
+        description: view.description,
+        timeout: 0,
+        actionProps: hiddenToastActionProps,
+        data: { hideCopyButton: true },
+      }),
+      runs: targets.map((target) => ({
+        target,
+        operationId: null,
+        observed: false,
+        outcome: { status: "pending" },
+        waitingMessage: null,
+      })),
+      startsFinished: false,
+      shownWaitingMessage: null,
+    };
+    const updateCurrent = (
+      update: (active: ActiveManagedRuntimeUpdate) => ActiveManagedRuntimeUpdate,
+    ) => {
+      const active = activeToastRef.current;
+      if (active?.kind !== "updating" || active.updateId !== updateId) return false;
+      activeToastRef.current = update(active);
+      return true;
+    };
+    void (async () => {
+      // One at a time: each environment's runtime manager serializes its driver.
+      for (const [index, target] of targets.entries()) {
+        const started = await startRuntimeAction({
+          environmentId: target.environmentId,
+          instanceId: target.instanceId,
+          action: "update",
+        }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
           operationId: null,
-          observed: false,
-          outcome: { status: "pending" },
-          waitingMessage: null,
-        })),
-        startsFinished: false,
-        shownWaitingMessage: null,
-      };
-      const updateCurrent = (
-        update: (active: ActiveManagedRuntimeUpdate) => ActiveManagedRuntimeUpdate,
-      ) => {
-        const active = activeToastRef.current;
-        if (active?.kind !== "updating" || active.updateId !== updateId) return false;
-        activeToastRef.current = update(active);
-        return true;
-      };
-      void (async () => {
-        // One at a time: each environment's runtime manager serializes its driver.
-        for (const [index, target] of targets.entries()) {
-          const started = await startRuntimeAction({
-            environmentId: target.environmentId,
-            instanceId: target.instanceId,
-            action: "update",
-          }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
-            operationId: null,
-            outcome: managedRuntimeUpdateStartFailure(error),
-          }));
-          const current = updateCurrent((active) => ({
-            ...active,
-            runs: active.runs.map((run, runIndex) =>
-              runIndex === index ? { ...run, ...started } : run,
-            ),
-          }));
-          if (!current) return;
-        }
-        if (updateCurrent((active) => ({ ...active, startsFinished: true }))) {
-          settleActiveUpdate();
-        }
-      })();
-    },
-    [releaseActiveToast, settleActiveUpdate, startRuntimeAction],
-  );
+          outcome: managedRuntimeUpdateStartFailure(error),
+        }));
+        const current = updateCurrent((active) => ({
+          ...active,
+          runs: active.runs.map((run, runIndex) =>
+            runIndex === index ? { ...run, ...started } : run,
+          ),
+        }));
+        if (!current) return;
+      }
+      if (updateCurrent((active) => ({ ...active, startsFinished: true }))) {
+        settleActiveUpdate();
+      }
+    })();
+  };
 
   useEffect(() => {
     startUpdatesRef.current = startUpdates;

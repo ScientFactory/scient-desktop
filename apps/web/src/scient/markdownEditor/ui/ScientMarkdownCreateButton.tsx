@@ -1,3 +1,5 @@
+import { useEffectEvent } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { FilePlus2 } from "lucide-react";
@@ -48,68 +50,29 @@ interface ScientMarkdownCreateButtonProps {
 }
 
 export function ScientMarkdownCreateButton(props: ScientMarkdownCreateButtonProps) {
-  const createFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const createFile = useCreateMarkdownFile();
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState(() => untitledMarkdownPath(props.selectedPath));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
+  const [resetInputs, setResetInputs] = useState(() => ({ open, value: props.selectedPath }));
+  if (resetInputs.open !== open || resetInputs.value !== props.selectedPath) {
+    setResetInputs({ open, value: props.selectedPath });
+    if (open) {
+      setPath(untitledMarkdownPath(props.selectedPath));
+      setError(null);
+    }
+  }
+  const selectCreatePath = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!open) return;
-    setPath(untitledMarkdownPath(props.selectedPath));
-    setError(null);
     queueMicrotask(() => inputRef.current?.select());
-  }, [open, props.selectedPath]);
+  });
+  useEffect(() => selectCreatePath(open, props.selectedPath), [open, props.selectedPath]);
 
-  const submit = async () => {
-    const normalized = normalizeMarkdownCreatePath(path);
-    if (!normalized) {
-      setError("Enter a relative Markdown path inside this workspace.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    const contents = "";
-    const isDefaultName = /(?:^|\/)untitled\.md$/u.test(normalized);
-    const defaultParent = normalized.includes("/")
-      ? normalized.slice(0, normalized.lastIndexOf("/") + 1)
-      : "";
-    try {
-      for (let collision = 1; collision <= 100; collision += 1) {
-        const candidate =
-          isDefaultName && collision > 1 ? `${defaultParent}untitled-${collision}.md` : normalized;
-        const result = await createFile({
-          environmentId: props.environmentId,
-          input: {
-            cwd: props.cwd,
-            relativePath: candidate,
-            contents,
-            createOnly: true,
-          },
-        });
-        if (result._tag === "Success") {
-          setOpen(false);
-          props.onCreated(result.value.relativePath, contents, result.value.revision);
-          return;
-        }
-        if (result._tag !== "Failure") return;
-        const cause = squashAtomCommandFailure(result);
-        if (isDefaultName && failureCode(cause) === "path_exists") continue;
-        setError(
-          failureCode(cause) === "path_exists"
-            ? "A file already exists at that path."
-            : cause instanceof Error
-              ? cause.message
-              : "Unable to create the Markdown file.",
-        );
-        return;
-      }
-      setError("No available untitled filename was found in this folder.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const submit = () =>
+    createMarkdownSubmit({ props, path, createFile, setError, setSubmitting, setOpen })();
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -163,4 +126,73 @@ export function ScientMarkdownCreateButton(props: ScientMarkdownCreateButtonProp
       </PopoverPopup>
     </Popover>
   );
+}
+
+function createMarkdownSubmit({
+  props,
+  path,
+  createFile,
+  setError,
+  setSubmitting,
+  setOpen,
+}: {
+  props: ScientMarkdownCreateButtonProps;
+  path: string;
+  createFile: ReturnType<typeof useCreateMarkdownFile>;
+  setError: Dispatch<SetStateAction<string | null>>;
+  setSubmitting: Dispatch<SetStateAction<boolean>>;
+  setOpen: Dispatch<SetStateAction<boolean>>;
+}) {
+  return async () => {
+    const normalized = normalizeMarkdownCreatePath(path);
+    if (!normalized) {
+      setError("Enter a relative Markdown path inside this workspace.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const contents = "";
+    const isDefaultName = /(?:^|\/)untitled\.md$/u.test(normalized);
+    const defaultParent = normalized.includes("/")
+      ? normalized.slice(0, normalized.lastIndexOf("/") + 1)
+      : "";
+    try {
+      for (let collision = 1; collision <= 100; collision += 1) {
+        const candidate =
+          isDefaultName && collision > 1 ? `${defaultParent}untitled-${collision}.md` : normalized;
+        const result = await createFile({
+          environmentId: props.environmentId,
+          input: {
+            cwd: props.cwd,
+            relativePath: candidate,
+            contents,
+            createOnly: true,
+          },
+        });
+        if (result._tag === "Success") {
+          setOpen(false);
+          props.onCreated(result.value.relativePath, contents, result.value.revision);
+          return;
+        }
+        if (result._tag !== "Failure") return;
+        const cause = squashAtomCommandFailure(result);
+        if (isDefaultName && failureCode(cause) === "path_exists") continue;
+        setError(
+          failureCode(cause) === "path_exists"
+            ? "A file already exists at that path."
+            : cause instanceof Error
+              ? cause.message
+              : "Unable to create the Markdown file.",
+        );
+        return;
+      }
+      setError("No available untitled filename was found in this folder.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+}
+
+function useCreateMarkdownFile() {
+  return useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
 }

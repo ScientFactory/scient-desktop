@@ -6,7 +6,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import {
   ModelPickerOverlayContext,
   useModelPickerOverlay,
@@ -78,11 +78,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     scrollScope,
   } = useModelPickerOverlay(props.isComposerOwned ?? false);
 
-  const activeEntry = useMemo(() => {
-    return (
-      props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null
-    );
-  }, [props.activeInstanceId, props.instanceEntries]);
+  const activeEntry =
+    props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null;
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
@@ -355,6 +352,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             align="start"
             className="before:hidden"
             padding="none"
+            touchBackdrop
             suspended={overlay.instanceId !== null}
           >
             <ModelPickerContent
