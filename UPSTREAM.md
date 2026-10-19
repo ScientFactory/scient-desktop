@@ -1109,8 +1109,8 @@ program it starts opens a visible window; Antigravity's own inner process is one
 upstream bug (T3's Grok uses the same path) worth proposing. In Scient's retained
 `AntigravityInstallation.ts`, a runtime check that runs out of time reports that instead of the
 install's catch-all disk-space advice.
-The install check, health check, model refresh (`AntigravityDriver.ts`) and sign-out
-(`AntigravityAuth.ts`) allow 5 minutes instead of T3's 90 seconds, each in a marked line: the
+The install check, model refresh (`AntigravityDriver.ts`) and sign-out (`AntigravityAuth.ts`)
+allow 5 minutes instead of T3's 90 seconds, each in a marked line: the
 official Windows agent unpacks about 7,300 files (320 MiB) into a fresh folder on every start, which
 took about 35 s on a development machine and can exceed 90 s on slower disks.
 

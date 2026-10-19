@@ -551,11 +551,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         );
         const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
         yield* Deferred.await(entered);
-        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("90 seconds");
         const snapshot = yield* Fiber.join(refresh);
         yield* Deferred.await(closed);
         expect(snapshot.status).toBe("error");
-        expect(snapshot.message).toContain("5 minutes");
+        expect(snapshot.message).toContain("90 seconds");
       }),
     ),
   );
