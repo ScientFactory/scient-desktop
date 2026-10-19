@@ -172,7 +172,10 @@ only the window that writes the record opens the page. A window that finds the
 lock held keeps its request id and waits for the lock, until the id expires:
 the holder releases it once it has recorded the opening, given up, or closed (a
 closed page drops its locks), and the record then says whether to stay quiet or
-open the page itself. Without Web Locks or storage, or when that wait runs out,
+open the page itself. A waiting claim is withdrawn, offering nothing, as soon as
+its operation ends, is replaced by another, or leaves the snapshot, or when the
+page is hidden for good; once it holds the lock it reads the operation again and
+opens only if the same operation still waits on the same page. Without Web Locks or storage, or when that wait runs out,
 there is no safe claim, so the page is not opened automatically; the card or a
 notification offers to open it. Once the manager has published an accepted operation, the
 rest of its startup runs in a manager-owned fiber: the start request waits for it,

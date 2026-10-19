@@ -161,8 +161,44 @@ function sharedStore(): Storage | null {
   }
 }
 
-type AutomaticOpeningClaim = "claimed" | "elsewhere" | "unavailable";
+type AutomaticOpeningClaim = "claimed" | "elsewhere" | "unavailable" | "stale";
 type ClaimAttempt = AutomaticOpeningClaim | "held";
+
+interface OpeningTarget {
+  readonly key: ProviderSignInKey;
+  readonly operationId: string;
+  readonly url: string;
+  readonly providerName: string;
+}
+
+/** The operations each provider instance showed last, from snapshots and start replies. */
+const latestOperations = new Map<string, ReadonlyArray<ProviderConnectionOperation>>();
+
+function noteLatestOperations(
+  key: ProviderSignInKey,
+  operations: ReadonlyArray<ProviderConnectionOperation | null | undefined>,
+) {
+  latestOperations.set(
+    keyOf(key),
+    operations.filter((operation) => operation !== null && operation !== undefined),
+  );
+}
+
+/**
+ * Whether the latest view of the target's operation still wants its page. A
+ * snapshot that still says "starting" lags behind the waiting state that began
+ * the claim, so it does not end it; another operation, a terminal or verifying
+ * state, or a different page does.
+ */
+function stillWanted(target: OpeningTarget): boolean {
+  const latest = latestOperations.get(keyOf(target.key));
+  if (latest === undefined) return true;
+  const operation = latest.find((candidate) => candidate.operationId === target.operationId);
+  if (!operation || TERMINAL_STATUSES.has(operation.status) || operation.status === "verifying") {
+    return false;
+  }
+  return operation.authorizationUrl === undefined || operation.authorizationUrl === target.url;
+}
 
 /**
  * Claims the automatic opening of one operation across this browser's windows.
@@ -172,21 +208,25 @@ type ClaimAttempt = AutomaticOpeningClaim | "held";
  * two windows can never both see it absent. A window that finds the lock held
  * waits for it, until `waitUntil`: the holder releases it once it has recorded
  * the opening, given up, or closed (a closed page drops its locks), and the
- * record then says whether anyone opened the page. Without Web Locks or storage,
- * or when the wait runs out, there is no safe claim, and the page is left for
- * the user to open.
+ * record then says whether anyone opened the page. A wait also ends, without a
+ * claim, as soon as the operation no longer wants its page (`signal`), and the
+ * operation is checked again once the lock is held. Without Web Locks or
+ * storage, or when the wait runs out, there is no safe claim, and the page is
+ * left for the user to open.
  */
 async function claimAutomaticOpening(
-  openingKey: string,
+  target: OpeningTarget,
   waitUntil: number,
+  signal: AbortSignal,
 ): Promise<AutomaticOpeningClaim> {
   const storage = sharedStore();
   const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
   if (!storage || !locks) return "unavailable";
-  const recordKey = `${OPENED_RECORD_PREFIX}${openingKey}`;
+  const recordKey = `${OPENED_RECORD_PREFIX}${openingKeyOf(target.key, target.operationId)}`;
   const attempt = (options: { readonly ifAvailable: true } | { readonly signal: AbortSignal }) =>
     locks.request(recordKey, options, async (lock): Promise<ClaimAttempt> => {
       if (lock === null) return "held";
+      if (signal.aborted || !stillWanted(target)) return "stale";
       const cutoff = now();
       for (let index = storage.length - 1; index >= 0; index -= 1) {
         const name = storage.key(index);
@@ -195,6 +235,7 @@ async function claimAutomaticOpening(
       }
       if (storage.getItem(recordKey) !== null) return "elsewhere";
       await beforeClaimRecord();
+      if (signal.aborted || !stillWanted(target)) return "stale";
       storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
       return "claimed";
     });
@@ -203,20 +244,18 @@ async function claimAutomaticOpening(
     if (first !== "held") return first;
     const remaining = waitUntil - now();
     if (remaining <= 0) return "unavailable";
-    const waited = await attempt({ signal: AbortSignal.timeout(remaining) });
+    const waited = await attempt({
+      signal: AbortSignal.any([signal, AbortSignal.timeout(remaining)]),
+    });
     return waited === "held" ? "unavailable" : waited;
   } catch {
-    return "unavailable";
+    // Ended because the operation no longer wants its page, not because time ran out.
+    return signal.aborted ? "stale" : "unavailable";
   }
 }
 
 /** Offers the page to the user when this window could not safely open it itself. */
-function offerManualOpening(input: {
-  readonly key: ProviderSignInKey;
-  readonly operationId: string;
-  readonly url: string;
-  readonly providerName: string;
-}) {
+function offerManualOpening(input: OpeningTarget) {
   // A setup view that is showing already offers to open the page.
   if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
   toastManager.add({
@@ -230,28 +269,45 @@ function offerManualOpening(input: {
   });
 }
 
-const claimsInFlight = new Set<string>();
+/** Claims in flight, by opening key; aborting one withdraws its lock request. */
+const claimsInFlight = new Map<
+  string,
+  { readonly target: OpeningTarget; readonly controller: AbortController }
+>();
+
+/** Withdraws the claims of a provider instance whose operation no longer wants its page. */
+function withdrawStaleClaims(key: ProviderSignInKey) {
+  for (const claim of claimsInFlight.values()) {
+    if (keyOf(claim.target.key) === keyOf(key) && !stillWanted(claim.target)) {
+      claim.controller.abort();
+    }
+  }
+}
+
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  // A closing page drops its locks; its queued requests must not linger meanwhile.
+  window.addEventListener("pagehide", () => {
+    for (const claim of claimsInFlight.values()) claim.controller.abort();
+  });
+}
 
 /**
  * Opens the page if this window wins the claim; otherwise leaves it to the
  * window that opened it, or to the user. `onSettled` runs once the claim is
- * decided, before any opening.
+ * decided, before any opening. A claim withdrawn because its operation ended
+ * or was superseded offers nothing.
  */
-async function openIfClaimed(input: {
-  readonly key: ProviderSignInKey;
-  readonly operationId: string;
-  readonly url: string;
-  readonly providerName: string;
-  readonly waitUntil: number;
-  readonly onSettled?: () => void;
-}): Promise<void> {
+async function openIfClaimed(
+  input: OpeningTarget & { readonly waitUntil: number; readonly onSettled?: () => void },
+): Promise<void> {
   const openingKey = openingKeyOf(input.key, input.operationId);
   // One claim per operation at a time; a later snapshot of it waits on this one.
   if (claimsInFlight.has(openingKey)) return;
-  claimsInFlight.add(openingKey);
+  const controller = new AbortController();
+  claimsInFlight.set(openingKey, { target: input, controller });
   let claim: AutomaticOpeningClaim;
   try {
-    claim = await claimAutomaticOpening(openingKey, input.waitUntil);
+    claim = await claimAutomaticOpening(input, input.waitUntil, controller.signal);
   } finally {
     claimsInFlight.delete(openingKey);
   }
@@ -452,15 +508,25 @@ export function observeProviderSignInSnapshots(
   providers: ReadonlyArray<ServerProvider>,
 ): void {
   dropExpired();
+  const present = new Set<string>();
   for (const provider of providers) {
     const key = { environmentId, instanceId: provider.instanceId };
+    present.add(keyOf(key));
+    const operations = [provider.connection?.operation, provider.connection?.accountOperation];
+    noteLatestOperations(key, operations);
+    withdrawStaleClaims(key);
     if (!pending.has(keyOf(key))) continue;
     const providerName = provider.displayName?.trim() || String(provider.driver);
-    for (const operation of [
-      provider.connection?.operation,
-      provider.connection?.accountOperation,
-    ]) {
+    for (const operation of operations) {
       if (operation) void considerOwnOperation(key, operation, providerName);
+    }
+  }
+  // A provider instance gone from its environment takes its operations with it.
+  for (const claim of claimsInFlight.values()) {
+    const key = claim.target.key;
+    if (key.environmentId === environmentId && !present.has(keyOf(key))) {
+      noteLatestOperations(key, []);
+      withdrawStaleClaims(key);
     }
   }
 }
@@ -503,6 +569,7 @@ export async function startProviderSignIn<T>(input: {
     notify();
   }
   const operation = input.operationOf(result);
+  if (operation) noteLatestOperations(input.key, [operation]);
   if (operation?.signInRequestId !== undefined) {
     // A start this client joined to one already in flight shares that start's
     // operation, so its own id has nothing left to identify.
@@ -614,6 +681,9 @@ export function resetProviderSignInBrowserForTests(
   openings.clear();
   surfaces.clear();
   startsInFlight.clear();
+  for (const claim of claimsInFlight.values()) claim.controller.abort();
+  claimsInFlight.clear();
+  latestOperations.clear();
   if (options.reload) hydratePending();
   else {
     pending.clear();

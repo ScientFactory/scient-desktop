@@ -368,6 +368,99 @@ describe("provider sign-in page opening", () => {
     await settle();
   });
 
+  /** Another window holds the claim lock for operation "connect-1" until released. */
+  async function holdClaimLockElsewhere() {
+    const name = `scient.providerSignIn.opened.v1:${environmentId} ${instanceId} connect-1`;
+    let release!: () => void;
+    let granted!: () => void;
+    const held = new Promise<void>((resolve) => (granted = resolve));
+    void realLocks.request(name, () => {
+      granted();
+      return new Promise<void>((resolve) => (release = resolve));
+    });
+    await held;
+    const pendingRequests = async () =>
+      ((await realLocks.query()).pending ?? []).filter((lock) => lock.name === name).length;
+    return { release: () => release(), pendingRequests };
+  }
+
+  it.each([
+    ["cancelled", operation({ status: "cancelled" })],
+    ["failed", operation({ status: "failed" })],
+    ["connected", operation({ status: "connected" })],
+    // Another start's operation replaces this one.
+    [
+      "superseded",
+      operation({ operationId: "connect-2", signInRequestId: "another-client-request" }),
+    ],
+  ])(
+    "withdraws a waiting claim whose operation is %s, opening and offering nothing",
+    async (_name, next) => {
+      const id = await startWithLostReply();
+      const holder = await holdClaimLockElsewhere();
+      observe(operation({ signInRequestId: id }));
+      await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
+
+      observe(next.signInRequestId ? next : { ...next, signInRequestId: id });
+      await settle();
+      // Node lists a withdrawn request until the lock is released; Chromium drops it at once.
+      holder.release();
+      await settle();
+      await settle();
+      expect(await holder.pendingRequests()).toBe(0);
+      expect(open).not.toHaveBeenCalled();
+      expect(toast.add).not.toHaveBeenCalled();
+    },
+  );
+
+  it("withdraws a waiting claim when its provider leaves the snapshot", async () => {
+    const id = await startWithLostReply();
+    const holder = await holdClaimLockElsewhere();
+    observe(operation({ signInRequestId: id }));
+    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
+    observeProviderSignInSnapshots(environmentId, []);
+    await settle();
+    holder.release();
+    await settle();
+    await settle();
+    expect(await holder.pendingRequests()).toBe(0);
+    expect(open).not.toHaveBeenCalled();
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the operation once the lock is held, and opens only if it still waits", async () => {
+    const id = await startWithLostReply();
+    const holder = await holdClaimLockElsewhere();
+    observe(operation({ signInRequestId: id }));
+    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
+    // A lagging snapshot still says "starting": the claim waits on, then opens.
+    const { authorizationUrl: _url, ...starting } = operation({
+      status: "starting",
+      signInRequestId: id,
+    });
+    observe(starting);
+    expect(await holder.pendingRequests()).toBe(1);
+    observe(operation({ signInRequestId: id }));
+    holder.release();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens once after a reload while another window holds the claim, if it still waits", async () => {
+    const id = await startWithLostReply();
+    const holder = await holdClaimLockElsewhere();
+    resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
+    observe(operation({ signInRequestId: id }));
+    observe(operation({ signInRequestId: id }));
+    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
+    // The holder closes without recording an opening.
+    holder.release();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
   it("closes the blank window when navigating it fails, and offers the page again", async () => {
     resetProviderSignInBrowserForTests({ now: () => clock });
     const opened = {
