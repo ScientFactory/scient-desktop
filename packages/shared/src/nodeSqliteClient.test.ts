@@ -172,7 +172,10 @@ it.effect("keeps large text and blob parameters off cached statements", () =>
     ];
     const cached = new Set<NodeSqlite.StatementSync>();
     const large = new Set<NodeSqlite.StatementSync>();
-    const largeBlobs = [new Uint8Array(64 * 1024 + 1), new ArrayBuffer(64 * 1024 + 1)];
+    const largeBlobs = [
+      new Uint8Array(64 * 1024 + 1),
+      new DataView(new ArrayBuffer(64 * 1024 + 1)),
+    ];
     for (const value of [small, largeText, ...largeBlobs, small]) {
       const expected = typeof value === "string" ? value.length : value.byteLength;
       for (const query of queries) {

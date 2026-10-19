@@ -18,7 +18,12 @@ import {
   PREVIEW_ZOOM_LEVELS,
   type PreviewAdjustInput,
 } from "@t3tools/contracts";
-import { normalizePreviewUrl, resolveAddressBarInput } from "@t3tools/shared/preview";
+import {
+  normalizePreviewUrl,
+  resolveAddressBarInput,
+  previewPdfAssetUrl,
+  resolveSearchUrlTemplate,
+} from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -31,6 +36,7 @@ import {
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
+import { getClientSettings } from "~/hooks/useSettings";
 import {
   rememberPreviewUrl,
   updatePreviewServerSnapshot,
@@ -225,6 +231,8 @@ export function PreviewView({
   );
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
+  const clientPdfUrl =
+    navStatus._tag === "Success" ? previewPdfAssetUrl(url, environmentHttpBaseUrl) : null;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
@@ -287,7 +295,7 @@ export function PreviewView({
 
   const handleSubmitUrl = async (next: string) => {
     try {
-      const resolved = resolveAddressBarInput(next);
+      const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
       if (await navigateToResolvedUrl(resolved)) {
         recordVisitForThread(threadRef, resolved);
       }
@@ -958,7 +966,12 @@ export function PreviewView({
             <>
               {previewBridge && tabId ? (
                 <ScientPreviewExportActions
-                  disabled={pdfExportOwner === null || isUnreachable || loading}
+                  disabled={
+                    pdfExportOwner === null ||
+                    isUnreachable ||
+                    loading ||
+                    (isServerTab && clientPdfUrl !== null)
+                  }
                   pageUrl={url}
                   tabId={tabId}
                   runtimeTabId={runtimeTabId}
@@ -1017,6 +1030,7 @@ export function PreviewView({
                 environmentId={threadRef.environmentId}
                 threadId={threadRef.threadId}
                 tabId={snapshot.tabId}
+                pdfUrl={clientPdfUrl}
                 visible={visible}
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
                 onControl={(control) =>

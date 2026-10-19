@@ -461,6 +461,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
       new Set<ProviderInstanceId>(
@@ -472,7 +473,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               (activeEntry?.driverKind === "droid"
                 ? getDroidModelSection(model) === "more"
                 : model.isLegacy),
-          )
+          ) && !favoritesSet.has(providerModelKey(props.activeInstanceId, activeModelSlug))
           ? [props.activeInstanceId]
           : [],
       ),
@@ -513,10 +514,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.clearTimeout(timeout);
     };
   }, [focusSearchInput]);
-
-  const favoritesSet = (() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  })();
 
   const entryByInstanceId = (() =>
     new Map(instanceEntries.map((entry) => [entry.instanceId, entry])))();
@@ -707,10 +704,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (isSearching || selectedInstanceId === "favorites" || sourceSectionRows) {
       return null;
     }
-    const currentModels = droidGroups
-      ? [...droidGroups.models, ...droidGroups.custom]
-      : filteredModels.filter((model) => !model.isLegacy);
-    const legacyModels = droidGroups?.more ?? filteredModels.filter((model) => model.isLegacy);
+    const currentModels: ModelPickerItem[] = [];
+    const legacyModels: ModelPickerItem[] = [];
+    for (const model of filteredModels) {
+      const isLegacy =
+        // SCIENT-FORK:START — Droid’s More section uses provider metadata, not legacy status.
+        (droidGroups ? getDroidModelSection(model) === "more" : model.isLegacy) &&
+        // SCIENT-FORK:END
+        !favoritesSet.has(providerModelKey(model.instanceId, model.slug));
+      (isLegacy ? legacyModels : currentModels).push(model);
+    }
     if (legacyModels.length === 0) {
       return null;
     }

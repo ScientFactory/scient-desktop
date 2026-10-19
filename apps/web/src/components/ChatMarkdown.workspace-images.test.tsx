@@ -96,7 +96,13 @@ function renderWithoutThread(markdown: string): string {
 
 function renderFilePreview(cwd: string, relativePath: string, text: string): string {
   return renderToStaticMarkup(
-    <FileMarkdownPreview cwd={cwd} relativePath={relativePath} text={text} threadRef={threadRef} />,
+    <FileMarkdownPreview
+      cwd={cwd}
+      relativePath={relativePath}
+      text={text}
+      threadRef={threadRef}
+      workspaceMutationId={null}
+    />,
   );
 }
 

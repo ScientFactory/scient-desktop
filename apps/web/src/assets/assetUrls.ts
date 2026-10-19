@@ -1,8 +1,13 @@
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { EMPTY_ASSET_URL_ATOM, resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import {
+  type AssetUrlState as RuntimeAssetUrlState,
+  assetUrlStateFromResult,
+  EMPTY_ASSET_URL_ATOM,
+  resolveAssetUrl,
+} from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { AssetResource, AssetImageDimensions, EnvironmentId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { assetEnvironment } from "~/state/assets";
@@ -13,24 +18,10 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
 // SCIENT-FORK:START — every state carries `refresh`, so a failed signed URL can be re-minted.
-export type AssetUrlState =
-  | { readonly _tag: "Loading"; readonly refresh: () => void }
-  | {
-      readonly _tag: "Failure";
-      readonly refresh: () => void;
-      /** A refresh of the failed URL is in flight. */
-      readonly waiting?: boolean;
-      /** Set when the session lacks `filesystem:read`; the file itself may be fine. */
-      readonly reason?: "missing-file-access";
-    }
-  | {
-      readonly _tag: "Success";
-      readonly url: string;
-      readonly expiresAt: number;
-      readonly sourcePath?: string;
-      readonly imageDimensions?: AssetImageDimensions;
-      readonly refresh: () => void;
-    };
+export type AssetUrlState = RuntimeAssetUrlState & {
+  readonly refresh: () => void;
+  readonly waiting?: boolean;
+};
 // SCIENT-FORK:END
 
 export function useAssetUrlState(
@@ -55,25 +46,14 @@ export function useAssetUrlState(
       ? { _tag: "Failure", refresh, reason: "missing-file-access" }
       : { _tag: "Failure", refresh };
   }
-  if (result._tag === "Failure") {
-    return { _tag: "Failure", refresh, waiting: result.waiting };
-  }
-  if (preparedConnection._tag === "None" || result._tag !== "Success") {
-    return { _tag: "Loading", refresh };
-  }
-  const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
-  return url === null
-    ? { _tag: "Failure", refresh, waiting: result.waiting }
-    : {
-        _tag: "Success",
-        url,
-        expiresAt: result.value.expiresAt,
-        refresh,
-        ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
-        ...(result.value.imageDimensions !== undefined
-          ? { imageDimensions: result.value.imageDimensions }
-          : {}),
-      };
+  return {
+    ...assetUrlStateFromResult(
+      result,
+      preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
+    ),
+    refresh,
+    ...(result.waiting ? { waiting: true } : {}),
+  };
   // SCIENT-FORK:END
 }
 
