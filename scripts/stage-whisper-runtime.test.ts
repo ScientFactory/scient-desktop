@@ -319,6 +319,16 @@ describe("the development runtime cache", () => {
     expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(false);
     await NodeFSP.writeFile(receiptPath, receipt(2));
     expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(true);
+
+    // Release signing changes the helper's bytes but not the list of files.
+    await NodeFSP.writeFile(NodePath.join(directory, "whisper-server.exe"), "signed helper");
+    expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(false);
+    expect(await isStagedWhisperRuntime(directory, "win", "x64", "names")).toBe(true);
+    await NodeFSP.writeFile(NodePath.join(directory, "parakeet.dll"), "leftover");
+    expect(await isStagedWhisperRuntime(directory, "win", "x64", "names")).toBe(false);
+    await NodeFSP.writeFile(receiptPath, receipt(1));
+    await NodeFSP.rm(NodePath.join(directory, "parakeet.dll"));
+    expect(await isStagedWhisperRuntime(directory, "win", "x64", "names")).toBe(false);
   });
 
   it("gives a checkout without the runtime the one another checkout staged", async () => {

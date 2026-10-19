@@ -57,9 +57,10 @@ async function qualify(runtimeDirectory) {
     .then((text) => JSON.parse(text).arch)
     .catch(() => undefined);
   const arch = platform === "mac" && recordedArch === "universal" ? "universal" : process.arch;
-  if (!(await isStagedWhisperRuntime(directory, platform, arch))) {
+  // Packaging may sign the files after staging, so their bytes are not compared.
+  if (!(await isStagedWhisperRuntime(directory, platform, arch, "names"))) {
     throw new Error(
-      `${directory} is not the pinned ${platform}/${arch} runtime: its receipt or files do not match.`,
+      `${directory} is not the pinned ${platform}/${arch} runtime: its receipt or file list does not match.`,
     );
   }
   if (platform === "win") await assertWindowsRuntimeSelfContained(directory);

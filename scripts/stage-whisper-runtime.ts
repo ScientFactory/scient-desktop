@@ -712,6 +712,12 @@ export async function isStagedWhisperRuntime(
   directory: string,
   platform: WhisperRuntimePlatform,
   arch: WhisperRuntimeArch,
+  /**
+   * "names" accepts recorded files whose bytes changed: release packaging
+   * signs the helper and its libraries after staging. The receipt, the build
+   * and the exact list of files must still match.
+   */
+  contents: "exact" | "names" = "exact",
 ): Promise<boolean> {
   try {
     const receipt: unknown = JSON.parse(
@@ -746,8 +752,7 @@ export async function isStagedWhisperRuntime(
         const expected = files[index] as Record<string, unknown> | null;
         return (
           expected?.file === file.file &&
-          expected.sha256 === file.sha256 &&
-          expected.size === file.size
+          (contents === "names" || (expected.sha256 === file.sha256 && expected.size === file.size))
         );
       })
     );
