@@ -549,6 +549,21 @@ jobs:
             throw "Visual Studio Installer failed with exit code $code"
           }
 
+      - name: Initialize the MSVC compiler environment
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$installPath) { throw "Visual Studio C++ tools are unavailable" }
+          & "$installPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          Get-Command cl.exe -ErrorAction Stop | Out-Null
+          foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if (!$value) { throw "Missing compiler environment variable: $name" }
+            "$name=$value" >> $env:GITHUB_ENV
+          }
+
       - uses: ./.github/actions/setup-apt-mirrors
         if: matrix.platform == 'linux'
 
