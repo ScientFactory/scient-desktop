@@ -31,7 +31,9 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
-    it.effect("reports and deletes only the database from before 0.1.0", () =>
+    // SCIENT-FORK:START — Scient keeps the original database: it is never offered, and its
+    // removal refuses without touching it.
+    it.effect("keeps the original database and never offers to delete it", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -43,50 +45,19 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           const sql = yield* SqlClient.SqlClient;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
-
-        const openLegacy = NodeSqliteClient.layer({ filename: legacy });
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`PRAGMA journal_mode = WAL`;
           yield* sql`CREATE TABLE v1_data (value TEXT)`;
-        }).pipe(Effect.provide(openLegacy));
-        // SCIENT-FORK:START — offered only once Scient's history import has copied it.
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`
-            CREATE TABLE scient_legacy_reconciliation_state
-              (id INTEGER PRIMARY KEY, revision INTEGER, source_token TEXT, last_error TEXT)
-          `;
-          yield* sql`
-            INSERT INTO scient_legacy_reconciliation_state VALUES (1, 1, '[1,"event-1",1,null]', 'busy')
-          `;
-        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`UPDATE scient_legacy_reconciliation_state SET last_error = NULL`;
-        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-        // SCIENT-FORK:END
-        assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
 
-        // A version before 0.1.0 still running against it keeps it.
-        const refused = yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`SELECT value FROM v1_data`;
-          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
-        }).pipe(Effect.provide(openLegacy));
-        assert.equal(refused._tag, "DatabaseInUseError");
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+        const refused = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        assert.equal(refused._tag, "LegacyDatabaseRemoveError");
         assert.isTrue(yield* fs.exists(legacy));
-
-        yield* maintenance.removeLegacyDatabase(dbPath);
-        assert.isFalse(yield* fs.exists(legacy));
-        assert.isFalse(yield* fs.exists(`${legacy}-wal`));
         assert.isTrue(yield* fs.exists(dbPath));
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
       }).pipe(Effect.scoped),
     );
+    // SCIENT-FORK:END
 
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {

@@ -83,6 +83,5 @@ or `/tmp` on Linux and macOS) and once next to the database for its
 write-ahead log.
 
 If you upgraded from an older version, its original database (`state.sqlite`)
-is still kept next to the current one so you can roll back. `scient doctor` offers
-to delete it, but never selects that repair for you and `--fix` skips it: once it
-is gone, that older version starts with no threads or settings.
+is kept next to the current one. Scient still reads it to bring in older
+conversations, so `scient doctor` does not delete it.

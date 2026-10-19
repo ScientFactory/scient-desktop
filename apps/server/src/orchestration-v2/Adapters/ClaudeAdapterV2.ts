@@ -3591,9 +3591,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             {
               readonly status: OrchestrationV2Subagent["status"];
               readonly attempt: number;
+              // SCIENT-FORK:START — sparse display metadata and reactivation share upstream
+              // member state.
               readonly activation: number;
-              // SCIENT-FORK: sparse display metadata shares upstream member state.
               readonly presentation: OrchestrationV2Subagent["presentation"];
+              // SCIENT-FORK:END
               readonly transcriptReadAttempts: number;
               readonly finalTranscriptRead: boolean;
               // Where the next read of the member's transcript starts; every
@@ -3610,8 +3612,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly label: string;
               readonly prompt: string;
               readonly model: string;
+              // SCIENT-FORK:START — cumulative counters from sparse observations.
               readonly totalTokens: number | undefined;
               readonly toolUseCount: number | undefined;
+              // SCIENT-FORK:END
               readonly createdAt: DateTime.Utc;
               readonly startedAt: DateTime.Utc | null;
               readonly completedAt: DateTime.Utc | null;

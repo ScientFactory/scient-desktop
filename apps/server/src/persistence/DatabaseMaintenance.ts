@@ -11,9 +11,6 @@ import { isSqlError } from "effect/sql/SqlError";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-// SCIENT-FORK:START
-import { legacyHistoryCopied } from "./scientLegacyDatabase.ts";
-// SCIENT-FORK:END
 
 export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
   "DatabaseMissingError",
@@ -71,8 +68,7 @@ export class LegacyDatabaseRemoveError extends Schema.TaggedError<LegacyDatabase
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message() {
-    // SCIENT-FORK: Scient versions do not share T3's 0.1.0 boundary.
-    return "Could not delete the original database. Check that this user can write to the data directory.";
+    return "Could not delete the database from before 0.1.0. Check that this user can write to the data directory.";
   }
 }
 
@@ -151,6 +147,9 @@ const lockExclusively = (databasePath: string) =>
     yield* sql`COMMIT`;
   });
 
+// SCIENT-FORK: see removeLegacyDatabase.
+const scientOriginalDatabaseDeletable: boolean = false;
+
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -169,16 +168,10 @@ const make = Effect.gen(function* () {
       const storage = yield* readStorage.pipe(
         Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
       );
-      // SCIENT-FORK:START — the original database is offered for deletion only once Scient's
-      // history import has copied it.
-      const copied = yield* legacyHistoryCopied.pipe(
-        Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
-      );
+      // SCIENT-FORK:START — the original database is never offered for deletion (see
+      // `removeLegacyDatabase`).
+      const legacyDatabaseBytes = null;
       // SCIENT-FORK:END
-      const legacy = legacyPath(databasePath);
-      // SCIENT-FORK: `copied` gates the offer.
-      const legacyDatabaseBytes =
-        copied && (yield* fs.exists(legacy)) ? Number((yield* fs.stat(legacy)).size) : null;
       return { ...storage, legacyDatabaseBytes };
     },
     (effect, databasePath) =>
@@ -238,6 +231,13 @@ const make = Effect.gen(function* () {
   const removeLegacyDatabase = Effect.fn("DatabaseMaintenance.removeLegacyDatabase")(
     function* (databasePath: string) {
       const legacy = legacyPath(databasePath);
+      // SCIENT-FORK:START — Scient keeps the original database. Its history import reads it,
+      // an older Scient run can add conversations the current database has not copied yet, and
+      // deleting it while SQLite holds it open fails on Windows.
+      if (!scientOriginalDatabaseDeletable) {
+        return yield* new LegacyDatabaseRemoveError({ path: legacy, cause: "kept by Scient" });
+      }
+      // SCIENT-FORK:END
       if (!(yield* fs.exists(legacy))) return;
       // A version before 0.1.0 may still be running against it. Keep the lock
       // while deleting, and delete the database before its WAL so a failure

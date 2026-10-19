@@ -598,6 +598,7 @@ export const make = Effect.gen(function* () {
     workspaceEntries,
     readFile,
     exchangeHelper: Option.isSome(config) ? config.value.fileExchangePath : undefined,
+    isProtectedPath: isInGitFolder,
   });
   // SCIENT-FORK:END
 
