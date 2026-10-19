@@ -1101,7 +1101,39 @@ describe("ProviderRuntimeManager", () => {
       }),
   );
 
-  it.effect("releases the runtime reservation when initial summary discovery is interrupted", () =>
+  it.effect("keeps a runtime change going when its caller disconnects during planning", () =>
+    Effect.gen(function* () {
+      const planStarted = yield* Deferred.make<void>();
+      const planGate = yield* Deferred.make<void>();
+      const runCount = yield* Ref.make(0);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () =>
+          Deferred.succeed(planStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(planGate)),
+            Effect.as(installPlan()),
+          ),
+        run: () => Ref.update(runCount, (count) => count + 1),
+      };
+      const { manager, providersRef, coordinator } = yield* makeHarness(actions, [systemProvider]);
+
+      const caller = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(planStarted);
+      yield* Fiber.interrupt(caller);
+      yield* Deferred.succeed(planGate, undefined);
+
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.strictEqual(yield* Ref.get(runCount), 1);
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
+
+  it.effect("releases the runtime reservation when shutdown interrupts summary discovery", () =>
     Effect.gen(function* () {
       const summaryStarted = yield* Deferred.make<void>();
       const actions: ProviderManagedRuntimeActions = {
@@ -1109,19 +1141,19 @@ describe("ProviderRuntimeManager", () => {
         plan: () => Effect.succeed(installPlan()),
         run: () => Effect.die("must not run"),
       };
-      const { manager, coordinator } = yield* makeHarness(actions);
+      const { manager, coordinator, closeManager } = yield* makeHarness(actions);
 
-      const startFiber = yield* manager
+      yield* manager
         .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
         .pipe(Effect.forkChild);
       yield* Deferred.await(summaryStarted);
-      yield* Fiber.interrupt(startFiber);
+      yield* closeManager;
 
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
     }),
   );
 
-  it.effect("releases the runtime reservation when initial publication is interrupted", () =>
+  it.effect("releases the runtime reservation when shutdown interrupts initial publication", () =>
     Effect.gen(function* () {
       const publicationStarted = yield* Deferred.make<void>();
       const actions: ProviderManagedRuntimeActions = {
@@ -1129,7 +1161,7 @@ describe("ProviderRuntimeManager", () => {
         plan: () => Effect.succeed(installPlan()),
         run: () => Effect.die("must not run"),
       };
-      const { manager, coordinator } = yield* makeHarness(
+      const { manager, coordinator, closeManager } = yield* makeHarness(
         actions,
         [systemProvider],
         () => Effect.void,
@@ -1143,18 +1175,18 @@ describe("ProviderRuntimeManager", () => {
         },
       );
 
-      const startFiber = yield* manager
+      yield* manager
         .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
         .pipe(Effect.forkChild);
       yield* Deferred.await(publicationStarted);
-      yield* Fiber.interrupt(startFiber);
+      yield* closeManager;
 
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
     }),
   );
 
   it.effect(
-    "publishes cancellation when interrupted after initial runtime state becomes visible",
+    "publishes cancellation when shutdown interrupts a startup whose runtime state is visible",
     () =>
       Effect.gen(function* () {
         const publicationCommitted = yield* Deferred.make<void>();
@@ -1163,7 +1195,7 @@ describe("ProviderRuntimeManager", () => {
           plan: () => Effect.succeed(installPlan()),
           run: () => Effect.die("must not run"),
         };
-        const { manager, coordinator, providersRef } = yield* makeHarness(
+        const { manager, coordinator, providersRef, closeManager } = yield* makeHarness(
           actions,
           [systemProvider],
           () => Effect.void,
@@ -1179,11 +1211,11 @@ describe("ProviderRuntimeManager", () => {
           },
         );
 
-        const startFiber = yield* manager
+        yield* manager
           .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
           .pipe(Effect.forkChild);
         yield* Deferred.await(publicationCommitted);
-        yield* Fiber.interrupt(startFiber);
+        yield* closeManager;
 
         assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
         assert.strictEqual(

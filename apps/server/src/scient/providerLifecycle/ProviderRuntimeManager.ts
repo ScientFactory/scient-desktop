@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import type {
@@ -236,6 +237,8 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   });
 
   yield* Effect.addFinalizer(() => cleanupAll);
+  // Startups run here, not in the request that asked for them.
+  const managerScope = yield* Scope.Scope;
 
   const publishCancelled = Effect.fn("ProviderRuntimeManager.publishCancelled")(function* (
     instanceId: ProviderInstanceId,
@@ -414,7 +417,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     },
   );
 
-  const start: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.start")(
+  const startup: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.startup")(
     function* (input) {
       const target = yield* readTarget(input.instanceId);
       const planned = yield* plan({ instanceId: input.instanceId, action: input.action });
@@ -686,6 +689,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         }),
       ).pipe(Effect.onExit(cleanupStartupExit));
       return { providers: initialProviders };
+    },
+  );
+
+  // Once asked, a runtime change belongs to the manager: planning can stall for
+  // a long time on a loaded machine, and a client that reconnects meanwhile only
+  // detaches from the reply. Cancel and manager shutdown still stop it.
+  const start: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.start")(
+    function* (input) {
+      const fiber = yield* startup(input).pipe(Effect.forkIn(managerScope));
+      return yield* Fiber.join(fiber);
     },
   );
 
