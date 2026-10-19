@@ -8,9 +8,13 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   assertPinnedWhisperServerSource,
+  assertWindowsRuntimeSelfContained,
   developmentRuntimeCacheEntry,
+  findUnshippedWindowsImports,
   isStagedWhisperRuntime,
   parseArguments,
+  PE_MACHINE_X64,
+  readPortableExecutable,
   resolveDevelopmentRuntimeCache,
   syncDevelopmentRuntimeCache,
   resolveArchiveExtractionPlan,
@@ -20,7 +24,118 @@ import {
   WHISPER_CPP_SOURCE,
   WHISPER_CPP_VERSION,
   WHISPER_MACOS_DEPLOYMENT_TARGET,
+  WHISPER_RUNTIME_BUILD,
+  WHISPER_WINDOWS_CPU_VARIANTS,
+  WHISPER_WINDOWS_RUNTIME_FILES,
+  windowsCMakeConfigureArguments,
 } from "./stage-whisper-runtime.ts";
+
+/** A minimal x64 PE file: one section holding import and delay-load descriptors and their names. */
+function portableExecutable(
+  input: {
+    readonly machine?: number;
+    readonly imports?: readonly string[];
+    readonly delayed?: readonly string[];
+    readonly delayAttributes?: number;
+  } = {},
+): Buffer {
+  const bytes = Buffer.alloc(0x1400);
+  const header = 0x80;
+  bytes.writeUInt16LE(0x5a4d, 0);
+  bytes.writeUInt32LE(header, 0x3c);
+  bytes.writeUInt32LE(0x4550, header);
+  bytes.writeUInt16LE(input.machine ?? PE_MACHINE_X64, header + 4);
+  bytes.writeUInt16LE(1, header + 6);
+  bytes.writeUInt16LE(240, header + 20);
+  const optional = header + 24;
+  bytes.writeUInt16LE(0x20b, optional);
+  bytes.writeUInt32LE(16, optional + 108);
+  const directories = optional + 112;
+  const section = optional + 240;
+  bytes.writeUInt32LE(0x1000, section + 8);
+  bytes.writeUInt32LE(0x1000, section + 12);
+  bytes.writeUInt32LE(0x1000, section + 16);
+  bytes.writeUInt32LE(0x400, section + 20);
+  const rva = (offset: number) => offset - 0x400 + 0x1000;
+  let names = 0x600;
+  const writeName = (name: string) => {
+    const at = names;
+    bytes.write(`${name}\0`, at, "latin1");
+    names += name.length + 1;
+    return rva(at);
+  };
+  for (const [index, name] of (input.imports ?? []).entries())
+    bytes.writeUInt32LE(writeName(name), 0x400 + index * 20 + 12);
+  if (input.imports?.length) bytes.writeUInt32LE(rva(0x400), directories + 8);
+  for (const [index, name] of (input.delayed ?? []).entries()) {
+    bytes.writeUInt32LE(input.delayAttributes ?? 1, 0x500 + index * 32);
+    bytes.writeUInt32LE(writeName(name), 0x500 + index * 32 + 4);
+  }
+  if (input.delayed?.length) bytes.writeUInt32LE(rva(0x500), directories + 13 * 8);
+  return bytes;
+}
+
+describe("Windows runtime dependencies", () => {
+  it("reads the machine and the libraries a file loads, including delay-loaded ones", () => {
+    expect(
+      readPortableExecutable(
+        portableExecutable({ imports: ["KERNEL32.dll", "whisper.dll"], delayed: ["SHELL32.dll"] }),
+      ),
+    ).toEqual({ machine: PE_MACHINE_X64, imports: ["KERNEL32.dll", "whisper.dll", "SHELL32.dll"] });
+    expect(readPortableExecutable(portableExecutable()).imports).toEqual([]);
+  });
+
+  it("refuses what it cannot read", () => {
+    expect(() => readPortableExecutable(Buffer.from("not a program"))).toThrow(/Not a readable/u);
+    const truncated = portableExecutable({ imports: ["KERNEL32.dll"] }).subarray(0, 0x300);
+    expect(() => readPortableExecutable(truncated)).toThrow(/Not a readable/u);
+    expect(() =>
+      readPortableExecutable(portableExecutable({ delayed: ["x.dll"], delayAttributes: 0 })),
+    ).toThrow(/old-style/u);
+  });
+
+  it("accepts Windows itself and the runtime's own files, and names everything else", () => {
+    const files = new Map([
+      [
+        "whisper-server.exe",
+        {
+          machine: PE_MACHINE_X64,
+          imports: ["whisper.dll", "GGML.dll", "KERNEL32.dll", "WS2_32.dll"],
+        },
+      ],
+      ["whisper.dll", { machine: PE_MACHINE_X64, imports: ["api-ms-win-crt-heap-l1-1-0.dll"] }],
+      ["ggml.dll", { machine: PE_MACHINE_X64, imports: ["VCRUNTIME140.dll", "MSVCP140.dll"] }],
+      ["ggml-cpu-x64.dll", { machine: PE_MACHINE_X64, imports: ["VCOMP140.DLL", "libomp.dll"] }],
+    ]);
+    expect(findUnshippedWindowsImports(files)).toEqual([
+      "ggml.dll needs VCRUNTIME140.dll",
+      "ggml.dll needs MSVCP140.dll",
+      "ggml-cpu-x64.dll needs VCOMP140.DLL",
+      "ggml-cpu-x64.dll needs libomp.dll",
+    ]);
+  });
+
+  it("checks a staged folder: every binary x64 and needing only Windows and its neighbours", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-voice-pe-"));
+    try {
+      const write = (file: string, bytes: Buffer) =>
+        NodeFSP.writeFile(NodePath.join(directory, file), bytes);
+      await write("whisper-server.exe", portableExecutable({ imports: ["whisper.dll"] }));
+      await write("whisper.dll", portableExecutable({ imports: ["KERNEL32.dll"] }));
+      await NodeFSP.writeFile(NodePath.join(directory, "LICENSE.whisper.cpp"), "license");
+      await expect(assertWindowsRuntimeSelfContained(directory)).resolves.toBeUndefined();
+
+      await write("ggml-base.dll", portableExecutable({ imports: ["VCOMP140.DLL"] }));
+      await expect(assertWindowsRuntimeSelfContained(directory)).rejects.toThrow(
+        /ggml-base\.dll needs VCOMP140\.DLL/u,
+      );
+      await write("ggml-base.dll", portableExecutable({ machine: 0xaa64 }));
+      await expect(assertWindowsRuntimeSelfContained(directory)).rejects.toThrow(/not an x64/u);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("stage-whisper-runtime", () => {
   it("pins source by immutable commit and checksum", () => {
@@ -30,13 +145,36 @@ describe("stage-whisper-runtime", () => {
     expect(WHISPER_CPP_SOURCE.sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("uses source builds on mac and verified prebuilts on supported targets", () => {
+  it("builds mac and Windows from source and uses verified prebuilts on Linux", () => {
     expect(WHISPER_MACOS_DEPLOYMENT_TARGET).toBe("12.0");
     expect(resolvePrebuiltArtifact("mac", "universal")).toBeNull();
+    expect(resolvePrebuiltArtifact("win", "x64")).toBeNull();
     expect(resolvePrebuiltArtifact("linux", "arm64")?.sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(resolvePrebuiltArtifact("linux", "x64")?.sha256).toMatch(/^[a-f0-9]{64}$/u);
-    expect(resolvePrebuiltArtifact("win", "x64")?.sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(() => resolvePrebuiltArtifact("win", "arm64")).toThrow(/no verified/u);
+  });
+
+  it("builds Windows without OpenMP and with the C and C++ runtime linked in", () => {
+    const args = windowsCMakeConfigureArguments("C:/src", "C:/src/build");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "-DGGML_OPENMP=OFF",
+        "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+        "-DBUILD_SHARED_LIBS=ON",
+        "-DGGML_BACKEND_DL=ON",
+        "-DGGML_CPU_ALL_VARIANTS=ON",
+        "-DGGML_NATIVE=OFF",
+        "-DWHISPER_SDL2=OFF",
+      ]),
+    );
+    expect(WHISPER_WINDOWS_RUNTIME_FILES).toEqual([
+      "whisper-server.exe",
+      "whisper.dll",
+      "ggml.dll",
+      "ggml-base.dll",
+      ...WHISPER_WINDOWS_CPU_VARIANTS.map((variant) => `ggml-cpu-${variant}.dll`),
+    ]);
   });
 
   it("requires the private request-path behavior from pinned source", () => {
@@ -153,6 +291,34 @@ describe("the development runtime cache", () => {
       `${WHISPER_CPP_VERSION}-${WHISPER_CPP_COMMIT.slice(0, 12)}-mac-arm64`,
     );
     expect(developmentRuntimeCacheEntry(root, "mac", "x64")).not.toBe(entry);
+    expect(WHISPER_RUNTIME_BUILD.win).toBe(2);
+    expect(NodePath.basename(developmentRuntimeCacheEntry(root, "win", "x64"))).toBe(
+      `${WHISPER_CPP_VERSION}-${WHISPER_CPP_COMMIT.slice(0, 12)}-win-x64-build2`,
+    );
+  });
+
+  it("does not take the upstream Windows archive for the Windows build", async () => {
+    const { checkout } = await workspace();
+    const directory = checkout("windows");
+    await NodeFSP.mkdir(directory, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(directory, "whisper-server.exe"), "helper");
+    const receipt = (build?: number) =>
+      JSON.stringify({
+        component: "whisper.cpp",
+        version: WHISPER_CPP_VERSION,
+        platform: "win",
+        arch: "x64",
+        ...(build === undefined ? {} : { build }),
+        source: { commit: WHISPER_CPP_COMMIT },
+        files: [{ file: "whisper-server.exe", sha256: sha256("helper"), size: 6 }],
+      });
+    const receiptPath = NodePath.join(directory, "provenance.json");
+    await NodeFSP.writeFile(receiptPath, receipt());
+    expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(false);
+    await NodeFSP.writeFile(receiptPath, receipt(1));
+    expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(false);
+    await NodeFSP.writeFile(receiptPath, receipt(2));
+    expect(await isStagedWhisperRuntime(directory, "win", "x64")).toBe(true);
   });
 
   it("gives a checkout without the runtime the one another checkout staged", async () => {

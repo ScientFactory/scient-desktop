@@ -124,6 +124,17 @@ jobs:
             if ($installedVersion -ne "$version.0") { throw "Installed version $installedVersion is not $version.0" }
           }
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
+      # The voice helper must need nothing Windows lacks (no Visual C++
+      # Redistributable) and must transcribe through the app's runtime owner.
+      - name: Transcribe with the installed voice runtime
+        shell: pwsh
+        run: node scripts/qualify-whisper-runtime.mjs (Join-Path $env:RUNNER_TEMP 'scient-install-upgrade/resources/whisper-runtime')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-voice-runtime
+          path: ${{ runner.temp }}/scient-install-upgrade/resources/whisper-runtime/
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
