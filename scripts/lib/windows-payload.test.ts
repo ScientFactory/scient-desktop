@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import failedReleaseFiles from "../fixtures/windows-payload-0622.json" with { type: "json" };
-import { WHISPER_WINDOWS_RUNTIME_FILES } from "../stage-whisper-runtime.ts";
 import {
   analyzeWindowsPayloadInventory,
   unexpectedWindowsNativeFiles,
@@ -32,13 +31,6 @@ it("reproduces the real 109-file release failure and admits the corrected invent
   assert.lengthOf(corrected.unexpectedFiles, 0);
   assert.equal(corrected.allowance, 37);
   assert.isAtMost(correctedFiles.length, 80 + corrected.allowance);
-});
-
-it("expects exactly the voice files the Windows build stages", () => {
-  assert.sameMembers(
-    [...WINDOWS_VOICE_FILES],
-    [...WHISPER_WINDOWS_RUNTIME_FILES, "LICENSE.whisper.cpp", "provenance.json"],
-  );
 });
 
 it.each(componentFiles)("rejects a missing required component file: %s", (missing) => {

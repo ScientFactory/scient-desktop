@@ -29,6 +29,7 @@ import {
   WHISPER_WINDOWS_RUNTIME_FILES,
   windowsCMakeConfigureArguments,
 } from "./stage-whisper-runtime.ts";
+import { WINDOWS_VOICE_FILES } from "./lib/windows-payload.ts";
 
 /** A minimal x64 PE file: one section holding import and delay-load descriptors and their names. */
 function portableExecutable(
@@ -175,6 +176,12 @@ describe("stage-whisper-runtime", () => {
       "ggml-base.dll",
       ...WHISPER_WINDOWS_CPU_VARIANTS.map((variant) => `ggml-cpu-${variant}.dll`),
     ]);
+  });
+
+  it("stages exactly the voice files the Windows payload check expects", () => {
+    expect([...WINDOWS_VOICE_FILES].toSorted()).toEqual(
+      [...WHISPER_WINDOWS_RUNTIME_FILES, "LICENSE.whisper.cpp", "provenance.json"].toSorted(),
+    );
   });
 
   it("requires the private request-path behavior from pinned source", () => {
