@@ -152,6 +152,7 @@ function operation(input: {
 
 const IDLE_POLL_INTERVAL = "1 second";
 const RESELECT_INTERVAL = "10 minutes";
+const STARTUP_SUMMARY_TIMEOUT = "2 minutes";
 
 export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
@@ -445,6 +446,17 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       }
       const startedAt = yield* nowIso;
       const baseSummary = yield* target.actions.getSummary.pipe(
+        // Nothing is published yet, so Cancel cannot reach a stalled read; the
+        // bound keeps it from holding the reservation indefinitely.
+        Effect.timeoutOrElse({
+          duration: STARTUP_SUMMARY_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new ProviderConnectionActionError({
+                message: "Scient could not read the provider runtime state in time. Try again.",
+              }),
+            ),
+        }),
         Effect.mapError((failure) =>
           makeError({
             provider: target.provider,

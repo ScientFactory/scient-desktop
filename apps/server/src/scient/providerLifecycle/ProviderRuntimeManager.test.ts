@@ -1153,6 +1153,57 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("releases the runtime reservation when initial summary discovery stalls", () =>
+    Effect.gen(function* () {
+      const summaryStarted = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Deferred.succeed(summaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, coordinator } = yield* makeHarness(actions);
+
+      const caller = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(summaryStarted);
+      yield* Fiber.interrupt(caller);
+      assert.notStrictEqual(yield* coordinator.current(INSTANCE), undefined);
+      yield* TestClock.adjust("2 minutes");
+
+      yield* yieldUntil(coordinator.current(INSTANCE), (current) => current === undefined);
+    }),
+  );
+
+  it.effect("releases the runtime reservation when initial publication is interrupted", () =>
+    Effect.gen(function* () {
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, coordinator } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        () => Effect.void,
+        undefined,
+        Effect.void,
+        {
+          beforeSetRuntime: (runtime) =>
+            runtime?.operation?.status === "preparing" ? Effect.interrupt : Effect.void,
+        },
+      );
+
+      const exit = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.exit);
+
+      // The manager stays open, so only the startup's own cleanup can release it.
+      assert.isTrue(Exit.isFailure(exit));
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
+
   it.effect("releases the runtime reservation when shutdown interrupts initial publication", () =>
     Effect.gen(function* () {
       const publicationStarted = yield* Deferred.make<void>();
