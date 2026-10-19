@@ -186,8 +186,10 @@ tag or release already exists.
    in the same workflow run. Publication fails closed if macOS is unsigned or
    the repository release gate is disabled. Windows is also required to be
    signed unless the operator explicitly set `allow_unsigned_windows=true` when
-   creating the candidate; that exception is recorded in the release body and
-   may trigger an Unknown Publisher or SmartScreen warning. The workflow
+   creating the candidate; that exception is recorded in the workflow run's
+   summary, not the release body, because the app shows the release body as
+   release notes. Unsigned installers may trigger an Unknown Publisher or
+   SmartScreen warning, which `docs/user/install.md` explains. The workflow
    publishes the already accepted assembled artifact, downloads the draft again,
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or

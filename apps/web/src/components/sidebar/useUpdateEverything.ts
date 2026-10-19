@@ -39,6 +39,18 @@ import {
   unsupportedBulkServerMachines,
 } from "./updateEverything.logic";
 import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
+import {
+  collectOtherServerUpdates,
+  isSelfUpdatingSshRemote,
+} from "~/scient/desktopUpdate/otherUpdates.logic";
+import {
+  managedRuntimeProviderMachines,
+  managedRuntimeRunOutcomes,
+  useManagedRuntimeUpdates,
+} from "~/scient/providerConnection/useManagedRuntimeUpdates";
+import { isMachineUpdating } from "~/scient/desktopUpdate/useOtherUpdates";
+import { releaseUpdateRunServer } from "~/scient/desktopUpdate/updateRunServers";
+import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
@@ -100,10 +112,18 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     },
     [committedServersRef],
   );
+  // An SSH remote this app launches from its own package follows it on the next connection.
+  const selfUpdating = new Set(
+    environments.filter(isSelfUpdatingSshRemote).map((environment) => environment.environmentId),
+  );
   const skipped: ReadonlyArray<SkippedMachine> = [
-    ...unreachable,
+    ...unreachable.filter((machine) => !selfUpdating.has(machine.environmentId)),
     ...unsupportedBulkServerMachines(behindServers, servers),
   ];
+  // Reviewed Scient-managed runtimes update with the providers.
+  const managedRuntimes = useManagedRuntimeUpdates();
+  // The sidebar's circle lists each server a pass may update.
+  const otherServers = collectOtherServerUpdates(machines, servers);
   // SCIENT-FORK:END
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
   const providers = useProviderUpdates();
@@ -112,27 +132,42 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const { summary, lines } = describeUpdateEverything({
     localVersion: localUpdateVersion,
     servers,
-    providerMachines: providers.machines.map((machine) => ({
-      environmentId: machine.environmentId,
-      label: machine.label,
-      providers: machine.candidates.map(
-        (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-      ),
-    })),
+    // SCIENT-FORK:START — managed runtimes are part of the pass.
+    providerMachines: [
+      ...providers.machines.map((machine) => ({
+        environmentId: machine.environmentId,
+        label: machine.label,
+        providers: machine.candidates.map(
+          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
+        ),
+      })),
+      ...managedRuntimeProviderMachines(managedRuntimes.targets),
+    ],
+    // SCIENT-FORK:END
   });
 
   return {
-    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    // SCIENT-FORK:START — managed runtimes are part of the pass.
+    hasUpdates:
+      servers.length > 0 || providers.machines.length > 0 || managedRuntimes.targets.length > 0,
+    // SCIENT-FORK:END
     summary,
     lines,
     restarts,
     skipped,
+    // SCIENT-FORK:START — the sidebar's circle for other machines and providers.
+    otherServers,
+    // SCIENT-FORK:END
     run: async ({
       downloadLocal,
       installLocal,
+      // SCIENT-FORK:START — the circle admits each server again when its restart is due.
+      admitServer,
     }: {
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
+      admitServer?: (target: ServerUpdateTarget) => boolean;
+      // SCIENT-FORK:END
     }) => {
       const localFailures: Array<string> = [];
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
@@ -180,7 +215,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
           updateProviders: async () => {
-            const runs = await providers.updateAll({ quiet: true });
+            // SCIENT-FORK:START — managed runtimes update beside the providers; one staged to
+            // switch when idle is handed off, so servers need not wait for its running turns.
+            const [runs, managedRuns] = await Promise.all([
+              providers.updateAll({ quiet: true }),
+              managedRuntimes.update(managedRuntimes.targets, { inPass: true }),
+            ]);
+            // SCIENT-FORK:END
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
               if (runOutcome.status !== "updated") {
@@ -210,7 +251,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
                   ),
                 },
             );
-            return outcomes;
+            // SCIENT-FORK:START — managed runtimes are part of the pass.
+            return [...outcomes, ...managedRuntimeRunOutcomes(managedRuns)];
+            // SCIENT-FORK:END
           },
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
@@ -232,7 +275,21 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               finishedServers.push(finished);
               return Promise.resolve(finished);
             });
-            const runs = current.map(async (server) => {
+            // A server whose machine is still updating a provider, or that the caller no longer
+            // admits, is left to the sidebar's circle, which offers it again when it can restart.
+            const admitted = current.filter(
+              (server) =>
+                !isMachineUpdating(server.environmentId) && (admitServer?.(server) ?? true),
+            );
+            for (const server of current) {
+              if (!admitted.includes(server)) {
+                releaseUpdateRunServer(
+                  server.environmentId,
+                  providerFailures.get(server.environmentId) ?? null,
+                );
+              }
+            }
+            const runs = admitted.map(async (server) => {
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,
@@ -249,7 +306,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               return finished;
             });
             await Promise.all(
-              current.map((server, index) =>
+              admitted.map((server, index) =>
                 waitForServerUpdateHandoff(server.environmentId, runs[index]!),
               ),
             );

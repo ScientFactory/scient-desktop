@@ -114,6 +114,11 @@
         "src/scient/documentPage/main.tsx",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",
         "public/scient-voice-worklet.js!",
+        // Retained donor update capsule and confirmation dialog: the sidebar shows other machines'
+        // updates in its own circle and asks beside the pill (docs/user/updating.md). Kept
+        // unmounted so upstream changes still merge.
+        "src/components/sidebar/SidebarUpdateCapsule.tsx",
+        "src/components/sidebar/UpdateEverythingDialog.tsx",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
