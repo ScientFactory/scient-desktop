@@ -181,9 +181,12 @@ describe("electron development launcher", () => {
     assert.include(script, "cd '/repo'");
     assert.include(script, process.execPath);
     assert.include(script, `export PATH='${NodePath.dirname(process.execPath)}':"$PATH"`);
-    assert.include(script, "/tool/pnpm.cjs");
     assert.include(script, "export SCIENT_DEV_APP_ROLE='stable'");
-    assert.include(script, "dev:app:start");
+    assert.include(
+      script,
+      "'/tmp/scient-dev-stable/controller/scripts/dev-app/controller.mjs' open",
+    );
+    assert.notInclude(script, "dev:app:start");
     assert.include(script, "export SCIENT_NEXT_HOME='/tmp/scient-dev-stable'");
     assert.include(script, "/tmp/scient-dev-stable/local-dev-app.log");
     assert.include(
@@ -192,6 +195,16 @@ describe("electron development launcher", () => {
     );
     assert.include(script, 'printf \'%s\\0\' "$@" > "$conversation_args_tmp"');
     assert.include(script, "2>&1");
+  });
+
+  it("starts a candidate through its own checkout's pnpm script", () => {
+    const script = makeDevelopmentCommandScript({
+      desktopRoot: "/repo/apps/desktop",
+      environment: { npm_execpath: "/tool/pnpm.cjs" },
+    });
+
+    assert.include(script, "'/tool/pnpm.cjs' dev:app:start");
+    assert.include(script, NodePath.resolve("/repo", ".scient-next", "local-dev-app.log"));
   });
 
   it("repairs Electron before loading the package entrypoint", () => {

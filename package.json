@@ -58,8 +58,8 @@
     "dev:app:status": "node scripts/local-dev-app.mjs status",
     "dev:app:stop": "node scripts/local-dev-app.mjs stop",
     "dev:app:uninstall": "node scripts/local-dev-app.mjs uninstall",
-    "canonical:sync": "node scripts/canonical-main-sync.mjs",
-    "canonical:sync:install": "node scripts/canonical-main-sync.mjs --install",
+    "dev:app:review": "node scripts/dev-app/controller.mjs review",
+    "dev:app:stable": "node scripts/dev-app/controller.mjs",
     "canonical:sync:uninstall": "node scripts/canonical-main-sync.mjs --uninstall",
     "brand:check": "node scripts/check-scient-brand.ts",
     "analysis:seams:check": "node scripts/verify-scient-analysis-seams.mjs",
@@ -90,5 +90,8 @@
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.10.0",
+  "scientDevApp": {
+    "protocol": 1
+  }
 }

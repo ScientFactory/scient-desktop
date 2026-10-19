@@ -4,6 +4,29 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+/**
+ * A managed stable launch runs on the profile its controller chose
+ * (scripts/dev-app). Anything but an existing profile directly inside
+ * <stateRoot>/profiles is refused before any storage opens.
+ */
+function stableProfileRoot(stateRoot) {
+  const candidate = process.env.SCIENT_NEXT_PROFILE_ROOT;
+  let real;
+  let profiles;
+  try {
+    if (!candidate || !path.isAbsolute(candidate)) throw new Error("missing");
+    real = fs.realpathSync(candidate);
+    profiles = fs.realpathSync(path.join(stateRoot, "profiles"));
+    const meta = JSON.parse(fs.readFileSync(path.join(real, "scient-dev-profile.json"), "utf8"));
+    if (path.dirname(real) !== profiles || meta.id !== path.basename(real)) {
+      throw new Error("outside");
+    }
+  } catch {
+    throw new Error("The stable dev app was launched without a valid review profile.");
+  }
+  return real;
+}
+
 const config = JSON.parse(
   fs.readFileSync(path.join(__dirname, "scient-dev-bootstrap.json"), "utf8"),
 );
@@ -48,7 +71,8 @@ process.env.SCIENT_DEV_BOOTSTRAP_STATE_ROOT = config.stateRoot;
 process.env.SCIENT_DEV_BOOTSTRAP_ROLE = config.role;
 process.env.SCIENT_DEV_BOOTSTRAP_NODE = config.nodePath;
 process.env.SCIENT_DEV_APP_ROLE = config.role;
-process.env.SCIENT_NEXT_HOME = config.stateRoot;
+process.env.SCIENT_NEXT_HOME =
+  managed && config.role === "stable" ? stableProfileRoot(config.stateRoot) : config.stateRoot;
 process.env.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 if (managed) delete process.env.SCIENT_DEV_COLD_BOOTSTRAP;
 else process.env.SCIENT_DEV_COLD_BOOTSTRAP = "1";

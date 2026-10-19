@@ -126,6 +126,18 @@ export function describeVoiceRecorderError(kind: VoiceRecorderErrorKind): string
   }
 }
 
+export function describeMicrophoneAccessRefusal(
+  access: "denied" | "restricted",
+  platform: string | undefined,
+): string {
+  if (platform === "win32") {
+    return "Microphone access is off. In Windows Settings > Privacy & security > Microphone, turn on microphone access and access for desktop apps, then try again.";
+  }
+  return access === "restricted"
+    ? "Microphone access is restricted by this Mac. Check parental controls or contact your administrator."
+    : "Microphone access is off. Enable Scient in System Settings, then restart Scient.";
+}
+
 function percent(progress: VoiceModelDownloadProgress | null): number {
   if (!progress || progress.totalBytes <= 0) return 0;
   return Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
@@ -269,9 +281,7 @@ export function useScientVoiceController({
         setPhase("idle");
         setMicrophonePermissionDenied(access === "denied");
         setErrorMessage(
-          access === "restricted"
-            ? "Microphone access is restricted by this Mac. Check parental controls or contact your administrator."
-            : "Microphone access is off. Enable Scient in System Settings, then restart Scient.",
+          describeMicrophoneAccessRefusal(access, window.desktopBridge?.getClientPlatform?.()),
         );
         recordAnalytics({
           name: "voice.transcription.failed",
