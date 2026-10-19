@@ -148,6 +148,9 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
             path: path.join(extraDir, ".claude", "skills", "demo", "SKILL.md"),
             enabled: true,
             scope: "project",
+            // SCIENT-FORK:START - additional project roots share the project-managed toggle policy.
+            enabledReadOnlyReason: "Managed in this project",
+            // SCIENT-FORK:END
             description: "From an additional directory.",
           },
         ]);

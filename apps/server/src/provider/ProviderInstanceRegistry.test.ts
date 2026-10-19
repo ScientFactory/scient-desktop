@@ -570,11 +570,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       failProbe = true;
       const accountChangedFailure = yield* claude!.snapshot.refresh;
 
+      // SCIENT-FORK:START — provider lifecycle facts are independent (docs/internals/provider-lifecycle.md).
+      // The CLI confirms sign-in; failed readiness must not reuse the previous organization's metadata.
       expect(accountChangedFailure).toMatchObject({
         status: "warning",
-        auth: { status: "unknown" },
-        message: "Claude Agent CLI failed while checking account status.",
+        message: "Claude is signed in, but Scient could not complete its readiness check.",
       });
+      expect(accountChangedFailure.auth).toEqual({ status: "authenticated", required: true });
+      // SCIENT-FORK:END
       expect(accountChangedFailure.checkedAt).not.toBe(first.checkedAt);
       expect(accountChangedFailure.usageLimits).toBeUndefined();
       expect(accountChangedFailure.slashCommands).not.toEqual(
@@ -609,11 +612,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
 
       const repeatedFailure = yield* claude!.snapshot.refresh;
+      // SCIENT-FORK:START — confirmed sign-in survives readiness failure, account metadata does not.
       expect(repeatedFailure).toMatchObject({
         status: "warning",
-        auth: { status: "unknown" },
-        message: "Claude Agent CLI failed while checking account status.",
+        message: "Claude is signed in, but Scient could not complete its readiness check.",
       });
+      expect(repeatedFailure.auth).toEqual({ status: "authenticated", required: true });
+      // SCIENT-FORK:END
       expect(repeatedFailure.slashCommands).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );

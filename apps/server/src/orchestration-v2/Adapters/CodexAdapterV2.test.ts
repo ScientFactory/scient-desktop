@@ -515,7 +515,8 @@ describe("CodexAdapterV2 runtime policy", () => {
         "Use `delegate_task`",
       );
       assert.include(
-        params.additionalContext?.t3_code_orchestration_02?.value ?? "",
+        // SCIENT-FORK: Scient's authored paragraphs pack scheduling with delegation.
+        params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "structured object, never as JSON text",
       );
     }),

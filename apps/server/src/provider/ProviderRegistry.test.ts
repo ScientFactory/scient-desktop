@@ -1363,23 +1363,30 @@ it.layer(
                   Effect.die("Unexpected instance rebuild in snapshot fixture"),
               },
             );
-            const retainedModels = [defaultModel, customModel, currentModel];
+            // SCIENT-FORK:START — shared/scientModel.ts publishes the automatic choice to every client.
+            const registryDefaultModel = { ...defaultModel, isDefault: true };
+            const retainedModels = [registryDefaultModel, customModel, currentModel];
+            // SCIENT-FORK:END
 
             for (const restarted of [false, true]) {
               yield* Effect.gen(function* () {
                 const registry = yield* ProviderRegistry.ProviderRegistry;
+                // SCIENT-FORK:START — registry snapshots include the automatic default.
                 assert.deepStrictEqual(
                   (yield* registry.getProviders)[0]?.models,
                   restarted
                     ? retainedModels
-                    : [defaultModel, customModel, currentModel, removedModel],
+                    : [registryDefaultModel, customModel, currentModel, removedModel],
                 );
+                // SCIENT-FORK:END
 
                 yield* registry.refreshInstance(instance.instanceId);
+                // SCIENT-FORK:START — persisted snapshots include the automatic default.
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
-                  restarted ? retainedModels : refreshedProvider.models,
+                  restarted ? retainedModels : [registryDefaultModel, currentModel, customModel],
                 );
+                // SCIENT-FORK:END
 
                 yield* Ref.set(nextProvider, failedProvider);
                 const afterFailure = yield* registry.refreshInstance(instance.instanceId);

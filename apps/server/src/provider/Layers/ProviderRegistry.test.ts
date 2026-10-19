@@ -69,7 +69,10 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type {
+  ProviderInstance,
+  ProviderWorkspaceSnapshot,
+} from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -863,6 +866,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         const refreshedProvider = {
           ...previousProvider,
           checkedAt: "2026-08-13T00:01:00.000Z",
+          nativeSessions: { canList: false, canLoad: false, canResume: false },
           models: [
             { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
           ],
@@ -1090,12 +1094,17 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         const empty: ServerProvider = {
           ...previous,
           status: "warning",
+          auth: { status: "unauthenticated", type: "pi" },
           models: [],
           slashCommands: [],
         };
         assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).models, []);
         assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).slashCommands, []);
-        const failed: ServerProvider = { ...empty, status: "error" };
+        const failed: ServerProvider = {
+          ...empty,
+          status: "error",
+          auth: { status: "unknown" },
+        };
         assert.deepStrictEqual(mergeProviderSnapshot(previous, failed).models, previous.models);
         assert.deepStrictEqual(
           mergeProviderSnapshot(previous, failed).slashCommands,
@@ -1929,7 +1938,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             status: "error",
             installed: false,
             slashCommands: [],
-          } as const satisfies ServerProvider;
+            slashCommandsPending: true,
+          } as const satisfies ProviderWorkspaceSnapshot;
           const snapshotCalls = yield* Ref.make(0);
           const scopedResult = yield* Ref.make<ServerProvider>(scopedProvider);
           const cacheInvalidations = yield* Ref.make(0);
@@ -2030,7 +2040,11 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
-            assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
+            const pendingSnapshot = (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0];
+            assert.strictEqual(pendingSnapshot?.cwd, "/workspace");
+            assert.deepStrictEqual(pendingSnapshot?.skills, scopedProvider.skills);
+            assert.deepStrictEqual(pendingSnapshot?.slashCommands, []);
+            assert.strictEqual(pendingSnapshot?.slashCommandsPending, true);
             yield* Ref.set(returnPendingSnapshot, false);
             const workspaceUpdate = yield* registry.streamChanges.pipe(
               Stream.runHead,
