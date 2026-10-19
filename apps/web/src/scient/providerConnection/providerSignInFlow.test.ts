@@ -500,6 +500,37 @@ describe("provider sign-in page opening", () => {
     },
   );
 
+  it("releases a restored id without claiming when its page was opened here by hand", async () => {
+    const id = await startWithLostReply();
+    reloadWith(storage);
+    await openProviderSignInPageByHand({
+      key,
+      operationId: "connect-1",
+      signInRequestId: undefined,
+      url,
+      providerName: "Antigravity",
+    });
+    server.failNext(1);
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("releases a restored id without claiming when an unstamped reply opened its page", async () => {
+    const id = await startWithLostReply();
+    reloadWith(storage);
+    await start(async () => operation());
+    expect(open).toHaveBeenCalledTimes(1);
+    server.failNext(1);
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
   it("drops ids of expired operations", async () => {
     const id = await startWithLostReply();
     clock += 16 * 60_000;

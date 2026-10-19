@@ -96,6 +96,11 @@ async function considerOwnOperation(
     return;
   }
   if (!opensPage(operation)) return;
+  // Opened here already, by hand or from an unstamped reply: nothing to claim.
+  if (hasOpenedProviderSignInPage(key, operation.operationId)) {
+    releaseSignInRequest(key, requestId);
+    return;
+  }
   const claimKey = `${signInKeyOf(key)}\u0000${operation.operationId}`;
   if (claimsInFlight.has(claimKey) || claimPage === null) return;
   claimsInFlight.add(claimKey);
