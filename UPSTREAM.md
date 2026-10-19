@@ -190,6 +190,10 @@ A marked line in `apps/server/vite.config.ts` adds `src/testUtils/checkoutIsolat
 sets `GIT_CEILING_DIRECTORIES` to the checkout root, so Git started below the root cannot find the
 repository.
 Upstream's harness has the same fallback, so this is worth upstreaming.
+A marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps a prompt that
+runtime teardown interrupts before its transport failure arrives as that failure, not as a
+successful `cancelled` response. Upstream converts every interrupt-only cause there, so this is
+worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
