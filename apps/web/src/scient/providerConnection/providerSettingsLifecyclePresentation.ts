@@ -299,7 +299,10 @@ export function providerSettingsLifecyclePresentation(
     return {
       kind: "failed",
       statusLabel: connectionOperation.failedAfterSignIn ? "Setup failed" : "Sign-in failed",
-      detail: connectionOperation.message,
+      // After the sign-in finished, the server's sentence is diagnostic; say what happened.
+      detail: connectionOperation.failedAfterSignIn
+        ? `${connectionOperation.method.endsWith("_credentials") ? "Connected" : "Signed in"}, but ${displayName} couldn’t start. Try again.`
+        : connectionOperation.message,
       ...(canRetrySignIn
         ? action({ kind: "sign-in", label: "Retry" })
         : action({ kind: "manage", label: "Manage" })),

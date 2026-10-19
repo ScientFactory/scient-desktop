@@ -46,7 +46,7 @@ const failure = (message: string, cause?: unknown) =>
     ...(cause === undefined ? {} : { cause }),
   });
 
-export const ANTIGRAVITY_STARTING_MESSAGE = "Starting Antigravity. This can take up to a minute.";
+export const ANTIGRAVITY_STARTING_MESSAGE = "Antigravity can take up to a minute to start.";
 
 export function antigravityConnectionMethod(method: AntigravityAuthMethod) {
   return antigravityAuthUsesBrowser(method)

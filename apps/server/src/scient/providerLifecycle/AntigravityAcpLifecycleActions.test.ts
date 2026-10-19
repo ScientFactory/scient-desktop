@@ -374,7 +374,7 @@ it.effect("tells a session failure after Google accepted the sign-in from a fail
       });
 
     const actions = startWith([]);
-    expect(actions.startingMessage).toBe("Starting Antigravity. This can take up to a minute.");
+    expect(actions.startingMessage).toBe("Antigravity can take up to a minute to start.");
 
     // A stored sign-in: authentication passes at once and session/new fails before any link.
     const beforeLink = yield* startWith([

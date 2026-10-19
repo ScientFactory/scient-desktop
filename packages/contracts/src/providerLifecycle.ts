@@ -239,7 +239,7 @@ export const ProviderRuntimeSummary = Schema.Struct({
 export type ProviderRuntimeSummary = typeof ProviderRuntimeSummary.Type;
 
 /** What a starting sign-in says when its provider names nothing of its own. */
-export const DEFAULT_PROVIDER_STARTING_MESSAGE = "Starting secure provider sign in.";
+export const DEFAULT_PROVIDER_STARTING_MESSAGE = "Starting sign-in.";
 
 export const ProviderConnectionSummary = Schema.Struct({
   methods: Schema.Array(ProviderConnectionMethod),

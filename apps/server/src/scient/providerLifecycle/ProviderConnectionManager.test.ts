@@ -2116,7 +2116,7 @@ describe("ProviderConnectionManager failure stage", () => {
       const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
         items.some((item) => item?.status === "failed"),
       );
-      assert.strictEqual(transitions[0]?.message, "Starting secure provider sign in.");
+      assert.strictEqual(transitions[0]?.message, "Starting sign-in.");
       assert.strictEqual(transitions.at(-1)?.failedAfterSignIn, true);
     }),
   );

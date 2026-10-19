@@ -133,7 +133,7 @@ function snapshot(current: ProviderConnectionOperation | null = null): ServerPro
       canDisconnect: false,
       operation: current,
       // As the server publishes it, so the card can say so from the click.
-      startingMessage: "Starting Antigravity. This can take up to a minute.",
+      startingMessage: "Antigravity can take up to a minute to start.",
     },
   };
 }
@@ -196,7 +196,7 @@ describe("Antigravity sign-in page", () => {
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     renderProvider(snapshot(starting()));
     await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
-    expect(text()).toContain("Starting Antigravity. This can take up to a minute.");
+    expect(text()).toContain("Antigravity can take up to a minute to start.");
 
     closeView(snapshot(starting()));
     start.resolve(snapshot(mine()));
@@ -400,7 +400,7 @@ describe("Antigravity sign-in page", () => {
     await expect.element(page.getByText("Signed in, but Antigravity couldn’t start")).toBeVisible();
     // The next step, not the server's sentence again; and a retry, not a new Google sign-in.
     expect(text()).toContain(
-      "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing.",
+      "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing.",
     );
     await expect
       .element(page.getByRole("button", { name: "Try starting Antigravity again" }))

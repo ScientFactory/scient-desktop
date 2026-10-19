@@ -294,7 +294,9 @@ async function openFor(input: {
     if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
     toastManager.add({
       type: blocked ? "warning" : "error",
-      title: blocked ? "Sign-in page blocked" : "Couldn’t open the sign-in page",
+      title: blocked
+        ? `${input.providerName} sign-in page blocked`
+        : `${input.providerName} sign-in page didn’t open`,
       actionProps: { children: "Open", onClick: () => void openFor(input) },
     });
   }

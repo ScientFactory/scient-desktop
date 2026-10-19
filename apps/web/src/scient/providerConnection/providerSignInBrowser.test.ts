@@ -378,7 +378,7 @@ describe("provider sign-in page opening", () => {
       readonly title: string;
       readonly actionProps: { readonly children: string };
     };
-    expect(notice.title).toBe("Couldn’t open the sign-in page");
+    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
     expect(notice.actionProps.children).toBe("Open");
   });
   it("treats a blocked popup as failed and offers the user's own click", async () => {
@@ -393,7 +393,7 @@ describe("provider sign-in page opening", () => {
       readonly description: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice).toMatchObject({ type: "warning", title: "Sign-in page blocked" });
+    expect(notice).toMatchObject({ type: "warning", title: "Antigravity sign-in page blocked" });
     expect(notice.description).toBeUndefined();
     expect(notice.actionProps.children).toBe("Open");
 
@@ -420,7 +420,7 @@ describe("provider sign-in page opening", () => {
       readonly description: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice.title).toBe("Couldn’t open the sign-in page");
+    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
     expect(notice.description).toBeUndefined();
     expect(notice.actionProps.children).toBe("Open");
     notice.actionProps.onClick();

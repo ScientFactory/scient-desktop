@@ -802,7 +802,7 @@ describe("a sign-in this client just started", () => {
       methods: ["antigravity_google"],
       canDisconnect: false,
       operation: null,
-      startingMessage: "Starting Antigravity. This can take up to a minute.",
+      startingMessage: "Antigravity can take up to a minute to start.",
     },
   });
 
@@ -812,7 +812,7 @@ describe("a sign-in this client just started", () => {
     ).toMatchObject({
       kind: "signing-in",
       statusLabel: "Starting",
-      detail: "Starting Antigravity. This can take up to a minute.",
+      detail: "Antigravity can take up to a minute to start.",
       busy: true,
     });
     expect(providerSettingsLifecyclePresentation(signedOut, "Antigravity").statusLabel).toBe(
@@ -840,6 +840,8 @@ describe("a sign-in this client just started", () => {
       kind: "failed",
       statusLabel: "Setup failed",
       actionLabel: "Retry",
+      // The row's hover text is the user's sentence, not the server's.
+      detail: "Signed in, but Antigravity couldn’t start. Try again.",
     });
     expect(
       providerSettingsLifecyclePresentation(failed, "Antigravity", { startingHere: true })

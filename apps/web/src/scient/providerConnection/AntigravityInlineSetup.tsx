@@ -55,6 +55,7 @@ import {
   ProviderAuthorizationCodeDisclosure,
   ProviderAuthorizationCodeForm,
 } from "./ProviderAuthorizationCodeForm";
+import { DiagnosticsSettingsLink } from "./DiagnosticsSettingsLink";
 import { useProviderSignInBrowser } from "./providerSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -676,11 +677,16 @@ export function AntigravityInlineSetup(props: {
         ? props.provider.message
         : null;
     const signInGuidance =
-      (failedAfterSignIn
-        ? usesCredentials
-          ? "Your credentials were accepted. Try again, or check Settings > Diagnostics if it keeps failing."
-          : "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing."
-        : signInError) ??
+      (failedAfterSignIn ? (
+        <>
+          {usesCredentials
+            ? "Your credentials were accepted. Try again, or check "
+            : "Your Google account is connected. Try again, or check "}
+          <DiagnosticsSettingsLink /> if it keeps failing.
+        </>
+      ) : (
+        signInError
+      )) ??
       configurationWarning ??
       (usesCredentials
         ? "Connect with the credentials in the provider settings."

@@ -396,7 +396,7 @@ describe("row sign-in", () => {
       ...signedOut("antigravity", ["antigravity_google"]),
       connection: {
         ...signedOut("antigravity", ["antigravity_google"]).connection!,
-        startingMessage: "Starting Antigravity. This can take up to a minute.",
+        startingMessage: "Antigravity can take up to a minute to start.",
       },
     };
     // As the controller does: the start runs through the shared opener and is slow.
@@ -416,7 +416,7 @@ describe("row sign-in", () => {
     await expect.element(progress).toBeVisible();
     await progress.hover();
     await expect
-      .element(page.getByText("Starting Antigravity. This can take up to a minute."))
+      .element(page.getByText("Antigravity can take up to a minute to start."))
       .toBeVisible();
     resetProviderSignInBrowserForTests();
   });
@@ -440,11 +440,7 @@ describe("row sign-in", () => {
     await expect.element(retry).toBeVisible();
     await retry.hover();
     await expect
-      .element(
-        page.getByText(
-          "Antigravity authenticated, but could not initialize a session or load models.",
-        ),
-      )
+      .element(page.getByText("Signed in, but Provider couldn’t start. Try again."))
       .toBeVisible();
   });
 
@@ -456,7 +452,7 @@ describe("row sign-in", () => {
         ["antigravity_google"],
         waiting({
           status: "starting",
-          message: "Starting Antigravity. This can take up to a minute.",
+          message: "Antigravity can take up to a minute to start.",
         }),
       ),
       onManage,
@@ -465,7 +461,7 @@ describe("row sign-in", () => {
     await expect.element(progress).toBeVisible();
     await progress.hover();
     await expect
-      .element(page.getByText("Starting Antigravity. This can take up to a minute."))
+      .element(page.getByText("Antigravity can take up to a minute to start."))
       .toBeVisible();
     await progress.click();
     expect(onManage).toHaveBeenCalledTimes(1);

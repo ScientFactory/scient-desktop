@@ -427,7 +427,7 @@ describe("ProviderSettingsLifecycleAction", () => {
           status: "starting",
           startedAt: "2026-10-08T00:00:00.000Z",
           finishedAt: null,
-          message: "Starting Antigravity. This can take up to a minute.",
+          message: "Antigravity can take up to a minute to start.",
         },
       },
     });
