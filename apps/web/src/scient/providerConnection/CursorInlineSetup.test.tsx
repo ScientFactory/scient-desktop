@@ -328,8 +328,8 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain("Open Cursor sign-in");
     expect(markup).toContain("Open the sign-in page to continue.");
     expect(markup).toContain(">Cancel<");
-    // The status icon is the only spinner: no second one beside the title.
-    expect(markup.match(/animate-spin/g)).toHaveLength(1);
+    // Waiting on the user, not on Scient: a still icon, and the open action leads.
+    expect(markup).not.toContain("animate-spin");
   });
 
   it("shows model discovery while verifying a completed sign-in", () => {

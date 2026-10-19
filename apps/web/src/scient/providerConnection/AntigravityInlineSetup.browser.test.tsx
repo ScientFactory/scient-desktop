@@ -117,7 +117,13 @@ function snapshot(current: ProviderConnectionOperation | null = null): ServerPro
     models: [],
     slashCommands: [],
     skills: [],
-    connection: { methods: ["antigravity_google"], canDisconnect: false, operation: current },
+    connection: {
+      methods: ["antigravity_google"],
+      canDisconnect: false,
+      operation: current,
+      // As the server publishes it, so the card can say so from the click.
+      startingMessage: "Starting Antigravity. This can take up to a minute.",
+    },
   };
 }
 
@@ -178,7 +184,7 @@ describe("Antigravity sign-in page", () => {
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     renderProvider(snapshot(starting()));
     await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
-    expect(text()).toContain("This can take up to a minute.");
+    expect(text()).toContain("Starting Antigravity. This can take up to a minute.");
 
     closeView(snapshot(starting()));
     start.resolve(snapshot(mine()));
@@ -238,6 +244,8 @@ describe("Antigravity sign-in page", () => {
     await expect.element(page.getByText("Open the Google sign-in page to continue.")).toBeVisible();
     expect(text()).not.toContain("in your browser");
     expect(openPage).not.toHaveBeenCalled();
+    // Waiting on the user: a still icon, not a spinner.
+    expect(host!.querySelector(".animate-spin")).toBeNull();
 
     await page.getByRole("button", { name: "Open Google sign-in" }).click();
     await expect
@@ -298,7 +306,8 @@ describe("Antigravity sign-in page", () => {
 
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     await expect.element(page.getByRole("alert")).toBeVisible();
-    expect(text()).toContain("Your browser blocked the sign-in page. Open it to continue.");
+    await expect.element(page.getByText("Sign-in page blocked")).toBeVisible();
+    expect(text()).toContain("Open Google sign-in to continue.");
     expect(text()).not.toContain("could not open");
 
     // A real same-origin window; its navigation to Google is stopped at the link.
@@ -377,7 +386,13 @@ describe("Antigravity sign-in page", () => {
 
     renderProvider(failed(true));
     await expect.element(page.getByText("Signed in, but Antigravity couldn’t start")).toBeVisible();
-    expect(text()).toContain("could not initialize a session");
+    // The next step, not the server's sentence again; and a retry, not a new Google sign-in.
+    expect(text()).toContain(
+      "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing.",
+    );
+    await expect
+      .element(page.getByRole("button", { name: "Try starting Antigravity again" }))
+      .toBeVisible();
     expect(text()).not.toContain("didn’t finish");
 
     renderProvider(failed(false));

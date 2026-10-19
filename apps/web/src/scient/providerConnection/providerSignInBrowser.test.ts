@@ -362,7 +362,7 @@ describe("provider sign-in page opening", () => {
     await vi.waitFor(() => expect(toast.add).toHaveBeenCalledTimes(1));
     expect(open).not.toHaveBeenCalled();
     expect((toast.add.mock.calls[0]![0] as { readonly title: string }).title).toBe(
-      "Open the Antigravity sign-in page",
+      "Open the sign-in page to continue",
     );
     release("record");
     await settle();
@@ -481,8 +481,8 @@ describe("provider sign-in page opening", () => {
       readonly title: string;
       readonly actionProps: { readonly children: string };
     };
-    expect(notice.title).toBe("Couldn’t open the Antigravity sign-in page");
-    expect(notice.actionProps.children).toBe("Open sign-in page");
+    expect(notice.title).toBe("Couldn’t open the sign-in page");
+    expect(notice.actionProps.children).toBe("Open");
   });
 
   it("opens once when a second window claims after the first recorded its opening", async () => {
@@ -513,7 +513,7 @@ describe("provider sign-in page opening", () => {
       readonly title: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice.title).toBe("Open the Antigravity sign-in page");
+    expect(notice.title).toBe("Open the sign-in page to continue");
     notice.actionProps.onClick();
     await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   });
@@ -530,12 +530,9 @@ describe("provider sign-in page opening", () => {
       readonly description: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice).toMatchObject({
-      type: "warning",
-      title: "The Antigravity sign-in page was blocked",
-      description: "Your browser blocked the sign-in page. Open it to continue.",
-    });
-    expect(notice.description).not.toContain("could not open");
+    expect(notice).toMatchObject({ type: "warning", title: "Sign-in page blocked" });
+    expect(notice.description).toBeUndefined();
+    expect(notice.actionProps.children).toBe("Open");
 
     // The toast's button is a click, so the browser lets that open through.
     const link = { href: "", rel: "", click: vi.fn() };
@@ -560,9 +557,9 @@ describe("provider sign-in page opening", () => {
       readonly description: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice.title).toBe("Couldn’t open the Antigravity sign-in page");
-    expect(notice.description).not.toContain("private");
-    expect(notice.actionProps.children).toBe("Open sign-in page");
+    expect(notice.title).toBe("Couldn’t open the sign-in page");
+    expect(notice.description).toBeUndefined();
+    expect(notice.actionProps.children).toBe("Open");
     notice.actionProps.onClick();
     await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
   });

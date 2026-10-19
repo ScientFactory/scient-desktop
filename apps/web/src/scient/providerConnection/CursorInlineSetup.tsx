@@ -1,4 +1,8 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   DownloadIcon,
@@ -135,14 +139,22 @@ export function CursorInlineSetup(props: {
   );
   const browserOpening = browser.opening;
   const pageOpenFailure = browserOpening?.status === "failed" ? browserOpening.error : null;
+  const pageBlocked = pageOpenFailure !== null && browserOpening?.blocked === true;
+  // Nothing is open here, or opening failed: the next step is the user's.
+  const userMustOpen =
+    activeConnectionOperation?.authorizationUrlKind === "primary" &&
+    (activeConnectionOperation.status === "waiting_for_browser" ||
+      activeConnectionOperation.status === "waiting_for_device_code") &&
+    ((browserOpening === null && !browser.startedHere) || pageOpenFailure !== null);
   // What the waiting view may say about the Cursor page: only this client opens it.
-  const browserPageCopy =
-    pageOpenFailure ??
-    (browserOpening?.status === "opened"
-      ? "Complete sign-in in your browser."
-      : browserOpening !== null || browser.startedHere
-        ? "Opening the sign-in page in your browser…"
-        : "Open the sign-in page to continue.");
+  const browserPageCopy = pageBlocked
+    ? "Open the sign-in page to continue."
+    : (pageOpenFailure ??
+      (browserOpening?.status === "opened"
+        ? "Complete sign-in in your browser."
+        : browserOpening !== null || browser.startedHere
+          ? "Opening the sign-in page in your browser…"
+          : "Open the sign-in page to continue."));
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -376,7 +388,7 @@ export function CursorInlineSetup(props: {
         <AssistedSetupStatus
           body={
             starting
-              ? "Starting sign-in…"
+              ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
                 ? "Finding models for your account…"
                 : browserPageCopy
@@ -384,12 +396,20 @@ export function CursorInlineSetup(props: {
           icon={
             openFailure ? (
               <TriangleAlertIcon className="size-5 text-warning" />
+            ) : userMustOpen ? (
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             ) : (
               <LoaderIcon className="size-5 animate-spin text-primary" />
             )
           }
           role={openFailure ? "alert" : undefined}
-          title={verifying ? "Checking your account" : "Finish signing in"}
+          title={
+            verifying
+              ? "Checking your account"
+              : pageBlocked && !starting
+                ? "Sign-in page blocked"
+                : "Finish signing in"
+          }
         />
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
@@ -398,7 +418,7 @@ export function CursorInlineSetup(props: {
               onClick={() => void browser.reopen()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant={userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
               <ExternalLinkIcon aria-hidden />{" "}
               {(browserOpening === null && !browser.startedHere) || browserOpening?.blocked === true

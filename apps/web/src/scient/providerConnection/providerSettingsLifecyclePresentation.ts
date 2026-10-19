@@ -1,4 +1,9 @@
-import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type EnvironmentId,
+  type ProviderManagedRuntimeAction,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import {
   hasInstallableCompatibilityRemedy,
@@ -9,6 +14,7 @@ import {
   needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
 import { hasExternalProviderUpdate } from "./providerLifecycleActions";
+import { useProviderSignInStartingHere } from "./providerSignInBrowser";
 
 export interface ProviderSettingsVersionAdvisory {
   readonly title: string;
@@ -86,9 +92,28 @@ const RUNTIME_ACTION_LABELS = {
   remove: "Removing",
 } satisfies Record<ProviderManagedRuntimeAction, string>;
 
+/**
+ * {@link providerSettingsLifecyclePresentation}, showing a sign-in this client
+ * just started as starting from the click.
+ */
+export function useProviderSettingsLifecyclePresentation(
+  environmentId: EnvironmentId,
+  provider: ServerProvider | undefined,
+  displayName: string,
+): ProviderSettingsLifecyclePresentation {
+  const startingHere = useProviderSignInStartingHere({
+    environmentId,
+    instanceId: provider?.instanceId ?? ("" as ServerProvider["instanceId"]),
+  });
+  return providerSettingsLifecyclePresentation(provider, displayName, {
+    startingHere: provider !== undefined && startingHere,
+  });
+}
+
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
   displayName: string,
+  options: { readonly startingHere?: boolean } = {},
 ): ProviderSettingsLifecyclePresentation {
   if (!provider) {
     return {
@@ -259,6 +284,16 @@ export function providerSettingsLifecyclePresentation(
     };
   }
   const connectionOperation = provider.connection?.operation ?? null;
+  // This client's start is in flight and the server has not yet reported it.
+  if (options.startingHere && !isActiveProviderConnectionOperation(connectionOperation)) {
+    return {
+      kind: "signing-in",
+      statusLabel: "Starting",
+      detail: provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE,
+      ...action({ kind: "continue", label: "Continue" }),
+      busy: true,
+    };
+  }
   if (connectionOperation?.status === "failed") {
     const canRetrySignIn = (provider.connection?.methods.length ?? 0) > 0;
     return {

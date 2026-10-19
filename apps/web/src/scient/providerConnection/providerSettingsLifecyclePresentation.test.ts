@@ -790,3 +790,60 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 });
+
+describe("a sign-in this client just started", () => {
+  const signedOut = provider({
+    installed: true,
+    version: "1.1.17",
+    auth: { status: "unauthenticated", required: true },
+    status: "warning",
+    models: [],
+    connection: {
+      methods: ["antigravity_google"],
+      canDisconnect: false,
+      operation: null,
+      startingMessage: "Starting Antigravity. This can take up to a minute.",
+    },
+  });
+
+  it("reads as the server's starting state before the server reports it", () => {
+    expect(
+      providerSettingsLifecyclePresentation(signedOut, "Antigravity", { startingHere: true }),
+    ).toMatchObject({
+      kind: "signing-in",
+      statusLabel: "Starting",
+      detail: "Starting Antigravity. This can take up to a minute.",
+      busy: true,
+    });
+    expect(providerSettingsLifecyclePresentation(signedOut, "Antigravity").statusLabel).toBe(
+      "Sign-in required",
+    );
+  });
+
+  it("replaces an earlier failure while the retry starts", () => {
+    const failed = {
+      ...signedOut,
+      connection: {
+        ...signedOut.connection!,
+        operation: {
+          operationId: "connect-1",
+          method: "antigravity_google" as const,
+          status: "failed" as const,
+          startedAt: "2026-10-18T00:00:00.000Z",
+          finishedAt: "2026-10-18T00:01:00.000Z",
+          message: "Antigravity authenticated, but could not initialize a session or load models.",
+          failedAfterSignIn: true,
+        },
+      },
+    };
+    expect(providerSettingsLifecyclePresentation(failed, "Antigravity")).toMatchObject({
+      kind: "failed",
+      statusLabel: "Setup failed",
+      actionLabel: "Retry",
+    });
+    expect(
+      providerSettingsLifecyclePresentation(failed, "Antigravity", { startingHere: true })
+        .statusLabel,
+    ).toBe("Starting");
+  });
+});

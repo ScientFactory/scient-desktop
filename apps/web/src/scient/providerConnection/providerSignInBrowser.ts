@@ -260,12 +260,8 @@ function offerManualOpening(input: OpeningTarget) {
   if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
   toastManager.add({
     type: "info",
-    title: `Open the ${input.providerName} sign-in page`,
-    description: "Scient did not open it automatically in this window.",
-    actionProps: {
-      children: "Open sign-in page",
-      onClick: () => void openFor(input),
-    },
+    title: "Open the sign-in page to continue",
+    actionProps: { children: "Open", onClick: () => void openFor(input) },
   });
 }
 
@@ -436,14 +432,8 @@ async function openFor(input: {
     if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
     toastManager.add({
       type: blocked ? "warning" : "error",
-      title: blocked
-        ? `The ${input.providerName} sign-in page was blocked`
-        : `Couldn’t open the ${input.providerName} sign-in page`,
-      description: message,
-      actionProps: {
-        children: "Open sign-in page",
-        onClick: () => void openFor(input),
-      },
+      title: blocked ? "Sign-in page blocked" : "Couldn’t open the sign-in page",
+      actionProps: { children: "Open", onClick: () => void openFor(input) },
     });
   }
 }
@@ -605,6 +595,20 @@ function subscribe(listener: () => void) {
 }
 
 const readPendingKeys = () => pendingKeysSnapshot;
+
+/**
+ * Whether this client's start command for the instance is still in flight, so
+ * views can show it starting from the click, before the server's starting
+ * operation arrives.
+ */
+export function useProviderSignInStartingHere(key: ProviderSignInKey): boolean {
+  const { environmentId, instanceId } = key;
+  const read = useCallback(
+    () => startsInFlight.has(keyOf({ environmentId, instanceId })),
+    [environmentId, instanceId],
+  );
+  return useSyncExternalStore(subscribe, read, read);
+}
 
 /** The provider instances for which this client holds a sign-in request id. */
 export function usePendingProviderSignInKeys(): ReadonlyArray<ProviderSignInKey> {

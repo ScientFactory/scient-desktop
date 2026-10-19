@@ -38,6 +38,10 @@ vi.mock("./useProviderLifecycleController", () => ({
 }));
 
 vi.mock("./environmentLocality", () => ({ useEnvironmentIsOnThisDevice: () => true }));
+vi.mock("./providerSignInBrowser", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./providerSignInBrowser")>()),
+  useProviderSignInStartingHere: () => false,
+}));
 
 vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: commands.toast },

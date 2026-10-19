@@ -49,6 +49,7 @@ import {
   ScientGettingStartedShell,
 } from "../onboarding/ScientGettingStartedView";
 import { ProviderSettingsLifecycleAction } from "./ProviderSettingsLifecycleAction";
+import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
 
 function snapshot(): ServerProvider {
   return {
@@ -386,6 +387,65 @@ describe("row sign-in", () => {
     renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect.poll(() => onManage.mock.calls.length).toBe(1);
+  });
+
+  it("shows the server's starting state from the click", async () => {
+    resetProviderSignInBrowserForTests({ open: async () => undefined });
+    const onManage = vi.fn();
+    const provider = {
+      ...signedOut("antigravity", ["antigravity_google"]),
+      connection: {
+        ...signedOut("antigravity", ["antigravity_google"]).connection!,
+        startingMessage: "Starting Antigravity. This can take up to a minute.",
+      },
+    };
+    // As the controller does: the start runs through the shared opener and is slow.
+    commands.connect.mockImplementation(() =>
+      startProviderSignIn({
+        key: { environmentId: EnvironmentId.make("local"), instanceId: provider.instanceId },
+        providerName: "Provider",
+        previousOperationId: null,
+        start: () => new Promise<never>(() => undefined),
+        operationOf: () => null,
+      }),
+    );
+    renderRow(provider, onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+
+    const progress = page.getByRole("button", { name: "Starting Provider", exact: true });
+    await expect.element(progress).toBeVisible();
+    await progress.hover();
+    await expect
+      .element(page.getByText("Starting Antigravity. This can take up to a minute."))
+      .toBeVisible();
+    resetProviderSignInBrowserForTests();
+  });
+
+  it("retries a failed sign-in, with the reason on hover", async () => {
+    const onManage = vi.fn();
+    renderRow(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({
+          status: "failed",
+          finishedAt: "2026-10-18T00:01:00.000Z",
+          message: "Antigravity authenticated, but could not initialize a session or load models.",
+          failedAfterSignIn: true,
+        }),
+      ),
+      onManage,
+    );
+    const retry = page.getByRole("button", { name: "Retry", exact: true });
+    await expect.element(retry).toBeVisible();
+    await retry.hover();
+    await expect
+      .element(
+        page.getByText(
+          "Antigravity authenticated, but could not initialize a session or load models.",
+        ),
+      )
+      .toBeVisible();
   });
 
   it("shows a slow start on the row and opens the setup view from it", async () => {

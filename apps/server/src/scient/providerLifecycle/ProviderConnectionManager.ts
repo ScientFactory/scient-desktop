@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
   ProviderConnectionError,
   ProviderDriverKind,
   publishedProviderConnectionOperation,
@@ -407,7 +408,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           signInRequestId: input.signInRequestId,
           status: "starting",
           startedAt,
-          message: actions.startingMessage ?? "Starting secure provider sign in.",
+          message: actions.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE,
         }),
       })
       .pipe(

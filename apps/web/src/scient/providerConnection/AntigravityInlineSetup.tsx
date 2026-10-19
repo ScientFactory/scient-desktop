@@ -1,4 +1,8 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   CheckIcon,
@@ -70,9 +74,6 @@ type SignInInvocation = {
   operationId: string | null;
   operationObserved: boolean;
 };
-
-// The agent unpacks itself on every launch before it answers.
-const STARTING_COPY = "Antigravity is starting. This can take up to a minute.";
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -530,13 +531,21 @@ export function AntigravityInlineSetup(props: {
       !starting && (activeConnectionOperation?.status === "verifying" || usesCredentials);
     const openingFailure =
       !verifying && browserOpening?.status === "failed" ? browserOpening.error : null;
-    const waitingBody =
-      openingFailure ??
-      (browserOpening?.status === "opened"
-        ? "Complete the official Antigravity sign-in in your browser."
-        : browserOpening !== null || browser.startedHere
-          ? "Opening Google sign-in in your browser…"
-          : "Open the Google sign-in page to continue.");
+    const blocked = openingFailure !== null && browserOpening?.blocked === true;
+    // Nothing is open here, or opening failed: the next step is the user's.
+    const userMustOpen =
+      !starting &&
+      !verifying &&
+      activeConnectionOperation?.authorizationUrlKind === "primary" &&
+      ((browserOpening === null && !browser.startedHere) || openingFailure !== null);
+    const waitingBody = blocked
+      ? "Open Google sign-in to continue."
+      : (openingFailure ??
+        (browserOpening?.status === "opened"
+          ? "Complete the official Antigravity sign-in in your browser."
+          : browserOpening !== null || browser.startedHere
+            ? "Opening Google sign-in in your browser…"
+            : "Open the Google sign-in page to continue."));
     const waitingForAuthorizationCode =
       (activeConnectionOperation?.acceptsAuthorizationCode === true ||
         (activeConnectionOperation?.acceptsAuthorizationCode === undefined &&
@@ -548,7 +557,7 @@ export function AntigravityInlineSetup(props: {
         <AssistedSetupStatus
           body={
             starting
-              ? STARTING_COPY
+              ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
                 ? "Finding the models available to your account…"
                 : waitingBody
@@ -556,6 +565,8 @@ export function AntigravityInlineSetup(props: {
           icon={
             openingFailure ? (
               <TriangleAlertIcon className="size-5 text-warning" />
+            ) : userMustOpen ? (
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             ) : (
               <LoaderIcon className="size-5 animate-spin text-primary" />
             )
@@ -568,7 +579,9 @@ export function AntigravityInlineSetup(props: {
                 ? "Starting Google sign-in"
                 : verifying
                   ? "Checking your Google account"
-                  : "Finish signing in"
+                  : blocked
+                    ? "Sign-in page blocked"
+                    : "Finish signing in"
           }
         />
         {waitingForAuthorizationCode &&
@@ -609,13 +622,12 @@ export function AntigravityInlineSetup(props: {
                 onClick={() => void browser.reopen()}
                 size="sm"
                 type="button"
-                variant="ghost-muted"
+                variant={userMustOpen ? "ghost-primary" : "ghost-muted"}
               >
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
                   ? "Open sign-in help"
-                  : (browserOpening === null && !browser.startedHere) ||
-                      browserOpening?.blocked === true
+                  : (browserOpening === null && !browser.startedHere) || blocked
                     ? "Open Google sign-in"
                     : "Reopen Google sign-in"}
               </Button>
@@ -664,7 +676,11 @@ export function AntigravityInlineSetup(props: {
         ? props.provider.message
         : null;
     const signInGuidance =
-      signInError ??
+      (failedAfterSignIn
+        ? usesCredentials
+          ? "Your credentials were accepted. Try again, or check Settings > Diagnostics if it keeps failing."
+          : "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing."
+        : signInError) ??
       configurationWarning ??
       (usesCredentials
         ? "Connect with the credentials in the provider settings."
@@ -699,13 +715,25 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            aria-label={signInError ? "Try again to sign in to Antigravity" : undefined}
+            aria-label={
+              failedAfterSignIn
+                ? "Try starting Antigravity again"
+                : signInError
+                  ? "Try again to sign in to Antigravity"
+                  : undefined
+            }
             onClick={() => void startSignIn()}
             size="sm"
             type="button"
             variant="ghost-primary"
           >
-            {usesCredentials ? <LogInIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}{" "}
+            {failedAfterSignIn ? (
+              <RefreshCwIcon aria-hidden />
+            ) : usesCredentials ? (
+              <LogInIcon aria-hidden />
+            ) : (
+              <ExternalLinkIcon aria-hidden />
+            )}{" "}
             {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
           </Button>
         </AssistedSetupActions>

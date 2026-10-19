@@ -238,10 +238,19 @@ export const ProviderRuntimeSummary = Schema.Struct({
 });
 export type ProviderRuntimeSummary = typeof ProviderRuntimeSummary.Type;
 
+/** What a starting sign-in says when its provider names nothing of its own. */
+export const DEFAULT_PROVIDER_STARTING_MESSAGE = "Starting secure provider sign in.";
+
 export const ProviderConnectionSummary = Schema.Struct({
   methods: Schema.Array(ProviderConnectionMethod),
   canDisconnect: Schema.Boolean,
   operation: Schema.NullOr(ProviderConnectionOperation),
+  /**
+   * What the provider says while its sign-in starts, for a provider whose start
+   * takes noticeably long. Clients show it from the click, before the starting
+   * operation arrives.
+   */
+  startingMessage: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   runtime: Schema.optionalKey(ProviderRuntimeSummary),
   /**
    * The provider's own sign-in list. Present only for a provider that connects

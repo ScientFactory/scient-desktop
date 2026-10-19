@@ -1073,7 +1073,10 @@ lifecycle bridge can mark the failure `failedAfterSignIn`; the same module recor
 ACP request in the local trace. Opening sign-in pages for the client that started them, and the
 Settings row's one-click sign-in, live in Scient-owned web modules
 (`scient/providerConnection/providerSignInBrowser.ts`), with one marked mount of
-`ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`. See
+`ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
+`components/settings/ProviderInstanceCard.tsx` carries two marked blocks: its lifecycle
+presentation comes from a Scient hook, so a sign-in started here reads as starting from the
+click, and a failed sign-in or setup takes the error status dot. See
 [provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
