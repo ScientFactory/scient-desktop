@@ -1,5 +1,14 @@
 # Upstream maintenance
 
+Mobile diff grammar tests: `apps/mobile/src/features/diffs/nativeReviewDiffHighlighter.test.ts`
+disables Shiki's per-line wall-clock timeout in its real-highlighter test wrapper.
+The inherited 500ms cutoff can return partial tokens and incomplete grammar state
+under runner contention, so equivalent inputs can produce different highlighting.
+Keep this test-only override when syncing upstream: these tests cover grammar
+boundaries, line/character batching, and cancellation, not elapsed-time fallback.
+Production retains the timeout and its partial-highlighting behavior; changing
+that behavior needs a separate decision about responsiveness and grammar recovery.
+
 Scient owns desktop/web reader-position policy. The owners are Scient-only files in
 `apps/web/src/components/chat/`: `readerScrollPolicy.ts` (the reading end),
 `readerScrolling.ts` (reader input, the one position writer, per-frame bookkeeping and
