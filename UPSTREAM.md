@@ -187,7 +187,8 @@ Server tests stay out of the source checkout. A marked seam in `ProviderReplayHa
 its project root, as in production, and a project-less test thread to its disposable replay profile.
 Upstream leaves that cwd null, and `Orchestrator.ts` then checkpoints `process.cwd()`, the checkout.
 A marked line in `apps/server/vite.config.ts` adds `src/testUtils/checkoutIsolation.setup.ts`, which
-sets `GIT_CEILING_DIRECTORIES` to the checkout root so no test can reach the repository through Git.
+sets `GIT_CEILING_DIRECTORIES` to the checkout root, so Git started below the root cannot find the
+repository.
 Upstream's harness has the same fallback, so this is worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve

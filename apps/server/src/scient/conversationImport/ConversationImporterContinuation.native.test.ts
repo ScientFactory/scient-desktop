@@ -1118,14 +1118,13 @@ describe("native import continuation and forks", () => {
         const project = Option.getOrThrow(
           yield* Effect.flatMap(ProjectStoreV2, (projects) => projects.get(PROJECT_ID)),
         );
-        const scope = first.checkpointScopes.find(
-          (candidate) => candidate.runId === first.runs.at(-1)?.id,
-        );
+        const run = first.runs.at(-1);
+        const scope = first.checkpointScopes.find((candidate) => candidate.runId === run?.id);
         assert.strictEqual(scope?.cwd, project.workspaceRoot);
         const checkpoint = first.checkpoints.find(
-          (candidate) => candidate.scopeId === scope?.id && candidate.status === "ready",
+          (candidate) => candidate.id === run?.checkpointId,
         );
-        assert.isDefined(checkpoint);
+        assert.strictEqual(checkpoint?.status, "ready");
         assert.strictEqual(
           NodeChildProcess.spawnSync("git", ["rev-parse", "--verify", "--quiet", checkpoint!.ref], {
             cwd: project.workspaceRoot,
@@ -1170,6 +1169,55 @@ describe("native import continuation and forks", () => {
         );
       }),
     ),
+  );
+  it.live(
+    "continues an import whose project folder is not a repository, without a checkpoint",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          const folder = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+            prefix: "scient-native-import-plain-",
+          });
+          const now = DateTime.formatIso(yield* DateTime.now);
+          yield* (yield* EventSinkV2).commitProjectCommand({
+            commandId: CommandId.make("plain-folder-project"),
+            projectId: PROJECT_ID,
+            commandType: "project.meta-updated",
+            acceptedAt: yield* DateTime.now,
+            event: {
+              eventId: EventId.make("plain-folder-project"),
+              type: "project.meta-updated",
+              aggregateKind: "project",
+              aggregateId: PROJECT_ID,
+              occurredAt: now,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: { projectId: PROJECT_ID, workspaceRoot: folder, updatedAt: now },
+            },
+          });
+          const { lease } = yield* leaseFor(importFixture({ turns: 1 }));
+          const { result } = yield* importOnce(lease);
+          yield* continueImport(
+            result.threadId,
+            MessageId.make("plain-folder-continuation"),
+            "Continue without a repository",
+          );
+          const projection = yield* (yield* ProjectionStoreV2).getThreadProjection(result.threadId);
+          const run = projection.runs.at(-1);
+          assert.strictEqual(run?.status, "completed");
+          assert.strictEqual(
+            projection.checkpointScopes.find((scope) => scope.runId === run?.id)?.cwd,
+            folder,
+          );
+          assert.isFalse(
+            projection.checkpoints.some(
+              (checkpoint) => checkpoint.runId === run?.id && checkpoint.status === "ready",
+            ),
+          );
+        }),
+      ),
   );
   it.live(
     "forks an inherited imported answer after revert without losing history or provenance",
@@ -2010,8 +2058,11 @@ it.live(
         let failSend = true;
         let generation = 0;
         const resumed: string[] = [];
+        // The reopened runtime continues in the same project workspace, so it outlives the first.
+        const projectScope = yield* Scope.Scope;
         const options = {
           runtimeOptions,
+          projectScope,
           nativeIdFactory: () => `uncertain-native-${generation++}`,
           beforeFresh: () =>
             pauseReplacement

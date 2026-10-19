@@ -160,8 +160,10 @@ Replay threads resolve their workspace as production does: their worktree, else 
 root (a project-less test thread gets its disposable replay profile). Give a test that checks
 checkpoints a real repository with `checkpointWorkspace()` from
 `@t3tools/provider-testing/replayWorkspace`. Server tests run with `GIT_CEILING_DIRECTORIES` set to
-the checkout root (`apps/server/src/testUtils/checkoutIsolation.setup.ts`), so Git cannot find the
-source repository from inside it and no test can capture, restore or publish refs there.
+the checkout root (`apps/server/src/testUtils/checkoutIsolation.setup.ts`), so Git started anywhere
+below the root, `apps/server` included, cannot find the source repository: a test that falls back to
+its working directory cannot capture, restore or publish refs there. A test that names the checkout
+root itself, such as an opt-in live suite, still reaches it.
 
 Complete Electron's dependency installation before running concurrent desktop suites:
 `pnpm --filter @t3tools/desktop exec install-electron`.
