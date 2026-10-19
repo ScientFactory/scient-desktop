@@ -557,6 +557,12 @@ and
 are process-scoped services shared by every WebSocket client. Closing a dialog or disconnecting one
 client therefore does not duplicate or orphan an operation.
 
+A managed runtime change starts in a manager-owned fiber from the first step, including planning,
+which can take tens of seconds on a loaded Windows machine. A reload or disconnect only detaches the
+start request; cancel and manager teardown still end it. Before the operation is published, nothing
+can cancel it, so its first runtime-state read gives up after two minutes and releases the
+reservation.
+
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation
 because several provider instances may use one executable. Different providers can proceed
