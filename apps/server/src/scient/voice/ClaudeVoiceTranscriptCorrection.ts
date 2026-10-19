@@ -81,10 +81,10 @@ export function makeClaudeVoiceTranscriptCorrection(
           const catalog = yield* scopedModelCatalog;
           const model = resolveClaudeCatalogApiModelId(catalog, input.modelSelection);
           // Voice chooses its own effort; unknown models have no advertised support for that default.
-          const supportsEffort = getClaudeCatalogModelCapabilities(
-            catalog,
-            input.modelSelection.model,
-          ).optionDescriptors.some((option) => option.id === "effort");
+          const supportsEffort = (
+            getClaudeCatalogModelCapabilities(catalog, input.modelSelection.model)
+              .optionDescriptors ?? []
+          ).some((option) => option.id === "effort");
           const effort = supportsEffort
             ? normalizeClaudeCatalogEffort(
                 catalog,
