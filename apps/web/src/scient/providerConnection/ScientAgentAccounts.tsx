@@ -36,6 +36,7 @@ import {
   scientAgentAccounts,
   scientAgentAccountSections,
   scientAgentAnswerFor,
+  scientAgentAnswerInput,
 } from "./scientAgentAccountList";
 
 const ACCOUNT_METHOD = "scient_agent_account";
@@ -67,10 +68,15 @@ export function ScientAgentAccounts(props: {
     reportFailure: false,
   });
   const [query, setQuery] = useState("");
-  // What was typed belongs to the sign-in it was typed for. Another client can
-  // replace that sign-in with one for a different account; the draft must not
+  // What was typed belongs to the sign-in and question it was typed for.
+  // Another client can replace that sign-in with one for a different account,
+  // or answer the question so the agent asks the next; the draft must not
   // follow it there.
-  const [draft, setDraft] = useState<ScientAgentAnswerDraft>({ operationId: "", value: "" });
+  const [draft, setDraft] = useState<ScientAgentAnswerDraft>({
+    operationId: "",
+    questionId: undefined,
+    value: "",
+  });
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
   const { copyToClipboard } = useCopyToClipboard();
@@ -80,7 +86,8 @@ export function ScientAgentAccounts(props: {
   const active = isActiveProviderConnectionOperation(operation) ? operation : null;
   const failed = operation?.status === "failed" ? operation : null;
   const answer = scientAgentAnswerFor(draft, active);
-  const setAnswer = (value: string) => setDraft({ operationId: active?.operationId ?? "", value });
+  const setAnswer = (value: string) =>
+    setDraft({ operationId: active?.operationId ?? "", questionId: active?.questionId, value });
   // Without a list there is nothing to choose from, but a sign-in that is
   // running or just failed is still shown.
   if (listed === undefined && active === null && failed === null) return null;
@@ -149,7 +156,7 @@ export function ScientAgentAccounts(props: {
     setPending({ kind: "answer" });
     const result = await submitAnswer({
       environmentId: props.environmentId,
-      input: { instanceId, operationId: current.operationId, authorizationCode: answer },
+      input: scientAgentAnswerInput(instanceId, current, answer),
     });
     setPending(null);
     if (result._tag === "Failure") {
