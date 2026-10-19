@@ -241,7 +241,18 @@ export function useBoundedAnswerFollow({
       if (delta <= 0.5) {
         // Nothing to reveal now. More may arrive while the prompt's run works,
         // or while its last lines appear; the reveal ends once they are shown.
-        if (answerSettled && !answerRevealing()) finish();
+        if (answerSettled && !answerRevealing()) {
+          (globalThis as any).__followFinish = {
+            promptTextTop: promptTextTop - viewportRect.top,
+            answerMeasured: answer !== null,
+            answerTop: rect.top - viewportRect.top,
+            answerBottom: rect.bottom - viewportRect.top,
+            delta,
+            scrollTop: viewport.scrollTop,
+            scrollMax: viewport.scrollHeight - viewport.clientHeight,
+          };
+          finish();
+        }
         return;
       }
       const before = viewport.scrollTop;
