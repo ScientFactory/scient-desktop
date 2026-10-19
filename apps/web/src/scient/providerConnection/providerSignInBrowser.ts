@@ -166,9 +166,52 @@ export type ProviderSignInPageClaimer = (
 
 let claimPage: ProviderSignInPageClaimer | null = null;
 
-/** Registered by the app-level coordinator, which holds the command. */
+/**
+ * The operations each provider instance showed last, from snapshots and start
+ * replies. A claim answered after the operation moved on is checked against
+ * them, and a claimer registered after a snapshot arrived replays them.
+ */
+const latestOperations = new Map<
+  string,
+  {
+    readonly key: ProviderSignInKey;
+    readonly providerName: string;
+    readonly operations: ReadonlyArray<ProviderConnectionOperation>;
+  }
+>();
+
+function noteLatestOperations(
+  key: ProviderSignInKey,
+  providerName: string,
+  operations: ReadonlyArray<ProviderConnectionOperation | null | undefined>,
+) {
+  latestOperations.set(keyOf(key), {
+    key,
+    providerName,
+    operations: operations.filter((operation) => operation !== null && operation !== undefined),
+  });
+}
+
+function latestOperation(key: ProviderSignInKey, operationId: string) {
+  return latestOperations
+    .get(keyOf(key))
+    ?.operations.find((operation) => operation.operationId === operationId);
+}
+
+/**
+ * Registered by the app-level coordinator, which holds the command. Operations
+ * already seen while it was missing are considered again, so the order in which
+ * the coordinator and its observers mount does not matter.
+ */
 export function setProviderSignInPageClaimer(claimer: ProviderSignInPageClaimer | null): void {
   claimPage = claimer;
+  if (claimer === null) return;
+  for (const latest of latestOperations.values()) {
+    if (!pending.has(keyOf(latest.key))) continue;
+    for (const operation of latest.operations) {
+      void considerOwnOperation(latest.key, operation, latest.providerName);
+    }
+  }
 }
 
 /** One claim in flight per operation; a later snapshot asks again only after it settles. */
@@ -355,8 +398,19 @@ async function considerOwnOperation(
     claimsInFlight.delete(openingKey);
   }
   if (granted === undefined) return;
+  // The operation may have ended or moved on while the claim was answered.
+  // Nothing newer known for the instance: the operation as it was claimed.
+  const current = latestOperations.has(keyOf(key))
+    ? latestOperation(key, operation.operationId)
+    : operation;
+  const stillWaiting =
+    current !== undefined &&
+    holds(key, requestId) &&
+    current.signInRequestId === requestId &&
+    opensPage(current) &&
+    current.authorizationUrl === operation.authorizationUrl;
   release(key, requestId);
-  if (granted) {
+  if (granted && stillWaiting) {
     await openFor({
       key,
       operationId: operation.operationId,
@@ -377,12 +431,11 @@ export function observeProviderSignInSnapshots(
   dropExpired();
   for (const provider of providers) {
     const key = { environmentId, instanceId: provider.instanceId };
-    if (!pending.has(keyOf(key))) continue;
     const providerName = provider.displayName?.trim() || String(provider.driver);
-    for (const operation of [
-      provider.connection?.operation,
-      provider.connection?.accountOperation,
-    ]) {
+    const operations = [provider.connection?.operation, provider.connection?.accountOperation];
+    noteLatestOperations(key, providerName, operations);
+    if (!pending.has(keyOf(key))) continue;
+    for (const operation of operations) {
       if (operation) void considerOwnOperation(key, operation, providerName);
     }
   }
@@ -426,6 +479,10 @@ export async function startProviderSignIn<T>(input: {
     notify();
   }
   const operation = input.operationOf(result);
+  // A reply is no newer than a snapshot that already shows its operation.
+  if (operation && latestOperation(input.key, operation.operationId) === undefined) {
+    noteLatestOperations(input.key, input.providerName, [operation]);
+  }
   if (operation?.signInRequestId !== undefined) {
     // A start this client joined to one already in flight shares that start's
     // operation, so its own id has nothing left to identify.
@@ -550,6 +607,7 @@ export function resetProviderSignInBrowserForTests(
   surfaces.clear();
   startsInFlight.clear();
   claimsInFlight.clear();
+  latestOperations.clear();
   if (options.reload) hydratePending();
   else {
     pending.clear();

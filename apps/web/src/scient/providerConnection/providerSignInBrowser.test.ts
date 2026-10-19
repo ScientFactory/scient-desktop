@@ -295,16 +295,54 @@ describe("provider sign-in page opening", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("waits for the claim command before claiming", async () => {
+  it("claims the operations it already saw once the claim command arrives", async () => {
     resetProviderSignInBrowserForTests({ open, now: () => clock, claim: null });
     const id = await startWithLostReply();
     observe(operation({ signInRequestId: id }));
     await settle();
     expect(open).not.toHaveBeenCalled();
+    // No further snapshot: registering the command replays what was seen.
     setProviderSignInPageClaimer(server.claim);
-    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+    setProviderSignInPageClaimer(server.claim);
     await settle();
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["cancelled", "failed", "connected"] as const)(
+    "does not open a page granted after its operation was %s",
+    async (status) => {
+      let grant!: (granted: boolean) => void;
+      server.claim.mockImplementationOnce(
+        () => new Promise<boolean>((resolve) => (grant = resolve)),
+      );
+      const id = await startWithLostReply();
+      observe(operation({ signInRequestId: id }));
+      await settle();
+      expect(server.claim).toHaveBeenCalledTimes(1);
+
+      // The operation ends while the claim is still being answered.
+      observe(operation({ status, signInRequestId: id }));
+      grant(true);
+      await settle();
+      expect(open).not.toHaveBeenCalled();
+      expect(toast.add).not.toHaveBeenCalled();
+      expect(storage.getItem(STORAGE_KEY)).toBeNull();
+    },
+  );
+
+  it("does not open a page granted after its operation was replaced", async () => {
+    let grant!: (granted: boolean) => void;
+    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
+    const id = await startWithLostReply();
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
+    grant(true);
+    await settle();
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("drops ids of expired operations", async () => {

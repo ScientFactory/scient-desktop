@@ -157,7 +157,9 @@ a `primary` URL, the client asks the server to claim the opening
 reply lost to a brief disconnect does not lose the opening.
 `ProviderSignInPageCoordinator`, mounted once in the root route, lends the opener
 that command and watches the provider snapshots of the environments where this
-client holds an id. The connection manager grants the claim once per operation,
+client holds an id; registering the command replays the operations already seen,
+so the order in which they mount does not matter. A grant that arrives after its
+operation ended or was replaced opens nothing. The connection manager grants the claim once per operation,
 under the operation's transition lock, and only to the request id stamped on the
 current operation while it waits on that page: windows that share a copied
 session, a reload after a grant, or a repeated snapshot are denied, and clients
