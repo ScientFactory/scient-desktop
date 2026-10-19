@@ -1123,6 +1123,18 @@ presentation comes from a Scient hook (its import and its call), so a sign-in st
 as starting from the click, and a failed sign-in or setup takes the error status dot. See
 [provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
 
+One marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps an agent that owns
+its process tree attached on Windows: `ownDetachedProcessGroup` spawns detached only off Windows,
+where `taskkill /T` already stops the tree. A detached agent has no console, so every console
+program it starts opens a visible window; Antigravity's own inner process is one. This is an
+upstream bug (T3's Grok uses the same path) worth proposing. In Scient's retained
+`AntigravityInstallation.ts`, a runtime check that runs out of time reports that instead of the
+install's catch-all disk-space advice.
+The install check, model refresh (`AntigravityDriver.ts`) and sign-out (`AntigravityAuth.ts`)
+allow 5 minutes instead of T3's 90 seconds, each in a marked line: the
+official Windows agent unpacks about 7,300 files (320 MiB) into a fresh folder on every start, which
+took about 35 s on a development machine and can exceed 90 s on slower disks.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
