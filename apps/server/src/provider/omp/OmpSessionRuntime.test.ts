@@ -1375,12 +1375,14 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
-  it.effect("a failed call's late cleanup stays out of later turns that lack the call", () =>
+  /**
+   * A turn whose foreground bash call `call-1` is aborted. It returns before
+   * its cleanup's last frame (`failedCleanup`); the next turn then begins.
+   */
+  const failedTurn = (h: Effect.Success<ReturnType<typeof wireHarness>>) =>
     Effect.gen(function* () {
-      const h = yield* wireHarness();
       yield* h.runtime.begin("first");
       yield* h.runtime.accepted("prompt-1", true);
-      // An aborted foreground bash call returns before its cleanup's last frame.
       yield* h.wire.send(
         { type: "agent_start" },
         { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
@@ -1399,15 +1401,37 @@ describe("Oh My Pi session runtime outcomes", () => {
       yield* h.settleFrames;
       yield* h.runtime.begin("second");
       yield* h.runtime.accepted("prompt-2", true);
-      const cleanup = {
-        type: "tool_execution_update",
-        toolCallId: "call-1",
-        toolName: "bash",
-        partialResult: { content: [{ type: "text", text: "[Command cancelled]" }], details: {} },
-      };
+    });
+
+  const failedCleanup = {
+    type: "tool_execution_update",
+    toolCallId: "call-1",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "[Command cancelled]" }], details: {} },
+  };
+
+  /** An update of a foreground call: OMP sends its output without a job id. */
+  const ownUpdate = (toolCallId: string, toolName: string, output: string) => ({
+    type: "tool_execution_update",
+    toolCallId,
+    toolName,
+    partialResult: { content: [{ type: "text", text: output }], details: {} },
+  });
+
+  const toolRows = (updates: ReadonlyArray<OmpSessionUpdate>) =>
+    updates.flatMap((update) =>
+      update.type === "tool"
+        ? [{ phase: update.phase, name: update.name, detail: update.detail }]
+        : [],
+    );
+
+  it.effect("a failed call's late cleanup stays out of later turns that lack the call", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* failedTurn(h);
       yield* h.wire.send(
         { type: "agent_start" },
-        cleanup,
+        failedCleanup,
         { type: "tool_execution_update", toolCallId: "fresh-tool", toolName: "read" },
         // A call of this turn under the same id has its own updates shown.
         { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
@@ -1420,6 +1444,114 @@ describe("Oh My Pi session runtime outcomes", () => {
         { toolCallId: "call-1", phase: "started" },
         { toolCallId: "call-1", phase: "updated" },
       ]);
+    }),
+  );
+
+  it.effect(
+    "a failed call's late cleanup stays out of a later call of another tool under its id",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* wireHarness();
+        yield* failedTurn(h);
+        yield* h.wire.send(
+          { type: "agent_start" },
+          { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+          ownUpdate("call-1", "read", "first lines"),
+          // Every frame names its call's tool, so the cleanup is told apart.
+          failedCleanup,
+          ownUpdate("call-1", "read", "more lines"),
+          {
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read",
+            result: { content: [{ type: "text", text: "all lines" }], details: {} },
+          },
+        );
+        const produced = yield* h.settleFrames;
+        yield* Scope.close(h.scope, Exit.void);
+        expect(toolRows(produced)).toEqual([
+          { phase: "started", name: "read", detail: undefined },
+          { phase: "updated", name: "read", detail: "first lines" },
+          { phase: "updated", name: "read", detail: "more lines" },
+          { phase: "completed", name: "read", detail: "all lines" },
+        ]);
+      }),
+  );
+
+  it.effect("a later call of the failed call's tool under its id shows its own output", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* failedTurn(h);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
+        ownUpdate("call-1", "bash", "partial output"),
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolRows(produced)).toEqual([
+        { phase: "started", name: "bash", detail: undefined },
+        { phase: "updated", name: "bash", detail: "partial output" },
+      ]);
+    }),
+  );
+
+  it.effect("a job that went quiet ages out of the job memory while another keeps reporting", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      // Each task is queued, then cancelled before it starts: OMP sends it no last frame.
+      const queuedTasks = (from: number, count: number) =>
+        Array.from({ length: count }, (_, index) => `task-${from + index}`).flatMap(
+          (toolCallId) => [
+            { type: "tool_execution_start", toolCallId, toolName: "task" },
+            {
+              type: "tool_execution_end",
+              toolCallId,
+              toolName: "task",
+              result: { details: { async: { state: "running", jobId: toolCallId, type: "task" } } },
+            },
+          ],
+        );
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "long", toolName: "bash" },
+        backgroundedEnd("long", "job-long"),
+        ...queuedTasks(0, 200),
+        jobUpdate("long", "running", "first output", "job-long"),
+        ...queuedTasks(200, 100),
+        jobUpdate("long", "running", "more output", "job-long"),
+      );
+      const first = yield* h.settleFrames;
+      yield* h.wire.send(
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "queued" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      yield* h.settleFrames;
+      // The long job still runs, so the session never settles.
+      yield* h.runtime.begin("second");
+      yield* h.runtime.accepted("prompt-2", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        jobUpdate("long", "running", "later output", "job-long"),
+        { type: "tool_execution_update", toolCallId: "long", toolName: "bash" },
+        { type: "tool_execution_update", toolCallId: "task-0", toolName: "read" },
+        { type: "tool_execution_update", toolCallId: "task-299", toolName: "read" },
+      );
+      const second = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(
+        toolRows(first.filter((update) => update.type === "tool" && update.toolCallId === "long")),
+      ).toEqual([
+        { phase: "started", name: "bash", detail: undefined },
+        { phase: "completed", name: "bash", detail: undefined },
+        { phase: "updated", name: "bash", detail: "first output" },
+        { phase: "updated", name: "bash", detail: "more output" },
+      ]);
+      // The oldest quiet task no longer holds its id; the newest still does, and so does the long job.
+      expect(toolFrames(second)).toEqual([{ toolCallId: "task-0", phase: "updated" }]);
     }),
   );
 
