@@ -87,9 +87,9 @@ ends the launch. Logs rotate at 10 MB and keep three files at
 
 Voice uses the machine's shared runtime (`pnpm voice:runtime:stage` once per
 machine). On Windows, allow microphone access for desktop apps in Settings >
-Privacy & security > Microphone. Voice on Windows also needs `vcomp140.dll`
-from the Microsoft Visual C++ Redistributable (x64); staging says so when it is
-missing.
+Privacy & security > Microphone. Staging voice on Windows needs Visual Studio
+2022 or later with the C++ desktop workload (Build Tools are enough); see
+[Scient voice](../internals/scient-voice.md).
 
 ## How It Stays Safe
 

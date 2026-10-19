@@ -6,7 +6,6 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
 
@@ -48,16 +47,12 @@ export function useEffectiveActiveProviderSkills(input: {
       }),
     }),
   ).data;
-  return useMemo(
-    () =>
-      mergeEffectiveProviderSkills({
-        provider: selectedProvider,
-        providerSkills: activeProviderStatus
-          ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
-          : EMPTY_PROVIDER_SKILLS,
-        inventory: scientSkills,
-        includeContextualProviderSkills: true,
-      }),
-    [activeProviderStatus, gitCwd, scientSkills, selectedProvider],
-  );
+  return mergeEffectiveProviderSkills({
+    provider: selectedProvider,
+    providerSkills: activeProviderStatus
+      ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+      : EMPTY_PROVIDER_SKILLS,
+    inventory: scientSkills,
+    includeContextualProviderSkills: true,
+  });
 }

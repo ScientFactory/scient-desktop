@@ -1,5 +1,5 @@
 import type { ProviderConnectionOperation } from "@t3tools/contracts";
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { openProviderSignInPageByHand } from "./providerSignInFlow";
 import { type ProviderSignInOpening, useProviderSignInOpening } from "./providerSignInOpenings";
@@ -31,18 +31,18 @@ export function useProviderSignInBrowser(
   const requestId = operation?.signInRequestId;
   const url = operation?.authorizationUrl ?? null;
   const opening = useProviderSignInOpening(key, operationId);
-  const readStartedHere = useCallback(() => {
+  const readStartedHere = () => {
     const signInKey = { environmentId, instanceId };
     return requestId !== undefined
       ? holdsSignInRequest(signInKey, requestId)
       : isProviderSignInStartingHere(signInKey);
-  }, [environmentId, instanceId, requestId]);
+  };
   const startedHere = useSyncExternalStore(
     subscribeToProviderSignIn,
     readStartedHere,
     readStartedHere,
   );
-  const reopen = useCallback(async () => {
+  const reopen = async () => {
     if (operationId === null || url === null) return;
     await openProviderSignInPageByHand({
       key: { environmentId, instanceId },
@@ -51,7 +51,7 @@ export function useProviderSignInBrowser(
       url,
       providerName,
     });
-  }, [environmentId, instanceId, operationId, providerName, requestId, url]);
+  };
   return { opening, startedHere, reopen };
 }
 

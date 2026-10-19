@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import {
   EnvironmentId,
@@ -7,14 +8,14 @@ import {
   type OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, useCallback, useLayoutEffect, useRef } from "react";
+import { createRef, useLayoutEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
-import { useTimelineWorking } from "./timelineWorkingState";
+import { deriveTimelineWorking } from "./timelineWorkingState";
 import { CHAT_TIMELINE_ANCHOR_OFFSET, readTimelinePosition } from "./timelineScrollAnchoring";
 
 /*
@@ -171,14 +172,11 @@ function Chat({
   const follow = useResponseFollow({ threadKey, runs, messages, loaded: true });
   const { start, followSent, clear } = follow;
   const atEndRef = useRef(true);
-  const readerAtEnd = useCallback(() => atEndRef.current, []);
-  const followDelivered = useCallback(
-    (promptId: MessageId) => {
-      clear();
-      start(promptId, true);
-    },
-    [clear, start],
-  );
+  const readerAtEnd = useStableCallback(() => atEndRef.current);
+  const followDelivered = useStableCallback((promptId: MessageId) => {
+    clear();
+    start(promptId, true);
+  });
   useQueuedDeliveryFollow({
     threadKey,
     latestPrompt: messages.findLast((entry) => entry.role === "user") ?? null,
@@ -210,7 +208,7 @@ function Chat({
   const sendBusy = [...chat.sending].some(
     (promptId) => !runs.some((entry) => entry.userMessageId === promptId),
   );
-  const timelineWorking = useTimelineWorking({
+  const timelineWorking = deriveTimelineWorking({
     threadWorking: running !== undefined || sendBusy,
     onlySendBusy: sendBusy && running === undefined,
     dispatchBaselineUserMessageId: null,

@@ -4,7 +4,6 @@ import type {
   EnvironmentId,
   ProjectFileErrorReason,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { chatFileLinkResolveInput } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
@@ -73,20 +72,21 @@ export function useMissingFileChoices(input: {
   readonly failureReason: ProjectFileErrorReason | null;
 }): { readonly absolutePath: string | null } & MissingFileChoices {
   const { cwd, environmentId, path } = input;
-  const absolutePath = useMemo(() => {
+  const absolutePath = (() => {
     if (path === null || path.length === 0) return null;
     if (isAbsolutePath(path)) return collapseAbsoluteFilePath(path);
     return cwd ? collapseAbsoluteFilePath(workspaceFileHostPath(path, cwd)) : null;
-  }, [cwd, path]);
-  const resolveInput = useMemo(
-    () => missingFileResolveInput({ absolutePath, cwd, failureReason: input.failureReason }),
-    [absolutePath, cwd, input.failureReason],
-  );
+  })();
+  const resolveInput = missingFileResolveInput({
+    absolutePath,
+    cwd,
+    failureReason: input.failureReason,
+  });
   const resolution = useEnvironmentQuery(
     resolveInput === null
       ? null
       : environmentFileLinkResolution({ environmentId, input: resolveInput }),
   );
-  const choices = useMemo(() => missingFileChoices(resolution.data), [resolution.data]);
+  const choices = missingFileChoices(resolution.data);
   return { absolutePath, ...choices };
 }

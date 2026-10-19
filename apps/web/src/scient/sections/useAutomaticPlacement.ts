@@ -1,5 +1,6 @@
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 
 import {
   EMPTY_PLACEMENT,
@@ -19,6 +20,36 @@ function load(key: string) {
   }
 }
 
+type SavedPlacement = { key: string; state: ReturnType<typeof load> };
+type PlacementAction =
+  | { type: "disabled"; key: string }
+  | {
+      type: "snapshot";
+      key: string;
+      groups: readonly PlacementInput[];
+      openKey: string | null;
+      now: number;
+      isFrozen: (key: string) => boolean;
+    }
+  | { type: "manual"; saved: SavedPlacement };
+
+function reduceSavedPlacement(previous: SavedPlacement, action: PlacementAction): SavedPlacement {
+  if (action.type === "manual") return action.saved;
+  const state =
+    action.type === "disabled"
+      ? EMPTY_PLACEMENT
+      : reconcilePlacement(
+          previous.key === action.key ? previous.state : load(action.key),
+          action.groups,
+          action.openKey,
+          action.now,
+          action.isFrozen,
+        );
+  return previous.key === action.key && previous.state === state
+    ? previous
+    : { key: action.key, state };
+}
+
 export function useAutomaticPlacement(input: {
   readonly scope: string;
   readonly groups: readonly PlacementInput[];
@@ -30,23 +61,26 @@ export function useAutomaticPlacement(input: {
 }) {
   const enabled = useAutomaticPlacementPreference((state) => state.enabled);
   const storageKey = `scient:sidebar:placement-order:${input.scope}`;
-  const [saved, setSaved] = useState(() => ({ key: storageKey, state: load(storageKey) }));
+  const [saved, dispatchPlacement] = useReducer(reduceSavedPlacement, storageKey, (key) => ({
+    key,
+    state: load(key),
+  }));
   const [paused, setPaused] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
   // Shell updates that do not change placement must not reset timers or write storage.
   const signature = JSON.stringify(input.groups);
-  const groups = useMemo(() => JSON.parse(signature) as PlacementInput[], [signature]);
+  const groups = JSON.parse(signature) as PlacementInput[];
   const knownSignature = JSON.stringify(input.knownKeys ?? null);
-  const knownKeys = useMemo(() => {
+  const knownKeys = (() => {
     const keys = JSON.parse(knownSignature) as string[] | null;
     return keys === null ? null : new Set(keys);
-  }, [knownSignature]);
+  })();
   const frozenSignature = JSON.stringify(input.frozenEnvironmentIds ?? []);
-  const isFrozen = useMemo(() => {
+  const isFrozen = (() => {
     const frozen = new Set(JSON.parse(frozenSignature) as string[]);
     return (key: string) =>
       frozen.size > 0 && frozen.has(parseScopedThreadKey(key)?.environmentId ?? "");
-  }, [frozenSignature]);
+  })();
   const state = !enabled || saved.key !== storageKey ? EMPTY_PLACEMENT : saved.state;
   const writes = useRef(new Map<string, { before: string | null; after: string }>());
   const moves = useRef(
@@ -63,11 +97,7 @@ export function useAutomaticPlacement(input: {
     if (!enabled) {
       writes.current.clear();
       moves.current.clear();
-      setSaved((previous) =>
-        previous.key === storageKey && previous.state === EMPTY_PLACEMENT
-          ? previous
-          : { key: storageKey, state: EMPTY_PLACEMENT },
-      );
+      dispatchPlacement({ type: "disabled", key: storageKey });
       return;
     }
     if (paused || !input.ready) return;
@@ -111,14 +141,13 @@ export function useAutomaticPlacement(input: {
         ],
       }));
     }
-    setSaved((previous) => {
-      const existing = previous.key === storageKey ? previous.state : load(storageKey);
-      const next = enabled
-        ? reconcilePlacement(existing, synchronized, input.openKey, now, isFrozen)
-        : EMPTY_PLACEMENT;
-      return previous.key === storageKey && previous.state === next
-        ? previous
-        : { key: storageKey, state: next };
+    dispatchPlacement({
+      type: "snapshot",
+      key: storageKey,
+      groups: synchronized,
+      openKey: input.openKey,
+      now,
+      isFrozen,
     });
   }, [
     clock,
@@ -159,7 +188,7 @@ export function useAutomaticPlacement(input: {
     return () => window.clearTimeout(timer);
   }, [enabled, input.ready, paused, state.groups, storageKey]);
 
-  const onManualPlacement = useCallback(
+  const onManualPlacement = useStableCallback(
     (
       groupId: string,
       order: readonly string[],
@@ -206,12 +235,14 @@ export function useAutomaticPlacement(input: {
         Date.now(),
         current.isFrozen,
       );
-      setSaved({
-        key: current.storageKey,
-        state: manuallyPlaceThread(reconciled, groupId, order, key, inputs, current.isFrozen),
+      dispatchPlacement({
+        type: "manual",
+        saved: {
+          key: current.storageKey,
+          state: manuallyPlaceThread(reconciled, groupId, order, key, inputs, current.isFrozen),
+        },
       });
     },
-    [],
   );
 
   return { enabled, state, onManualPlacement, onInteractionChange: setPaused };

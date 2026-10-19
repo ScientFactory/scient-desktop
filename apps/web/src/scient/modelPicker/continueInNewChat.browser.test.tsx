@@ -21,7 +21,7 @@ import { ProviderOnboardingPicker } from "../providerConnection/ProviderOnboardi
 import { ProviderModelPicker } from "../../components/chat/ProviderModelPicker";
 import {
   hasCommittedConversationMessages,
-  useComposerModelPickerFork,
+  createComposerModelPickerFork,
 } from "../../components/chat/composerModelPickerFork";
 import { ScientForkWorkspaceModeDialog } from "../../components/chat/scient-fork/ScientForkWorkspaceModeDialog";
 import { DraftId, useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
@@ -66,7 +66,7 @@ function ComposerPickerParent(props: {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selection, setSelection] = useState({ instanceId: codexId, model: "gpt-model" });
   const draft = useComposerThreadDraft(draftTarget);
-  const continueInNewChat = useComposerModelPickerFork({
+  const continueInNewChat = createComposerModelPickerFork({
     hasConversationMessages: hasCommittedConversationMessages(props.history),
     onForkConversation: (settings) => {
       forkRequested(settings);

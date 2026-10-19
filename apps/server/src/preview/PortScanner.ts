@@ -733,11 +733,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
-      if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
-        // SCIENT-FORK:START explicit-url-authority — no discovered listener list.
-        return { configured: new Map() } satisfies WebProbeSnapshot;
-        // SCIENT-FORK:END explicit-url-authority
-      }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
       const runNetstat = (protocol: "tcp" | "tcpv6") =>
         processRunner.run({

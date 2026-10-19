@@ -79,7 +79,7 @@ export function PythonToolkitSettings({
       updated.delete(next.toolkitId);
       return updated;
     });
-    try {
+    return await (async () => {
       const accepted = await runtime.act("update", {
         toolkitChange: { toolkitId: next.toolkitId, action },
       });
@@ -87,14 +87,14 @@ export function PythonToolkitSettings({
         setRequestErrors((current) =>
           new Map(current).set(next.toolkitId, { intent: next, action }),
         );
-    } finally {
+    })().finally(() => {
       requests.current.delete(next.toolkitId);
       setPendingActions((current) => {
         const updated = new Map(current);
         updated.delete(next.toolkitId);
         return updated;
       });
-    }
+    });
   };
   return (
     <>

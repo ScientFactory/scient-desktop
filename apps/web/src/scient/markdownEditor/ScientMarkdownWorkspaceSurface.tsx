@@ -1,3 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffectEvent } from "react";
 import {
   useEffect,
   useLayoutEffect,
@@ -103,12 +105,14 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
-  bindingsRef.current = props;
+  useLayoutEffect(() => {
+    bindingsRef.current = props;
+  });
   const previousThemeRef = useRef(props.resolvedTheme);
   const previousWorkspaceResourceIndexKeyRef = useRef(props.workspaceResourceIndexKey);
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
-  const pendingEditorOwner = useRef({}).current;
+  const [pendingEditorOwner] = useState(() => ({}));
   const retainedInput = useSyncExternalStore(
     props.persistence.subscribe,
     props.persistence.getPendingInput,
@@ -136,6 +140,32 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     props.persistence.getSnapshot,
   );
   const appliedVersionRef = useRef(persistenceSnapshot.editVersion);
+  const onWritebackRefusal = useStableCallback((pending: ScientMarkdownPendingWriteback | null) => {
+    const accepted = bindingsRef.current.persistence.retainPendingInput(
+      pending ? { message: pending.message, payload: pending } : null,
+      pendingEditorOwner,
+    );
+    if (accepted && activeViewRef.current) setPendingWriteback(pending);
+  });
+  const onUserSourceChange = useStableCallback((source: string) => {
+    if (!activeViewRef.current) return;
+    // First real edit reveals the formatting controls.
+    setChromeExpanded(true);
+    const lease = bindingsRef.current.persistence;
+    const accepted = lease.change(source, appliedVersionRef.current);
+    const snapshot = lease.getSnapshot();
+    appliedVersionRef.current = snapshot.editVersion;
+    controllerRef.current?.synchronizePersistence(snapshot);
+    if (!accepted)
+      queueMicrotask(() => {
+        // The originating ProseMirror dispatch finishes after this callback.
+        // Re-apply current truth after that dispatch if this view was stale.
+        const controller = controllerRef.current;
+        if (controller?.view) controller.view.updateState(controller.session.state);
+      });
+  });
+  const readBindings = useStableCallback(() => bindingsRef.current);
+  const selectImage = useStableCallback(() => imageInputRef.current?.click());
   const [controller] = useState(
     () =>
       new ScientMarkdownEditorView({
@@ -143,66 +173,58 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         revision: persistenceSnapshot.baselineRevision,
         authoritativeSource: persistenceSnapshot.baselineSource,
         mode: "write",
-        onWritebackRefusal: (pending) => {
-          const accepted = bindingsRef.current.persistence.retainPendingInput(
-            pending ? { message: pending.message, payload: pending } : null,
-            pendingEditorOwner,
-          );
-          if (accepted && activeViewRef.current) setPendingWriteback(pending);
-        },
+        onWritebackRefusal: onWritebackRefusal,
         ariaLabel: props.ariaLabel,
         resolveTheme: () =>
-          bindingsRef.current.resolvedTheme ??
+          readBindings().resolvedTheme ??
           (document.documentElement.classList.contains("dark") ? "dark" : "light"),
-        onLocalHeadingOpened: () => bindingsRef.current.onLocalHeadingOpened?.(),
-        onOpenWikiLink: (target, anchor) => bindingsRef.current.onOpenWikiLink?.(target, anchor),
-        onOpenLink: (target, anchor) => bindingsRef.current.onOpenLink?.(target, anchor),
+        onLocalHeadingOpened: () => readBindings().onLocalHeadingOpened?.(),
+        onOpenWikiLink: (target, anchor) => readBindings().onOpenWikiLink?.(target, anchor),
+        onOpenLink: (target, anchor) => readBindings().onOpenLink?.(target, anchor),
         ...(props.resolveLinkFullPath
           ? {
               resolveLinkFullPath: (kind: ScientMarkdownLinkKind, target: string) =>
-                bindingsRef.current.resolveLinkFullPath?.(kind, target) ?? null,
+                readBindings().resolveLinkFullPath?.(kind, target) ?? null,
             }
           : {}),
         ...(props.onCopyLink
           ? {
               onCopyLink: (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) =>
-                bindingsRef.current.onCopyLink?.(request, anchor),
+                readBindings().onCopyLink?.(request, anchor),
             }
           : {}),
         ...(props.resolveImageSource
           ? {
-              resolveImageSource: (...args) =>
-                bindingsRef.current.resolveImageSource?.(...args) ?? null,
+              resolveImageSource: (...args) => readBindings().resolveImageSource?.(...args) ?? null,
             }
           : {}),
         ...(props.onOpenSourceLine
-          ? { onOpenSourceLine: (line: number) => bindingsRef.current.onOpenSourceLine?.(line) }
+          ? { onOpenSourceLine: (line: number) => readBindings().onOpenSourceLine?.(line) }
           : {}),
         imageOptions: {
           resolveImageActions: (source) =>
-            bindingsRef.current.imageOptions?.resolveImageActions?.(source) ?? [],
+            readBindings().imageOptions?.resolveImageActions?.(source) ?? [],
           showImageContextMenu: async (items, position) => {
-            const show = bindingsRef.current.imageOptions?.showImageContextMenu;
+            const show = readBindings().imageOptions?.showImageContextMenu;
             if (show) return show(items, position);
             const api = readLocalApi();
             return api ? api.contextMenu.show([...items], position) : null;
           },
-          onImageError: (error) => bindingsRef.current.imageOptions?.onImageError?.(error),
+          onImageError: (error) => readBindings().imageOptions?.onImageError?.(error),
         },
         ...(props.uploadImage
           ? {
               uploadImage: async (file: File) => {
-                const upload = bindingsRef.current.uploadImage;
+                const upload = readBindings().uploadImage;
                 if (!upload) throw new Error("Image upload is not available in this file surface.");
                 return upload(file);
               },
               onImageUploadFailure: (error: unknown) =>
-                bindingsRef.current.onImageUploadFailure?.(error),
-              selectImage: () => imageInputRef.current?.click(),
+                readBindings().onImageUploadFailure?.(error),
+              selectImage,
             }
           : {}),
-        wikiLinkTargetExists: (target) =>
-          bindingsRef.current.wikiLinkTargetExists?.(target) ?? null,
+        wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;
@@ -231,26 +253,12 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             api.contextMenu.show(items, menuPosition),
           );
         },
-        onUserSourceChange: (source) => {
-          if (!activeViewRef.current) return;
-          // First real edit reveals the formatting controls.
-          setChromeExpanded(true);
-          const lease = bindingsRef.current.persistence;
-          const accepted = lease.change(source, appliedVersionRef.current);
-          const snapshot = lease.getSnapshot();
-          appliedVersionRef.current = snapshot.editVersion;
-          controllerRef.current?.synchronizePersistence(snapshot);
-          if (!accepted)
-            queueMicrotask(() => {
-              // The originating ProseMirror dispatch finishes after this callback.
-              // Re-apply current truth after that dispatch if this view was stale.
-              const controller = controllerRef.current;
-              if (controller?.view) controller.view.updateState(controller.session.state);
-            });
-        },
+        onUserSourceChange: onUserSourceChange,
       }),
   );
-  controllerRef.current = controller;
+  useLayoutEffect(() => {
+    controllerRef.current = controller;
+  });
 
   useLayoutEffect(
     () =>
@@ -315,7 +323,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     };
   }, [controller, props.persistence, pendingEditorOwner]);
 
-  useEffect(() => {
+  const synchronizeEditorPersistence = useEffectEvent((..._changes: readonly unknown[]) => {
     const snapshot = props.persistence.getSnapshot();
     appliedVersionRef.current = snapshot.editVersion;
     controller.setMode(
@@ -324,7 +332,18 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         : "write",
     );
     controller.synchronizePersistence(snapshot);
-  }, [controller, props.persistence, persistenceSnapshot, canEditPendingInput, pendingEditorOwner]);
+  });
+  useEffect(
+    () =>
+      synchronizeEditorPersistence(
+        controller,
+        props.persistence,
+        persistenceSnapshot,
+        canEditPendingInput,
+        pendingEditorOwner,
+      ),
+    [controller, props.persistence, persistenceSnapshot, canEditPendingInput, pendingEditorOwner],
+  );
 
   useFinalUnmount(() => {
     // Persistence outlives this view. Unmount must never flush or unblock it.

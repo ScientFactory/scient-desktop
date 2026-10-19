@@ -3,7 +3,6 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -48,7 +47,7 @@ export function useProviderEnableAction(input: {
   const patch = buildEnableProviderPatch(settings, input.provider);
   const displayName = input.provider.displayName?.trim() || String(input.provider.driver);
 
-  const enable = useCallback(async () => {
+  const enable = async () => {
     if (access !== "granted" || patch === null) {
       throw new Error(`This session cannot enable ${displayName}.`);
     }
@@ -62,7 +61,7 @@ export function useProviderEnableAction(input: {
     }
     const failure = squashAtomCommandFailure(result);
     throw failure instanceof Error ? failure : new Error(`Scient could not enable ${displayName}.`);
-  }, [access, displayName, input.environmentId, patch, updateSettings]);
+  };
 
   return {
     access,

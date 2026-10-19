@@ -1,5 +1,5 @@
 import type { DesktopCliCommandState } from "@t3tools/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -29,32 +29,31 @@ export function CliCommandSettingsRow() {
     };
   }, [bridge]);
 
-  const change = useCallback(
-    (action: "install" | "uninstall") => {
-      if (!bridge || pending) return;
-      setPending(true);
-      void bridge[action]()
-        .then(setState)
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title:
-                action === "install"
-                  ? "Could not install scient"
-                  : "Could not remove terminal command",
-              description: error instanceof Error ? error.message : "Something went wrong.",
-            }),
-          );
-          return bridge
-            .getState()
-            .then(setState)
-            .catch(() => undefined);
-        })
-        .finally(() => setPending(false));
-    },
-    [bridge, pending],
-  );
+  const change = (action: "install" | "uninstall") => {
+    if (!bridge || pending) return;
+    setPending(true);
+    void bridge[action]()
+      .then(setState)
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title:
+              action === "install"
+                ? "Could not install scient"
+                : "Could not remove terminal command",
+            description: error instanceof Error ? error.message : "Something went wrong.",
+          }),
+        );
+        // SCIENT-FORK:START - refresh launcher state after a partial failure.
+        return bridge
+          .getState()
+          .then(setState)
+          .catch(() => undefined);
+        // SCIENT-FORK:END
+      })
+      .finally(() => setPending(false));
+  };
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;

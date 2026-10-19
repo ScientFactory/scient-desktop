@@ -1,5 +1,5 @@
 import { useSettingsIntentPreload } from "../../components/settings/useSettingsIntentPreload";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel } from "../../components/ui/collapsible";
@@ -84,14 +84,14 @@ export function useScientSettingsNavigation(
   const activeSettingsPath = items.find(
     (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
   )?.to;
-  const observedVisibilityScope = useMemo(() => {
+  const observedVisibilityScope = (() => {
     const path = items.find(
       (item) =>
         resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
     )?.to;
     const pageSections = path ? SETTINGS_PAGE_SECTIONS[path] : undefined;
     return path && pageSections ? { path, pageSections } : null;
-  }, [resolvedPathname, items]);
+  })();
   const visiblePageSectionIds = getVisibleSettingsSectionIds({
     activePath: activeSettingsPath,
     scope: observedVisibilityScope,
@@ -112,24 +112,21 @@ export function useScientSettingsNavigation(
     });
   }, [observedVisibilityScope]);
 
-  const handlePageSectionClick = useCallback(
-    (to: SettingsPath, targetId: string) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
-        return;
-      }
-      void navigate({
-        to,
-        hash: targetId,
-        replace: true,
-        hashScrollIntoView: false,
-        state: { settingsTargetHighlight: false },
-      });
-    },
-    [isMobile, navigate, pathname, setOpenMobile],
-  );
+  const handlePageSectionClick = (to: SettingsPath, targetId: string) => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
+      return;
+    }
+    void navigate({
+      to,
+      hash: targetId,
+      replace: true,
+      hashScrollIntoView: false,
+      state: { settingsTargetHighlight: false },
+    });
+  };
 
   return (item: { to: SettingsPath; label: string }) => {
     const pageSections = SETTINGS_PAGE_SECTIONS[item.to];

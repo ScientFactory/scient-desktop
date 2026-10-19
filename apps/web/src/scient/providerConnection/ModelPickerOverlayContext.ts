@@ -1,13 +1,5 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import {
-  createContext,
-  useCallback,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { createContext, useId, useRef, useState, type RefObject } from "react";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 
 /** The picker retains its setup owner while an owned, portaled dialog has focus. */
@@ -23,17 +15,11 @@ export function useModelPickerOverlay(composerOwned: boolean) {
   const instanceRef = useRef<ProviderInstanceId | null>(null);
   const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const id = useId();
-  const setOverlayInstance = useCallback((next: ProviderInstanceId | null) => {
+  const setOverlayInstance = (next: ProviderInstanceId | null) => {
     instanceRef.current = next;
     setInstanceId(next);
-  }, []);
-  const context = useMemo(
-    () => ({ instanceId, pickerTriggerRef, setInstanceId: setOverlayInstance }),
-    [instanceId, setOverlayInstance],
-  );
-  const scrollScope = useMemo(
-    () => ({ id, ...(composerOwned ? { portalProps: composerFloatingLayerProps } : {}) }),
-    [id, composerOwned],
-  );
+  };
+  const context = { instanceId, pickerTriggerRef, setInstanceId: setOverlayInstance };
+  const scrollScope = { id, ...(composerOwned ? { portalProps: composerFloatingLayerProps } : {}) };
   return { context, instanceRef, pickerTriggerRef, scrollScope };
 }

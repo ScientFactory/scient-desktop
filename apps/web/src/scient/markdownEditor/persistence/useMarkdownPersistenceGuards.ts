@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -108,24 +107,13 @@ export function useMarkdownPersistenceGuards(
   },
 ) {
   const files = useMarkdownPersistenceRegistrySnapshot();
-  return useMemo(
-    () =>
-      createMarkdownPersistenceGuards({
-        files,
-        registry: markdownPersistenceRegistry,
-        scope: { kind: input.idKind, environmentId: input.environmentId, cwd: input.cwd },
-        genericPendingIds: input.genericPendingIds,
-        ...(input.onAttention === undefined ? {} : { onAttention: input.onAttention }),
-      }),
-    [
-      files,
-      input.idKind,
-      input.environmentId,
-      input.cwd,
-      input.genericPendingIds,
-      input.onAttention,
-    ],
-  );
+  return createMarkdownPersistenceGuards({
+    files,
+    registry: markdownPersistenceRegistry,
+    scope: { kind: input.idKind, environmentId: input.environmentId, cwd: input.cwd },
+    genericPendingIds: input.genericPendingIds,
+    ...(input.onAttention === undefined ? {} : { onAttention: input.onAttention }),
+  });
 }
 
 export function useMarkdownPersistenceNavigationGuards(
@@ -135,20 +123,16 @@ export function useMarkdownPersistenceNavigationGuards(
   },
 ) {
   const files = useMarkdownPersistenceRegistrySnapshot();
-  return useMemo(
-    () =>
-      createMarkdownPersistenceGuards({
-        files,
-        registry: markdownPersistenceRegistry,
-        scope: { kind: "global" },
-        genericPendingIds: new Set(
-          [...input.genericPendingByWorkspace].flatMap(([workspaceKey, ids]) =>
-            [...ids].map((id) => `${workspaceKey}:${id}`),
-          ),
-        ),
-        attentionWorkspace: { environmentId: input.environmentId, cwd: input.cwd },
-        ...(input.onAttention === undefined ? {} : { onAttention: input.onAttention }),
-      }),
-    [files, input.genericPendingByWorkspace, input.environmentId, input.cwd, input.onAttention],
-  );
+  return createMarkdownPersistenceGuards({
+    files,
+    registry: markdownPersistenceRegistry,
+    scope: { kind: "global" },
+    genericPendingIds: new Set(
+      [...input.genericPendingByWorkspace].flatMap(([workspaceKey, ids]) =>
+        [...ids].map((id) => `${workspaceKey}:${id}`),
+      ),
+    ),
+    attentionWorkspace: { environmentId: input.environmentId, cwd: input.cwd },
+    ...(input.onAttention === undefined ? {} : { onAttention: input.onAttention }),
+  });
 }

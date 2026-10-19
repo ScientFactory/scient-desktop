@@ -302,7 +302,9 @@ describe("update restart flow", () => {
     await userEvent.unhover(footerButton());
     await userEvent.tab();
     expect(document.activeElement).toBe(footerButton());
-    await vi.waitFor(() => expect(popover()).not.toBeNull());
+    // Under 12x CPU throttling the focus-opened popover appears after the default
+    // second but always appears; a loaded runner needs the same allowance.
+    await vi.waitFor(() => expect(popover()).not.toBeNull(), { timeout: 5_000 });
     elsewhere.remove();
   });
 

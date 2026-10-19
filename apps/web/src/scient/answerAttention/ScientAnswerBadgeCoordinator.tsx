@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import { environmentShell } from "../../state/shell";
 import { useUiStateStore } from "../../uiStateStore";
@@ -33,7 +33,7 @@ export function ScientAnswerBadgeCoordinator() {
     }
   }, [snapshots]);
 
-  const count = useMemo(() => {
+  const count = (() => {
     if (
       !snapshots.ready ||
       snapshots.environments.every(({ shell }) => Option.isNone(shell.snapshot))
@@ -49,7 +49,7 @@ export function ScientAnswerBadgeCoordinator() {
       }
     }
     return unread;
-  }, [snapshots, visits, baselines]);
+  })();
 
   useEffect(() => {
     const setBadge = window.desktopBridge?.setUnreadAnswerCount;

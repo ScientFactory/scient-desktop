@@ -5,7 +5,7 @@ import {
 import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Check, Copy, PenLine } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -55,23 +55,29 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
   const styleCloseTimer = useRef<number | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "reference" });
 
-  const cancelStyleClose = useCallback(() => {
+  const cancelStyleClose = () => {
     if (styleCloseTimer.current === null) return;
     window.clearTimeout(styleCloseTimer.current);
     styleCloseTimer.current = null;
-  }, []);
-  const scheduleStyleClose = useCallback(() => {
+  };
+  const scheduleStyleClose = () => {
     cancelStyleClose();
     styleCloseTimer.current = window.setTimeout(() => {
       styleCloseTimer.current = null;
       setStyleOpen(false);
     }, 120);
-  }, [cancelStyleClose]);
+  };
 
+  const [previousReferenceInput, setPreviousReferenceInput] = useState({
+    record: props.record,
+    style: style,
+  });
+  if (previousReferenceInput.record !== props.record || previousReferenceInput.style !== style) {
+    setPreviousReferenceInput({ record: props.record, style: style });
+    setReference({ status: "loading" });
+  }
   useEffect(() => {
     let active = true;
-    setReference({ status: "loading" });
-
     void loadCitationModule().then(
       (module) => {
         if (!active) return;

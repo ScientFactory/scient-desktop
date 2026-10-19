@@ -1,3 +1,4 @@
+import { useEffectEvent } from "react";
 import {
   CaseSensitive,
   ChevronDown,
@@ -62,9 +63,13 @@ export function ScientFindBar({
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replacement, setReplacement] = useState("");
 
-  useEffect(() => {
+  const focusRequestedFind = useEffectEvent((..._changes: readonly unknown[]) => {
     if (snapshot.findOpen) inputRef.current?.focus();
-  }, [snapshot.findFocusRequest, snapshot.findOpen]);
+  });
+  useEffect(
+    () => focusRequestedFind(snapshot.findFocusRequest, snapshot.findOpen),
+    [snapshot.findFocusRequest, snapshot.findOpen],
+  );
 
   const configure = (input: {
     readonly query?: string;

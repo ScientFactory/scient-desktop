@@ -13,7 +13,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -88,27 +88,43 @@ export function CursorInlineSetup(props: {
   const [optimisticRuntimeOperation, setOptimisticRuntimeOperation] =
     useState<OptimisticProviderValue<ProviderRuntimeOperation> | null>(null);
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
     setOptimisticRuntimeOperation(null);
-  }, [props.provider.instanceId]);
+  }
 
   const runtime = props.provider.connection?.runtime;
   const serverRuntimeOperation = runtime?.operation ?? null;
 
-  useEffect(() => {
-    // Errors belong to the lifecycle state that produced them. In particular,
-    // a late runtime-cancel failure must not survive installation and be
-    // relabelled as a Cursor sign-in failure on the next screen.
+  const [previousLifecycle, setPreviousLifecycle] = useState(
+    () =>
+      [
+        props.provider.auth.status,
+        props.provider.installed,
+        runtime?.operation?.operationId,
+        runtime?.operation?.status,
+        runtime?.source,
+      ] as const,
+  );
+  if (
+    !Object.is(previousLifecycle[0], props.provider.auth.status) ||
+    !Object.is(previousLifecycle[1], props.provider.installed) ||
+    !Object.is(previousLifecycle[2], runtime?.operation?.operationId) ||
+    !Object.is(previousLifecycle[3], runtime?.operation?.status) ||
+    !Object.is(previousLifecycle[4], runtime?.source)
+  ) {
+    setPreviousLifecycle([
+      props.provider.auth.status,
+      props.provider.installed,
+      runtime?.operation?.operationId,
+      runtime?.operation?.status,
+      runtime?.source,
+    ]);
     setLocalError(null);
-  }, [
-    props.provider.auth.status,
-    props.provider.installed,
-    runtime?.operation?.operationId,
-    runtime?.operation?.status,
-    runtime?.source,
-  ]);
+  }
 
   // The start command returns before the provider-status stream publishes the
   // operation, so bridge that brief gap locally. The first new provider
@@ -165,23 +181,38 @@ export function CursorInlineSetup(props: {
   ) => {
     setLocalError(null);
     setPendingAction(action);
-    try {
-      const provider = await operation();
-      if (syncRuntimeOperation) {
-        const nextOperation = provider.connection?.runtime?.operation ?? null;
-        setOptimisticRuntimeOperation(
-          nextOperation && isActiveProviderRuntimeOperation(nextOperation)
-            ? { baseProvider: props.provider, value: nextOperation }
-            : null,
-        );
+    let actionFailure: { readonly cause: unknown } | undefined;
+    let actionResult: ServerProvider | undefined;
+    finishAction: {
+      try {
+        try {
+          const provider = await operation();
+          if (syncRuntimeOperation) {
+            const nextOperation = provider.connection?.runtime?.operation ?? null;
+            setOptimisticRuntimeOperation(
+              nextOperation && isActiveProviderRuntimeOperation(nextOperation)
+                ? { baseProvider: props.provider, value: nextOperation }
+                : null,
+            );
+          }
+          {
+            actionResult = provider;
+            break finishAction;
+          }
+        } catch (error) {
+          setLocalError(providerLifecycleFailureMessage(error, fallback));
+          {
+            actionResult = undefined;
+            break finishAction;
+          }
+        }
+      } catch (cause) {
+        actionFailure = { cause };
       }
-      return provider;
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, fallback));
-      return undefined;
-    } finally {
-      setPendingAction(null);
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
+    return actionResult;
   };
 
   const install = () =>

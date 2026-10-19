@@ -8,7 +8,7 @@ import {
   ImageIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -81,49 +81,46 @@ export function VegaLiteChartDialog({
     previousOpenRef.current = open;
   }, [open]);
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
     }, 1_500);
-  }, []);
+  };
 
-  const showPersistentMessage = useCallback((message: string) => {
+  const showPersistentMessage = (message: string) => {
     if (messageTimerRef.current != null) {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
     setActionMessage(message);
-  }, []);
+  };
 
-  const runControllerAction = useCallback(
-    (
-      action: Exclude<DialogAction, "copy-source" | null>,
-      operation: (controller: VegaLiteViewController) => Promise<void>,
-      successMessage: string | null,
-      failureMessage: string,
-    ) => {
-      const controller = controllerRef.current;
-      if (controller == null || activeAction != null) return;
-      setActiveAction(action);
-      void operation(controller).then(
-        () => {
-          setActiveAction(null);
-          if (successMessage != null) showTransientMessage(successMessage);
-        },
-        (cause: unknown) => {
-          console.error("[scient-visualizations] Expanded chart action failed", action, cause);
-          setActiveAction(null);
-          showPersistentMessage(failureMessage);
-        },
-      );
-    },
-    [activeAction, showPersistentMessage, showTransientMessage],
-  );
+  const runControllerAction = (
+    action: Exclude<DialogAction, "copy-source" | null>,
+    operation: (controller: VegaLiteViewController) => Promise<void>,
+    successMessage: string | null,
+    failureMessage: string,
+  ) => {
+    const controller = controllerRef.current;
+    if (controller == null || activeAction != null) return;
+    setActiveAction(action);
+    void operation(controller).then(
+      () => {
+        setActiveAction(null);
+        if (successMessage != null) showTransientMessage(successMessage);
+      },
+      (cause: unknown) => {
+        console.error("[scient-visualizations] Expanded chart action failed", action, cause);
+        setActiveAction(null);
+        showPersistentMessage(failureMessage);
+      },
+    );
+  };
 
-  const handleCopySource = useCallback(() => {
+  const handleCopySource = () => {
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
       return;
@@ -141,36 +138,33 @@ export function VegaLiteChartDialog({
         showPersistentMessage("Unable to copy the chart source.");
       },
     );
-  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
+  };
 
-  const handleDownloadSource = useCallback(() => {
+  const handleDownloadSource = () => {
     try {
       downloadVegaLiteSource(source, exportTitle);
     } catch (cause) {
       console.error("[scient-visualizations] Unable to download expanded chart source", cause);
       showPersistentMessage("Unable to download the Vega-Lite source.");
     }
-  }, [exportTitle, showPersistentMessage, source]);
+  };
 
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      if (!nextOpen) {
-        const state = controllerRef.current?.getState();
-        if (state != null) onReturnState(state);
-      }
-      onOpenChange(nextOpen);
-    },
-    [onOpenChange, onReturnState],
-  );
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      const state = controllerRef.current?.getState();
+      if (state != null) onReturnState(state);
+    }
+    onOpenChange(nextOpen);
+  };
 
-  const handleReset = useCallback(() => {
+  const handleReset = () => {
     runControllerAction(
       "reset",
       (controller) => controller.reset(),
       "View reset",
       "Unable to reset the chart view.",
     );
-  }, [runControllerAction]);
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

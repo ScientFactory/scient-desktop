@@ -1,5 +1,5 @@
 import type { FileCitation } from "@t3tools/contracts";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
 import { toastManager } from "~/components/ui/toast";
 import {
@@ -28,21 +28,18 @@ export function MarkdownCitationActions({
   reveal?: FileCitation | undefined;
   revealId?: number | undefined;
 }) {
-  const readViewport = useCallback(() => {
+  const readViewport = () => {
     const root = controller.view?.dom;
     return root?.closest<HTMLElement>(".scient-markdown-document-shell") ?? root ?? null;
-  }, [controller]);
+  };
   const viewport = useSyncExternalStore(controller.subscribe, readViewport, () => null);
   const { environmentId, threadId, cwd, path } = source;
-  const capture = useCallback(
-    () =>
-      captureMarkdownCitation(
-        controller,
-        { environmentId, threadId, cwd, path },
-        window.getSelection(),
-      ),
-    [controller, environmentId, threadId, cwd, path],
-  );
+  const capture = () =>
+    captureMarkdownCitation(
+      controller,
+      { environmentId, threadId, cwd, path },
+      window.getSelection(),
+    );
   useEffect(() => {
     if (!viewport || !reveal || revealId === undefined) return;
     return revealMarkdownCitation(controller, reveal);

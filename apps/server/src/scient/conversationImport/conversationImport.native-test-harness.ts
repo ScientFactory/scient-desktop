@@ -21,11 +21,13 @@ import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as RuntimePolicy from "../../orchestration-v2/RuntimePolicy.ts";
 import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import * as Commit from "./ConversationImportCommit.ts";
 import * as ImporterLive from "./ConversationImporterLive.ts";
 import type { PortableConversationImportPlan } from "./conversationImportPlan.ts";
@@ -172,10 +174,18 @@ export function nativeImportRuntimeTestLayer(
   options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
   const database = options.databaseLayer ?? SqlitePersistence.layerMemory;
+  // Local threads must resolve to the disposable project, never the server checkout.
+  const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
+    Layer.provide(
+      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.succeed(undefined) }),
+    ),
+    Layer.orDie,
+  );
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,
-    { databaseLayer: database, configureMcp: false, ...options },
+    { databaseLayer: database, configureMcp: false, runtimePolicyLayer, ...options },
   ).pipe(
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),

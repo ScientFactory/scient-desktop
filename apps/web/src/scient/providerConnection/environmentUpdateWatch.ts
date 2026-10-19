@@ -1,7 +1,9 @@
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
+import { serverEnvironment } from "~/state/server";
 
 /** How long a machine may be out of contact before an update on it is treated as lost. */
 export const ENVIRONMENT_CONTACT_GRACE_MS = 2 * 60_000;
@@ -33,8 +35,11 @@ export function watchEnvironmentProviders(
     unsubscribe?.();
   };
   unsubscribe = appAtomRegistry.subscribe(
-    environmentPresentations.presentationAtom(environmentId),
-    (presentation) => {
+    Atom.make((get) => ({
+      presentation: get(environmentPresentations.presentationAtom(environmentId)),
+      providers: get(serverEnvironment.providersValueAtom(environmentId)),
+    })),
+    ({ presentation, providers }) => {
       if (stopped) return;
       if (presentation === null) {
         clearLoss();
@@ -44,7 +49,7 @@ export function watchEnvironmentProviders(
       const config = presentation.serverConfig;
       if (presentation.connection.phase === "connected" && config !== null) {
         clearLoss();
-        onSnapshot({ status: "connected", providers: config.providers });
+        onSnapshot({ status: "connected", providers: providers ?? [] });
         return;
       }
       lossTimer ??= setTimeout(() => {

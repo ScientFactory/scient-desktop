@@ -4,7 +4,7 @@ import type {
   ThreadSection,
   ThreadSectionProjectRef,
 } from "@t3tools/contracts";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { readThreadShell } from "../../state/entities";
@@ -149,66 +149,56 @@ export function useNewSectionForThreads(
   } | null>(null);
   const [requestKey, setRequestKey] = useState(0);
 
-  const candidates = useMemo(() => catalogs.map((catalog) => catalog.environmentId), [catalogs]);
-  const environmentChoices = useMemo(
-    () =>
-      candidates.map((environmentId) => ({
-        environmentId,
-        label:
-          environments.find((environment) => environment.environmentId === environmentId)?.label ??
+  const candidates = catalogs.map((catalog) => catalog.environmentId);
+  const environmentChoices = candidates.map((environmentId) => ({
+    environmentId,
+    label:
+      environments.find((environment) => environment.environmentId === environmentId)?.label ??
+      environmentId,
+  }));
+
+  const request = (threadRefs: readonly ScopedThreadRef[], anchor: SectionCreateAnchor) => {
+    setRequestKey((key) => key + 1);
+    setPending({
+      open: true,
+      threadRefs,
+      anchor,
+      environmentId:
+        threadRefs.length > 0
+          ? null
+          : defaultSectionEnvironment(candidates, readSidebarSectionScope()),
+    });
+  };
+
+  const submit = async (name: string) => {
+    const threadRefs = pending?.threadRefs ?? [];
+    const result = await createSectionAndFile({
+      name,
+      threadRefs,
+      scopeProjectRefs: readSidebarSectionScope(),
+      environmentId: pending?.environmentId ?? null,
+      create,
+      moveThreadsToSection,
+    });
+    for (const { environmentId, section } of result.created) {
+      options.onCreated?.({ environmentId, sectionId: section.id });
+    }
+    if (result.created.length > 0 && result.failedEnvironmentIds.length > 0) {
+      const labels = result.failedEnvironmentIds.map(
+        (environmentId) =>
+          environmentChoices.find((choice) => choice.environmentId === environmentId)?.label ??
           environmentId,
-      })),
-    [candidates, environments],
-  );
-
-  const request = useCallback(
-    (threadRefs: readonly ScopedThreadRef[], anchor: SectionCreateAnchor) => {
-      setRequestKey((key) => key + 1);
-      setPending({
-        open: true,
-        threadRefs,
-        anchor,
-        environmentId:
-          threadRefs.length > 0
-            ? null
-            : defaultSectionEnvironment(candidates, readSidebarSectionScope()),
-      });
-    },
-    [candidates],
-  );
-
-  const submit = useCallback(
-    async (name: string) => {
-      const threadRefs = pending?.threadRefs ?? [];
-      const result = await createSectionAndFile({
-        name,
-        threadRefs,
-        scopeProjectRefs: readSidebarSectionScope(),
-        environmentId: pending?.environmentId ?? null,
-        create,
-        moveThreadsToSection,
-      });
-      for (const { environmentId, section } of result.created) {
-        options.onCreated?.({ environmentId, sectionId: section.id });
-      }
-      if (result.created.length > 0 && result.failedEnvironmentIds.length > 0) {
-        const labels = result.failedEnvironmentIds.map(
-          (environmentId) =>
-            environmentChoices.find((choice) => choice.environmentId === environmentId)?.label ??
-            environmentId,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Section not created everywhere",
-            description: `Could not create it on ${labels.join(", ")}. Those threads were not moved.`,
-          }),
-        );
-      }
-      return result.created.length > 0;
-    },
-    [create, environmentChoices, moveThreadsToSection, options.onCreated, pending],
-  );
+      );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Section not created everywhere",
+          description: `Could not create it on ${labels.join(", ")}. Those threads were not moved.`,
+        }),
+      );
+    }
+    return result.created.length > 0;
+  };
 
   const pickEnvironment =
     pending !== null && pending.threadRefs.length === 0 && environmentChoices.length > 1;

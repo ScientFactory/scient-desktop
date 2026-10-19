@@ -1,4 +1,4 @@
-import { Suspense, use, useMemo } from "react";
+import { Suspense, use } from "react";
 
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { LRUCache } from "~/lib/lruCache";
@@ -89,13 +89,9 @@ function UncachedScientMath({ displayMode, isStreaming, tex }: ScientMathProps) 
   const runtime = use(getScientKatexRuntimePromise());
   // Streaming prefixes stay outside the cache. Settled math, including failed
   // parses, shares one bounded result with editor validation.
-  const html = useMemo(
-    () =>
-      isStreaming
-        ? runtime.renderScientTexToHtml(tex, displayMode)
-        : renderCachedScientMath(runtime, tex, displayMode),
-    [displayMode, isStreaming, runtime, tex],
-  );
+  const html = isStreaming
+    ? runtime.renderScientTexToHtml(tex, displayMode)
+    : renderCachedScientMath(runtime, tex, displayMode);
 
   if (html === null) {
     return <ScientMathLiteral tex={tex} displayMode={displayMode} />;

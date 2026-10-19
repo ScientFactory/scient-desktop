@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { FileUpIcon, ImportIcon } from "lucide-react";
-import { type RefObject, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -35,7 +35,11 @@ import { mergeEnvironmentSettings, useClientSettings } from "../../hooks/useSett
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { randomUUID } from "../../lib/utils";
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   cancelConversationImport,
@@ -67,6 +71,12 @@ import {
   useConversationImportRequests,
   type ConversationImportSource,
 } from "./requests";
+
+function checkedDesktopUploadOutcome(result: Parameters<typeof desktopUploadOutcome>[0]) {
+  const outcome = desktopUploadOutcome(result);
+  if (outcome instanceof ConversationImportNotice) throw outcome;
+  return outcome;
+}
 
 /**
  * The File menu, drag and drop, and OS file-open events enter the same
@@ -245,28 +255,25 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const projects = useProjects();
   const threads = useThreadShells();
   const configs = useServerConfigs();
+  const providersByEnvironment = useEnvironmentProviders();
   const clientSettings = useClientSettings();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, handleNewThread, routeDraftId, routeThreadRef } =
     useHandleNewThread();
 
-  const environmentOptions = useMemo(
-    () =>
-      importEnvironmentOptions({
-        environmentIds: configs.keys(),
-        labels: new Map(
-          environments.map((environment) => [environment.environmentId, environment.label]),
-        ),
-        connected: new Set(
-          environments
-            .filter((environment) => environment.connection.phase === "connected")
-            .map((environment) => environment.environmentId),
-        ),
-        primaryEnvironmentId,
-      }),
-    [configs, environments, primaryEnvironmentId],
-  );
+  const environmentOptions = importEnvironmentOptions({
+    environmentIds: configs.keys(),
+    labels: new Map(
+      environments.map((environment) => [environment.environmentId, environment.label]),
+    ),
+    connected: new Set(
+      environments
+        .filter((environment) => environment.connection.phase === "connected")
+        .map((environment) => environment.environmentId),
+    ),
+    primaryEnvironmentId,
+  });
   const environmentLabel = (environmentId: EnvironmentId | null) =>
     environmentOptions.find((option) => option.environmentId === environmentId)?.label ?? null;
   // Projects the file can go to: those of connected environments.
@@ -346,10 +353,8 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     (defaultProject?.environmentId === environmentId ? defaultProject : undefined) ??
     environmentProjects[0] ??
     null;
-  const settings = useMemo(
-    () => (config === undefined ? null : mergeEnvironmentSettings(config.settings, clientSettings)),
-    [clientSettings, config],
-  );
+  const settings =
+    config === undefined ? null : mergeEnvironmentSettings(config.settings, clientSettings);
   // What a new chat opened now would carry: the chat in view, and the
   // composer's remembered choices.
   const stickyModelSelectionByProvider = useComposerDraftStore(
@@ -360,7 +365,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     settings === null
       ? null
       : newChatModelSelection({
-          config,
+          providers: environmentId === null ? undefined : providersByEnvironment.get(environmentId),
           settings,
           project,
           carrySelection: readCarriedModelSelection(
@@ -383,10 +388,16 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const markdownMode: "document" | undefined = documentModeFor === source ? "document" : undefined;
   // One attempt per file, destination, and mode; "Try again" starts another.
   // What an attempt shows is kept with it, so a new attempt starts clean.
-  const attempt = useMemo(
-    () => ({ source, environmentId, markdownMode, retries }),
-    [source, environmentId, markdownMode, retries],
-  );
+  // Its identity owns upload cleanup and progress, so it must outlive render caches.
+  const [attempt, setAttempt] = useState(() => ({ source, environmentId, markdownMode, retries }));
+  if (
+    attempt.source !== source ||
+    attempt.environmentId !== environmentId ||
+    attempt.markdownMode !== markdownMode ||
+    attempt.retries !== retries
+  ) {
+    setAttempt({ source, environmentId, markdownMode, retries });
+  }
   const [progress, setProgress] = useState<{
     readonly attempt: typeof attempt;
     readonly stage: Stage;
@@ -490,8 +501,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           const result = await sending;
           desktopAttempt = null;
           if (stopped() || result === null) return;
-          const outcome = desktopUploadOutcome(result);
-          if (outcome instanceof ConversationImportNotice) throw outcome;
+          const outcome = checkedDesktopUploadOutcome(result);
           if (outcome._tag === "stopped") {
             release();
             dismissConversationImportRequest();

@@ -443,19 +443,24 @@ export function ModelConnectionEditor({
     }
     setBusy(true);
     setError(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await onSave({
-        revision: settings.revision,
-        connection,
-        ...(!reusing && apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
-      });
-      setApiKey("");
-      onClose();
+      try {
+        await onSave({
+          revision: settings.revision,
+          connection,
+          ...(!reusing && apiKey ? { apiKey: Redacted.make(apiKey) } : {}),
+        });
+        setApiKey("");
+        onClose();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not save this model.");
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save this model.");
-    } finally {
-      setBusy(false);
+      actionFailure = { cause };
     }
+    setBusy(false);
+    if (actionFailure) throw actionFailure.cause;
   };
   const baseUrlField = (placeholder?: string) => (
     <Field label="Base URL">

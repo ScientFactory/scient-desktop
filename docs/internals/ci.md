@@ -31,8 +31,8 @@ gates (a main push may reuse the exact queue qualification described below):
   runner time. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
 - **Test Web**: three shards of `vp run --filter @t3tools/web test --shard N/3`, each on its own
-  runner. This keeps the large web suite from competing with other workspace packages.
-- **Test Web Layout**: the dedicated browser/layout suite checks rendering and interaction geometry separately from the unit shards.
+  runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
+  the large web suite from competing with other workspace packages.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
   separate runners instead of workers: files within a shard execute serially, and no
@@ -64,7 +64,7 @@ gates (a main push may reuse the exact queue qualification described below):
 A push to `main` reuses expensive product checks only when a completed, successful run of
 this CI workflow on `merge_group` has the exact same commit **and comparison base**. Its
 queue-only receipt must match the repository, workflow revision, run and attempt, and certify
-all applicable lanes, including layout and mobile static analysis. PR and queue runs always
+all applicable lanes, including web browser tests and mobile static analysis. PR and queue runs always
 execute their normal checks. Documentation and upstream provenance keep their event-specific
 checks; required check names and branch protections are unchanged.
 On valid reuse, the expensive main-push jobs are skipped; `Test` reports the source qualification

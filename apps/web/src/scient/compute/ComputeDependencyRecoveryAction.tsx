@@ -45,7 +45,7 @@ export function ComputeDependencyRecoveryAction(props: {
     if (!owner || owner.sessionId !== props.session.sessionId || owner.lifecycle !== "live") return;
     inFlight.current = true;
     setBusy(true);
-    try {
+    return await (async () => {
       const result = await replaceComputeContextSession({
         contextId: props.contextId,
         expectedSession: props.session,
@@ -104,11 +104,11 @@ export function ComputeDependencyRecoveryAction(props: {
           description: result.error,
         });
       }
-    } finally {
+    })().finally(() => {
       inFlight.current = false;
       setBusy(false);
       props.onSettled();
-    }
+    });
   };
 
   return (

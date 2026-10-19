@@ -79,7 +79,7 @@ export function ComputeInstallationRow({
     setResult(null);
     setShowSuccess(false);
     setError(null);
-    try {
+    return await (async () => {
       const verification = await verifyRuntime({
         environmentId,
         input: {
@@ -107,12 +107,14 @@ export function ComputeInstallationRow({
             "The connection could not be verified. Scient did not start a test session.",
         );
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The connection could not be verified.");
-    } finally {
-      lock.current = false;
-      setTesting(false);
-    }
+    })()
+      .catch(async (cause) => {
+        setError(cause instanceof Error ? cause.message : "The connection could not be verified.");
+      })
+      .finally(() => {
+        lock.current = false;
+        setTesting(false);
+      });
   };
   const items = installation ? (
     <>

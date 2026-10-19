@@ -65,8 +65,8 @@ describe("universal chat-file opening seam", () => {
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
-    expect(chatMarkdownSource).toContain(
-      "openHtmlLinkInBrowser(\n                    fileLinkMeta.filePath,\n                    browserRelativePath,\n                    homeRelativePath,",
+    expect(chatMarkdownSource).toMatch(
+      /openHtmlLinkInBrowser\(\s*fileLinkMeta\.filePath,\s*browserRelativePath,\s*homeRelativePath,?\s*\)/u,
     );
     expect(chatMarkdownSource).toContain(
       'resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"',

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type {
   EnvironmentId,
   VoiceModelDownloadProgress,
@@ -155,9 +156,50 @@ export function useScientVoiceController({
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
   const recordAnalytics = useRecordScientAnalytics();
-  const [localPhase, setPhaseState] = useState<VoicePhase>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [microphonePermissionDenied, setMicrophonePermissionDenied] = useState(false);
+  const [{ localPhase, errorMessage, microphonePermissionDenied }, dispatchController] = useReducer(
+    (
+      state: {
+        localPhase: VoicePhase;
+        errorMessage: string | null;
+        microphonePermissionDenied: boolean;
+      },
+      action:
+        | { type: "phase"; phase: VoicePhase }
+        | { type: "error"; message: string | null }
+        | { type: "permission"; denied: boolean }
+        | { type: "recorder-error"; kind: VoiceRecorderErrorKind },
+    ) => {
+      switch (action.type) {
+        case "phase":
+          return state.localPhase === action.phase ? state : { ...state, localPhase: action.phase };
+        case "error":
+          return state.errorMessage === action.message
+            ? state
+            : { ...state, errorMessage: action.message };
+        case "permission":
+          return state.microphonePermissionDenied === action.denied
+            ? state
+            : { ...state, microphonePermissionDenied: action.denied };
+        case "recorder-error":
+          return state.localPhase === "idle" &&
+            state.microphonePermissionDenied === (action.kind === "permission-denied") &&
+            state.errorMessage === describeVoiceRecorderError(action.kind)
+            ? state
+            : {
+                ...state,
+                localPhase: "idle" as const,
+                microphonePermissionDenied: action.kind === "permission-denied",
+                errorMessage: describeVoiceRecorderError(action.kind),
+              };
+      }
+    },
+    { localPhase: "idle", errorMessage: null, microphonePermissionDenied: false },
+  );
+  const setPhaseState = (phase: VoicePhase) => dispatchController({ type: "phase", phase });
+  const setErrorMessage = (message: string | null) =>
+    dispatchController({ type: "error", message });
+  const setMicrophonePermissionDenied = (denied: boolean) =>
+    dispatchController({ type: "permission", denied });
   const [downloadProgress, setDownloadProgress] = useState<VoiceModelDownloadProgress | null>(null);
   const [modelSnapshot, setModelSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -170,16 +212,24 @@ export function useScientVoiceController({
     onTranscript,
     onRequestSubmit,
   });
-  completionCallbacksRef.current = { onTranscript, onRequestSubmit };
+  useLayoutEffect(() => {
+    completionCallbacksRef.current = { onTranscript, onRequestSubmit };
+  });
   const draftOriginRef = useRef(draftOrigin);
-  draftOriginRef.current = draftOrigin;
+  useLayoutEffect(() => {
+    draftOriginRef.current = draftOrigin;
+  });
   const localFieldKeyRef = useRef(localFieldKey);
-  localFieldKeyRef.current = localFieldKey;
+  useLayoutEffect(() => {
+    localFieldKeyRef.current = localFieldKey;
+  });
   // Where this control's text would go now. A recording belongs to the
   // destination it started with; if that changes first, it is cancelled.
   const destinationKey = draftOrigin ? `draft:${draftOrigin.key}` : `field:${localFieldKey ?? ""}`;
   const destinationKeyRef = useRef(destinationKey);
-  destinationKeyRef.current = destinationKey;
+  useLayoutEffect(() => {
+    destinationKeyRef.current = destinationKey;
+  });
   const recordingDestinationRef = useRef<string | null>(null);
 
   // Committed dictation is shown by owner key: the draft's key for composer
@@ -193,17 +243,17 @@ export function useScientVoiceController({
   const draftJobError = useVoiceJobError(draftOwnerKey);
   const phase: VoicePhase = localPhase !== "idle" ? localPhase : (job?.phase ?? "idle");
 
-  const setPhase = useCallback((next: VoicePhase) => {
+  const setPhase = useStableCallback((next: VoicePhase) => {
     phaseRef.current = next;
     setPhaseState(next);
-  }, []);
+  });
 
-  const clearErrors = useCallback(() => {
+  const clearErrors = useStableCallback(() => {
     setErrorMessage(null);
     setMicrophonePermissionDenied(false);
     clearVoiceJobError(localOwnerKey);
     clearVoiceJobError(draftOriginRef.current ? `draft:${draftOriginRef.current.key}` : null);
-  }, [localOwnerKey]);
+  });
 
   const recorder = useVoiceRecorder({
     onAutoStop: (clip) => autoStopRef.current(clip),
@@ -221,54 +271,42 @@ export function useScientVoiceController({
    * Hands a committed stop to the window-level job owner. Everything the job
    * needs, including where its text goes, is captured here, synchronously.
    */
-  const commit = useCallback(
-    (clip: Promise<VoiceWavClip | null>, send: boolean): Promise<void> => {
-      if (!client) return Promise.resolve();
-      setPhase("idle");
-      setErrorMessage(null);
-      const origin = draftOriginRef.current;
-      const fieldKey = localFieldKeyRef.current;
-      const ownerKey = origin ? `draft:${origin.key}` : localOwnerKey;
-      const correctionRequested =
-        correctionEnabled && correctionClient !== null && environmentId !== undefined;
-      const { done } = startVoiceJob({
-        ownerKey,
-        clip,
-        send,
-        voiceBridge: client,
-        correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
-        language: languagePreference === "auto" ? undefined : languagePreference,
-        recordAnalytics,
-        deliver: origin
-          ? (text, sendText) => deliverVoiceTranscriptToDraft(origin, text, sendText)
-          : (text, sendText) => {
-              if (localFieldKeyRef.current !== fieldKey) return;
-              routeCompletedVoiceTranscription(completionCallbacksRef, text, sendText);
-            },
-        fail: origin
-          ? (message) =>
-              reportVoiceDraftFailure(origin, message, (shown) => setVoiceJobError(ownerKey, shown))
-          : (message) => setVoiceJobError(ownerKey, message),
-      });
-      return done;
-    },
-    [
-      client,
-      correctionClient,
-      correctionEnabled,
-      environmentId,
-      languagePreference,
-      localOwnerKey,
+  const commit = (clip: Promise<VoiceWavClip | null>, send: boolean): Promise<void> => {
+    if (!client) return Promise.resolve();
+    setPhase("idle");
+    setErrorMessage(null);
+    const origin = draftOriginRef.current;
+    const fieldKey = localFieldKeyRef.current;
+    const ownerKey = origin ? `draft:${origin.key}` : localOwnerKey;
+    const correctionRequested =
+      correctionEnabled && correctionClient !== null && environmentId !== undefined;
+    const { done } = startVoiceJob({
+      ownerKey,
+      clip,
+      send,
+      voiceBridge: client,
+      correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
+      language: languagePreference === "auto" ? undefined : languagePreference,
       recordAnalytics,
-      setPhase,
-    ],
-  );
+      deliver: origin
+        ? (text, sendText) => deliverVoiceTranscriptToDraft(origin, text, sendText)
+        : (text, sendText) => {
+            if (localFieldKeyRef.current !== fieldKey) return;
+            routeCompletedVoiceTranscription(completionCallbacksRef, text, sendText);
+          },
+      fail: origin
+        ? (message) =>
+            reportVoiceDraftFailure(origin, message, (shown) => setVoiceJobError(ownerKey, shown))
+        : (message) => setVoiceJobError(ownerKey, message),
+    });
+    return done;
+  };
 
-  const useOriginal = useCallback((): void => {
+  const finishOriginal = (): void => {
     if (job?.phase === "correcting") finishVoiceJobWithOriginal(job.id);
-  }, [job]);
+  };
 
-  const beginRecording = useCallback(async (): Promise<void> => {
+  const beginRecording = async (): Promise<void> => {
     const operation = (operationRef.current += 1);
     recordingDestinationRef.current = destinationKeyRef.current;
     clearErrors();
@@ -298,9 +336,9 @@ export function useScientVoiceController({
     if (!started) return;
     recordingStartedAtRef.current = performance.now();
     setPhase("recording");
-  }, [cancelRecording, clearErrors, client, recordAnalytics, setPhase, startRecording]);
+  };
 
-  const activate = useCallback(async (): Promise<void> => {
+  const activate = async (): Promise<void> => {
     if (!client) return;
     const operation = (operationRef.current += 1);
     clearErrors();
@@ -321,75 +359,78 @@ export function useScientVoiceController({
     } else {
       setPhase("setup-prompt");
     }
-  }, [beginRecording, clearErrors, client, setPhase]);
+  };
 
-  const setupModel = useCallback(
-    async (requestedModelId?: VoiceModelId): Promise<void> => {
-      if (!client) return;
-      const operation = (operationRef.current += 1);
-      clearErrors();
-      setDownloadProgress(null);
-      setPhase("downloading");
-      let modelId: VoiceModelId | null = null;
-      let unsubscribe: () => void = () => undefined;
-      try {
-        const snapshot = modelSnapshot ?? (await client.getModelsState());
-        if (operation !== operationRef.current) return;
-        setModelSnapshot(snapshot);
-        modelId =
-          requestedModelId ?? snapshot.recommendation?.modelId ?? snapshot.models[0]?.id ?? null;
-        if (!modelId) {
+  const setupModel = async (requestedModelId?: VoiceModelId): Promise<void> => {
+    if (!client) return;
+    const operation = (operationRef.current += 1);
+    clearErrors();
+    setDownloadProgress(null);
+    setPhase("downloading");
+    let modelId: VoiceModelId | null = null;
+    let unsubscribe: () => void = () => undefined;
+    let operationFailure: { error: unknown } | null = null;
+    try {
+      completeOperation: {
+        try {
+          const snapshot = modelSnapshot ?? (await client.getModelsState());
+          if (operation !== operationRef.current) break completeOperation;
+          setModelSnapshot(snapshot);
+          modelId =
+            requestedModelId ?? snapshot.recommendation?.modelId ?? snapshot.models[0]?.id ?? null;
+          if (!modelId) {
+            setPhase("idle");
+            setErrorMessage(MODEL_SETUP_FAILED_MESSAGE);
+            break completeOperation;
+          }
+          downloadModelIdRef.current = modelId;
+          unsubscribe = client.onModelDownloadProgress(setDownloadProgress);
+          const nextSnapshot = await client.downloadModel({ modelId, selectOnSuccess: true });
+          setModelSnapshot(nextSnapshot);
+          if (operation !== operationRef.current) break completeOperation;
+          const state = nextSnapshot.models.find((model) => model.id === modelId)?.state;
+          if (state?.state === "ready") await beginRecording();
+          else {
+            setPhase("idle");
+            setErrorMessage(
+              state?.state === "error" || state?.state === "unavailable"
+                ? state.message
+                : MODEL_SETUP_FAILED_MESSAGE,
+            );
+          }
+        } catch (error) {
+          if (operation !== operationRef.current) break completeOperation;
           setPhase("idle");
-          setErrorMessage(MODEL_SETUP_FAILED_MESSAGE);
-          return;
+          setErrorMessage(describeVoiceError(error));
         }
-        downloadModelIdRef.current = modelId;
-        unsubscribe = client.onModelDownloadProgress(setDownloadProgress);
-        const nextSnapshot = await client.downloadModel({ modelId, selectOnSuccess: true });
-        setModelSnapshot(nextSnapshot);
-        if (operation !== operationRef.current) return;
-        const state = nextSnapshot.models.find((model) => model.id === modelId)?.state;
-        if (state?.state === "ready") await beginRecording();
-        else {
-          setPhase("idle");
-          setErrorMessage(
-            state?.state === "error" || state?.state === "unavailable"
-              ? state.message
-              : MODEL_SETUP_FAILED_MESSAGE,
-          );
-        }
-      } catch (error) {
-        if (operation !== operationRef.current) return;
-        setPhase("idle");
-        setErrorMessage(describeVoiceError(error));
-      } finally {
-        unsubscribe();
-        if (downloadModelIdRef.current === modelId) downloadModelIdRef.current = null;
-        if (operation === operationRef.current) setDownloadProgress(null);
       }
-    },
-    [beginRecording, clearErrors, client, modelSnapshot, setPhase],
-  );
+    } catch (error) {
+      operationFailure = { error };
+    }
 
-  const stop = useCallback(
-    (send: boolean): Promise<void> => {
-      if (
-        phaseRef.current !== "recording" ||
-        performance.now() - recordingStartedAtRef.current < ARM_DELAY_MS
-      ) {
-        return Promise.resolve();
-      }
-      // A recording whose destination changed is being cancelled, not committed.
-      if (recordingDestinationRef.current !== destinationKeyRef.current) return Promise.resolve();
-      operationRef.current += 1;
-      // Starts the recorder's final flush and commits it in the same task, so
-      // leaving the thread right after the click cannot drop the dictation.
-      return commit(stopRecording(), send);
-    },
-    [commit, stopRecording],
-  );
+    unsubscribe();
+    if (downloadModelIdRef.current === modelId) downloadModelIdRef.current = null;
+    if (operation === operationRef.current) setDownloadProgress(null);
 
-  const cancel = useCallback(async (): Promise<void> => {
+    if (operationFailure !== null) throw operationFailure.error;
+  };
+
+  const stop = (send: boolean): Promise<void> => {
+    if (
+      phaseRef.current !== "recording" ||
+      performance.now() - recordingStartedAtRef.current < ARM_DELAY_MS
+    ) {
+      return Promise.resolve();
+    }
+    // A recording whose destination changed is being cancelled, not committed.
+    if (recordingDestinationRef.current !== destinationKeyRef.current) return Promise.resolve();
+    operationRef.current += 1;
+    // Starts the recorder's final flush and commits it in the same task, so
+    // leaving the thread right after the click cannot drop the dictation.
+    return commit(stopRecording(), send);
+  };
+
+  const cancel = async (): Promise<void> => {
     const cancelledPhase = phaseRef.current;
     const operation = (operationRef.current += 1);
     const cancelDownload =
@@ -413,26 +454,28 @@ export function useScientVoiceController({
     setElapsedMs(0);
     clearErrors();
     setPhase("idle");
-  }, [cancelRecording, clearErrors, client, job, recordAnalytics, setPhase]);
+  };
 
-  const dismissSetup = useCallback(() => {
+  const dismissSetup = () => {
     operationRef.current += 1;
     clearErrors();
     setPhase("idle");
-  }, [clearErrors, setPhase]);
+  };
 
-  autoStopRef.current = (clip) => {
+  const handleAutoStop = (clip: VoiceWavClip | null) => {
     if (phaseRef.current !== "recording") return;
     if (recordingDestinationRef.current !== destinationKeyRef.current) return;
     operationRef.current += 1;
     void commit(Promise.resolve(clip), false);
   };
+  useLayoutEffect(() => {
+    autoStopRef.current = handleAutoStop;
+  });
 
   useEffect(() => {
     if (recorderStatus !== "error" || !recorderErrorKind) return;
-    setPhase("idle");
-    setMicrophonePermissionDenied(recorderErrorKind === "permission-denied");
-    setErrorMessage(describeVoiceRecorderError(recorderErrorKind));
+    phaseRef.current = "idle";
+    dispatchController({ type: "recorder-error", kind: recorderErrorKind });
     recordAnalytics({
       name: "voice.transcription.failed",
       properties: {
@@ -440,7 +483,7 @@ export function useScientVoiceController({
         failureClass: recorderErrorKind === "permission-denied" ? "permission" : "audio",
       },
     });
-  }, [recordAnalytics, recorderErrorKind, recorderStatus, setPhase]);
+  }, [recordAnalytics, recorderErrorKind, recorderStatus]);
 
   useEffect(() => {
     if (phase !== "recording") return;
@@ -509,6 +552,6 @@ export function useScientVoiceController({
     dismissSetup,
     stop,
     cancel,
-    useOriginal,
+    useOriginal: finishOriginal,
   };
 }

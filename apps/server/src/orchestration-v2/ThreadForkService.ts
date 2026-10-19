@@ -161,9 +161,10 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           titleRegeneration: null,
           rollbackFailure: null,
           rollbackRequestId: undefined,
-          linkedPullRequest: null,
-          branchPullRequest: null,
-          pullRequests: [],
+          // PR context follows the conversation; watching remains the source thread's responsibility.
+          pullRequests: input.sourceProjection.thread.pullRequests?.map(
+            ({ watch: _watch, ...link }) => link,
+          ),
           deletedAt: null,
         };
         const transfer: OrchestrationV2ContextTransfer = {

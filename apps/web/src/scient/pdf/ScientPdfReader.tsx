@@ -1,3 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect } from "react";
+import type { Dispatch, SetStateAction, RefObject } from "react";
 import type {
   PdfSourceActions,
   PdfSourceDescriptor,
@@ -27,7 +30,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   DropdownMenu,
@@ -159,16 +162,16 @@ export function ScientPdfReader(props: {
   // even when the renewed authorization yields the same URL.
   const [loadAttempt, setLoadAttempt] = useState(0);
   const refreshAsset = asset.refresh;
-  const retryLoad = useCallback(() => {
+  const retryLoad = () => {
     setLoadAttempt((attempt) => attempt + 1);
     refreshAsset();
-  }, [refreshAsset]);
+  };
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
     previousRefreshKey.current = props.refreshKey;
-    asset.refresh();
-  }, [asset.refresh, props.refreshKey]);
+    refreshAsset();
+  }, [refreshAsset, props.refreshKey]);
   if (asset._tag === "Failure") {
     return (
       <div className="scient-pdf-reader">
@@ -256,15 +259,6 @@ function LoadedScientPdfReader(props: {
       .map((keys) => labelKeys(keys))
       .join(" / ");
   const keyboardAction = useRef<(command: string) => boolean>(() => false);
-  keyboardAction.current = (command) => {
-    if (command === "pdf.find") setSearchOpen(true);
-    else if (state.phase !== "ready") return false;
-    else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
-    else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
-    else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
-    else return false;
-    return true;
-  };
   useEffect(() => {
     const root = rootRef.current;
     return root
@@ -291,68 +285,56 @@ function LoadedScientPdfReader(props: {
     viewerElement,
   });
   const { state } = reader;
-  const thumbnailPages = useMemo(
-    () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
-    [state.pageCount],
-  );
+  const handleKeyboardAction = (command: string) => {
+    if (command === "pdf.find") setSearchOpen(true);
+    else if (state.phase !== "ready") return false;
+    else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
+    else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
+    else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
+    else return false;
+    return true;
+  };
+  useLayoutEffect(() => {
+    keyboardAction.current = handleKeyboardAction;
+  });
 
-  const setSidebar = useCallback(
-    (next: PdfSidebarMode) => {
-      setSidebarState(next);
-      pdfReaderSessionStore.updateSidebar(props.documentKey, next);
-    },
-    [props.documentKey],
-  );
+  const thumbnailPages = Array.from({ length: state.pageCount }, (_, index) => index + 1);
 
-  useEffect(() => setPageInput(String(state.page)), [state.page]);
+  const setSidebar = (next: PdfSidebarMode) => {
+    setSidebarState(next);
+    pdfReaderSessionStore.updateSidebar(props.documentKey, next);
+  };
+
+  const [previousPage, setPreviousPage] = useState(state.page);
+  if (previousPage !== state.page) {
+    setPreviousPage(state.page);
+    setPageInput(String(state.page));
+  }
   const onSyncPageChange = props.syncNavigation?.onPageChange;
   useEffect(() => {
     if (state.phase === "ready") onSyncPageChange?.(state.page);
   }, [onSyncPageChange, state.page, state.phase]);
+  const { prepareSearch, goToSyncPoint } = reader;
   useEffect(() => {
     if (!searchOpen) return;
-    reader.prepareSearch();
+    prepareSearch();
     searchRef.current?.focus();
-  }, [reader.prepareSearch, searchOpen]);
+  }, [prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
     if (target === null || target === undefined || state.phase !== "ready") return;
-    reader.goToSyncPoint(target);
-  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, state.phase]);
+    goToSyncPoint(target);
+  }, [props.syncNavigation?.forwardTarget, goToSyncPoint, state.phase]);
 
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     setSearchOpen(false);
     setSearchQuery("");
     reader.closeSearch();
-  }, [reader.closeSearch]);
+  };
 
-  const saveCopy = useCallback(async () => {
-    if (saveCopyPendingRef.current) return;
-    saveCopyPendingRef.current = true;
-    setSavingCopy(true);
-    try {
-      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
-        props.actions.saveCopy(props.source, {
-          url: props.sourceUrl,
-          expiresAt: props.sourceExpiresAt,
-          refresh: props.refreshSource,
-        }),
-      );
-      const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) props.refreshSource();
-    } catch {
-      toastManager.add({
-        type: "error",
-        title: "The PDF could not be saved",
-        description: "Try again or choose another location.",
-      });
-    } finally {
-      saveCopyPendingRef.current = false;
-      setSavingCopy(false);
-    }
-  }, [props.actions, props.refreshSource, props.source, props.sourceExpiresAt, props.sourceUrl]);
+  const saveCopy = () => createReaderSaveCopy({ props, saveCopyPendingRef, setSavingCopy })();
 
-  const clearSourceSyncHintTimers = useCallback(() => {
+  const clearSourceSyncHintTimers = useStableCallback(() => {
     if (sourceSyncHintShowTimerRef.current !== null) {
       window.clearTimeout(sourceSyncHintShowTimerRef.current);
       sourceSyncHintShowTimerRef.current = null;
@@ -361,14 +343,14 @@ function LoadedScientPdfReader(props: {
       window.clearTimeout(sourceSyncHintHideTimerRef.current);
       sourceSyncHintHideTimerRef.current = null;
     }
-  }, []);
+  });
 
-  const dismissSourceSyncHint = useCallback(() => {
+  const dismissSourceSyncHint = useStableCallback(() => {
     clearSourceSyncHintTimers();
     setSourceSyncHintVisible(false);
-  }, [clearSourceSyncHintTimers]);
+  });
 
-  const showSourceSyncHint = useCallback(() => {
+  const showSourceSyncHint = useStableCallback(() => {
     if (sourceSyncHintHideTimerRef.current !== null) {
       window.clearTimeout(sourceSyncHintHideTimerRef.current);
     }
@@ -377,44 +359,41 @@ function LoadedScientPdfReader(props: {
       sourceSyncHintHideTimerRef.current = null;
       setSourceSyncHintVisible(false);
     }, PDF_SOURCE_SYNC_HINT_VISIBLE_MS);
-  }, []);
+  });
 
   useEffect(() => clearSourceSyncHintTimers, [clearSourceSyncHintTimers]);
 
-  const scheduleSourceSyncHint = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (
-        props.syncNavigation?.onInverseSearch === undefined ||
-        state.phase !== "ready" ||
-        pdfSourceSyncHintLearnedThisSession ||
-        event.ctrlKey ||
-        event.metaKey
-      ) {
+  const scheduleSourceSyncHint = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (
+      props.syncNavigation?.onInverseSearch === undefined ||
+      state.phase !== "ready" ||
+      pdfSourceSyncHintLearnedThisSession ||
+      event.ctrlKey ||
+      event.metaKey
+    ) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("a, button, input, select, textarea, [contenteditable='true']")) return;
+    if (target.closest(".page[data-page-number]") === null) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+
+    if (sourceSyncHintVisible) {
+      showSourceSyncHint();
+      return;
+    }
+    if (sourceSyncHintShowTimerRef.current !== null) return;
+
+    sourceSyncHintShowTimerRef.current = window.setTimeout(() => {
+      sourceSyncHintShowTimerRef.current = null;
+      if (pdfSourceSyncHintLearnedThisSession || window.getSelection()?.isCollapsed === false) {
         return;
       }
-
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest("a, button, input, select, textarea, [contenteditable='true']")) return;
-      if (target.closest(".page[data-page-number]") === null) return;
-      if (window.getSelection()?.isCollapsed === false) return;
-
-      if (sourceSyncHintVisible) {
-        showSourceSyncHint();
-        return;
-      }
-      if (sourceSyncHintShowTimerRef.current !== null) return;
-
-      sourceSyncHintShowTimerRef.current = window.setTimeout(() => {
-        sourceSyncHintShowTimerRef.current = null;
-        if (pdfSourceSyncHintLearnedThisSession || window.getSelection()?.isCollapsed === false) {
-          return;
-        }
-        showSourceSyncHint();
-      }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
-    },
-    [props.syncNavigation?.onInverseSearch, showSourceSyncHint, sourceSyncHintVisible, state.phase],
-  );
+      showSourceSyncHint();
+    }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
+  };
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.key !== "Escape") return;
@@ -803,4 +782,40 @@ function LoadedScientPdfReader(props: {
       </div>
     </div>
   );
+}
+
+function createReaderSaveCopy({
+  props,
+  saveCopyPendingRef,
+  setSavingCopy,
+}: {
+  props: Parameters<typeof LoadedScientPdfReader>[0];
+  saveCopyPendingRef: RefObject<boolean>;
+  setSavingCopy: Dispatch<SetStateAction<boolean>>;
+}) {
+  return async () => {
+    if (saveCopyPendingRef.current) return;
+    saveCopyPendingRef.current = true;
+    setSavingCopy(true);
+    try {
+      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
+        props.actions.saveCopy(props.source, {
+          url: props.sourceUrl,
+          expiresAt: props.sourceExpiresAt,
+          refresh: props.refreshSource,
+        }),
+      );
+      const presentation = announcePdfSaveCopyResult(result);
+      if (presentation.refreshSource) props.refreshSource();
+    } catch {
+      toastManager.add({
+        type: "error",
+        title: "The PDF could not be saved",
+        description: "Try again or choose another location.",
+      });
+    } finally {
+      saveCopyPendingRef.current = false;
+      setSavingCopy(false);
+    }
+  };
 }

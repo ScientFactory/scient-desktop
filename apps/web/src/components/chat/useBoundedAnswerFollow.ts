@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { observeResize } from "~/lib/observeResize";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
@@ -212,7 +213,9 @@ export function useBoundedAnswerFollow({
       };
       const answerBox = rowRect(answerRow.id);
       if (!answerBox) {
-        if (mountAttempts-- > 0) frame = requestAnimationFrame(tick);
+        const attemptsLeft = mountAttempts;
+        mountAttempts -= 1;
+        if (attemptsLeft > 0) frame = requestAnimationFrame(tick);
         return;
       }
       const answer = answerBox.element;
@@ -408,5 +411,5 @@ export function useBoundedAnswerFollow({
     followResponse,
     onFinished,
   ]);
-  return useCallback(() => (intent.current.stopped ? null : intent.current.prompt), []);
+  return useStableCallback(() => (intent.current.stopped ? null : intent.current.prompt));
 }

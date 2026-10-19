@@ -101,6 +101,37 @@ is eligible; same-workspace conversation forks also work in non-Git projects.
 Explicitly addressed archived origins remain readable for this decision;
 deleted origins do not.
 
+## Owner decisions on upstream behavior
+
+Alignments keep these as recorded. Changing one needs the owner's decision, not a
+merge resolution.
+
+- **`doctor` keeps the original database (decided 2026-10-19).** Upstream's repair
+  that deletes `state.sqlite` stays in the code but is never offered:
+  `scientOriginalDatabaseDeletable` in `apps/server/src/persistence/DatabaseMaintenance.ts`
+  is `false`, and its test fails if the repair is offered. Enabling it needs a
+  staleness check under the deletion lock and a Windows-safe removal.
+- **Old V1 tables are kept (decided 2026-10-19).** Scient migration 067 drops only
+  `projection_state` and `checkpoint_diff_blobs`. `projection_thread_activities`,
+  `projection_pending_approvals`, `projection_thread_proposed_plans` and
+  `projection_turns` stay: the legacy history import and its per-start refresh read
+  them, and Scient migration 016 reads `projection_turns`. Open follow-up, a separate
+  PR after measuring the space they take on a synthetic database: a cleanup step after
+  the startup import that drops them only once every legacy import is complete at
+  `LEGACY_HISTORY_REPAIR_VERSION`, plus an end to the refresh from `state.sqlite`.
+  Never drop them unconditionally. v0.6.21 (2026-10-02) is the last release that
+  stored conversations only in `state.sqlite`; the import shipped in v0.6.22
+  (2026-10-10).
+- **Workspace write authorization stays active (decided 2026-10-19).** Upstream's
+  `KnownWorkspaces` check and the `.git` write denial cover Scient's saves, creates,
+  renames, image uploads and plan saves. They do not affect agents, which write with
+  their own tools. Known cases it refuses, to fix by registering the folder rather
+  than by loosening the check: a scheduled task's "Use a specific checkout" path that
+  is not one of the project's Git worktrees; a draft thread on a hand-made worktree
+  outside the managed folders and the project, before its first message; and any
+  thread worktree outside the managed folders when `git worktree list` fails. A
+  refused Markdown image upload reports a generic internal error.
+
 ## Native V2 reliability model
 
 The message-boundary RPC enters

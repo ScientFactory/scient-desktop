@@ -2,7 +2,6 @@
 import {
   act,
   createRef,
-  useCallback,
   useImperativeHandle,
   useRef,
   useState,
@@ -68,10 +67,10 @@ function RepairEditorFixture({
   const [draft, setDraft] = useState(initialDraft);
   const draftRef = useRef(draft);
   const handle: ComposerHandleRef = useRef(null);
-  const setPrompt = useCallback((next: string) => {
+  const setPrompt = (next: string) => {
     draftRef.current = next;
     setDraft(next);
-  }, []);
+  };
   useImperativeHandle(
     handle,
     () =>

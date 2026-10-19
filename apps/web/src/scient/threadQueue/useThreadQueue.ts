@@ -7,7 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePreparedConnection } from "../../state/session";
 import {
   controlThreadQueue,
@@ -59,40 +59,34 @@ export function useThreadQueue(input: {
     revision: undefined,
   });
   const connected = Option.isSome(usePreparedConnection(environmentId));
-  const accept = useCallback(
-    (snapshot: ScientThreadQueueSnapshot) => {
-      if (currentKey.current !== key || snapshot.threadId !== threadId) return;
-      if (snapshot.unchanged) {
-        setState((old) => (old.key === key && old.error !== null ? { ...old, error: null } : old));
-        return snapshot;
-      }
-      if (
-        revisionRef.current.key === key &&
-        (revisionRef.current.revision ?? -1) > (snapshot.revision ?? 0)
-      )
-        return snapshot;
-      revisionRef.current = { key, revision: snapshot.revision };
-      setState((old) =>
-        old.key === key && (old.snapshot?.revision ?? -1) > (snapshot.revision ?? 0)
-          ? old
-          : { key, snapshot, error: null },
-      );
+  const accept = (snapshot: ScientThreadQueueSnapshot) => {
+    if (currentKey.current !== key || snapshot.threadId !== threadId) return;
+    if (snapshot.unchanged) {
+      setState((old) => (old.key === key && old.error !== null ? { ...old, error: null } : old));
       return snapshot;
-    },
-    [key, threadId],
-  );
-  const fail = useCallback(
-    (cause: unknown) => {
-      if (currentKey.current === key)
-        setState((old) => ({
-          key,
-          snapshot: old.key === key ? old.snapshot : null,
-          error: cause instanceof Error ? cause.message : String(cause),
-        }));
-    },
-    [key],
-  );
-  const refresh = useCallback(async () => {
+    }
+    if (
+      revisionRef.current.key === key &&
+      (revisionRef.current.revision ?? -1) > (snapshot.revision ?? 0)
+    )
+      return snapshot;
+    revisionRef.current = { key, revision: snapshot.revision };
+    setState((old) =>
+      old.key === key && (old.snapshot?.revision ?? -1) > (snapshot.revision ?? 0)
+        ? old
+        : { key, snapshot, error: null },
+    );
+    return snapshot;
+  };
+  const fail = (cause: unknown) => {
+    if (currentKey.current === key)
+      setState((old) => ({
+        key,
+        snapshot: old.key === key ? old.snapshot : null,
+        error: cause instanceof Error ? cause.message : String(cause),
+      }));
+  };
+  const refresh = async () => {
     if (!environmentId || !threadId || refreshInFlight.current === key) return;
     refreshInFlight.current = key;
     try {
@@ -113,10 +107,9 @@ export function useThreadQueue(input: {
         count: pollFailures.current.key === key ? pollFailures.current.count + 1 : 1,
       };
       fail(cause);
-    } finally {
-      if (refreshInFlight.current === key) refreshInFlight.current = null;
     }
-  }, [environmentId, threadId, key, accept, fail]);
+    if (refreshInFlight.current === key) refreshInFlight.current = null;
+  };
   useEffect(() => {
     if (!connected || (state.key === key && state.snapshot?.nativeQueue === true)) return;
     let stopped = false;

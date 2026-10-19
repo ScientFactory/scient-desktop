@@ -76,6 +76,11 @@ other files keep their filename and can be downloaded.
 
 ## Send while the agent is working
 
+On web and desktop, choose **Settings → General → Follow-up behavior** to queue
+new messages for a later turn or steer the running turn immediately. The setting
+applies to this client; already queued messages keep their place. Queued messages
+are saved on the server and can be edited, reordered, or removed above the composer.
+
 On web and desktop, a message sent during a running turn appears in the queue
 above the composer. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
@@ -86,19 +91,17 @@ that hold. When the thread is idle, **Send** on the first waiting message starts
 only that message; the other messages stay held in order. Reorder first if you
 want to send a different one. Once resumed, the queue sends each message after
 the preceding answer finishes successfully.
-
-In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
-behavior or **Steer** to send new messages immediately. **Send shortcut**
-controls whether Enter or Cmd/Ctrl+Enter sends. While a turn is running, the
-alternate shortcut uses the opposite action: `Cmd+Enter` on macOS or
-`Ctrl+Enter` on Windows and Linux steers when your default is Queue and queues
-when your default is Steer. These settings apply to the current client. Messages
-already queued keep their place.
+When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
+the opposite action: it steers when your default is Queue and queues when your
+default is Steer.
+If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut uses
+your default follow-up behavior; add **Shift** to use the opposite action. This
+applies only to multiline messages when you choose the multiline send option.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
-the oldest queued message now, as a steer into the running turn. It leaves the
-current draft in the composer and waits if the agent needs an approval or an
-answer, and it requires an active turn that supports steering. Change
+the oldest queued message as a steer. This leaves the current draft intact and
+requires an active turn that supports steering. If that shortcut sends the opposite
+action for your draft, move focus outside the composer to steer the queued message. Change
 `thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the

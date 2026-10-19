@@ -13,7 +13,6 @@ const REQUIRED = [
   "windows_packaging_changes",
   "test",
   "test_web",
-  "test_web_layout",
   "test_server",
   "transfer-report",
   "rust",

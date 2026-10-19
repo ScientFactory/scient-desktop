@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   formatCount,
@@ -62,7 +62,7 @@ export function UsageAccountingTrendChart({
   const activeSeriesIndexRef = useRef<number | null>(null);
   const tooltipCurveAdjustedRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
-  const { paths, points, ticks, toY } = useMemo(() => {
+  const { paths, points, ticks, toY } = (() => {
     const peak = trend.series.reduce((current, series) => Math.max(current, ...series.values), 0);
     const scale = niceScale(peak, 4);
     const toY = (value: number) =>
@@ -78,9 +78,9 @@ export function UsageAccountingTrendChart({
       ticks: scale.ticks,
       toY,
     };
-  }, [trend]);
+  })();
 
-  const positionTooltip = useCallback(() => {
+  const positionTooltip = () => {
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
     const hoverPosition = hoverPositionRef.current;
@@ -116,9 +116,9 @@ export function UsageAccountingTrendChart({
     tooltipCurveAdjustedRef.current = position.top < basePosition.top;
     plot.style.setProperty("--usage-accounting-tooltip-left", `${position.left}px`);
     plot.style.setProperty("--usage-accounting-tooltip-top", `${position.top}px`);
-  }, [points]);
+  };
 
-  const scheduleTooltipPosition = useCallback(() => {
+  const scheduleTooltipPosition = () => {
     if (typeof requestAnimationFrame === "undefined") {
       positionTooltip();
       return;
@@ -128,7 +128,7 @@ export function UsageAccountingTrendChart({
       animationFrameRef.current = null;
       positionTooltip();
     });
-  }, [positionTooltip]);
+  };
 
   useEffect(
     () => () => {
@@ -136,7 +136,7 @@ export function UsageAccountingTrendChart({
         cancelAnimationFrame(animationFrameRef.current);
       }
     },
-    [],
+    [animationFrameRef],
   );
 
   useLayoutEffect(() => {
@@ -146,89 +146,80 @@ export function UsageAccountingTrendChart({
     const tooltip = tooltipRef.current;
     if (plot === null || tooltip === null) return;
     return observeResize([plot, tooltip], positionTooltip);
-  }, [activePeriod, positionTooltip]);
+  }, [activePeriod, positionTooltip, plotRef, tooltipRef]);
 
-  const selectPeriod = useCallback(
-    (index: number) => {
-      const plot = plotRef.current;
-      if (plot === null || trend.periods.length === 0) return;
-      const boundedIndex = Math.min(trend.periods.length - 1, Math.max(0, index));
-      const x =
-        trend.periods.length === 1
-          ? plot.clientWidth / 2
-          : (boundedIndex / (trend.periods.length - 1)) * plot.clientWidth;
-      let highestSeriesIndex = 0;
-      let highestPoint = VIEW_HEIGHT;
-      points.forEach((seriesPoints, seriesIndex) => {
-        const pointY = seriesPoints[boundedIndex]?.y ?? VIEW_HEIGHT;
-        if (pointY < highestPoint) {
-          highestPoint = pointY;
-          highestSeriesIndex = seriesIndex;
-        }
-      });
-      const y = (highestPoint / VIEW_HEIGHT) * plot.clientHeight;
-      hoverPositionRef.current = { x, y };
-      activeSeriesIndexRef.current = highestSeriesIndex;
-      plot.style.setProperty("--usage-accounting-hover-x", `${x}px`);
-      plot.style.setProperty("--usage-accounting-hover-y", `${y}px`);
-      setActivePeriod(boundedIndex);
-      setActiveSeriesIndex(highestSeriesIndex);
-      scheduleTooltipPosition();
-    },
-    [points, scheduleTooltipPosition, trend.periods.length],
-  );
+  const selectPeriod = (index: number) => {
+    const plot = plotRef.current;
+    if (plot === null || trend.periods.length === 0) return;
+    const boundedIndex = Math.min(trend.periods.length - 1, Math.max(0, index));
+    const x =
+      trend.periods.length === 1
+        ? plot.clientWidth / 2
+        : (boundedIndex / (trend.periods.length - 1)) * plot.clientWidth;
+    let highestSeriesIndex = 0;
+    let highestPoint = VIEW_HEIGHT;
+    points.forEach((seriesPoints, seriesIndex) => {
+      const pointY = seriesPoints[boundedIndex]?.y ?? VIEW_HEIGHT;
+      if (pointY < highestPoint) {
+        highestPoint = pointY;
+        highestSeriesIndex = seriesIndex;
+      }
+    });
+    const y = (highestPoint / VIEW_HEIGHT) * plot.clientHeight;
+    hoverPositionRef.current = { x, y };
+    activeSeriesIndexRef.current = highestSeriesIndex;
+    plot.style.setProperty("--usage-accounting-hover-x", `${x}px`);
+    plot.style.setProperty("--usage-accounting-hover-y", `${y}px`);
+    setActivePeriod(boundedIndex);
+    setActiveSeriesIndex(highestSeriesIndex);
+    scheduleTooltipPosition();
+  };
 
-  const handlePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const plot = plotRef.current;
-      if (plot === null || trend.periods.length === 0) return;
-      const bounds = plot.getBoundingClientRect();
-      if (bounds.width === 0 || bounds.height === 0) return;
-      const x = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
-      const pointerY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
-      const curveX = (x / bounds.width) * VIEW_WIDTH;
-      const curveYs = points.map(
-        (seriesPoints) =>
-          (shapePreservingCurveYAtX(seriesPoints, curveX) / VIEW_HEIGHT) * bounds.height,
-      );
-      const nearestSeries = nearestCurveIndex({
-        curveYs,
-        pointerY,
-        previousIndex: activeSeriesIndexRef.current,
-        switchMargin: 5,
-      });
-      if (nearestSeries === null) return;
-      const y = curveYs[nearestSeries] ?? pointerY;
-      hoverPositionRef.current = { x, y };
-      activeSeriesIndexRef.current = nearestSeries;
-      plot.style.setProperty("--usage-accounting-hover-x", `${x}px`);
-      plot.style.setProperty("--usage-accounting-hover-y", `${y}px`);
-      setActivePeriod(nearestPeriodIndex(x, bounds.width, trend.periods.length));
-      setActiveSeriesIndex(nearestSeries);
-      scheduleTooltipPosition();
-    },
-    [points, scheduleTooltipPosition, trend.periods.length],
-  );
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const plot = plotRef.current;
+    if (plot === null || trend.periods.length === 0) return;
+    const bounds = plot.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return;
+    const x = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
+    const pointerY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
+    const curveX = (x / bounds.width) * VIEW_WIDTH;
+    const curveYs = points.map(
+      (seriesPoints) =>
+        (shapePreservingCurveYAtX(seriesPoints, curveX) / VIEW_HEIGHT) * bounds.height,
+    );
+    const nearestSeries = nearestCurveIndex({
+      curveYs,
+      pointerY,
+      previousIndex: activeSeriesIndexRef.current,
+      switchMargin: 5,
+    });
+    if (nearestSeries === null) return;
+    const y = curveYs[nearestSeries] ?? pointerY;
+    hoverPositionRef.current = { x, y };
+    activeSeriesIndexRef.current = nearestSeries;
+    plot.style.setProperty("--usage-accounting-hover-x", `${x}px`);
+    plot.style.setProperty("--usage-accounting-hover-y", `${y}px`);
+    setActivePeriod(nearestPeriodIndex(x, bounds.width, trend.periods.length));
+    setActiveSeriesIndex(nearestSeries);
+    scheduleTooltipPosition();
+  };
 
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const current = activePeriod ?? trend.periods.length - 1;
-      const next =
-        event.key === "ArrowLeft"
-          ? current - 1
-          : event.key === "ArrowRight"
-            ? current + 1
-            : event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? trend.periods.length - 1
-                : null;
-      if (next === null) return;
-      event.preventDefault();
-      selectPeriod(next);
-    },
-    [activePeriod, selectPeriod, trend.periods.length],
-  );
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const current = activePeriod ?? trend.periods.length - 1;
+    const next =
+      event.key === "ArrowLeft"
+        ? current - 1
+        : event.key === "ArrowRight"
+          ? current + 1
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? trend.periods.length - 1
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    selectPeriod(next);
+  };
 
   if (trend.periods.length === 0 || trend.series.length === 0) {
     return (

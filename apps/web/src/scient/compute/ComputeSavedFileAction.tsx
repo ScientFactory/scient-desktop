@@ -42,7 +42,7 @@ export function ComputeSavedFileAction(props: {
   const run = async (relativePath: string) => {
     if (reading || props.disabled) return;
     setReading(true);
-    try {
+    return await (async () => {
       const file = await readFile({
         environmentId: props.environmentId,
         input: { cwd: props.cwd, relativePath },
@@ -66,15 +66,17 @@ export function ComputeSavedFileAction(props: {
       });
       if (result._tag !== "Success") throw squashAtomCommandFailure(result);
       props.onSubmitted(result.value);
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Unable to run saved file",
-        description: error instanceof Error ? error.message : "The file could not be submitted.",
+    })()
+      .catch(async (error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to run saved file",
+          description: error instanceof Error ? error.message : "The file could not be submitted.",
+        });
+      })
+      .finally(() => {
+        setReading(false);
       });
-    } finally {
-      setReading(false);
-    }
   };
   return (
     <>

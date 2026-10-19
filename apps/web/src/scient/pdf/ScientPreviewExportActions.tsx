@@ -1,6 +1,7 @@
+import type { Dispatch, SetStateAction, RefObject } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Download, FileDown, FileText } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -34,59 +35,15 @@ export function ScientPreviewExportActions(props: {
     };
   }, []);
 
-  const exportPdf = useCallback(
-    async (action: PdfExportAction) => {
-      if (props.disabled || !props.runtimeTabId || !props.pageUrl || exportPendingRef.current)
-        return;
-      exportPendingRef.current = true;
-      setExporting(true);
-      const hadArtifact = Boolean(readHtmlPdfRelation(props.threadRef, props.tabId)?.artifactId);
-      try {
-        const result = await exportBrowserPdf({
-          threadRef: props.threadRef,
-          tabId: props.tabId,
-          runtimeTabId: props.runtimeTabId,
-          pageUrl: props.pageUrl,
-          activate: action === "open",
-          trigger: "user",
-        });
-        if (action === "save") {
-          const saveResult = await savePdfCopy(result.source);
-          announcePdfSaveCopyResult(saveResult, { warnings: result.receipt.warnings });
-        } else if (result.receipt.warnings.length > 0) {
-          toastManager.add({
-            type: "warning",
-            title: "PDF exported with warnings",
-            description: result.receipt.warnings.join(" · "),
-          });
-        } else {
-          toastManager.add({
-            type: "success",
-            title: hadArtifact ? "PDF updated" : "PDF exported",
-            data: { compact: true, dismissAfterVisibleMs: 2_500 },
-          });
-        }
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: action === "save" ? "Unable to save PDF" : "Unable to export PDF",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
-      } finally {
-        exportPendingRef.current = false;
-        if (mountedRef.current) setExporting(false);
-      }
-    },
-    [
+  const exportPdf = (action: PdfExportAction) =>
+    createPreviewPdfExport({
+      props,
       exportBrowserPdf,
-      props.disabled,
-      props.pageUrl,
-      props.runtimeTabId,
-      props.tabId,
-      props.threadRef,
       savePdfCopy,
-    ],
-  );
+      exportPendingRef,
+      mountedRef,
+      setExporting,
+    })(action);
 
   return (
     <Menu>
@@ -125,4 +82,62 @@ export function ScientPreviewExportActions(props: {
       </MenuPopup>
     </Menu>
   );
+}
+
+function createPreviewPdfExport({
+  props,
+  exportBrowserPdf,
+  savePdfCopy,
+  exportPendingRef,
+  mountedRef,
+  setExporting,
+}: {
+  props: Parameters<typeof ScientPreviewExportActions>[0];
+  exportBrowserPdf: ReturnType<typeof useBrowserPdfExport>;
+  savePdfCopy: ReturnType<typeof usePdfSaveCopy>;
+  exportPendingRef: RefObject<boolean>;
+  mountedRef: RefObject<boolean>;
+  setExporting: Dispatch<SetStateAction<boolean>>;
+}) {
+  return async (action: PdfExportAction) => {
+    if (props.disabled || !props.runtimeTabId || !props.pageUrl || exportPendingRef.current) return;
+    exportPendingRef.current = true;
+    setExporting(true);
+    const hadArtifact = Boolean(readHtmlPdfRelation(props.threadRef, props.tabId)?.artifactId);
+    try {
+      const result = await exportBrowserPdf({
+        threadRef: props.threadRef,
+        tabId: props.tabId,
+        runtimeTabId: props.runtimeTabId,
+        pageUrl: props.pageUrl,
+        activate: action === "open",
+        trigger: "user",
+      });
+      if (action === "save") {
+        const saveResult = await savePdfCopy(result.source);
+        announcePdfSaveCopyResult(saveResult, { warnings: result.receipt.warnings });
+      } else if (result.receipt.warnings.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "PDF exported with warnings",
+          description: result.receipt.warnings.join(" · "),
+        });
+      } else {
+        toastManager.add({
+          type: "success",
+          title: hadArtifact ? "PDF updated" : "PDF exported",
+          data: { compact: true, dismissAfterVisibleMs: 2_500 },
+        });
+      }
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: action === "save" ? "Unable to save PDF" : "Unable to export PDF",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    } finally {
+      exportPendingRef.current = false;
+      if (mountedRef.current) setExporting(false);
+    }
+  };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { plotlyWebGlActivityPool } from "./plotlyWebGlActivityPool";
 
@@ -30,7 +30,9 @@ export function usePlotlyViewportActivity(
   const [active, setActive] = useState(false);
   const everActivatedRef = useRef(false);
   const onDeactivateRef = useRef(onDeactivate);
-  onDeactivateRef.current = onDeactivate;
+  useLayoutEffect(() => {
+    onDeactivateRef.current = onDeactivate;
+  }, [onDeactivate]);
 
   useEffect(() => {
     if (element == null) return;

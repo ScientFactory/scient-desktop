@@ -4,7 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -181,7 +181,7 @@ export function AssistantSelectionToolbar({
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
-  const capture = useCallback(() => {
+  const capture = () => {
     if (!viewport) return null;
     const captured = captureAssistantTextSelection(viewport, window.getSelection());
     const messageId = captured?.source.dataset.assistantCitationSource;
@@ -195,6 +195,6 @@ export function AssistantSelectionToolbar({
       },
       sourceAnchor: { source: captured.source, range: captured.range, viewport },
     };
-  }, [threadRef, viewport]);
+  };
   return <SelectionCitationToolbar viewport={viewport} capture={capture} onCite={onCite} />;
 }

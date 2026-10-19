@@ -2058,11 +2058,10 @@ it.live(
         let failSend = true;
         let generation = 0;
         const resumed: string[] = [];
-        // The reopened runtime continues in the same project workspace, so it outlives the first.
-        const projectScope = yield* Scope.Scope;
         const options = {
           runtimeOptions,
-          projectScope,
+          // The persisted project folder must outlive both runtime connections.
+          projectScope: yield* Scope.Scope,
           nativeIdFactory: () => `uncertain-native-${generation++}`,
           beforeFresh: () =>
             pauseReplacement

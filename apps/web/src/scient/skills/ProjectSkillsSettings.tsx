@@ -23,9 +23,10 @@ export function ProjectSkillsSettings(props: {
   const [pendingName, setPendingName] = useState<string | null>(null);
   const projectSkills = inventory.data?.skills.filter((skill) => skill.scope === "project") ?? [];
 
+  const { refresh: refreshInventory } = inventory;
   useEffect(() => {
-    inventory.refresh();
-  }, [inventory.refresh, props.environmentId, props.projectId]);
+    refreshInventory();
+  }, [refreshInventory]);
 
   const updateSkill = async (
     name: string,
@@ -34,14 +35,17 @@ export function ProjectSkillsSettings(props: {
   ) => {
     if (pendingName !== null) return;
     setPendingName(name);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
       await setPreference({
         environmentId: props.environmentId,
         input: { projectId: props.projectId, name, active, invocationPolicy },
       });
-    } finally {
-      setPendingName(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingName(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   if (inventory.error) {

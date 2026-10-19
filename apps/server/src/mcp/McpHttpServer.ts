@@ -413,6 +413,22 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   return screenshotPath;
 });
 
+/**
+ * Tool input schemas are advertised through each schema's JSON codec, which
+ * offers `null` for every `Schema.optional` field, but Toolkit decodes with the
+ * schema itself and rejects that `null`. Decoding through the same codec makes
+ * a tool accept what it advertises.
+ */
+const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+): Toolkit.Toolkit<Tools> =>
+  // The clones keep each tool's id, name and decoded parameter type, so handlers still match.
+  Toolkit.make(
+    ...Object.values(toolkit.tools).map((tool) =>
+      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+    ),
+  ) as unknown as Toolkit.Toolkit<Tools>;
+
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
@@ -463,6 +479,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   const built = yield* PreviewSnapshotToolkit;
   const execute = yield* makeScientToolExecutor(built).pipe(Effect.orDie);
   const tool = PreviewSnapshotTool;
+  const decodeParameters = Schema.decodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema));
   yield* server.addTool({
     tool: new McpSchema.Tool({
       name: tool.name,
@@ -487,7 +504,8 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
             Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
             "preview_snapshot",
           );
-          return yield* execute("preview_snapshot", payload).pipe(
+          return yield* decodeParameters(payload).pipe(
+            Effect.flatMap((input) => execute("preview_snapshot", input)),
             Effect.provideService(WorkspaceBindingResolver, resolver),
             Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
             Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
@@ -698,7 +716,7 @@ const registerRequestToolkit = <Tools extends Record<string, Tool.Any>>(
         dependencies: [McpSchema.McpRequestContext],
       }).annotateMerge(tool.annotations);
       const requestToolkit = Toolkit.make(requestTool);
-      yield* McpServer.registerToolkit(requestToolkit).pipe(
+      yield* McpServer.registerToolkit(decodeAsAdvertised(requestToolkit)).pipe(
         Effect.provide(
           Layer.succeedContext(
             // Bind the canonical Handler SPI by the constructed tool's service id.
@@ -908,7 +926,7 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   const devices = yield* DeviceService.DeviceService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const sessions = yield* ProviderSessionManagerV2;
-  const built = yield* DeviceScreenshotToolkit;
+  const built = yield* decodeAsAdvertised(DeviceScreenshotToolkit);
   yield* registerImageTool(
     DeviceScreenshotTool,
     (payload) =>
@@ -932,7 +950,7 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   const htmlRender = yield* HtmlRender.HtmlRender;
   const sessions = yield* ProviderSessionManagerV2;
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const built = yield* HtmlPreviewToolkit;
+  const built = yield* decodeAsAdvertised(HtmlPreviewToolkit);
   yield* registerImageTool(
     HtmlPreviewTool,
     (payload) =>

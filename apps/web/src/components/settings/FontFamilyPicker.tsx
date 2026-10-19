@@ -1,6 +1,6 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
 import {
   Combobox,
@@ -121,9 +121,11 @@ export function FontFamilyPicker({
   // its open state never receives Base UI's entrance style baseline, so the
   // exit transition on close has no style delta, never fires transitionend,
   // and the popup lingers on screen forever.
+  const [openAfterMount] = useState(initialOpen);
   useEffect(() => {
-    if (initialOpen) setOpen(true);
-  }, []);
+    // oxlint-disable-next-line react/set-state-in-effect -- Base UI needs one closed commit first to record the popup's entrance style.
+    if (openAfterMount) setOpen(true);
+  }, [openAfterMount]);
   const listRef = useRef<LegendListRef | null>(null);
   const enumeration = useFontEnumeration();
 
@@ -132,14 +134,11 @@ export function FontFamilyPicker({
     if (nextOpen) setQuery("");
   };
 
-  const families = useMemo(() => {
-    if (enumeration.status !== "granted") return [];
-    return enumeration.families;
-  }, [enumeration]);
+  const families = enumeration.status === "granted" ? enumeration.families : [];
 
-  const items = useMemo(() => {
-    return getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
-  }, [defaultFamily, defaultOptionLabel, families, query]);
+  // SCIENT-FORK:START - preserve semantic default labels and their matching filter.
+  const items = getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
+  // SCIENT-FORK:END
 
   const selectedValue = selectedFamily.length === 0 ? DEFAULT_FONT_VALUE : selectedFamily;
 
@@ -219,6 +218,10 @@ export function FontFamilyPicker({
               <LegendList<string>
                 ref={listRef}
                 data={items}
+                // Rows are memoized by item, but Base UI highlights and selects
+                // virtualized rows by index. Re-render them when filtering moves
+                // a surviving item to a new index.
+                extraData={items}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}

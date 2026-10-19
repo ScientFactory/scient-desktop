@@ -28,27 +28,15 @@ export interface QueuedRunsControlHandle {
 
 type ThreadQueueProjection = Parameters<typeof deriveThreadQueueWorkflowState>[0];
 
-// Separate hooks so these stay cached across the useAssetUrls call, which keys on
-// the resources array.
-function useQueueWorkflow(projection: ThreadQueueProjection | undefined) {
-  "use memo";
-  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
-  const queuedImageAttachmentIds: string[] = [];
-  for (const { attachments } of workflow?.queuedRuns ?? []) {
-    for (const attachment of attachments) {
-      if (attachment.type === "image") queuedImageAttachmentIds.push(attachment.id);
-    }
-  }
-  const queuedImageAttachmentResources = queuedImageAttachmentIds.map((attachmentId) => ({
-    _tag: "attachment" as const,
-    attachmentId,
-  }));
-  return { workflow, queuedImageAttachmentIds, queuedImageAttachmentResources };
-}
-
-function useAcknowledgedMessageIds(projection: ThreadQueueProjection | undefined) {
-  "use memo";
-  return new Set((projection?.messages ?? []).map((message) => message.id));
+function queuedImageResources(projection: ThreadQueueProjection | undefined) {
+  if (!projection) return [];
+  return deriveThreadQueueWorkflowState(projection).queuedRuns.flatMap(({ attachments }) =>
+    attachments.flatMap((attachment) =>
+      attachment.type === "image"
+        ? [{ _tag: "attachment" as const, attachmentId: attachment.id }]
+        : [],
+    ),
+  );
 }
 
 /** Native queue state and commands, presented once in Scient's composer strip. */
@@ -83,11 +71,8 @@ export function QueuedRunsControl({
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const {
-    workflow,
-    queuedImageAttachmentIds: imageIds,
-    queuedImageAttachmentResources,
-  } = useQueueWorkflow(projection);
+  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
+  const queuedImageAttachmentResources = queuedImageResources(projection);
   const queued = workflow?.queuedRuns ?? [];
   const failedHead =
     workflow?.isHeld === true &&
@@ -118,14 +103,14 @@ export function QueuedRunsControl({
   }));
   const imageUrls = useAssetUrls(props.environmentId, queuedImageAttachmentResources);
   const attachmentUrls = new Map(
-    imageIds.flatMap((id, index) => {
+    queuedImageAttachmentResources.flatMap((resource, index) => {
       const url = imageUrls[index];
-      return url ? [[id, url] as const] : [];
+      return url ? [[resource.attachmentId, url] as const] : [];
     }),
   );
   // Acknowledged messages retire their optimistic copies even after their run
   // has left the queue; filtering only by queued IDs would resurrect them.
-  const acknowledged = useAcknowledgedMessageIds(projection);
+  const acknowledged = new Set((projection?.messages ?? []).map((message) => message.id));
   const pendingMessages = props.optimisticMessages
     .filter(
       (message) =>

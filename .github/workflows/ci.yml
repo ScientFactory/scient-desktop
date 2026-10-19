@@ -358,15 +358,49 @@ jobs:
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
+      # The browser project runs React tests in headless Chromium. Same cache key as
+      # test_server, so both jobs share one downloaded browser.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
       - name: Test
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
+          # SCIENT-FORK: the Markdown editor timing suite runs in its own step below.
+          SCIENT_MARKDOWN_PERF_SHARED_RUNNER: "1"
         run: >-
           vp run --filter @t3tools/web test
           --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           --reporter=default
           --reporter=json
           --outputFile.json="$TEST_REPORT"
+
+      # SCIENT-FORK:START — the Markdown editor's timing budgets skip in the shard, where they
+      # would share the runner with headless Chromium and measure that contention, and run alone.
+      - name: Test Markdown editor performance
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: vp run --filter @t3tools/web test src/scient/markdownEditor/prosemirror/performance.test.ts
+      # SCIENT-FORK:END
 
       - name: Upload test result
         if: always()
@@ -377,31 +411,6 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
           retention-days: 14
-
-  test_web_layout:
-    needs: queue_ci
-    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
-    name: Test Web layout
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Install Chromium
-        run: apps/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
-
-      - name: Test layout
-        run: vp run --filter @t3tools/web test:layout
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
@@ -732,7 +741,7 @@ jobs:
 
   queue_qualification:
     name: Queue qualification receipt
-    needs: [check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_web_layout, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
+    needs: [check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
     if: ${{ !cancelled() && github.event_name == 'merge_group' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

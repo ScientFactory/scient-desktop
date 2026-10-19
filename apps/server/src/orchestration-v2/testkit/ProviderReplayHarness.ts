@@ -572,6 +572,7 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
+        layerStores,
       ),
     ),
   );
@@ -611,6 +612,8 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerProviderSessionManagerProvided,
         layerRuntime,
+        layerServerConfig,
+        layerServerSettings,
       ),
     ),
   );

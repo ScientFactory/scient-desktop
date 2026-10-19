@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { latestCompletedAnswerFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useUiStateStore } from "../../uiStateStore";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -13,13 +13,10 @@ export function useAcknowledgeAnswer(thread: EnvironmentThread | null | undefine
   const runs = projection?.runs;
   const messages = projection?.messages;
   const nodes = projection?.nodes;
-  const answer = useMemo(
-    () =>
-      runs && messages && nodes
-        ? latestCompletedAnswerFromProjection({ runs, messages, nodes })
-        : null,
-    [runs, messages, nodes],
-  );
+  const answer =
+    runs && messages && nodes
+      ? latestCompletedAnswerFromProjection({ runs, messages, nodes })
+      : null;
   // Opening an empty conversation establishes visited metadata without consuming
   // a future answer or a still-loading completion.
   const watermark =

@@ -6,7 +6,7 @@ import type {
   UsageSummary,
 } from "@t3tools/contracts";
 import { ChartNoAxesCombinedIcon, ChevronDownIcon, CircleAlertIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import {
   formatCount,
@@ -91,19 +91,15 @@ export function UsageAccountingView({
 }: {
   readonly summaries: readonly UsageSummary[];
 }) {
-  const accounting = useMemo(() => aggregateAccounting(summaries), [summaries]);
+  const accounting = aggregateAccounting(summaries);
   const [metric, setMetric] = useState<AccountingChartMetric>("spend");
   const [group, setGroup] = useState<AccountingChartGroup>("model");
-  const trend = useMemo(
-    () =>
-      buildAccountingTrend({
-        rows: accounting.sourceRows,
-        keys: accounting.keys,
-        metric,
-        group,
-      }),
-    [accounting.keys, accounting.sourceRows, group, metric],
-  );
+  const trend = buildAccountingTrend({
+    rows: accounting.sourceRows,
+    keys: accounting.keys,
+    metric,
+    group,
+  });
 
   return (
     <div className="flex min-w-0 flex-col gap-7">

@@ -1,5 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import {
   type HtmlFilePresentationRequest,
@@ -25,20 +25,20 @@ export function useScientRightPanelOpeners(input: {
   readonly runAfterPendingFileSave: ReturnType<typeof useActivePendingSurfaceDeparture>;
 }) {
   const { activeThreadRef, activeProject, activeWorkspaceRoot, runAfterPendingFileSave } = input;
-  const addAgentsSurface = useCallback(() => {
+  const addAgentsSurface = () => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("agents", () => {
       useRightPanelStore.getState().open(activeThreadRef, "agents");
     });
-  }, [activeThreadRef, runAfterPendingFileSave]);
-  const addSourcesSurface = useCallback(() => {
+  };
+  const addSourcesSurface = () => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
     const surface = scientSourcesSurface();
     runAfterPendingFileSave(surface.id, () => {
       useRightPanelStore.getState().openScient(activeThreadRef, surface);
     });
-  }, [activeProject, activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
-  const addComputeSurface = useCallback(() => {
+  };
+  const addComputeSurface = () => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
     const surface = scientComputeSurface({
       cwd: activeWorkspaceRoot,
@@ -47,47 +47,44 @@ export function useScientRightPanelOpeners(input: {
     runAfterPendingFileSave(surface.id, () => {
       useRightPanelStore.getState().openScient(activeThreadRef, surface);
     });
-  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
-  const openScientSourcePdf = useCallback(
-    (input: {
-      readonly sourceId: string;
-      readonly attachmentId: string;
-      readonly fileName: string;
-    }) => {
-      if (!activeThreadRef) return;
-      const surface = scientSourcePdfSurface(input);
-      runAfterPendingFileSave(surface.id, () => {
-        useRightPanelStore.getState().openScient(activeThreadRef, surface);
-      });
-    },
-    [activeThreadRef, runAfterPendingFileSave],
-  );
-  const openFileSourceSurfaceNow = useCallback(
-    (relativePath: string, line?: number, options?: OpenFileOptions) => {
-      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      const openOptions = {
-        ...(shouldOpenInBrowserByDefault(relativePath)
-          ? { htmlPreviewMode: "source" as const }
-          : {}),
-        ...options,
-      };
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line, openOptions);
-    },
-    [activeThreadRef, activeWorkspaceRoot],
-  );
+  };
+  const openScientSourcePdf = (input: {
+    readonly sourceId: string;
+    readonly attachmentId: string;
+    readonly fileName: string;
+  }) => {
+    if (!activeThreadRef) return;
+    const surface = scientSourcePdfSurface(input);
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  };
+  const openFileSourceSurfaceNow = (
+    relativePath: string,
+    line?: number,
+    options?: OpenFileOptions,
+  ) => {
+    if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+    const openOptions = {
+      ...(shouldOpenInBrowserByDefault(relativePath) ? { htmlPreviewMode: "source" as const } : {}),
+      ...options,
+    };
+    useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line, openOptions);
+  };
   const openFileSurfaceNow = useScientFileOpening({
     threadRef: activeThreadRef,
     workspaceRoot: activeWorkspaceRoot ?? null,
     openSource: openFileSourceSurfaceNow,
   });
-  const openFileSourceSurface = useCallback(
-    (relativePath: string, line?: number, options?: OpenFileOptions) => {
-      runAfterPendingFileSave(`file:${relativePath}`, () => {
-        openFileSourceSurfaceNow(relativePath, line, options);
-      });
-    },
-    [openFileSourceSurfaceNow, runAfterPendingFileSave],
-  );
+  const openFileSourceSurface = (
+    relativePath: string,
+    line?: number,
+    options?: OpenFileOptions,
+  ) => {
+    runAfterPendingFileSave(`file:${relativePath}`, () => {
+      openFileSourceSurfaceNow(relativePath, line, options);
+    });
+  };
   return {
     addAgentsSurface,
     addSourcesSurface,
@@ -100,23 +97,21 @@ export function useScientRightPanelOpeners(input: {
 
 /** Marks a file surface's HTML or LaTeX presentation request as handled. */
 export function useFilePresentationRequestHandlers(activeThreadRef: ScopedThreadRef | null) {
-  const handleHtmlPresentationRequestHandled = useCallback(
+  const handleHtmlPresentationRequestHandled = useStableCallback(
     (relativePath: string, request: HtmlFilePresentationRequest) => {
       if (!activeThreadRef) return;
       useRightPanelStore
         .getState()
         .consumeHtmlPresentationRequest(activeThreadRef, relativePath, request.id);
     },
-    [activeThreadRef],
   );
-  const handleLatexPresentationRequestHandled = useCallback(
+  const handleLatexPresentationRequestHandled = useStableCallback(
     (relativePath: string, request: LatexFilePresentationRequest) => {
       if (!activeThreadRef) return;
       useRightPanelStore
         .getState()
         .consumeLatexPresentationRequest(activeThreadRef, relativePath, request.id);
     },
-    [activeThreadRef],
   );
   return { handleHtmlPresentationRequestHandled, handleLatexPresentationRequestHandled };
 }

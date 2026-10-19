@@ -2,14 +2,13 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   PROVIDER_DISPLAY_NAMES,
   type EnvironmentId,
-  type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useEnvironments } from "~/state/environments";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { watchEnvironmentProviders } from "./environmentUpdateWatch";
 import {
   collectManagedRuntimeUpdateCandidates,
@@ -39,8 +38,9 @@ export function connectedProviderEnvironments(
     readonly environmentId: EnvironmentId;
     readonly label: string;
     readonly connection: { readonly phase: string };
-    readonly serverConfig: Pick<ServerConfig, "providers"> | null;
+    readonly serverConfig: object | null;
   }>,
+  providersByEnvironment: ReadonlyMap<EnvironmentId, ReadonlyArray<ServerProvider>>,
 ): ProviderEnvironment[] {
   return environments.flatMap((environment) =>
     environment.connection.phase === "connected" && environment.serverConfig !== null
@@ -48,7 +48,7 @@ export function connectedProviderEnvironments(
           {
             environmentId: environment.environmentId,
             label: environment.label,
-            providers: environment.serverConfig.providers,
+            providers: providersByEnvironment.get(environment.environmentId) ?? [],
           },
         ]
       : [],
@@ -289,10 +289,11 @@ export function managedRuntimeProviderMachines(
  */
 export function useManagedRuntimeUpdates() {
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const startRuntimeAction = useStartProviderRuntimeAction();
   const runs = useAtomValue(managedRuntimeUpdateRunsAtom);
   const candidates = collectManagedRuntimeUpdateCandidates(
-    connectedProviderEnvironments(environments),
+    connectedProviderEnvironments(environments, providersByEnvironment),
   );
   const targets = managedRuntimeUpdateTargets(candidates);
 

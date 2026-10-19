@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
 import { getVoiceBridge } from "./voiceClient.ts";
@@ -22,7 +22,7 @@ export function ScientVoiceCommentControl({
   readonly onTranscript: (text: string) => void;
   readonly className?: string;
 }): ReactNode {
-  const client = useMemo(() => getVoiceBridge(), []);
+  const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {

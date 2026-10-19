@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   CheckIcon,
   CopyIcon,
@@ -11,7 +12,7 @@ import {
   RotateCcwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
@@ -19,7 +20,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   RichFenceSourceMenuItem,
   type ScientRichFenceAuthoringActions,
-  useRichFenceContextMenu,
+  createRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import {
@@ -124,8 +125,10 @@ export function VegaLiteChartCard({
   const { ref: viewportRef, isNearViewport } = useNearViewport();
   const controllerRef = useRef<VegaLiteViewController | null>(null);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const parsedSource = useMemo(() => parseSource(source), [source]);
-  const [status, setStatus] = useState<ChartStatus>({ kind: "idle" });
+  const parsedSource = parseSource(source);
+  const [status, setStatus] = useState<ChartStatus>(() => ({
+    kind: isNearViewport && parsedSource.parsed != null ? "loading" : "idle",
+  }));
   const [retryVersion, setRetryVersion] = useState(0);
   const [sourceVisible, setSourceVisible] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -133,14 +136,28 @@ export function VegaLiteChartCard({
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const displayTitle = title || "Vega-Lite chart";
-  const markdownCopy = useMemo(
-    () => vegaLiteMarkdownCopySource(source, language, fenceMeta),
-    [fenceMeta, language, source],
-  );
+  const markdownCopy = vegaLiteMarkdownCopySource(source, language, fenceMeta);
 
-  useEffect(() => {
+  const [previousMount, setPreviousMount] = useState({
+    isNearViewport: isNearViewport,
+    parsedSource: parsedSource,
+    retryVersion: retryVersion,
+    theme: theme,
+  });
+  if (
+    previousMount.isNearViewport !== isNearViewport ||
+    previousMount.parsedSource !== parsedSource ||
+    previousMount.retryVersion !== retryVersion ||
+    previousMount.theme !== theme
+  ) {
+    setPreviousMount({
+      isNearViewport: isNearViewport,
+      parsedSource: parsedSource,
+      retryVersion: retryVersion,
+      theme: theme,
+    });
     if (isNearViewport && parsedSource.parsed != null) setStatus({ kind: "loading" });
-  }, [isNearViewport, parsedSource, retryVersion, theme]);
+  }
 
   useEffect(
     () => () => {
@@ -149,49 +166,46 @@ export function VegaLiteChartCard({
     [],
   );
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);
     setActionMessage(message);
     copyResetTimerRef.current = setTimeout(() => {
       setActionMessage(null);
       copyResetTimerRef.current = null;
     }, 1_500);
-  }, []);
+  };
 
-  const showPersistentMessage = useCallback((message: string) => {
+  const showPersistentMessage = (message: string) => {
     if (copyResetTimerRef.current != null) {
       clearTimeout(copyResetTimerRef.current);
       copyResetTimerRef.current = null;
     }
     setActionMessage(message);
-  }, []);
+  };
 
-  const runControllerAction = useCallback(
-    (
-      action: Exclude<ChartAction, "copy-source" | null>,
-      operation: (controller: VegaLiteViewController) => Promise<void>,
-      successMessage: string | null,
-      failureMessage: string,
-    ) => {
-      const controller = controllerRef.current;
-      if (controller == null || activeAction != null) return;
-      setActiveAction(action);
-      void operation(controller).then(
-        () => {
-          setActiveAction(null);
-          if (successMessage != null) showTransientMessage(successMessage);
-        },
-        (cause) => {
-          console.error("[scient-visualizations] Vega-Lite chart action failed", action, cause);
-          setActiveAction(null);
-          showPersistentMessage(failureMessage);
-        },
-      );
-    },
-    [activeAction, showPersistentMessage, showTransientMessage],
-  );
+  const runControllerAction = (
+    action: Exclude<ChartAction, "copy-source" | null>,
+    operation: (controller: VegaLiteViewController) => Promise<void>,
+    successMessage: string | null,
+    failureMessage: string,
+  ) => {
+    const controller = controllerRef.current;
+    if (controller == null || activeAction != null) return;
+    setActiveAction(action);
+    void operation(controller).then(
+      () => {
+        setActiveAction(null);
+        if (successMessage != null) showTransientMessage(successMessage);
+      },
+      (cause) => {
+        console.error("[scient-visualizations] Vega-Lite chart action failed", action, cause);
+        setActiveAction(null);
+        showPersistentMessage(failureMessage);
+      },
+    );
+  };
 
-  const handleCopySource = useCallback(() => {
+  const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
@@ -208,32 +222,32 @@ export function VegaLiteChartCard({
         showPersistentMessage("Unable to copy the chart source.");
       },
     );
-  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
+  });
 
-  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
-  const handleToggleSource = useCallback(() => {
+  const handleContextMenu = createRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleToggleSource = () => {
     setSourceVisible((visible) => !visible);
-  }, []);
+  };
 
-  const handleExpand = useCallback(() => {
+  const handleExpand = () => {
     setExpandedState(controllerRef.current?.getState() ?? null);
     setExpanded(true);
-  }, []);
+  };
 
-  const handleReturnState = useCallback((state: VegaLiteViewState) => {
+  const handleReturnState = (state: VegaLiteViewState) => {
     const controller = controllerRef.current;
     if (controller == null) return;
     void controller.setState(state).catch((cause: unknown) => {
       console.error("[scient-visualizations] Unable to return expanded chart state", cause);
     });
-  }, []);
+  };
 
-  const handleReady = useCallback((mounted: MountedVegaLiteView) => {
+  const handleReady = (mounted: MountedVegaLiteView) => {
     setStatus({
       kind: "ready",
       warnings: mounted.warnings,
     });
-  }, []);
+  };
 
   const parseError = parsedSource.error;
   const visibleStatus: ChartStatus =

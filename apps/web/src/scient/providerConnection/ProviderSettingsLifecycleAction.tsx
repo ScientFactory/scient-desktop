@@ -239,6 +239,18 @@ function BrowserSignInButton(props: {
   });
   const onThisDevice = useEnvironmentIsOnThisDevice(props.environmentId);
 
+  const continueSignIn = (provider: ServerProvider) => {
+    const operation = provider.connection?.operation;
+    // A flow waiting on a code or pairing continues in the setup view.
+    if (
+      onThisDevice &&
+      isActiveProviderConnectionOperation(operation) &&
+      !(operation?.status === "waiting_for_browser" && operation.authorizationUrlKind === "primary")
+    ) {
+      props.onManage();
+    }
+  };
+
   // From the click the row shows the starting state, like the server's, so this
   // button is replaced at once; the start continues without it.
   const signIn = async () => {
@@ -248,19 +260,7 @@ function BrowserSignInButton(props: {
     try {
       // The controller opens the sign-in page for this client once it is ready.
       const provider = await controller.startConnection(props.method);
-      const operation = provider.connection?.operation;
-      // A flow that waits on something other than the page Scient opened, such
-      // as a code to paste, continues in the setup view.
-      if (
-        onThisDevice &&
-        isActiveProviderConnectionOperation(operation) &&
-        !(
-          operation?.status === "waiting_for_browser" &&
-          operation.authorizationUrlKind === "primary"
-        )
-      ) {
-        props.onManage();
-      }
+      continueSignIn(provider);
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -302,21 +302,26 @@ function ManagedRuntimeActionButton(props: {
     }
     pendingRef.current = true;
     setPending(true);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const plan = await controller.planRuntime(props.action);
-      await controller.startRuntime(plan);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not ${props.action} ${props.displayName}`,
-          description: actionErrorMessage(error),
-        }),
-      );
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
+      try {
+        const plan = await controller.planRuntime(props.action);
+        await controller.startRuntime(plan);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not ${props.action} ${props.displayName}`,
+            description: actionErrorMessage(error),
+          }),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    pendingRef.current = false;
+    setPending(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const label =

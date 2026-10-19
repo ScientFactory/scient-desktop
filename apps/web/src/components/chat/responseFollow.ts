@@ -1,5 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { MessageId, OrchestrationV2RunStatus } from "@t3tools/contracts";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../../types";
 import { shouldRevealArrivedPrompt } from "./readerScrollPolicy";
 
@@ -116,34 +117,35 @@ export function useResponseFollow(input: {
     : null;
   // A prompt whose send failed has nothing left to follow.
   const current = input.loaded && state === "missing" ? null : own;
-  const start = useCallback((promptId: MessageId, followsResponse: boolean) => {
+  const start = useStableCallback((promptId: MessageId, followsResponse: boolean) => {
     setIntent({ threadKey: latest.current.threadKey, promptId, followsResponse });
-  }, []);
+  });
   /**
    * A prompt sent from this window at the end: a thread's first prompt keeps
    * its placement and has its answer revealed; a later prompt's whole
    * response is followed to the end.
    */
-  const followSent = useCallback(
-    (promptId: MessageId, firstMessage: boolean) => start(promptId, !firstMessage),
-    [start],
+  const followSent = useStableCallback((promptId: MessageId, firstMessage: boolean) =>
+    start(promptId, !firstMessage),
   );
-  const clear = useCallback(() => setIntent(null), []);
-  const onFinished = useCallback((promptId: string) => {
+  const clear = useStableCallback(() => setIntent(null));
+  const onFinished = useStableCallback((promptId: string) => {
     setIntent((existing) => (existing?.promptId === promptId ? null : existing));
-  }, []);
-  const onResume = useCallback((promptId: string) => {
+  });
+  const onResume = useStableCallback((promptId: string) => {
     const { threadKey, runs, messages } = latest.current;
     const resumedState = promptResponseState({ promptId, runs, messages });
     if (resumedState === "awaiting" || resumedState === "running")
       setIntent({ threadKey, promptId: promptId as MessageId, followsResponse: true });
-  }, []);
+  });
   const followsResponse = current?.followsResponse ?? false;
   const settled = state === "settled";
-  const timeline = useMemo<TimelineResponseFollow>(
-    () => ({ followsResponse, settled, onFinished, onResume }),
-    [followsResponse, settled, onFinished, onResume],
-  );
+  const timeline = {
+    followsResponse,
+    settled,
+    onFinished,
+    onResume,
+  } satisfies TimelineResponseFollow;
   return { promptId: current?.promptId ?? null, timeline, start, followSent, clear };
 }
 
