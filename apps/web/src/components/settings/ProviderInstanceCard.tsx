@@ -59,7 +59,9 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
 import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
+// SCIENT-FORK:START — the presentation reads this client's in-flight sign-in starts.
 import { useProviderSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — managed-copy guidance retains its lifecycle owner.
 import { managedVersionAdvisory } from "~/scient/providerConnection/providerSettingsLifecyclePresentation";
 // SCIENT-FORK:END

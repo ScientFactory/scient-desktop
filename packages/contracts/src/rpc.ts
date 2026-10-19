@@ -2064,7 +2064,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  // SCIENT-FORK:START — the client that started a sign-in claims its page's one opening.
   WsServerClaimProviderSignInPageRpc,
+  // SCIENT-FORK:END
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,

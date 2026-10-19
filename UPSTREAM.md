@@ -1078,11 +1078,12 @@ The server-side claim of a sign-in page adds one Scient RPC,
 `server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts` and
 imported in its existing marked block of `contracts/src/rpc.ts`; its group entry, scope
 (`server/src/auth/RpcAuthorization.ts`) and aggregate (`server/src/observability/RpcInstrumentation.ts`)
-sit with the existing provider-connection entries. The web defines its command in
-`scient/providerConnection/providerSignInCommands.ts`.
-`components/settings/ProviderInstanceCard.tsx` carries two marked blocks: its lifecycle
-presentation comes from a Scient hook, so a sign-in started here reads as starting from the
-click, and a failed sign-in or setup takes the error status dot. See
+are each one marked line beside the existing provider-connection entries. Those existing
+provider-connection entries in the three files are earlier unmarked Scient additions, to be marked in a follow-up.
+The web defines its command in `scient/providerConnection/providerSignInCommands.ts`.
+`components/settings/ProviderInstanceCard.tsx` carries three marked blocks: its lifecycle
+presentation comes from a Scient hook (its import and its call), so a sign-in started here reads
+as starting from the click, and a failed sign-in or setup takes the error status dot. See
 [provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
