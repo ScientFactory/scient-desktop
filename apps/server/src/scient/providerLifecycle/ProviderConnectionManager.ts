@@ -8,6 +8,8 @@ import {
   type ProviderConnectionOperation,
   type ProviderConnectionStartInput,
   type ProviderConnectionSubmitAuthorizationCodeInput,
+  type ProviderSignInPageClaimInput,
+  type ProviderSignInPageClaimResult,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -46,6 +48,13 @@ export interface ProviderConnectionManagerShape {
     { readonly providers: ReadonlyArray<ServerProvider> },
     ProviderConnectionError
   >;
+  /**
+   * Grants the opening of an operation's sign-in page once: to a holder of the
+   * request id stamped on the current operation while it waits on a primary page.
+   */
+  readonly claimSignInPage: (
+    input: ProviderSignInPageClaimInput,
+  ) => Effect.Effect<ProviderSignInPageClaimResult>;
   readonly submitAuthorizationCode: (
     input: ProviderConnectionSubmitAuthorizationCodeInput,
   ) => Effect.Effect<
@@ -71,6 +80,8 @@ interface ActiveConnection {
   readonly attemptRef: Ref.Ref<ProviderConnectionAttempt | undefined>;
   readonly authorizationCodeSubmittedRef: Ref.Ref<boolean>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
+  /** Whether a client has been granted the opening of this operation's page. */
+  readonly pageClaimedRef: Ref.Ref<boolean>;
   /** The manager-owned startup, until it hands off to its supervisor. */
   readonly startupRef: Ref.Ref<Fiber.Fiber<unknown, unknown> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
@@ -352,12 +363,14 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
     const transitionLock = yield* Semaphore.make(1);
     const startupRef = yield* Ref.make<Fiber.Fiber<unknown, unknown> | undefined>(undefined);
+    const pageClaimedRef = yield* Ref.make(false);
     const active: ActiveConnection = {
       operationId,
       scope,
       attemptRef,
       authorizationCodeSubmittedRef,
       fiberRef,
+      pageClaimedRef,
       startupRef,
       transitionLock,
     };
@@ -711,6 +724,34 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       : yield* outcome;
   });
 
+  const claimSignInPage: ProviderConnectionManagerShape["claimSignInPage"] = Effect.fn(
+    "ProviderConnectionManager.claimSignInPage",
+  )(function* (input) {
+    const active = (yield* Ref.get(activeRef)).get(input.instanceId);
+    if (!active || active.operationId !== input.operationId) return { granted: false };
+    // Under the operation's transition lock, so its state cannot change between
+    // the check and the grant.
+    return yield* active.transitionLock.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* Ref.get(activeRef)).get(input.instanceId) !== active) return { granted: false };
+        const published = publishedProviderConnectionOperation(
+          (yield* providerRegistry.getProviders).find(
+            (provider) => provider.instanceId === input.instanceId,
+          )?.connection,
+        );
+        const waitsOnPage =
+          published?.operationId === input.operationId &&
+          (published.status === "waiting_for_browser" ||
+            published.status === "waiting_for_device_code") &&
+          published.authorizationUrlKind === "primary" &&
+          published.authorizationUrl !== undefined &&
+          published.signInRequestId === input.signInRequestId;
+        if (!waitsOnPage) return { granted: false };
+        return { granted: !(yield* Ref.getAndSet(active.pageClaimedRef, true)) };
+      }),
+    );
+  });
+
   const submitAuthorizationCode: ProviderConnectionManagerShape["submitAuthorizationCode"] =
     Effect.fn("ProviderConnectionManager.submitAuthorizationCode")(function* (input) {
       const target = yield* readTarget(input.instanceId);
@@ -993,7 +1034,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     );
   });
 
-  return ProviderConnectionManager.of({ start, cancel, submitAuthorizationCode, disconnect });
+  return ProviderConnectionManager.of({
+    start,
+    cancel,
+    claimSignInPage,
+    submitAuthorizationCode,
+    disconnect,
+  });
 });
 
 export const layer = Layer.effect(ProviderConnectionManager, make());

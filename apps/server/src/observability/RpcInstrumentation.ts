@@ -265,6 +265,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.documentsReleaseDocumentPdf]: "documents",
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",
+  // SCIENT-FORK:START — one client opens an operation's sign-in page.
+  [WS_METHODS.serverClaimProviderSignInPage]: "server",
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: "server",
   [WS_METHODS.serverDisconnectProvider]: "server",
   [WS_METHODS.serverPlanProviderRuntime]: "server",

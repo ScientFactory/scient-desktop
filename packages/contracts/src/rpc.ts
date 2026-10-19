@@ -421,6 +421,7 @@ import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerClaimProviderSignInPageRpc,
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,
@@ -2063,6 +2064,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  // SCIENT-FORK:START — one client opens an operation's sign-in page.
+  WsServerClaimProviderSignInPageRpc,
+  // SCIENT-FORK:END
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,

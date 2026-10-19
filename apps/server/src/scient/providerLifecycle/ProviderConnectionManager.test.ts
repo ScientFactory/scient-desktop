@@ -2226,3 +2226,78 @@ describe("ProviderConnectionManager over the RPC boundary", () => {
     }),
   );
 });
+
+describe("ProviderConnectionManager sign-in page claims", () => {
+  const requestId = "request-12345678";
+  const waitingActions = (gate?: Deferred.Deferred<void>): ProviderConnectionActions => ({
+    methods: ["codex_browser"],
+    start: () =>
+      (gate ? Deferred.await(gate) : Effect.void).pipe(
+        Effect.as({
+          authorizationUrl: "https://auth.openai.com/",
+          authorizationUrlKind: "primary" as const,
+          initialStatus: "waiting_for_browser" as const,
+          waitForCompletion: Effect.never,
+          cancel: Effect.void,
+        }),
+      ),
+    disconnect: Effect.void,
+  });
+  const operationOf = (providers: ReadonlyArray<ServerProvider>) =>
+    providers[0]?.connection?.operation ?? null;
+
+  it.effect("grants exactly one of concurrent claims, and none after", () =>
+    Effect.gen(function* () {
+      const { manager, providersRef } = yield* makeHarness({ actions: waitingActions() });
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: requestId,
+      });
+      const operationId = operationOf(yield* Ref.get(providersRef))!.operationId;
+      const claim = manager.claimSignInPage({
+        instanceId: CODEX_INSTANCE,
+        operationId,
+        signInRequestId: requestId,
+      });
+      // Two windows that share the request id claim at once.
+      const results = yield* Effect.all([claim, claim, claim], { concurrency: "unbounded" });
+      assert.strictEqual(results.filter((result) => result.granted).length, 1);
+      assert.isFalse((yield* claim).granted);
+    }),
+  );
+
+  it.effect("denies a wrong id, another operation, a start still running and an ended one", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const { manager, providersRef } = yield* makeHarness({ actions: waitingActions(gate) });
+      yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser", signInRequestId: requestId })
+        .pipe(Effect.forkChild);
+      const starting = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => operationOf(providers)?.status === "starting",
+      );
+      const operationId = operationOf(starting)!.operationId;
+      const claim = (patch: { readonly operationId?: string; readonly signInRequestId?: string }) =>
+        manager.claimSignInPage({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          signInRequestId: requestId,
+          ...patch,
+        });
+
+      assert.isFalse((yield* claim({})).granted, "not waiting on its page yet");
+      yield* Deferred.succeed(gate, undefined);
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => operationOf(providers)?.status === "waiting_for_browser",
+      );
+      assert.isFalse((yield* claim({ signInRequestId: "another-request-id" })).granted);
+      assert.isFalse((yield* claim({ operationId: "connect-superseded" })).granted);
+
+      yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId });
+      assert.isFalse((yield* claim({})).granted, "ended");
+    }),
+  );
+});

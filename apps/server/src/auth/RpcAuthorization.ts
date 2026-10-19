@@ -78,6 +78,9 @@ export const RPC_REQUIRED_SCOPES = {
 
   [WS_METHODS.serverStartProviderConnection]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderConnection]: AuthProvidersManageScope,
+  // SCIENT-FORK:START — one client opens an operation's sign-in page.
+  [WS_METHODS.serverClaimProviderSignInPage]: AuthProvidersManageScope,
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: AuthProvidersManageScope,
   [WS_METHODS.serverDisconnectProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,

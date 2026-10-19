@@ -127,6 +127,12 @@ export const makeProviderConnectionRpcHandlers = ({
         providerConnectionManager.cancel(input),
         { "rpc.aggregate": "server" },
       ),
+    [WS_METHODS.serverClaimProviderSignInPage]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.serverClaimProviderSignInPage,
+        providerConnectionManager.claimSignInPage(input),
+        { "rpc.aggregate": "server" },
+      ),
     [WS_METHODS.serverSubmitProviderAuthorizationCode]: (input) =>
       observeRpcEffect(
         WS_METHODS.serverSubmitProviderAuthorizationCode,
@@ -157,6 +163,7 @@ export const makeProviderConnectionRpcHandlers = ({
     typeof WsServerManagementRpcGroup,
     | typeof WS_METHODS.serverStartProviderConnection
     | typeof WS_METHODS.serverCancelProviderConnection
+    | typeof WS_METHODS.serverClaimProviderSignInPage
     | typeof WS_METHODS.serverSubmitProviderAuthorizationCode
     | typeof WS_METHODS.serverDisconnectProvider
     | typeof WS_METHODS.serverPlanProviderRuntime

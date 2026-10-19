@@ -293,6 +293,21 @@ export const ProviderConnectionCancelInput = Schema.Struct({
 });
 export type ProviderConnectionCancelInput = typeof ProviderConnectionCancelInput.Type;
 
+/**
+ * Asks to be the one client that opens an operation's sign-in page. The server
+ * grants it once per operation, only to a holder of the request id stamped on
+ * it while it waits on a primary page.
+ */
+export const ProviderSignInPageClaimInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  operationId: TrimmedNonEmptyString,
+  signInRequestId: ProviderSignInRequestId,
+});
+export type ProviderSignInPageClaimInput = typeof ProviderSignInPageClaimInput.Type;
+
+export const ProviderSignInPageClaimResult = Schema.Struct({ granted: Schema.Boolean });
+export type ProviderSignInPageClaimResult = typeof ProviderSignInPageClaimResult.Type;
+
 const authorizationCodeHasNoControlCharacters = Schema.makeFilter((value: string) => {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
