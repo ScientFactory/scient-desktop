@@ -35,17 +35,51 @@ import UntypedCiteproc from "citeproc";
 
 const Citeproc = UntypedCiteproc as CiteprocModule;
 
-export function renderCslBibliographyEntry(item: CslItem, style: ScientReferenceStyleId): string {
+type BibliographyEntryRenderer = (item: CslItem) => string;
+
+// Building an engine compiles its CSL style, which takes over a second for APA;
+// rendering with a built engine takes milliseconds. Build each style once.
+const renderersByStyle = new Map<ScientReferenceStyleId, BibliographyEntryRenderer>();
+
+function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRenderer {
+  let current: CslItem | null = null;
   const engine = new Citeproc.Engine(
     {
       retrieveLocale: () => bundledLocales["en-US"],
-      retrieveItem: (id) => (id === item.id ? item : null),
+      retrieveItem: (id) => (current !== null && id === current.id ? current : null),
     },
     bundledStyles[style],
     "en-US",
   );
   engine.setOutputFormat("text");
-  engine.updateItems([item.id]);
-  const bibliography = engine.makeBibliography();
-  return bibliography ? (bibliography[1][0] ?? "") : "";
+
+  return (item) => {
+    current = item;
+    try {
+      // citeproc derives sort keys and name disambiguation when an item is first
+      // registered and keeps them for a re-registered ID, so render each entry
+      // from an empty registry, as a newly built engine would.
+      engine.updateItems([]);
+      engine.updateItems([item.id]);
+      const bibliography = engine.makeBibliography();
+      return bibliography ? (bibliography[1][0] ?? "") : "";
+    } finally {
+      current = null;
+    }
+  };
+}
+
+export function renderCslBibliographyEntry(item: CslItem, style: ScientReferenceStyleId): string {
+  let render = renderersByStyle.get(style);
+  if (!render) {
+    render = createRenderer(style);
+    renderersByStyle.set(style, render);
+  }
+  try {
+    return render(item);
+  } catch (error) {
+    // A failed update can leave citeproc's registry inconsistent.
+    renderersByStyle.delete(style);
+    throw error;
+  }
 }
