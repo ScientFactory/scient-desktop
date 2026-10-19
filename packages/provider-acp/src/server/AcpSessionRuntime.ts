@@ -1554,9 +1554,16 @@ export const make = (
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
+          // SCIENT-FORK:START — Windows owns the tree with taskkill /T, not a group.
+          // A detached agent has no console, so every console program it starts
+          // (Antigravity's own inner process included) opens a visible window.
           ...(options.ownDetachedProcessGroup === undefined
             ? {}
-            : { detached: options.ownDetachedProcessGroup }),
+            : {
+                detached:
+                  options.ownDetachedProcessGroup && options.processGroupPlatform !== "win32",
+              }),
+          // SCIENT-FORK:END
           shell: containedSpawnCommand.shell,
         }),
       )

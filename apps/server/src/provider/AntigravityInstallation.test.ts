@@ -491,6 +491,27 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
+  it.effect("reports a runtime check that runs out of time, not a disk problem", () =>
+    Effect.gen(function* () {
+      const enteredValidation = yield* Deferred.make<void>();
+      const { installation, stagingReleased } = yield* makeHarness({
+        previous: true,
+        validate: () =>
+          Deferred.succeed(enteredValidation, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* installation.start;
+      yield* Deferred.await(enteredValidation);
+      yield* TestClock.adjust("90 seconds");
+      expect(yield* terminalState(installation)).toMatchObject({
+        phase: "failed",
+        message:
+          "Antigravity didn't respond within 90 seconds while Scient was checking it. Try again when your computer is less busy.",
+      });
+      yield* Deferred.await(stagingReleased);
+      yield* expectPreviousRelease(installation);
+    }),
+  );
+
   it.effect.each(
     [
       {
@@ -622,7 +643,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             Effect.asVoid,
           );
           if (!helper) {
-            expect(command.options.detached).toBe(true);
+            // Windows owns the tree with taskkill; detaching would show a console.
+            expect(command.options.detached).toBe(platform !== "win32");
             stopNative = terminate;
           }
           yield* Effect.addFinalizer(() =>
