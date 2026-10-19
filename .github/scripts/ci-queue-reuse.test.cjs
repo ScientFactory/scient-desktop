@@ -658,7 +658,7 @@ function mobileGateScript() {
   return lines.join("\n");
 }
 
-test("the mobile gate classifies the tested diff, including renames and newline filenames", (t) => {
+test("the mobile gate classifies the tested diff, including renames and unusual filenames", (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ci-mobile-gate-"));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const env = {
@@ -679,10 +679,13 @@ test("the mobile gate classifies the tested diff, including renames and newline 
     }).trim();
   git(["init", "-q"]);
   const blob = git(["hash-object", "-w", "--stdin"], "x\n");
+  // Paths are strings or raw bytes; stdin carries bytes that are not valid UTF-8.
   const commit = (files, parent) => {
     fs.rmSync(env.GIT_INDEX_FILE, { force: true });
-    for (const file of files)
-      git(["update-index", "--add", "--cacheinfo", `100644,${blob},${file}`]);
+    const records = files.map((file) =>
+      Buffer.concat([Buffer.from(`100644 ${blob}\t`), Buffer.from(file), Buffer.from([0])]),
+    );
+    git(["update-index", "-z", "--index-info"], Buffer.concat(records));
     const tree = git(["write-tree"]);
     return git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", "change"]);
   };
@@ -690,9 +693,10 @@ test("the mobile gate classifies the tested diff, including renames and newline 
   const gate = (base, head) => {
     const output = path.join(temp, "output");
     fs.writeFileSync(output, "");
+    // Hosted runners use a UTF-8 locale; the gate must still match raw bytes.
     execFileSync("bash", ["-c", script], {
       cwd: temp,
-      env: { ...env, BASE_SHA: base, GITHUB_SHA: head, GITHUB_OUTPUT: output },
+      env: { ...env, LC_ALL: "C.UTF-8", BASE_SHA: base, GITHUB_SHA: head, GITHUB_OUTPUT: output },
       stdio: "pipe",
     });
     return fs.readFileSync(output, "utf8").trim();
@@ -731,6 +735,16 @@ test("the mobile gate classifies the tested diff, including renames and newline 
         "apps/mobile/Foo\nBar.swift",
       ]),
     ),
+    "changed=true",
+  );
+  // Nor may a byte that is not valid UTF-8 hide it from the matcher.
+  const invalid = Buffer.concat([
+    Buffer.from("apps/mobile/Foo"),
+    Buffer.from([0xff]),
+    Buffer.from("Bar.swift"),
+  ]);
+  assert.equal(
+    gate(base, after(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt", invalid])),
     "changed=true",
   );
   // Anything unresolvable runs the lint.

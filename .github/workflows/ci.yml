@@ -658,6 +658,9 @@ jobs:
             exit 0
           }
 
+          # Match bytes, not characters: a Git filename need not be valid UTF-8.
+          export LC_ALL=C
+
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
           # Without rename detection a rename lists both paths: renaming a matched file
           # out of the matched paths removes a lint input just like editing it. A newline
