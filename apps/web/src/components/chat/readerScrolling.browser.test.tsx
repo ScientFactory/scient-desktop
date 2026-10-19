@@ -587,7 +587,10 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
       text: "Beginning.",
     },
   };
-  const extra = { readingFollowPromptId: entries[9]!.message.id };
+  // A streaming answer belongs to a working run. On an idle thread, a reader
+  // still within the end's last lines is kept at the end instead, which is
+  // not the follow this test is about.
+  const extra = { readingFollowPromptId: entries[9]!.message.id, isWorking: true };
   render("geometry:bounded-cancel", [...entries, answer], extra);
   await frames(3);
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: -80, bubbles: true }));
