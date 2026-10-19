@@ -25,16 +25,18 @@ import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { readLocalApi } from "../../localApi";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironmentMachines, useEnvironments } from "../../state/environments";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { allEnvironmentProjectSnapshotsReadyAtom } from "../../state/shell";
 import { useUiStateStore } from "../../uiStateStore";
 import { readThreadShell } from "../../state/entities";
 import { placementEligible } from "./placementEligibility";
 import { migrateLegacyPlacement } from "./placementMigration";
 import { useAutomaticPlacement } from "./useAutomaticPlacement";
 import { useThreadSectionActions } from "./actions";
-import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
+import {
+  frozenPlacementEnvironmentsKeyAtom,
+  loadedThreadEnvironmentsKeyAtom,
+} from "./loadedEnvironments";
 import { useThreadSectionCatalogs } from "./catalog";
 import {
   environmentGroupOrder,
@@ -53,7 +55,7 @@ import {
 } from "./pendingNewThreadSections";
 import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
 import { setSidebarSectionScope } from "./sidebarScope";
-import type { SidebarSectionsViewProps } from "./SidebarSectionsView";
+import type { SectionMachine, SidebarSectionsViewProps } from "./SidebarSectionsView";
 import { useEmptySectionCleanup } from "./useEmptySectionCleanup";
 import { useNewSectionForThreads } from "./useNewSectionForThreads";
 import { useThreadSectionMenu } from "./useThreadSectionMenu";
@@ -101,7 +103,7 @@ export function projectRefForSection(
 export type SidebarSectionsOwnViewProps = Pick<
   SidebarSectionsViewProps,
   | "groups"
-  | "environmentLabels"
+  | "environmentMachines"
   | "collapsedGroupIds"
   | "routeThreadKey"
   | "onToggleGroup"
@@ -154,8 +156,11 @@ export function useSidebarSections(input: {
     return () => setSidebarSectionScope(null);
   }, [scopeProjectRefs]);
   const { environments } = useEnvironments();
+  const machineById = useEnvironmentMachines();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const snapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
+  // One machine catching up or offline holds only its own threads' placement.
+  const frozenKey = useAtomValue(frozenPlacementEnvironmentsKeyAtom);
+  const frozenEnvironmentIds = frozenKey ? frozenKey.split("\n") : [];
   const visits = useUiStateStore((state) => state.threadLastVisitedAtById);
 
   const [viewMode, setViewMode] = useLocalStorage(
@@ -210,9 +215,9 @@ export function useSidebarSections(input: {
     }
     return collapsed as ReadonlySet<string>;
   })();
-  // Machine names qualify section headers once the listed sections come from
+  // Machine icons qualify section headers once the listed sections come from
   // more than one environment.
-  const environmentLabels = (() => {
+  const environmentMachines = (() => {
     const listed = new Set(
       canonicalGroups.flatMap((group) =>
         group.environmentId === null ? [] : [group.environmentId],
@@ -222,10 +227,18 @@ export function useSidebarSections(input: {
     return new Map(
       environments.flatMap((environment) =>
         listed.has(environment.environmentId)
-          ? [[environment.environmentId as string, environment.label] as const]
+          ? [
+              [
+                environment.environmentId as string,
+                {
+                  label: environment.label,
+                  kind: machineById.get(environment.environmentId) ?? "server",
+                },
+              ] as const,
+            ]
           : [],
       ),
-    ) as ReadonlyMap<string, string>;
+    ) as ReadonlyMap<string, SectionMachine>;
   })();
   const completeGroups = (() => {
     const now = input.now ?? new Date().toISOString();
@@ -264,7 +277,8 @@ export function useSidebarSections(input: {
     scope: PLACEMENT_SCOPE,
     groups: placementInputs,
     openKey: routeThreadKey,
-    ready: supported && snapshotsReady === true,
+    ready: supported && frozenKey !== null,
+    frozenEnvironmentIds,
     knownKeys: knownPlacementKeys,
   });
   const groups = (() => {
@@ -523,7 +537,7 @@ export function useSidebarSections(input: {
 
   const viewProps: SidebarSectionsOwnViewProps = {
     groups,
-    environmentLabels,
+    environmentMachines,
     canonicalGroupOrders,
     onManualPlacement,
     onInteractionChange: placement.onInteractionChange,

@@ -28,7 +28,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { type ScopedThreadRef, ThreadSectionId } from "@t3tools/contracts";
+import {
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+  ThreadSectionId,
+} from "@t3tools/contracts";
 import { ChevronRightIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
@@ -40,6 +44,7 @@ import {
   useState,
 } from "react";
 
+import { EnvironmentMachineIcon } from "../../components/EnvironmentMachineIcon";
 import type { SidebarDropVerb } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
@@ -78,6 +83,12 @@ export type SectionsRowSortable = Pick<
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
 
+/** The machine a section header names by its icon. */
+export interface SectionMachine {
+  readonly label: string;
+  readonly kind: EnvironmentMachineKind;
+}
+
 export interface SidebarSectionsViewProps {
   readonly canonicalGroupOrders?: ReadonlyMap<string, readonly string[]> | undefined;
   readonly onManualPlacement?: (
@@ -88,8 +99,8 @@ export interface SidebarSectionsViewProps {
   ) => void;
   readonly onInteractionChange?: (active: boolean) => void;
   readonly groups: readonly SectionGroup<Shell>[];
-  /** Machine names for section headers, by environment; null when one environment's sections show. */
-  readonly environmentLabels?: ReadonlyMap<string, string> | null;
+  /** Machines for section headers, by environment; null when one environment's sections show. */
+  readonly environmentMachines?: ReadonlyMap<string, SectionMachine> | null;
   readonly collapsedGroupIds: ReadonlySet<string>;
   /** The open thread stays visible even inside a collapsed section. */
   readonly routeThreadKey: string | null;
@@ -675,7 +686,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   machine={
                     group.environmentId === null
                       ? null
-                      : (props.environmentLabels?.get(group.environmentId) ?? null)
+                      : (props.environmentMachines?.get(group.environmentId) ?? null)
                   }
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
@@ -761,7 +772,7 @@ function SectionHeaderRow(props: {
   group: SectionGroup<Shell>;
   label: string;
   /** The section's machine, shown while sections from several machines are listed. */
-  machine: string | null;
+  machine: SectionMachine | null;
   collapsed: boolean;
   isDropTarget: boolean;
   /** The section being dragged: it slides with its rows and takes the accent. */
@@ -843,10 +854,26 @@ function SectionHeaderRow(props: {
                 collapsed count and chevron stay whole beside them. */}
             <span className="flex h-full min-w-0 items-center gap-2">
               <FadeTruncate text={props.label} className="shrink" />
+              {/* An icon, not the name, so a narrow sidebar keeps the section's name. */}
               {props.machine !== null ? (
-                <span className="-ml-1 max-w-24 shrink-0 truncate font-normal opacity-70">
-                  · {props.machine}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        role="img"
+                        aria-label={props.machine.label}
+                        className="-ml-1 inline-flex shrink-0 opacity-70"
+                      />
+                    }
+                  >
+                    <EnvironmentMachineIcon
+                      aria-hidden
+                      kind={props.machine.kind}
+                      className="size-3"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{props.machine.label}</TooltipPopup>
+                </Tooltip>
               ) : null}
               {props.collapsed ? (
                 <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>

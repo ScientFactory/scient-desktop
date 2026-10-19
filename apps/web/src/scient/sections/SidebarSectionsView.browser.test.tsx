@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
+import type { SectionMachine } from "./SidebarSectionsView";
+
 const { reorderActiveThread } = vi.hoisted(() => ({
   reorderActiveThread: vi.fn(async () => ({ _tag: "Success" })),
 }));
@@ -63,7 +65,7 @@ function renderView(
     readonly promoted?: boolean;
     /** Adds a General thread on another environment, whose sections aren't listed. */
     readonly foreignThread?: boolean;
-    readonly environmentLabels?: ReadonlyMap<string, string>;
+    readonly environmentMachines?: ReadonlyMap<string, SectionMachine>;
     readonly onManualPlacement?: (
       groupId: string,
       order: readonly string[],
@@ -95,7 +97,7 @@ function renderView(
   root.render(
     <SidebarSectionsView
       groups={groups as never}
-      environmentLabels={options.environmentLabels ?? null}
+      environmentMachines={options.environmentMachines ?? null}
       {...(options.promoted
         ? { canonicalGroupOrders: new Map([[groupKey("a"), ["env:a1", "env:a2", "env:a3"]]]) }
         : {})}
@@ -709,12 +711,19 @@ it("refuses to drop a thread into another environment's section", async () => {
   expect(reorderActiveThread).not.toHaveBeenCalled();
 });
 
-it("names each section's machine when sections from several machines show", async () => {
-  renderView(vi.fn(), { environmentLabels: new Map([["env", "Lab server"]]) });
+it("marks each section's machine with its icon when sections from several machines show", async () => {
+  renderView(vi.fn(), {
+    environmentMachines: new Map([["env", { label: "Lab server", kind: "server" }]]),
+    names: ["A long section name that fills the narrow sidebar", "B", "C"],
+  });
   await nextFrame();
-  expect(headerOf("a").textContent).toContain("· Lab server");
+  const machine = headerOf("a").querySelector('[role="img"][aria-label="Lab server"]');
+  expect(machine).not.toBeNull();
+  // The icon replaces the name, so the section's name keeps the width.
+  expect(headerOf("a").textContent).not.toContain("Lab server");
+  expect(headerOf("a").textContent).toContain("A long section name");
   // General belongs to no machine.
-  expect(headerOf(GENERAL_SECTION_GROUP_ID).textContent).not.toContain("Lab server");
+  expect(headerOf(GENERAL_SECTION_GROUP_ID).querySelector('[role="img"]')).toBeNull();
 });
 
 it("keeps a manual drop in the promoted display without saving unrelated automatic positions", async () => {

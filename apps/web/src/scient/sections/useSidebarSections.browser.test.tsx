@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const mocks = vi.hoisted(() => ({
   configsAtom: { atom: "configs" },
+  frozenAtom: { atom: "frozen" },
   create: vi.fn(),
   reorder: vi.fn(),
   moveThreadsToSection: vi.fn(),
@@ -42,12 +43,16 @@ vi.mock("./pendingNewThreadSections", () => ({
   rememberSectionForNewThread: vi.fn(),
   useApplyPendingNewThreadSections: () => {},
 }));
-vi.mock("./loadedEnvironments", () => ({ loadedThreadEnvironmentsKeyAtom: {} }));
+vi.mock("./loadedEnvironments", () => ({
+  loadedThreadEnvironmentsKeyAtom: {},
+  frozenPlacementEnvironmentsKeyAtom: mocks.frozenAtom,
+}));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: mocks.configsAtom }));
-vi.mock("../../state/shell", () => ({ allEnvironmentProjectSnapshotsReadyAtom: {} }));
+// Placement stays unready here (an incomplete catalog); its own hook tests cover it.
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
-  useAtomValue: (atom: unknown) => (atom === mocks.configsAtom ? new Map() : ""),
+  useAtomValue: (atom: unknown) =>
+    atom === mocks.configsAtom ? new Map() : atom === mocks.frozenAtom ? null : "",
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -56,6 +61,7 @@ vi.mock("../../state/environments", () => ({
       { environmentId: "remote", label: "Lab server" },
     ],
   }),
+  useEnvironmentMachines: () => new Map([["local", "laptop"]]),
 }));
 vi.mock("../../state/entities", () => ({ readThreadShell: () => ({ projectId: "project-a" }) }));
 vi.mock("./NewSectionPopover", () => ({
@@ -279,19 +285,20 @@ describe("environment-local catalogs", () => {
     expect(mocks.reorder).toHaveBeenCalledWith("remote", [GENERAL_SECTION_GROUP_ID, "c"]);
   });
 
-  it("names machines on section headers only when several environments' sections show", () => {
+  it("marks section headers with machines only when several environments' sections show", () => {
     mocks.catalogs = [{ environmentId: "local", sections: [section("a", 0)], generalIndex: 1 }];
     mount();
-    expect(sections.viewProps.environmentLabels).toBeNull();
+    expect(sections.viewProps.environmentMachines).toBeNull();
     mocks.catalogs = [
       { environmentId: "local", sections: [section("a", 0)], generalIndex: 1 },
       { environmentId: "remote", sections: [section("c", 0)], generalIndex: 1 },
     ];
     mount();
-    expect(sections.viewProps.environmentLabels).toEqual(
+    expect(sections.viewProps.environmentMachines).toEqual(
       new Map([
-        ["local", "Laptop"],
-        ["remote", "Lab server"],
+        ["local", { label: "Laptop", kind: "laptop" }],
+        // A machine that has not reported its kind shows the server icon, as thread rows do.
+        ["remote", { label: "Lab server", kind: "server" }],
       ]),
     );
   });
