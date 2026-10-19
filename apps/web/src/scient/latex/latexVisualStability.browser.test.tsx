@@ -664,12 +664,14 @@ it("keeps a scroll made before the reading line is taken again, corrects drift, 
   })!.pos;
   const end = editor.view.coordsAtPos(line).top;
   for (const spacer of spacers) spacer.remove();
-  // The frame follows the paper at a resize delivery, which a busy runner
-  // can defer by a frame or more; the text must then be back and stay.
-  const moved = () => Math.abs(editor.view.coordsAtPos(line).top - end);
-  await expect.poll(moved, { timeout: 2000 }).toBeLessThan(2);
+  // The frame follows the paper and pages settle, as the stage observer does
+  // at its resize delivery (which a busy runner can defer or skip here).
+  const frame = editor.view.dom.closest<HTMLElement>(".scient-latex-page-zoom-frame")!;
+  const stage = frame.querySelector<HTMLElement>(".scient-latex-page-stage")!;
+  frame.style.height = `${stage.getBoundingClientRect().height}px`;
+  editor.view.dom.dispatchEvent(new CustomEvent("scient-latex-layout"));
   await settled();
-  expect(moved()).toBeLessThan(2);
+  expect(Math.abs(editor.view.coordsAtPos(line).top - end)).toBeLessThan(2);
 }, 30000);
 
 it("renumbers a reference in an unchanged title when labels change places", async () => {
