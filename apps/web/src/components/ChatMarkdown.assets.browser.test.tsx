@@ -1,5 +1,10 @@
 import { RegistryContext } from "@effect/atom-react";
-import { type AssetCreateUrlResult, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  type AssetCreateUrlResult,
+  AuthFilesystemReadScope,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { act, type ReactNode } from "react";
@@ -7,6 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mint = vi.hoisted(() => vi.fn<() => Promise<AssetCreateUrlResult>>());
+const access = vi.hoisted(() => ({ ready: true }));
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
@@ -32,14 +38,29 @@ vi.mock(import("../state/assets"), async (original) => {
     },
   };
 });
+vi.mock(import("../scient/fileOpening/environmentFileState"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentFileLinkResolution: Atom.family(
+      (target: Parameters<typeof actual.environmentFileLinkResolution>[0]) =>
+        Atom.make(Effect.succeed({ _tag: "literal" as const, path: target.input.path })),
+    ),
+  };
+});
 vi.mock(import("../state/filesystem"), async (original) => ({
   ...(await original()),
-  useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
+  useFilesystemReadAccess: () => ({
+    canReadFiles: access.ready,
+    isPending: !access.ready,
+    error: null,
+  }),
 }));
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
-  readEnvironmentScope: () => false,
-  useEnvironmentScope: () => false,
+  readEnvironmentScope: (_id, scope) => access.ready && scope === AuthFilesystemReadScope,
+  useEnvironmentScope: (_id, scope) => access.ready && scope === AuthFilesystemReadScope,
   readPreparedConnection: (() => ({ httpBaseUrl: "https://host.test" })) as never,
   usePreparedConnection: (() => ({
     _tag: "Some",
@@ -62,6 +83,7 @@ const assetResult = (version: string): AssetCreateUrlResult => ({
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registry = AtomRegistry.make();
+  access.ready = true;
   mint.mockReset().mockResolvedValue(assetResult("updated"));
 });
 afterEach(async () => {
@@ -87,6 +109,7 @@ function createTestRoot() {
 }
 
 it("opens host media through server authorization before the client grant loads", async () => {
+  access.ready = false;
   mint.mockResolvedValue({ relativeUrl: "/api/assets/image.png", expiresAt: 1 });
   const onImageExpand = vi.fn();
   const { container, render } = createTestRoot();
@@ -118,13 +141,19 @@ const threadRef = {
   threadId: ThreadId.make("media-thread"),
 };
 
-function markdown(workspaceMutationId?: string | null) {
+const imageLayouts = ["standalone", "inline", "file"] as const;
+type ImageLayout = (typeof imageLayouts)[number];
+
+function markdown(workspaceMutationId?: string | null, layout: ImageLayout = "standalone") {
   return (
     <ChatMarkdown
       cwd="/repo"
       imageBaseDir="/repo"
       threadRef={threadRef}
-      text="![Diagram](diagram.svg)"
+      text={
+        layout === "inline" ? "Before ![Diagram](diagram.svg) after." : "![Diagram](diagram.svg)"
+      }
+      imageCaptions={layout === "file"}
       workspaceMutationId={workspaceMutationId}
     />
   );
@@ -134,56 +163,61 @@ function renderedImage(container: HTMLElement) {
   return container.querySelector<HTMLImageElement>('img[alt="Diagram"]')?.getAttribute("src");
 }
 
-it("ordinary chat keeps its embedded asset URL across renders and reopening", async () => {
-  const { container, render } = createTestRoot();
-  await render(markdown());
-  expect(renderedImage(container)).toBe(imageUrl("updated"));
-  mint.mockResolvedValue(assetResult("changed"));
+it.each(imageLayouts)(
+  "unversioned %s images keep their cached URL across reopening",
+  async (layout) => {
+    const { container, render } = createTestRoot();
+    await render(markdown(undefined, layout));
+    expect(renderedImage(container)).toBe(imageUrl("updated"));
+    mint.mockResolvedValue(assetResult("changed"));
 
-  await render(markdown());
-  await render(null);
-  await render(markdown());
+    await render(markdown(undefined, layout));
+    await render(null);
+    await render(markdown(undefined, layout));
 
-  expect(renderedImage(container)).toBe(imageUrl("updated"));
-  expect(mint).toHaveBeenCalledTimes(1);
-});
+    expect(renderedImage(container)).toBe(imageUrl("updated"));
+    expect(mint).toHaveBeenCalledTimes(1);
+  },
+);
 
-it.each(["URL", "failure"] as const)(
-  "reopening a file preview with no workspace mutation replaces its cached %s",
-  async (cached) => {
+it.each(imageLayouts.flatMap((layout) => ["URL", "failure"].map((cached) => ({ layout, cached }))))(
+  "reopening a $layout image with no workspace mutation replaces its cached $cached",
+  async ({ cached, layout }) => {
     if (cached === "failure") mint.mockRejectedValueOnce(new Error("Image missing"));
     else mint.mockResolvedValueOnce(assetResult("stale"));
     const { container, render } = createTestRoot();
-    await render(markdown(null));
+    await render(markdown(null, layout));
     expect(renderedImage(container)).toBe(cached === "URL" ? imageUrl("stale") : undefined);
     await render(null);
 
     mint.mockResolvedValue(assetResult("updated"));
-    await render(markdown(null));
+    await render(markdown(null, layout));
 
     expect(renderedImage(container)).toBe(imageUrl("updated"));
     expect(mint).toHaveBeenCalledTimes(2);
   },
 );
 
-it.each(["initial", "refresh"] as const)(
-  "shows the latest workspace edit after a pending %s asset request settles",
-  async (request) => {
+it.each(
+  imageLayouts.flatMap((layout) => ["initial", "refresh"].map((request) => ({ layout, request }))),
+)(
+  "shows the latest workspace edit for $layout images after a pending $request request",
+  async ({ request, layout }) => {
     let resolvePending!: (value: AssetCreateUrlResult) => void;
     const pending = new Promise<AssetCreateUrlResult>((resolve) => {
       resolvePending = resolve;
     });
     const { container, render } = createTestRoot();
     if (request === "refresh") {
-      await render(markdown("m0"));
+      await render(markdown("m0", layout));
       expect(renderedImage(container)).toBe(imageUrl("updated"));
     }
 
     mint.mockReturnValueOnce(pending).mockResolvedValue(assetResult("latest"));
-    await render(markdown("m1"));
+    await render(markdown("m1", layout));
     const callsBeforeEdits = mint.mock.calls.length;
-    await render(markdown("m2"));
-    await render(markdown("m3"));
+    await render(markdown("m2", layout));
+    await render(markdown("m3", layout));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits);
 
     await act(async () => {
@@ -193,7 +227,20 @@ it.each(["initial", "refresh"] as const)(
 
     expect(renderedImage(container)).toBe(imageUrl("latest"));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits + 1);
-    await render(markdown("m3"));
+    await render(markdown("m3", layout));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits + 1);
   },
 );
+
+it("replaces a decoded file image when its workspace revision changes", async () => {
+  const { container, render } = createTestRoot();
+  await render(markdown("m0", "file"));
+  const image = container.querySelector<HTMLImageElement>('img[alt="Diagram"]')!;
+  await act(() => image.dispatchEvent(new Event("load")));
+  mint.mockResolvedValue(assetResult("latest"));
+
+  await render(markdown("m1", "file"));
+
+  expect(renderedImage(container)).toBe(imageUrl("latest"));
+  expect(mint).toHaveBeenCalledTimes(2);
+});

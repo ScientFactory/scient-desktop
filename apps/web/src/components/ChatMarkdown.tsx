@@ -257,6 +257,7 @@ import {
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
+import { useWorkspaceImageRefresh } from "../scient/images/useWorkspaceImageRefresh";
 import {
   ScientMarkdownSource,
   scientWorkspaceImageCard,
@@ -1199,44 +1200,17 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
-  const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
-  // SCIENT-FORK:START — a workspace image card's resource may carry an absolute path or its own
-  // cwd and relative path (scient/images/inlineWorkspaceImage.ts).
-  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
-  const handledRefreshToken = useRef<string | null | undefined>(undefined);
-  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
-  useEffect(() => {
-    if (!connectionReady) {
-      handledRefreshToken.current = null;
-      return;
-    }
-    if (
-      props.workspaceMutationId === undefined ||
-      props.kind === "video" ||
-      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
-      handledRefreshToken.current === refreshToken
-    ) {
-      return;
-    }
-    if (assetLoading) {
-      // Only the initial mount shares a pending request; edits and reconnects need a new one.
-      if (handledRefreshToken.current === undefined) {
-        handledRefreshToken.current = refreshToken;
-      }
-      return;
-    }
-    handledRefreshToken.current = refreshToken;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [
-    assetLoading,
-    connectionReady,
-    props.kind,
-    props.workspaceMutationId,
-    refreshAssetUrl,
-    refreshToken,
-    resource._tag,
-  ]);
+  // SCIENT-FORK:START — standalone cards and inline assets share pending-edit invalidation.
+  useWorkspaceImageRefresh({
+    environmentId: props.environmentId,
+    resource,
+    workspaceMutationId: props.kind === "video" ? undefined : props.workspaceMutationId,
+    loading: assetUrl._tag === "Loading" || assetUrl.waiting === true,
+    requestRefresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
   const path =
     resource._tag === "media-file"
       ? resource.path
@@ -3043,6 +3017,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       authoredTitle,
       altText,
       srcString,
+      workspaceMutationId,
     });
     if (workspaceImageCard !== null) return workspaceImageCard;
     // SCIENT-FORK:END

@@ -16,7 +16,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("~/previewStateStore", () => ({
   useThreadPreviewState: () => ({
     serverEpoch: 1,
-    sessions: mocks.ready ? { browser: { viewport: FILL_PREVIEW_VIEWPORT } } : {},
+    sessions: mocks.ready
+      ? {
+          browser: {
+            viewport: FILL_PREVIEW_VIEWPORT,
+            navStatus: { _tag: "Success", url: "about:blank", title: "" },
+          },
+        }
+      : {},
     desktopByTabId: {},
   }),
 }));
