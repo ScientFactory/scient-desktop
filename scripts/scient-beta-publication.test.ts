@@ -159,6 +159,7 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
               FAILURE: failure,
               NOTES_RECEIPT: NodePath.join(root, "published-notes.md"),
               RUNNER_TEMP: root,
+              GITHUB_STEP_SUMMARY: NodePath.join(root, "step-summary.md"),
               RELEASE_CHANNEL: channel,
               DISTRIBUTION_REPOSITORY: repository,
               SCIENT_DESKTOP_CANONICAL_REPOSITORY: "ScientFactory/scient-desktop",
@@ -191,9 +192,12 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
         expect(mutations).toHaveLength(2);
         for (const args of mutations) expect(args[args.indexOf("--repo") + 1]).toBe(repository);
         if (channel === "beta") {
-          const notes = NodeFS.readFileSync(NodePath.join(root, "published-notes.md"), "utf8");
-          expect(notes).toContain("Windows note");
-          expect(notes).not.toContain("Approved fixture notes");
+          // Beta has no notes; the unsigned-Windows exception stays out of the body the app
+          // shows as release notes, in the run summary instead.
+          expect(NodeFS.readFileSync(NodePath.join(root, "published-notes.md"), "utf8")).toBe("");
+          expect(NodeFS.readFileSync(NodePath.join(root, "step-summary.md"), "utf8")).toContain(
+            "allow_unsigned_windows=true",
+          );
           for (const args of mutations) {
             expect(args).toContain("--prerelease");
             expect(args).toContain("--latest=false");

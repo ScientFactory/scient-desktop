@@ -18,6 +18,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 // SCIENT-FORK:START — reviewed Scient-managed runtime updates get their own notice
 import { ManagedRuntimeUpdateNotification } from "../scient/providerConnection/ManagedRuntimeUpdateNotification";
 export { ManagedRuntimeUpdateNotification };
+import { offersProviderUpdateToasts } from "../scient/desktopUpdate/updateAvailabilityToasts";
 // SCIENT-FORK:END
 
 function useHasLocalSecondaryEnvironment(): boolean {
@@ -31,6 +32,9 @@ function useHasLocalSecondaryEnvironment(): boolean {
 
 export function ProviderUpdateLaunchNotification() {
   const hasLocalSecondary = useHasLocalSecondaryEnvironment();
+  // SCIENT-FORK:START — on desktop the sidebar's update circle offers provider CLI updates.
+  if (!offersProviderUpdateToasts()) return <ManagedRuntimeUpdateNotification />;
+  // SCIENT-FORK:END
 
   return hasLocalSecondary ? (
     <>

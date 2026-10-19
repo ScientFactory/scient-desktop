@@ -5,6 +5,12 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+# SCIENT-FORK:START — Scient binary name; the crate keeps T3's package name.
+[[bin]]
+name = "scient-kde-snap-shot"
+path = "src/main.rs"
+# SCIENT-FORK:END
+
 [dependencies]
 async-channel = "2"
 png = "0.18"

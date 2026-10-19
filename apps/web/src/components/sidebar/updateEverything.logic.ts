@@ -181,13 +181,16 @@ export function currentConfirmedServerTargets(
   });
 }
 
-/** An explicit Restart keeps its direct install action even when other machines have updates. */
+/**
+ * Other updates join this app's own download in one confirmed pass. Without a download they
+ * have their own control, and an explicit Restart keeps its direct install action.
+ */
 export function shouldRunUpdateEverything(
   hasRemoteUpdates: boolean,
   isDownloading: boolean,
   localAction: "none" | "download" | "install",
 ): boolean {
-  return hasRemoteUpdates && !isDownloading && localAction !== "install";
+  return hasRemoteUpdates && !isDownloading && localAction === "download";
 }
 // SCIENT-FORK:END
 

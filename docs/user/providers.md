@@ -91,9 +91,12 @@ When provider update checks are enabled, Scient checks its qualified stable-rele
 app starts, periodically while it remains open, and when you click **Install**, **Update**, or
 **Repair**. A newly qualified release can appear as **Update** without restarting Scient. **Refresh
 providers** in Settings also checks the catalog immediately without changing its normal automatic
-schedule. If a Scient-managed runtime has an update, Scient shows a notice with **Update** and
-**Settings**. **Update** installs it in place and reports when the verified version is active or why
-it failed, with **Retry**. **Settings** opens the provider in the correct environment. Clicking
+schedule. In the desktop app, a Scient-managed runtime update on any connected machine appears in the
+sidebar's update circle, whose **Update** installs it in place and shows its progress, failure, and
+**Retry** ([Update Scient](./updating.md#update-other-machines-and-providers)). The web app shows a
+notice with **Update** and **Settings** instead. Its **Update** installs in place and reports when
+the verified version is active or why it failed, with **Retry**. **Settings** opens the provider in
+the correct environment. Clicking
 **Install** or **Update** starts the operation directly, without a second confirmation. In Settings,
 it runs without opening the management card: Settings and onboarding show **Installing**, **Updating**, or **Verifying**, with a
 small download percentage when available, beside an icon-only **Manage** button. Progress remains

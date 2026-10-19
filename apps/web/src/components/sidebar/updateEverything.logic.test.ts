@@ -178,10 +178,10 @@ describe("Scient bulk update authority", () => {
     expect(skipped.some((entry) => /npm|t3@/.test(entry.reason))).toBe(false);
   });
 
-  it("keeps Restart direct while preserving bulk download and provider-only entry points", () => {
+  it("bundles other updates only with this app's download and keeps Restart direct", () => {
     expect(shouldRunUpdateEverything(true, false, "install")).toBe(false);
     expect(shouldRunUpdateEverything(true, false, "download")).toBe(true);
-    expect(shouldRunUpdateEverything(true, false, "none")).toBe(true);
+    expect(shouldRunUpdateEverything(true, false, "none")).toBe(false);
     expect(shouldRunUpdateEverything(true, true, "download")).toBe(false);
     expect(shouldRunUpdateEverything(false, false, "download")).toBe(false);
   });

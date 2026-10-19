@@ -49,6 +49,14 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+// SCIENT-FORK:START
+import {
+  buildScientHomeCheckStep,
+  migrateRemoteScientHome,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
+import { makeSharedSshPreparation } from "./scientSshPreparation.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -181,7 +189,8 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    options?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -495,17 +504,18 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   exit 1
 fi
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+# SCIENT-FORK: under Scient's remote home, never ~/.t3.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_RUNTIME_DIR="$HOME/.scient-next/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
 if ! t3_runtime_ready; then
-  mkdir -p "$HOME/.t3/runtime/versions"
+  mkdir -p "$HOME/.scient-next/runtime/versions"
   # Concurrent launches (two clients, a retry racing a slow first run) must
   # not both install: mkdir is the atomic lock and the ready check repeats
   # under it.
-  T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  T3_LOCK="$HOME/.scient-next/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
   # mkdir is the only portable atomic exclusive create (mv would silently
   # nest a candidate inside an existing lock). The owner publishes its pid
   # right after, so a lock with a live owner is never reclaimed however
@@ -552,7 +562,7 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  T3_STAGING="$(mktemp -d "$HOME/.scient-next/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -653,8 +663,13 @@ exit 1
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+# SCIENT-FORK:START — Scient's own remote home, never ~/.t3, so only a
+# Scient server is ever adopted. An earlier Scient home in ~/.t3 is copied once,
+# by a separate step, before anything creates the new home.
+DEFAULT_SERVER_HOME="$HOME/.scient-next"
+STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"
+@@SCIENT_HOME_CHECK_STEP@@
+# SCIENT-FORK:END
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -850,8 +865,10 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+# SCIENT-FORK:START
+DEFAULT_SERVER_HOME="$HOME/.scient-next"
+STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK:END
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -863,7 +880,8 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK: Scient's remote home.
+STATE_DIR="$HOME/.scient-next/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -886,7 +904,8 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK: Scient's remote home.
+STATE_DIR="$HOME/.scient-next/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -975,6 +994,8 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    // SCIENT-FORK: defers to the one-time copy of an earlier Scient home.
+    SCIENT_HOME_CHECK_STEP: buildScientHomeCheckStep(remoteRunnerMode(input) === "archive"),
   });
 }
 
@@ -1013,7 +1034,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...sshRunnerLogFields(runner),
       stateKey,
     });
-    const result = yield* runSshCommand(target, {
+    const launchCommand = {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs:
@@ -1023,7 +1044,16 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
-    });
+    };
+    let result = yield* runSshCommand(target, launchCommand);
+    // SCIENT-FORK:START — the launch stopped before creating Scient's home
+    // because an earlier one in ~/.t3 may need copying. The copy runs with its
+    // own budget, then the launch runs again.
+    if (getLastNonEmptyOutputLine(result.stdout) === SCIENT_HOME_MIGRATION_REQUIRED) {
+      yield* migrateRemoteScientHome(target, stateKey, buildRemoteNodeEnvScript(runner), input);
+      result = yield* runSshCommand(target, launchCommand);
+    }
+    // SCIENT-FORK:END
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",
@@ -1476,6 +1506,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  // SCIENT-FORK:START — host preparations run as manager-owned jobs.
+  const preparations = makeSharedSshPreparation<SshEnvironmentEffectError>(
+    managerScope,
+    () =>
+      new SshLaunchError({
+        message:
+          "Scient is still preparing this SSH host. The first connection after an update can take several minutes; it continues in the background.",
+        stdout: "",
+      }),
+  );
+  // SCIENT-FORK:END
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -1799,7 +1840,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    requestOptions?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1827,6 +1869,14 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
+    // SCIENT-FORK:START — a long host preparation outlives a retried saved
+    // connection; it runs as a manager-owned job (scientSshPreparation.ts).
+    yield* preparations.await(
+      key,
+      Effect.asVoid(withTargetLock(key, ensureTunnelEntry(key, resolvedTarget, runner))),
+      requestOptions?.boundedWait === true,
+    );
+    // SCIENT-FORK:END
     return yield* withTargetLock(
       key,
       Effect.gen(function* () {

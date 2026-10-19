@@ -35,6 +35,8 @@ const testState = vi.hoisted(() => ({
   navigate: vi.fn(),
   startRuntimeAction: vi.fn(),
   dismissNotificationKey: vi.fn(),
+  offersToasts: true,
+  primaryPrompt: vi.fn(() => null),
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => testState.navigate }));
@@ -51,7 +53,10 @@ vi.mock("../providerUpdateDismissal", () => ({
 }));
 vi.mock("./ProviderUpdateEnvironmentRows", () => ({ ProviderUpdateEnvironmentRows: () => null }));
 vi.mock("./ProviderUpdatePrimaryNotification", () => ({
-  ProviderUpdatePrimaryNotification: () => null,
+  ProviderUpdatePrimaryNotification: testState.primaryPrompt,
+}));
+vi.mock("~/scient/desktopUpdate/updateAvailabilityToasts", () => ({
+  offersProviderUpdateToasts: () => testState.offersToasts,
 }));
 vi.mock("./ProviderUpdateLaunchNotification.environments", () => ({
   useLocalEnvironmentUpdateGroups: () => ({ groups: testState.groups, isAnySettling: false }),
@@ -77,6 +82,7 @@ vi.mock("./ui/toast", () => ({
 
 // Prompts are shown once per app session, so each test loads a fresh module.
 let ManagedRuntimeUpdateNotification: typeof import("./ProviderUpdateLaunchNotification").ManagedRuntimeUpdateNotification;
+let ProviderUpdateLaunchNotification: typeof import("./ProviderUpdateLaunchNotification").ProviderUpdateLaunchNotification;
 
 const macos = "local:macos" as EnvironmentId;
 const wsl = "local:wsl" as EnvironmentId;
@@ -169,7 +175,10 @@ async function click(action: { readonly onClick?: () => void } | undefined) {
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ ManagedRuntimeUpdateNotification } = await import("./ProviderUpdateLaunchNotification"));
+  ({ ManagedRuntimeUpdateNotification, ProviderUpdateLaunchNotification } =
+    await import("./ProviderUpdateLaunchNotification"));
+  testState.offersToasts = true;
+  testState.primaryPrompt.mockClear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.groups = [];
   testState.toasts = [];
@@ -326,5 +335,24 @@ describe("managed runtime update notification", () => {
     await render();
     await click(toastTitled("2 managed provider updates available").data?.secondaryActionProps);
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/settings/providers" });
+  });
+});
+
+describe("update availability on desktop", () => {
+  it("leaves the managed runtime offer to the sidebar circle", async () => {
+    testState.offersToasts = false;
+    setGroups({ id: macos, label: "macOS", providers: [codex()] });
+    await render();
+    expect(testState.toasts).toEqual([]);
+  });
+
+  it("mounts the provider CLI prompts only where toasts offer updates", async () => {
+    testState.offersToasts = false;
+    await act(async () => root.render(<ProviderUpdateLaunchNotification />));
+    expect(testState.primaryPrompt).not.toHaveBeenCalled();
+
+    testState.offersToasts = true;
+    await act(async () => root.render(<ProviderUpdateLaunchNotification key="browser" />));
+    expect(testState.primaryPrompt).toHaveBeenCalled();
   });
 });
