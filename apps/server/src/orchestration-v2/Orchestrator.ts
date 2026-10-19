@@ -230,7 +230,8 @@ export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<Orc
   { commandId: CommandId, threadId: ThreadId },
 ) {
   override get message(): string {
-    return `Thread ${this.threadId} already exists. Use a new thread id.`;
+    // SCIENT-FORK: preserve conversation-facing identity-reuse guidance.
+    return "This conversation already exists. Start a new conversation instead.";
   }
 }
 

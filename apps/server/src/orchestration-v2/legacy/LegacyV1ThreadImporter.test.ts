@@ -734,12 +734,15 @@ it.layer(layerTest)("LegacyV1ThreadImporter transcript lookup", (it) => {
           span.end = (endTime, exit) => {
             end(endTime, exit);
             const query = span.attributes.get("db.query.text");
+            // SCIENT-FORK:START history hydration has its own event lookup.
             if (
               typeof query === "string" &&
-              /^\s*SELECT event_id\s+FROM orchestration_events/.test(query)
+              /^\s*SELECT event_id\s+FROM orchestration_events/.test(query) &&
+              query.includes("aggregate_kind = 'thread'")
             ) {
               statements.push(query);
             }
+            // SCIENT-FORK:END
           };
           return span;
         },

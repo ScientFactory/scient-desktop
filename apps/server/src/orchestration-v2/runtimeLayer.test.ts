@@ -4097,6 +4097,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       const threadId = ThreadId.make("runtime-layer-archive-preparing-thread");
+      // SCIENT-FORK:START runtime policy resolves local threads through the project store.
+      yield* seedProject({
+        projectId: ProjectId.make("archive-preparing-project"),
+        title: "Archive preparing work",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      // SCIENT-FORK:END
       yield* orchestrator.dispatch({
         type: "thread.create",
         createdBy: "user",

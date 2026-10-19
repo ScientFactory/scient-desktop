@@ -2608,7 +2608,13 @@ describe("orchestrator MCP toolkit", () => {
 
             // Claude steers into the running turn, which then ends.
             const steerReceived = yield* Deferred.make<void>();
-            steerReceivedGates.set(childSteerText, steerReceived);
+            // SCIENT-FORK:START match the skill-scope projection (docs/internals/providers.md).
+            const childSteerPrompt = emptyMcpReplayPrompt(
+              ProviderDriverKind.make("claudeAgent"),
+              childSteerText,
+            );
+            steerReceivedGates.set(childSteerPrompt, steerReceived);
+            // SCIENT-FORK:END
             const steeredSend = yield* steerIntoUntaskedChildRun(
               { providerInstanceId: claudeInstanceId, model: claudeModel },
               "steer-untasked-run",
@@ -2616,7 +2622,8 @@ describe("orchestrator MCP toolkit", () => {
             // A steer that misses the turn is sent again as its own run, so
             // end the turn only once the steer reached it.
             yield* Deferred.await(steerReceived);
-            steerReceivedGates.delete(childSteerText);
+            // SCIENT-FORK: remove the same projected prompt registered above.
+            steerReceivedGates.delete(childSteerPrompt);
             yield* invoke("scient_thread_interrupt", {
               threadId: steeredSend.child.childThreadId,
               runId: steeredSend.sent.runId,

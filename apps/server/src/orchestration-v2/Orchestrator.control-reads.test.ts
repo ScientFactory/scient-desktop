@@ -1087,7 +1087,11 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
     assert.ok(Result.isFailure(outcome), "duplicate create must be rejected");
     const refused = outcome.failure;
     assert.equal(refused._tag, "OrchestratorThreadAlreadyExistsError");
-    assert.equal(refused.message, `Thread ${threadId} already exists. Use a new thread id.`);
+    // SCIENT-FORK: preserve conversation-facing identity-reuse guidance.
+    assert.equal(
+      refused.message,
+      "This conversation already exists. Start a new conversation instead.",
+    );
     assert.deepEqual(yield* projections.getThread(threadId), before);
     assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
     const retried = yield* orchestrator.dispatch(duplicate).pipe(Effect.flip);
