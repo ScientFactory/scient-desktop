@@ -1880,135 +1880,133 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  for (const tagged of [true, false]) {
-    it.effect(
-      `delivers a ${tagged ? "tagged" : "legacy untagged"} failed task once its surviving native child settles without another run update`,
-      () =>
-        Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const eventSink = yield* EventSink.EventSinkV2;
-          const now = yield* DateTime.now;
-          const name = tagged ? "continuing-failure" : "continuing-legacy-failure";
-          const threadId = ThreadId.make(`thread:${name}-parent`);
-          const projectId = ProjectId.make(`project:${name}`);
-          const runId = RunId.make(`run:${name}-parent`);
-          const rootNodeId = NodeId.make(`node:${name}-parent-root`);
-          yield* seedParentWithTerminalTask({
-            threadId,
-            projectId,
-            runId,
-            rootNodeId,
-            taskId: NodeId.make(`node:${name}-seed`),
-            deliveryState: "acknowledged",
-            now,
-          });
-          const child = yield* seedRestartCancelledChild({
-            parentThreadId: threadId,
-            projectId,
-            parentRunId: runId,
-            rootNodeId,
-            name: `${name}-child`,
-            completionWake: "always",
-            continuationPending: false,
-            now,
-          });
-          const parent = yield* orchestrator.getThreadProjection(threadId);
-          const task = parent.subagents.find((row) => row.id === child.taskId)!;
-          const native = {
-            ...task,
-            id: NodeId.make(`node:${name}-surviving-native-child`),
-            threadId: child.childThreadId,
-            runId: child.childRunId,
-            parentNodeId: NodeId.make(`node:${name}-child-root`),
-            origin: "provider_native" as const,
-            childThreadId: null,
-            completionDelivery: undefined,
-          };
-          const failed = runEvent({
-            threadId: child.childThreadId,
-            runId: child.childRunId,
-            ordinal: 1,
-            status: "failed",
-            now,
-          });
-          // Reconciliation excludes the run reactor, so recovery below proves the
-          // finalizer deferred before the independent native settlement arrives.
-          yield* eventSink.write({
-            commandId: reconcileCommandId(name),
-            events: [
-              tagged
-                ? { ...failed, payload: { ...failed.payload, delegatedTaskId: child.taskId } }
-                : failed,
-              {
-                id: EventId.make(`event:${name}:surviving-native-child:running`),
-                type: "subagent.updated",
-                threadId: child.childThreadId,
-                runId: child.childRunId,
-                nodeId: native.id,
-                occurredAt: now,
-                payload: native,
+  it.effect.each([true, false])(
+    "delivers a failed task after native settlement without another run update (task tag: %s)",
+    (tagged) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const name = tagged ? "continuing-failure" : "continuing-legacy-failure";
+        const threadId = ThreadId.make(`thread:${name}-parent`);
+        const projectId = ProjectId.make(`project:${name}`);
+        const runId = RunId.make(`run:${name}-parent`);
+        const rootNodeId = NodeId.make(`node:${name}-parent-root`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make(`node:${name}-seed`),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: `${name}-child`,
+          completionWake: "always",
+          continuationPending: false,
+          now,
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const task = parent.subagents.find((row) => row.id === child.taskId)!;
+        const native = {
+          ...task,
+          id: NodeId.make(`node:${name}-surviving-native-child`),
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          parentNodeId: NodeId.make(`node:${name}-child-root`),
+          origin: "provider_native" as const,
+          childThreadId: null,
+          completionDelivery: undefined,
+        };
+        const failed = runEvent({
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          ordinal: 1,
+          status: "failed",
+          now,
+        });
+        // Reconciliation excludes the run reactor, so recovery below proves the
+        // finalizer deferred before the independent native settlement arrives.
+        yield* eventSink.write({
+          commandId: reconcileCommandId(name),
+          events: [
+            tagged
+              ? { ...failed, payload: { ...failed.payload, delegatedTaskId: child.taskId } }
+              : failed,
+            {
+              id: EventId.make(`event:${name}:surviving-native-child:running`),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: native.id,
+              occurredAt: now,
+              payload: native,
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (row) => row.id === child.taskId,
+          )!.result,
+        );
+        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
+        const afterSequence = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`event:${name}:surviving-native-child:completed`),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: native.id,
+              occurredAt: now,
+              payload: {
+                ...native,
+                status: "completed",
+                completedAt: now,
+                result: "Native child finished.",
               },
-            ],
-          });
-          yield* orchestrator.recoverDelegatedTasks;
-          assert.isNull(
-            (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
-              (row) => row.id === child.taskId,
-            )!.result,
-          );
-          assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
-          const afterSequence = yield* eventSink.latestSequence();
-          yield* eventSink.write({
-            events: [
-              {
-                id: EventId.make(`event:${name}:surviving-native-child:completed`),
-                type: "subagent.updated",
-                threadId: child.childThreadId,
-                runId: child.childRunId,
-                nodeId: native.id,
-                occurredAt: now,
-                payload: {
-                  ...native,
-                  status: "completed",
-                  completedAt: now,
-                  result: "Native child finished.",
-                },
-              },
-            ],
-          });
-          yield* eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
-            Stream.filter(
-              (stored) =>
-                stored.event.type === "subagent.updated" &&
-                stored.event.payload.id === child.taskId &&
-                stored.event.payload.result !== null,
-            ),
-            Stream.take(1),
-            Stream.runHead,
-          );
-          // Recovery takes the same parent lock after settlement has published and offered the wake.
-          yield* orchestrator.recoverDelegatedTasks;
-          const finished = yield* orchestrator.getThreadProjection(threadId);
-          const delivered = finished.subagents.find((row) => row.id === child.taskId)!;
-          assert.equal(delivered.status, "failed");
-          assert.isNotNull(delivered.result);
-          assert.equal(delivered.completionDelivery?.state, "claimed");
-          assert.equal(
-            finished.contextTransfers.filter(
-              (transfer) =>
-                transfer.type === "subagent_result" &&
-                transfer.sourceThreadId === child.childThreadId,
-            ).length,
-            1,
-          );
-          yield* orchestrator.recoverDelegatedTasks;
-          assert.equal(
-            (yield* orchestrator.getThreadProjection(threadId)).contextTransfers.length,
-            finished.contextTransfers.length,
-          );
-        }),
-    );
-  }
+            },
+          ],
+        });
+        yield* eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === child.taskId &&
+              stored.event.payload.result !== null,
+          ),
+          Stream.take(1),
+          Stream.runHead,
+        );
+        // Recovery takes the same parent lock after settlement has published and offered the wake.
+        yield* orchestrator.recoverDelegatedTasks;
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = finished.subagents.find((row) => row.id === child.taskId)!;
+        assert.equal(delivered.status, "failed");
+        assert.isNotNull(delivered.result);
+        assert.equal(delivered.completionDelivery?.state, "claimed");
+        assert.equal(
+          finished.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          ).length,
+          1,
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).contextTransfers.length,
+          finished.contextTransfers.length,
+        );
+      }),
+  );
 
   it.effect("settles a child whose provider failure holds its queued wakes", () =>
     Effect.gen(function* () {

@@ -162,10 +162,10 @@ it.effect("keeps large text and blob parameters off cached statements", () =>
 
     const small = "small";
     const queries = [
-      (value: string | Uint8Array | ArrayBuffer) => sql`SELECT length(${value}) AS size`,
-      (value: string | Uint8Array | ArrayBuffer) =>
+      (value: string | Uint8Array | DataView) => sql`SELECT length(${value}) AS size`,
+      (value: string | Uint8Array | DataView) =>
         sql.unsafe("SELECT length($value) AS size", [{ $value: value }]),
-      (value: string | Uint8Array | ArrayBuffer) =>
+      (value: string | Uint8Array | DataView) =>
         sql.unsafe("SELECT length($value) AS callable", [
           Object.assign(() => {}, { $value: value }),
         ]),
