@@ -167,7 +167,9 @@ which the client opens. Windows that share a copied session, a reload after a
 grant, a repeated report, and an operation replaced or cancelled before the claim are
 denied, and clients without the id never ask. A cancel the server processes after
 the grant opens nothing if the snapshot showing it arrives before the grant;
-otherwise the page opens, as if the user cancelled just after it opened. Other clients' setup views offer to open the page and do
+otherwise the page opens, as if the user cancelled just after it opened. Opening the
+page by hand spends this window's id for it, and an automatic opening skips a
+page this window already opened, so a grant still on its way opens nothing more. Other clients' setup views offer to open the page and do
 not claim it is open. A server can only run one connection operation per
 instance, so a second start from another client is rejected and releases its id;
 a second start from the same client joins the in-flight command, shares its

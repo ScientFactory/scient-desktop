@@ -12,6 +12,7 @@ vi.mock("../../components/ui/toast", () => ({ toastManager: toast }));
 
 import {
   observeProviderSignInSnapshots,
+  openProviderSignInPageByHand,
   type ProviderSignInPageClaimer,
   resetProviderSignInBrowserForTests,
   setProviderSignInPageClaimer,
@@ -471,6 +472,35 @@ describe("provider sign-in page opening", () => {
     expect(toast.add).not.toHaveBeenCalled();
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
+
+  it.each([
+    ["spends the held id", true],
+    ["is already open, even with the id still held", false],
+  ] as const)(
+    "opens once when the user opens the page during a pending claim: the opening %s",
+    async (_case, withId) => {
+      const answer = server.hold();
+      const id = await startWithLostReply();
+      observe(operation({ signInRequestId: id }));
+      await settle();
+      expect(server.claim).toHaveBeenCalledTimes(1);
+
+      await openProviderSignInPageByHand({
+        key,
+        operationId: "connect-1",
+        signInRequestId: withId ? id : undefined,
+        url,
+        providerName: "Antigravity",
+      });
+      expect(open).toHaveBeenCalledTimes(1);
+      // A manual opening that names the id spends it at once.
+      expect(storage.getItem(STORAGE_KEY) === null).toBe(withId);
+      await answer();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(toast.add).not.toHaveBeenCalled();
+      expect(storage.getItem(STORAGE_KEY)).toBeNull();
+    },
+  );
 
   it("drops ids of expired operations", async () => {
     const id = await startWithLostReply();

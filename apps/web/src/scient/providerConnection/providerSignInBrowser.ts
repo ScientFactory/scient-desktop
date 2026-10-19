@@ -371,10 +371,11 @@ async function considerOwnOperation(
     claimsInFlight.delete(openingKey);
   }
   if (result === undefined) return;
-  // An id released meanwhile saw its operation end: nothing to open.
+  // An id released meanwhile saw its operation end, or the user opened the page
+  // by hand: nothing to open.
   const stillHeld = holds(key, requestId);
   release(key, requestId);
-  if (result.granted && stillHeld) {
+  if (result.granted && stillHeld && !openings.has(openingKey)) {
     await openFor({
       key,
       operationId: operation.operationId,
@@ -382,6 +383,21 @@ async function considerOwnOperation(
       providerName,
     });
   }
+}
+
+/**
+ * The user's own opening of an operation's page. It spends this window's id for
+ * the operation, so a grant still on its way opens nothing more.
+ */
+export async function openProviderSignInPageByHand(input: {
+  readonly key: ProviderSignInKey;
+  readonly operationId: string;
+  readonly signInRequestId: string | undefined;
+  readonly url: string;
+  readonly providerName: string;
+}): Promise<void> {
+  if (input.signInRequestId !== undefined) release(input.key, input.signInRequestId);
+  await openFor(input);
 }
 
 /**
@@ -541,8 +557,14 @@ export function useProviderSignInBrowser(
   const startedHere = useSyncExternalStore(subscribe, readStartedHere, readStartedHere);
   const reopen = useCallback(async () => {
     if (operationId === null || url === null) return;
-    await openFor({ key: { environmentId, instanceId }, operationId, url, providerName });
-  }, [environmentId, instanceId, operationId, providerName, url]);
+    await openProviderSignInPageByHand({
+      key: { environmentId, instanceId },
+      operationId,
+      signInRequestId: requestId,
+      url,
+      providerName,
+    });
+  }, [environmentId, instanceId, operationId, providerName, requestId, url]);
   return { opening, startedHere, reopen };
 }
 
