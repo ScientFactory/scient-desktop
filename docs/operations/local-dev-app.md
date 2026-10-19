@@ -220,6 +220,10 @@ reload alone. Contract-derived features may explicitly report that the app and
 server are out of sync, but logic-only server changes cannot always be detected
 from the renderer.
 
+Automatic desktop restarts wait for the new app and backend to register before
+processing another rebuild. If the previous instance cannot be stopped, the
+launcher refuses to start a replacement rather than overlapping two instances.
+
 The lower-level command remains available when its managed lifecycle is not
 needed:
 
@@ -242,6 +246,11 @@ For a candidate change:
    `[dev-runner]`; and
 5. inspect `pnpm dev:app:logs` when startup details are needed; and
 6. stop it through `pnpm dev:app:stop` when inspection is complete.
+
+The development backend prefers the publication helper staged beside its bundle
+in `apps/server/dist/file-exchange/`, before cached builds in `native/file-exchange/`.
+After changing the native helper protocol, stop and start the owning candidate to
+rebuild both artifacts. A renderer reload does not update the backend or its helper.
 
 Do not reinstall or replace the stable launcher for ordinary feature review. A
 linked worktree automatically receives isolated `.scient-next` state and a

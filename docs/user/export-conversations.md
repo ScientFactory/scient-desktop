@@ -139,7 +139,7 @@ viewers. Keep them if you may want to bring the conversation back into Scient la
 
 Word export runs Pandoc, which Scient downloads into its own folder the first time you need it;
 nothing is installed system-wide. Pandoc is free software under the GNU GPL, version 2 or later.
-**Settings → Scientific Computing → Word export** shows the Pandoc release, its licence, and a link
+**Settings → Documents → Word** shows the Pandoc release, its licence, and a link
 to that release's source code; the full notice is under **Open source licenses**. Search Settings
 for "Word" or "Pandoc" to find it.
 
