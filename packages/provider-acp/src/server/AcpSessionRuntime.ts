@@ -1557,11 +1557,12 @@ export const make = (
           // SCIENT-FORK:START — Windows owns the tree with taskkill /T, not a group.
           // A detached agent has no console, so every console program it starts
           // (Antigravity's own inner process included) opens a visible window.
+          // The host decides, not the teardown platform a test may simulate.
           ...(options.ownDetachedProcessGroup === undefined
             ? {}
             : {
                 detached:
-                  options.ownDetachedProcessGroup && options.processGroupPlatform !== "win32",
+                  options.ownDetachedProcessGroup && (yield* HostProcess.Platform) !== "win32",
               }),
           // SCIENT-FORK:END
           shell: containedSpawnCommand.shell,
