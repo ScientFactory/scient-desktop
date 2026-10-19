@@ -39,6 +39,13 @@ export default mergeConfig(
           dependsOn: ["@t3tools/web#build"],
           cache: false,
         },
+        // SCIENT-FORK:START — desktop development renders from the Vite dev server, so its
+        // server build skips the web production build and its copy (minutes per launch).
+        "build:dev": {
+          command: "node scripts/cli.ts build --skip-web-client",
+          cache: false,
+        },
+        // SCIENT-FORK:END
       },
     },
     pack: {

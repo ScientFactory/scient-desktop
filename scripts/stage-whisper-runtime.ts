@@ -353,7 +353,17 @@ export async function stageWhisperRuntime(options: StageOptions): Promise<void> 
     const executable = NodePath.join(temporaryOutput, runtimeExecutableName(options.platform));
     await NodeFSP.stat(executable);
     if (options.platform !== "win") await NodeFSP.chmod(executable, 0o755);
-    const help = await capture(executable, ["--help"]);
+    const help = await capture(executable, ["--help"]).catch((error: unknown) => {
+      // 0xC0000135: Windows could not load a DLL. The official build links the
+      // Visual C++ runtime and its OpenMP library (vcomp140.dll).
+      if (options.platform === "win" && String(error).includes("exited 3221225781")) {
+        throw new Error(
+          "whisper-server could not load its DLLs. Install the Microsoft Visual C++ Redistributable (x64), which provides vcomp140.dll, then stage again.",
+          { cause: error },
+        );
+      }
+      throw error;
+    });
     if (!help.includes("--request-path")) {
       throw new Error("Staged whisper-server does not advertise --request-path.");
     }
