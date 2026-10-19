@@ -23,6 +23,10 @@ const controller: ProviderLifecycleController = {
   cancelConnection: vi.fn(),
   submitAuthorizationCode: vi.fn(),
   disconnect: vi.fn(),
+  signInKey: {
+    environmentId: "environment-test",
+    instanceId: "sign-in-test",
+  } as ProviderLifecycleController["signInKey"],
   openAuthorizationPage: vi.fn(),
   updateExternalRuntime: vi.fn(),
   refresh: vi.fn(),

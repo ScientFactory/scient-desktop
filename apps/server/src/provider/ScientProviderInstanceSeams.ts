@@ -50,6 +50,8 @@ export interface ProviderConnectionActionFailure {
    * the sign-in as possibly removed.
    */
   readonly signInMayBeRemoved?: boolean | undefined;
+  /** The provider accepted the sign-in; the failure came while finishing its setup. */
+  readonly afterSignIn?: boolean | undefined;
 }
 
 export interface ProviderConnectionAttempt {
@@ -96,6 +98,8 @@ export interface ProviderConnectionAttempt {
  */
 export interface ProviderConnectionActions {
   readonly methods: ReadonlyArray<ProviderConnectionMethod>;
+  /** Shown while `start` runs, for a provider whose start can take noticeably long. */
+  readonly startingMessage?: string | undefined;
   /**
    * `account` names an entry of the provider's own sign-in list. The manager
    * passes it only for a provider whose snapshot lists accounts, and only an

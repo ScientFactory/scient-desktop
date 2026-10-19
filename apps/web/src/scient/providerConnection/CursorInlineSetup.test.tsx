@@ -65,6 +65,10 @@ function controller(): ProviderLifecycleController {
     cancelConnection: vi.fn(async () => provider()),
     submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => runtimePlan),
     startRuntime: vi.fn(async () => provider()),
@@ -301,7 +305,7 @@ describe("CursorInlineSetup", () => {
     expect(markup).not.toContain("Sign in to Cursor");
   });
 
-  it("reopens the captured Cursor authorization page while sign-in is active", () => {
+  it("offers the captured Cursor page without claiming this client opened it", () => {
     const markup = render(
       provider({
         connection: {
@@ -321,10 +325,11 @@ describe("CursorInlineSetup", () => {
     );
 
     expect(markup).toContain("Finish signing in");
-    expect(markup).toContain("Reopen Cursor sign-in");
+    expect(markup).toContain("Open Cursor sign-in");
+    expect(markup).toContain("Open the sign-in page to continue.");
     expect(markup).toContain(">Cancel<");
-    // The status icon is the only spinner: no second one beside the title.
-    expect(markup.match(/animate-spin/g)).toHaveLength(1);
+    // Waiting on the user, not on Scient: a still icon, and the open action leads.
+    expect(markup).not.toContain("animate-spin");
   });
 
   it("shows model discovery while verifying a completed sign-in", () => {

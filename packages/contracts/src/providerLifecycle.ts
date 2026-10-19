@@ -81,6 +81,16 @@ export type ProviderConnectionOperationStatus = typeof ProviderConnectionOperati
 export const ProviderAuthorizationUrlKind = Schema.Literals(["primary", "manual_fallback"]);
 export type ProviderAuthorizationUrlKind = typeof ProviderAuthorizationUrlKind.Type;
 
+/**
+ * Opaque, client-generated id of one start request. It lets the client that
+ * started a sign-in recognize its operation in streamed snapshots, so it can
+ * open the sign-in page even if the start command's reply never arrives.
+ */
+export const ProviderSignInRequestId = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9-]{8,64}$/),
+);
+export type ProviderSignInRequestId = typeof ProviderSignInRequestId.Type;
+
 export const ProviderConnectionOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   method: ProviderConnectionMethod,
@@ -102,6 +112,13 @@ export const ProviderConnectionOperation = Schema.Struct({
   account: Schema.optionalKey(ProviderConnectionAccountId),
   /** What the provider asks the user to do or paste, in its own words. */
   instructions: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  /**
+   * A failed operation whose provider accepted the account sign-in: the failure came while
+   * starting a session or verifying the account, so the sign-in itself did finish.
+   */
+  failedAfterSignIn: Schema.optionalKey(Schema.Boolean),
+  /** The start request that created this operation, when its client sent one. */
+  signInRequestId: Schema.optionalKey(ProviderSignInRequestId),
   /**
    * The question an answer is accepted for. A flow can ask several in turn;
    * a submission echoes this so an answer typed for an earlier one is refused.
@@ -233,10 +250,19 @@ export const ProviderRuntimeSummary = Schema.Struct({
 });
 export type ProviderRuntimeSummary = typeof ProviderRuntimeSummary.Type;
 
+/** What a starting sign-in says when its provider names nothing of its own. */
+export const DEFAULT_PROVIDER_STARTING_MESSAGE = "Starting sign-in.";
+
 export const ProviderConnectionSummary = Schema.Struct({
   methods: Schema.Array(ProviderConnectionMethod),
   canDisconnect: Schema.Boolean,
   operation: Schema.NullOr(ProviderConnectionOperation),
+  /**
+   * What the provider says while its sign-in starts, for a provider whose start
+   * takes noticeably long. Clients show it from the click, before the starting
+   * operation arrives.
+   */
+  startingMessage: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   runtime: Schema.optionalKey(ProviderRuntimeSummary),
   /**
    * The provider's own sign-in list. Present only for a provider that connects
@@ -269,6 +295,7 @@ export const ProviderConnectionStartInput = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
   /** Required when the provider lists accounts: the entry to sign in to. */
   account: Schema.optionalKey(ProviderConnectionAccountId),
+  signInRequestId: Schema.optionalKey(ProviderSignInRequestId),
 });
 export type ProviderConnectionStartInput = typeof ProviderConnectionStartInput.Type;
 
@@ -277,6 +304,28 @@ export const ProviderConnectionCancelInput = Schema.Struct({
   operationId: TrimmedNonEmptyString,
 });
 export type ProviderConnectionCancelInput = typeof ProviderConnectionCancelInput.Type;
+
+/**
+ * Asks to be the one client that opens an operation's sign-in page. The server
+ * grants it once per operation, only to a holder of the request id stamped on
+ * it while it waits on a primary page.
+ */
+export const ProviderSignInPageClaimInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  operationId: TrimmedNonEmptyString,
+  signInRequestId: ProviderSignInRequestId,
+});
+export type ProviderSignInPageClaimInput = typeof ProviderSignInPageClaimInput.Type;
+
+/** A grant carries the page to open: the operation's primary URL when it was granted. */
+export const ProviderSignInPageClaimResult = Schema.Union([
+  Schema.Struct({
+    granted: Schema.Literal(true),
+    authorizationUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+  }),
+  Schema.Struct({ granted: Schema.Literal(false) }),
+]);
+export type ProviderSignInPageClaimResult = typeof ProviderSignInPageClaimResult.Type;
 
 const authorizationCodeHasNoControlCharacters = Schema.makeFilter((value: string) => {
   for (let index = 0; index < value.length; index += 1) {

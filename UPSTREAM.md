@@ -1061,6 +1061,47 @@ Legacy CLI owners are named explicitly and remain active for explicit `agy` path
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive.
 
+Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
+worth proposing to T3:
+
+- `linkAntigravityUserSkills` (`provider/antigravityAuthSupport.ts`) linked the private profile's
+  `config/skills` and `antigravity-cli/skills` to `~/.gemini` even when those directories did not
+  exist; on `session/new` the agent then fails every session with -32603. The seam calls
+  `scient/skills/antigravityUserSkillLinks.ts`: link only an existing directory, remove a dangling
+  link, and replace an empty directory the agent created once the target exists; a directory with
+  content is never touched. One marked fixture line in `antigravityAuthSupport.test.ts` creates
+  the CLI skill directory that upstream's test expected to be linked while missing.
+- `prepareAntigravityProfile`'s browser-helper preflight ran on every launch, and its
+  `timeoutOrElse` waited for the helper's teardown (`taskkill`, then an unbounded exit wait on
+  Windows). The seam (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`) keeps a
+  success per helper executable and Node/Electron startup variables for the server process, and
+  lets a timed-out teardown finish in the background, bounded by one forced kill of the helper,
+  which a second marked line records as it starts. Creating the helper process is synchronous in
+  Node on Windows and can still block the event loop once.
+- `removeAntigravitySessionFiles` (`provider/acp/AntigravitySessionFiles.ts`) could not clean up
+  after a failed `session/new`, which leaves `<session>.db-wal`/`-shm` and never reports the
+  session id. The seam sweeps SQLite sidecars without their database
+  (`scient/providerLifecycle/antigravityConversationSidecars.ts`).
+
+The fourth stays inside `AntigravityAuth.ts`'s existing marked failure block, which takes its
+post-authentication message from `scient/providerLifecycle/antigravityAuthDiagnostics.ts` so the
+lifecycle bridge can mark the failure `failedAfterSignIn`; the same module records the failed
+ACP request in the local trace. Opening sign-in pages for the client that started them, and the
+Settings row's one-click sign-in, live in Scient-owned web modules
+(`scient/providerConnection/providerSignIn*.ts` and `oneClickSignIn.ts`), with one marked mount of
+`ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
+The server-side claim of a sign-in page adds one Scient RPC,
+`server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts` and
+imported in its existing marked block of `contracts/src/rpc.ts`; its group entry, scope
+(`server/src/auth/RpcAuthorization.ts`) and aggregate (`server/src/observability/RpcInstrumentation.ts`)
+are each one marked line beside the existing provider-connection entries. Those existing
+provider-connection entries in the three files are earlier unmarked Scient additions, to be marked in a follow-up.
+The web defines its command in `scient/providerConnection/providerSignInCommands.ts`.
+`components/settings/ProviderInstanceCard.tsx` carries three marked blocks: its lifecycle
+presentation comes from a Scient hook (its import and its call), so a sign-in started here reads
+as starting from the click, and a failed sign-in or setup takes the error status dot. See
+[provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.

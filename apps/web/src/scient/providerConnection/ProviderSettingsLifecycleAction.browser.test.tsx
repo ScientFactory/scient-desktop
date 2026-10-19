@@ -4,6 +4,8 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderConnectionMethod,
+  type ProviderConnectionOperation,
   type ProviderRuntimeOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -13,12 +15,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
-const commands = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn() }));
+const commands = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn(), connect: vi.fn() }));
+const locality = vi.hoisted(() => ({ onThisDevice: true }));
+
+vi.mock("./environmentLocality", () => ({
+  useEnvironmentIsOnThisDevice: () => locality.onThisDevice,
+}));
 
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({
     planRuntime: commands.plan,
     startRuntime: commands.start,
+    startConnection: commands.connect,
   }),
 }));
 
@@ -41,6 +49,7 @@ import {
   ScientGettingStartedShell,
 } from "../onboarding/ScientGettingStartedView";
 import { ProviderSettingsLifecycleAction } from "./ProviderSettingsLifecycleAction";
+import { resetProviderSignInForTests, startProviderSignIn } from "./providerSignInFlow";
 
 function snapshot(): ServerProvider {
   return {
@@ -177,6 +186,7 @@ function renderSurface(surface: (typeof SURFACES)[number], provider: ServerProvi
 
 beforeEach(() => {
   vi.clearAllMocks();
+  locality.onThisDevice = true;
   commands.plan.mockResolvedValue({
     action: "install",
     target: "darwin-arm64",
@@ -270,3 +280,191 @@ it.each([1280, 390])(
     await expect.element(page.getByRole("button", { name: "Skip", exact: true })).toBeVisible();
   },
 );
+
+describe("row sign-in", () => {
+  function signedOut(
+    driver: string,
+    methods: ReadonlyArray<ProviderConnectionMethod>,
+    current: ProviderConnectionOperation | null = null,
+  ): ServerProvider {
+    return {
+      ...snapshot(),
+      instanceId: ProviderInstanceId.make(driver),
+      driver: ProviderDriverKind.make(driver),
+      displayName: "Provider",
+      installed: true,
+      version: "1.0.0",
+      connection: { methods: [...methods], canDisconnect: false, operation: current },
+    };
+  }
+
+  function waiting(patch: Partial<ProviderConnectionOperation>): ProviderConnectionOperation {
+    return {
+      operationId: "connect-1",
+      method: "antigravity_google",
+      status: "waiting_for_browser",
+      startedAt: "2026-10-18T00:00:00.000Z",
+      finishedAt: null,
+      message: "Finish signing in.",
+      ...patch,
+    };
+  }
+
+  function renderRow(provider: ServerProvider, onManage: () => void) {
+    if (!host) {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+    }
+    flushSync(() => {
+      root!.render(
+        <ProviderSettingsLifecycleAction
+          displayName="Provider"
+          environmentId={EnvironmentId.make("local")}
+          onManage={onManage}
+          provider={provider}
+        />,
+      );
+    });
+  }
+
+  it.each([
+    ["antigravity", "antigravity_google"],
+    ["cursor", "cursor_browser"],
+    ["codex", "codex_browser"],
+  ] as const)("starts %s sign-in with one click", async (driver, method) => {
+    const onManage = vi.fn();
+    const provider = signedOut(driver, [method]);
+    commands.connect.mockResolvedValue(
+      signedOut(driver, [method], waiting({ method, authorizationUrlKind: "primary" })),
+    );
+    renderRow(provider, onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => commands.connect.mock.calls).toEqual([[method]]);
+    await commands.connect.mock.results[0]!.value;
+    expect(onManage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["claudeAgent", ["claude_subscription", "claude_console"]],
+    ["grok", ["grok_account", "grok_device_code"]],
+    ["droid", ["droid_device_pairing"]],
+    ["antigravity", ["antigravity_credentials"]],
+  ] as const)("opens the setup view for %s instead", async (driver, methods) => {
+    const onManage = vi.fn();
+    renderRow(signedOut(driver, methods), onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    expect(onManage).toHaveBeenCalledTimes(1);
+    expect(commands.connect).not.toHaveBeenCalled();
+  });
+
+  it("also opens the setup view on another device, for pasting the return URL", async () => {
+    locality.onThisDevice = false;
+    const onManage = vi.fn();
+    commands.connect.mockResolvedValue(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({ authorizationUrlKind: "primary", authorizationResponseKind: "callback_url" }),
+      ),
+    );
+    renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => commands.connect.mock.calls).toEqual([["antigravity_google"]]);
+    await commands.connect.mock.results[0]!.value;
+    expect(onManage).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues in the setup view when the started flow asks for something", async () => {
+    const onManage = vi.fn();
+    commands.connect.mockResolvedValue(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({ authorizationUrlKind: "manual_fallback", acceptsAuthorizationCode: true }),
+      ),
+    );
+    renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => onManage.mock.calls.length).toBe(1);
+  });
+
+  it("shows the server's starting state from the click", async () => {
+    resetProviderSignInForTests({ open: async () => undefined });
+    const onManage = vi.fn();
+    const provider = {
+      ...signedOut("antigravity", ["antigravity_google"]),
+      connection: {
+        ...signedOut("antigravity", ["antigravity_google"]).connection!,
+        startingMessage: "Antigravity can take up to a minute to start.",
+      },
+    };
+    // As the controller does: the start runs through the shared opener and is slow.
+    commands.connect.mockImplementation(() =>
+      startProviderSignIn({
+        key: { environmentId: EnvironmentId.make("local"), instanceId: provider.instanceId },
+        providerName: "Provider",
+        previousOperationId: null,
+        start: () => new Promise<never>(() => undefined),
+        operationOf: () => null,
+      }),
+    );
+    renderRow(provider, onManage);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+
+    const progress = page.getByRole("button", { name: "Starting Provider", exact: true });
+    await expect.element(progress).toBeVisible();
+    await progress.hover();
+    await expect
+      .element(page.getByText("Antigravity can take up to a minute to start."))
+      .toBeVisible();
+    resetProviderSignInForTests();
+  });
+
+  it("retries a failed sign-in, with the reason on hover", async () => {
+    const onManage = vi.fn();
+    renderRow(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({
+          status: "failed",
+          finishedAt: "2026-10-18T00:01:00.000Z",
+          message: "Antigravity authenticated, but could not initialize a session or load models.",
+          failedAfterSignIn: true,
+        }),
+      ),
+      onManage,
+    );
+    const retry = page.getByRole("button", { name: "Retry", exact: true });
+    await expect.element(retry).toBeVisible();
+    await retry.hover();
+    await expect
+      .element(page.getByText("Signed in, but Provider couldn’t start. Try again."))
+      .toBeVisible();
+  });
+
+  it("shows a slow start on the row and opens the setup view from it", async () => {
+    const onManage = vi.fn();
+    renderRow(
+      signedOut(
+        "antigravity",
+        ["antigravity_google"],
+        waiting({
+          status: "starting",
+          message: "Antigravity can take up to a minute to start.",
+        }),
+      ),
+      onManage,
+    );
+    const progress = page.getByRole("button", { name: "Starting Provider", exact: true });
+    await expect.element(progress).toBeVisible();
+    await progress.hover();
+    await expect
+      .element(page.getByText("Antigravity can take up to a minute to start."))
+      .toBeVisible();
+    await progress.click();
+    expect(onManage).toHaveBeenCalledTimes(1);
+    expect(commands.connect).not.toHaveBeenCalled();
+  });
+});

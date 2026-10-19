@@ -18,6 +18,7 @@ import {
 import { ANTIGRAVITY_RELEASE_VERSION } from "../../provider/antigravityRelease.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
 import { bundledAntigravityAcpAsset } from "./antigravityAcpCatalog.ts";
+import { ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE } from "./antigravityAuthDiagnostics.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-lifecycle-test");
 const driver = ProviderDriverKind.make("antigravity");
@@ -352,4 +353,59 @@ it.effect("never removes a managed runtime when its repair download or verificat
     expect(removes).toBe(1);
     expect(refreshes).toBe(1);
   }),
+);
+
+it.effect("tells a session failure after Google accepted the sign-in from a failed sign-in", () =>
+  Effect.gen(function* () {
+    const controllerWith = (states: ReadonlyArray<ProviderAuthState>): ProviderAuthController => ({
+      start: () => Effect.succeed(authState("starting", { flowId: "flow" })),
+      complete: () => Effect.die("No callback in this test."),
+      cancel: (_owner, flowId) => Effect.succeed(authState("cancelled", { flowId })),
+      logout: () => Effect.succeed(authState("idle")),
+      subscribe: () => Stream.fromIterable(states),
+    });
+    const startWith = (states: ReadonlyArray<ProviderAuthState>) =>
+      makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller: controllerWith(states),
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("owner"),
+      });
+
+    const actions = startWith([]);
+    expect(actions.startingMessage).toBe("Antigravity can take up to a minute to start.");
+
+    // A stored sign-in: authentication passes at once and session/new fails before any link.
+    const beforeLink = yield* startWith([
+      authState("failed", { flowId: "flow", message: ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE }),
+    ])
+      .start("antigravity_google")
+      .pipe(Effect.scoped, Effect.flip);
+    expect(beforeLink).toMatchObject({
+      message: ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE,
+      afterSignIn: true,
+    });
+
+    // A browser sign-in that Google accepted, followed by the same failure.
+    const attempt = yield* startWith([
+      authState("waiting", { flowId: "flow", authorizationUrl }),
+      authState("failed", { flowId: "flow", message: ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE }),
+    ]).start("antigravity_google");
+    expect(yield* attempt.waitForCompletion.pipe(Effect.flip)).toMatchObject({
+      message: ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE,
+      afterSignIn: true,
+    });
+
+    const declined = yield* startWith([
+      authState("waiting", { flowId: "flow", authorizationUrl }),
+      authState("failed", {
+        flowId: "flow",
+        message: "Google sign-in failed. Start sign-in again.",
+      }),
+    ]).start("antigravity_google");
+    const plain = yield* declined.waitForCompletion.pipe(Effect.flip);
+    expect(plain.message).toBe("Google sign-in failed. Start sign-in again.");
+    expect(plain.afterSignIn).toBeUndefined();
+  }).pipe(Effect.scoped),
 );

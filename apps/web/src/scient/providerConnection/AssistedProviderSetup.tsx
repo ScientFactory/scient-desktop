@@ -60,7 +60,9 @@ export function AssistedSetupStatus(props: {
         <p className="text-sm font-medium text-foreground" data-assisted-setup-title="true">
           {props.title}
         </p>
-        <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{props.body}</div>
+        <div className="mt-0.5 text-pretty text-xs leading-relaxed text-muted-foreground">
+          {props.body}
+        </div>
       </div>
       {props.trailing ? (
         <div className="shrink-0 self-center in-[[data-model-picker-content=true]]:hidden">

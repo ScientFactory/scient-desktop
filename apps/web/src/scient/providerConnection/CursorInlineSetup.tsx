@@ -1,4 +1,8 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   DownloadIcon,
@@ -46,6 +50,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
+import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -127,6 +132,13 @@ export function CursorInlineSetup(props: {
   const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
     ? connectionOperation
     : null;
+  const browser = useProviderSignInBrowser(
+    props.controller.signInKey,
+    activeConnectionOperation,
+    props.displayName,
+  );
+  // Only this window opens the Cursor page; others offer it.
+  const page = browserSignInWaitingView(browser, activeConnectionOperation);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -352,29 +364,48 @@ export function CursorInlineSetup(props: {
   }
 
   if (activeConnectionOperation || pendingAction === "sign-in") {
+    const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
+    const openFailure = !starting && !verifying ? page.failure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            verifying ? "Finding models for your account…" : "Complete sign-in in your browser."
+            starting
+              ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
+              : verifying
+                ? "Finding models for your account…"
+                : page.body
           }
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={verifying ? "Checking your account" : "Finish signing in"}
+          icon={
+            openFailure ? (
+              <TriangleAlertIcon className="size-5 text-warning" />
+            ) : page.userMustOpen ? (
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
+            ) : (
+              <LoaderIcon className="size-5 animate-spin text-primary" />
+            )
+          }
+          role={openFailure ? "alert" : undefined}
+          title={
+            verifying
+              ? "Checking your account"
+              : page.blocked && !starting
+                ? "Sign-in page blocked"
+                : "Finish signing in"
+          }
         />
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
             <Button
-              onClick={() =>
-                void props.controller.openAuthorizationPage(
-                  activeConnectionOperation.authorizationUrl!,
-                )
-              }
+              disabled={browser.opening?.status === "opening"}
+              onClick={() => void browser.reopen()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
-              <ExternalLinkIcon aria-hidden /> Reopen Cursor sign-in
+              <ExternalLinkIcon aria-hidden />{" "}
+              {page.notOpenedHere || page.blocked ? "Open Cursor sign-in" : "Reopen Cursor sign-in"}
             </Button>
           ) : null}
           {activeConnectionOperation ? (

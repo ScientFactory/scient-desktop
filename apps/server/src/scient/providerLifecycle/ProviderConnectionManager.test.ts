@@ -1,9 +1,12 @@
 import { describe, it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthProvidersManageScope,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  WS_METHODS,
+  WsRpcGroup,
   type ProviderConnectionOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -18,6 +21,9 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as RpcTest from "effect/rpc/RpcTest";
+import { RPC_REQUIRED_SCOPES } from "../../auth/RpcAuthorization.ts";
+import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 
 import {
   ProviderRegistry,
@@ -1147,7 +1153,7 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
-  it.effect("releases the connection reservation when starting is interrupted", () =>
+  it.effect("keeps an accepted startup when its caller goes away, and cancel still stops it", () =>
     Effect.gen(function* () {
       const interrupted = yield* Deferred.make<void>();
       const starts = yield* Ref.make(0);
@@ -1179,6 +1185,13 @@ describe("ProviderConnectionManager", () => {
         (providers) => providers[0]?.connection?.operation?.status === "starting",
       );
       yield* Fiber.interrupt(first);
+      // A reload or disconnect of the asking client only detaches it.
+      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+      assert.isFalse(yield* Deferred.isDone(interrupted));
+      const running = (yield* Ref.get(providersRef))[0]?.connection?.operation;
+      assert.strictEqual(running?.status, "starting");
+
+      yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId: running!.operationId });
       yield* Deferred.await(interrupted);
 
       const retry = yield* manager
@@ -2296,6 +2309,267 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         .pipe(Effect.flip);
       assert.strictEqual(error.reason, "disconnect_failed");
       assert.match(error.message, /The sign-in was removed, but Scient could not stop/u);
+    }),
+  );
+});
+
+describe("ProviderConnectionManager failure stage", () => {
+  it.effect("announces a slow start and marks failures that came after the sign-in", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      let starts = 0;
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        startingMessage: "Starting the provider. This can take up to a minute.",
+        start: () => {
+          starts += 1;
+          return starts === 1
+            ? Effect.fail(
+                new ProviderConnectionActionError({
+                  message: "Signed in, but no session could start.",
+                  afterSignIn: true,
+                }),
+              )
+            : starts === 2
+              ? Effect.fail(new ProviderConnectionActionError({ message: "Sign-in declined." }))
+              : Effect.succeed({
+                  initialStatus: "waiting_for_browser",
+                  waitForCompletion: Deferred.await(completed),
+                  cancel: Effect.void,
+                });
+        },
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      const start = manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+
+      yield* start.pipe(Effect.flip);
+      yield* start.pipe(Effect.flip);
+      yield* start;
+      yield* Deferred.fail(
+        completed,
+        new ProviderConnectionActionError({ message: "Session failed.", afterSignIn: true }),
+      );
+      const transitions = yield* yieldUntil(
+        Ref.get(transitionsRef),
+        (items) => items.filter((item) => item?.status === "failed").length === 3,
+      );
+
+      assert.strictEqual(
+        transitions[0]?.message,
+        "Starting the provider. This can take up to a minute.",
+      );
+      assert.deepStrictEqual(
+        transitions
+          .filter((item) => item?.status === "failed")
+          .map((item) => item?.failedAfterSignIn ?? false),
+        [true, false, true],
+      );
+    }),
+  );
+
+  it.effect("marks a sign-in Scient could not verify as failed after the sign-in", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Effect.void,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+      assert.strictEqual(transitions[0]?.message, "Starting sign-in.");
+      assert.strictEqual(transitions.at(-1)?.failedAfterSignIn, true);
+    }),
+  );
+});
+
+describe("ProviderConnectionManager sign-in request ids", () => {
+  it.effect("keeps the starting client's request id on every state of its operation", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://auth.openai.com/",
+            authorizationUrlKind: "primary",
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: "request-12345678",
+      });
+      yield* Deferred.fail(completed, new ProviderConnectionActionError({ message: "Declined." }));
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+      assert.deepStrictEqual(
+        transitions.map((item) => [item?.status, item?.signInRequestId]),
+        [
+          ["starting", "request-12345678"],
+          ["waiting_for_browser", "request-12345678"],
+          ["failed", "request-12345678"],
+        ],
+      );
+    }),
+  );
+});
+
+describe("ProviderConnectionManager over the RPC boundary", () => {
+  it.effect("keeps an accepted startup when the asking client disconnects", () =>
+    Effect.gen(function* () {
+      const reachBrowser = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Deferred.await(reachBrowser).pipe(
+            Effect.as({
+              authorizationUrl: "https://auth.openai.com/",
+              authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_browser" as const,
+              waitForCompletion: Effect.never,
+              cancel: Effect.void,
+            }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({ actions });
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.serverStartProviderConnection
+          > => tag !== WS_METHODS.serverStartProviderConnection,
+        ),
+      );
+      const clientScope = yield* Scope.make();
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverStartProviderConnection, (input) =>
+              manager.start(input),
+            ),
+            RpcAuthorization.layer([AuthProvidersManageScope]),
+          ),
+        ),
+        Scope.provide(clientScope),
+      );
+
+      yield* client[WS_METHODS.serverStartProviderConnection]({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: "request-12345678",
+      }).pipe(Effect.ignore, Effect.forkChild);
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.operation?.status === "starting",
+      );
+      // The renderer reloads: its connection, and the request on it, go away.
+      yield* Scope.close(clientScope, Exit.void);
+      yield* Deferred.succeed(reachBrowser, undefined);
+
+      const providers = yield* yieldUntil(
+        Ref.get(providersRef),
+        (current) => current[0]?.connection?.operation?.status !== "starting",
+      );
+      const operation = providers[0]?.connection?.operation;
+      assert.strictEqual(operation?.status, "waiting_for_browser");
+      assert.strictEqual(operation?.signInRequestId, "request-12345678");
+      assert.strictEqual(operation?.authorizationUrl, "https://auth.openai.com/");
+    }),
+  );
+});
+
+describe("ProviderConnectionManager sign-in page claims", () => {
+  const requestId = "request-12345678";
+  const waitingActions = (gate?: Deferred.Deferred<void>): ProviderConnectionActions => ({
+    methods: ["codex_browser"],
+    start: () =>
+      (gate ? Deferred.await(gate) : Effect.void).pipe(
+        Effect.as({
+          authorizationUrl: "https://auth.openai.com/",
+          authorizationUrlKind: "primary" as const,
+          initialStatus: "waiting_for_browser" as const,
+          waitForCompletion: Effect.never,
+          cancel: Effect.void,
+        }),
+      ),
+    disconnect: Effect.void,
+  });
+  const operationOf = (providers: ReadonlyArray<ServerProvider>) =>
+    providers[0]?.connection?.operation ?? null;
+
+  it.effect("grants exactly one of concurrent claims, with the page to open, and none after", () =>
+    Effect.gen(function* () {
+      const { manager, providersRef } = yield* makeHarness({ actions: waitingActions() });
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+        signInRequestId: requestId,
+      });
+      const operationId = operationOf(yield* Ref.get(providersRef))!.operationId;
+      const claim = manager.claimSignInPage({
+        instanceId: CODEX_INSTANCE,
+        operationId,
+        signInRequestId: requestId,
+      });
+      // Two windows that share the request id claim at once.
+      const results = yield* Effect.all([claim, claim, claim], { concurrency: "unbounded" });
+      const grants = results.filter((result) => result.granted);
+      assert.deepStrictEqual(grants, [
+        { granted: true, authorizationUrl: "https://auth.openai.com/" },
+      ]);
+      assert.deepStrictEqual(yield* claim, { granted: false });
+    }),
+  );
+
+  it.effect("denies a wrong id, another operation, a start still running and an ended one", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const { manager, providersRef } = yield* makeHarness({ actions: waitingActions(gate) });
+      yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser", signInRequestId: requestId })
+        .pipe(Effect.forkChild);
+      const starting = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => operationOf(providers)?.status === "starting",
+      );
+      const operationId = operationOf(starting)!.operationId;
+      const claim = (patch: { readonly operationId?: string; readonly signInRequestId?: string }) =>
+        manager.claimSignInPage({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          signInRequestId: requestId,
+          ...patch,
+        });
+
+      assert.isFalse((yield* claim({})).granted, "not waiting on its page yet");
+      yield* Deferred.succeed(gate, undefined);
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => operationOf(providers)?.status === "waiting_for_browser",
+      );
+      assert.isFalse((yield* claim({ signInRequestId: "another-request-id" })).granted);
+      assert.isFalse((yield* claim({ operationId: "connect-superseded" })).granted);
+
+      yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId });
+      assert.isFalse((yield* claim({})).granted, "ended");
     }),
   );
 });
