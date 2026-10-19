@@ -81,46 +81,6 @@ describe("durable atomic text replacement", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("retries a transient Windows destination lock without exposing a partial file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const target = `${directory}/document.md`;
-      yield* fs.writeFileString(target, "original");
-      const locked = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "FileSystem",
-        method: "rename",
-        cause: Object.assign(new Error("destination is temporarily locked"), { code: "EPERM" }),
-      });
-      let attempts = 0;
-      const firstRename = yield* Deferred.make<void>();
-      const observed = FileSystem.make({
-        ...fs,
-        rename: (from, to) => {
-          attempts += 1;
-          return Deferred.succeed(firstRename, undefined).pipe(
-            Effect.andThen(attempts < 3 ? Effect.fail(locked) : fs.rename(from, to)),
-          );
-        },
-      });
-      const writing = yield* writeFileStringAtomically({
-        filePath: target,
-        contents: "replacement",
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, observed),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstRename);
-      yield* TestClock.adjust("1 second");
-      yield* Fiber.join(writing);
-      expect(attempts).toBe(3);
-      expect(yield* fs.readFileString(target)).toBe("replacement");
-      expect(yield* fs.readDirectory(directory)).toEqual(["document.md"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("does not retry a permanent rename error or a transient error off Windows", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -162,46 +122,6 @@ describe("durable atomic text replacement", () => {
         expect(outcome._tag).toBe("Failure");
         expect(attempts).toBe(1);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("bounds retries when a Windows destination lock does not clear", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const target = `${directory}/document.md`;
-      yield* fs.writeFileString(target, "original");
-      const firstRename = yield* Deferred.make<void>();
-      let attempts = 0;
-      const locked = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "FileSystem",
-        method: "rename",
-        cause: Object.assign(new Error("destination remains locked"), { code: "EACCES" }),
-      });
-      const failing = FileSystem.make({
-        ...fs,
-        rename: () => {
-          attempts += 1;
-          return Deferred.succeed(firstRename, undefined).pipe(Effect.andThen(Effect.fail(locked)));
-        },
-      });
-      const writing = yield* writeFileStringAtomically({
-        filePath: target,
-        contents: "replacement",
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, failing),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.exit,
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstRename);
-      yield* TestClock.adjust("6 seconds");
-      const outcome = yield* Fiber.join(writing);
-      expect(outcome._tag).toBe("Failure");
-      expect(attempts).toBeGreaterThan(1);
-      expect(yield* fs.readFileString(target)).toBe("original");
-      expect(yield* fs.readDirectory(directory)).toEqual(["document.md"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

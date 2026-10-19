@@ -278,6 +278,15 @@ jobs:
           --reporter=json
           --outputFile.json="$TEST_REPORT"
 
+      # SCIENT-FORK:START — the Markdown editor's timing budgets skip in the shard, where they
+      # would share the runner with headless Chromium and measure that contention, and run alone.
+      - name: Test Markdown editor performance
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        env:
+          SCIENT_MARKDOWN_PERF_ISOLATED: "1"
+        run: vp run --filter @t3tools/web test src/scient/markdownEditor/prosemirror/performance.test.ts
+      # SCIENT-FORK:END
+
       - name: Upload test result
         if: always()
         uses: actions/upload-artifact@v7

@@ -254,14 +254,17 @@ it.live("ingests coordinator-owned workflow members after successful root settle
         );
         assert.isDefined(member);
         assert.equal(member?.title, "Agent 1");
-        assert.isEmpty(
-          settled.subagents.find((candidate) => candidate.presentation?.kind === "workflow")
-            ?.workflow?.agents ?? [],
+        // The member streams into its own thread, which the coordinator lists.
+        assert.isNotNull(member?.childThreadId);
+        assert.deepEqual(
+          settled.subagents
+            .find((candidate) => candidate.presentation?.kind === "workflow")
+            ?.workflow?.agents.map((agent) => agent.childThreadId),
+          [member?.childThreadId],
         );
         assert.equal(member?.status, "running");
         assert.isNull(member?.runId);
         assert.isNull(member?.nativeTaskRef);
-        assert.isNull(member?.childThreadId);
         yield* Queue.offer(messages, progress(65));
         const live = yield* waitForProjection((projection) =>
           projection.subagents.some(

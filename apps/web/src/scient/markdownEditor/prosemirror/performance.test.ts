@@ -7,6 +7,9 @@ import { ScientMarkdownEditorView } from "./view";
 import { ScientProseMirrorSession } from "./session";
 
 const strictQualification = process.env.SCIENT_MARKDOWN_PERF_STRICT === "1";
+// A CI shard runs headless Chromium beside this suite, so CI measures it in its own step.
+const sharedCiRunner =
+  process.env.CI === "true" && process.env.SCIENT_MARKDOWN_PERF_ISOLATED !== "1";
 
 function representativeDocument(minimumLength: number): string {
   const blocks: string[] = [];
@@ -27,7 +30,7 @@ function percentile(values: ReadonlyArray<number>, quantile: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * quantile))] ?? 0;
 }
 
-describe("Scient Markdown performance qualification", () => {
+describe.skipIf(sharedCiRunner)("Scient Markdown performance qualification", () => {
   const controllers: ScientMarkdownEditorView[] = [];
 
   afterEach(() => {
