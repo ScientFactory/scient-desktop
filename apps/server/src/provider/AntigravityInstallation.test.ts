@@ -631,8 +631,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             Effect.asVoid,
           );
           if (!helper) {
-            // Windows owns the tree with taskkill; detaching would show a console.
-            expect(command.options.detached).toBe(platform !== "win32");
+            // The real host decides, not the simulated platform: Windows owns the
+            // tree with taskkill, and detaching there would show a console.
+            expect(command.options.detached).toBe(hostPlatform !== "win32");
             stopNative = terminate;
           }
           yield* Effect.addFinalizer(() =>
