@@ -150,34 +150,28 @@ The client that starts a sign-in opens its page, once, whatever is mounted when
 the page becomes available (`apps/web/src/scient/providerConnection/providerSignInBrowser.ts`).
 Before sending a start, the lifecycle controller records a random sign-in request
 id there and sends it as `signInRequestId`; the connection manager stamps it on
-every state of the operation it creates. The page opens when the start reply or
-a streamed provider snapshot shows an operation carrying an id this client holds,
-waiting on a `primary` URL, so a reply lost to a brief disconnect does not lose
-the opening. `ProviderSignInPageCoordinator`, mounted once in the root route,
-watches the provider snapshots of the environments where this client holds an id.
-Other clients see the id but do not hold it, so they never open the page; their
-setup views offer to open it and do not claim it is open. A server can only run
-one connection operation per instance, so a second start from another client is
-rejected and releases its id; a second start from the same client joins the
-in-flight command, shares its operation, and releases its own id. An id is
-released when its page opens, when its operation ends, when the server rejects
-its start, or 15 minutes after it was made; held ids live in session storage, so
-a renderer reload during a slow start still opens the page, while a full quit
-leaves the card's open action. Against a server that does not stamp ids, the
-reply alone identifies a new operation. A remounted view or a reconnect does not
-open the page again. A window opened from another starts with a copy of its
-session storage, so before an automatic opening a window claims the operation:
-it checks and writes a record in local storage inside an exclusive Web Lock, and
-only the window that writes the record opens the page. A window that finds the
-lock held keeps its request id and waits for the lock, until the id expires:
-the holder releases it once it has recorded the opening, given up, or closed (a
-closed page drops its locks), and the record then says whether to stay quiet or
-open the page itself. A waiting claim is withdrawn, offering nothing, as soon as
-its operation ends, is replaced by another, or leaves the snapshot, or when the
-page is hidden for good; once it holds the lock it reads the operation again and
-opens only if the same operation still waits on the same page. Without Web Locks or storage, or when that wait runs out,
-there is no safe claim, so the page is not opened automatically; the card or a
-notification offers to open it. Once the manager has published an accepted operation, the
+every state of the operation it creates. When the start reply or a streamed
+provider snapshot shows an operation carrying an id this client holds, waiting on
+a `primary` URL, the client asks the server to claim the opening
+(`claimProviderSignInPage`) and opens the page only if the server grants it, so a
+reply lost to a brief disconnect does not lose the opening.
+`ProviderSignInPageCoordinator`, mounted once in the root route, lends the opener
+that command and watches the provider snapshots of the environments where this
+client holds an id. The connection manager grants the claim once per operation,
+under the operation's transition lock, and only to the request id stamped on the
+current operation while it waits on that page: windows that share a copied
+session, a reload after a grant, or a repeated snapshot are denied, and clients
+without the id never ask. Other clients' setup views offer to open the page and do
+not claim it is open. A server can only run one connection operation per
+instance, so a second start from another client is rejected and releases its id;
+a second start from the same client joins the in-flight command, shares its
+operation, and releases its own id. An id is released when the server answers the
+claim, when its operation ends, when the server rejects its start, or 15 minutes
+after it was made; an unknown answer keeps it for the next snapshot. Held ids live
+in session storage, so a renderer reload before the claim still opens the page; a
+window that dies between the grant and the opening, or a full quit, leaves the
+card's open action. Against a server that does not stamp ids, the reply alone
+identifies a new operation. Once the manager has published an accepted operation, the
 rest of its startup runs in a manager-owned fiber: the start request waits for it,
 but a reload or disconnect only detaches that request, while cancel, the provider's
 own failure or deadline, and manager teardown end the startup.

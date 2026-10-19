@@ -12,7 +12,9 @@ vi.mock("../../components/ui/toast", () => ({ toastManager: toast }));
 
 import {
   observeProviderSignInSnapshots,
+  type ProviderSignInPageClaimer,
   resetProviderSignInBrowserForTests,
+  setProviderSignInPageClaimer,
   startProviderSignIn,
 } from "./providerSignInBrowser";
 
@@ -56,12 +58,6 @@ function provider(current: ProviderConnectionOperation): ServerProvider {
 
 class MemoryStorage {
   readonly values = new Map<string, string>();
-  get length() {
-    return this.values.size;
-  }
-  key(index: number) {
-    return [...this.values.keys()][index] ?? null;
-  }
   clone() {
     const copy = new MemoryStorage();
     for (const [name, value] of this.values) copy.values.set(name, value);
@@ -78,14 +74,32 @@ class MemoryStorage {
   }
 }
 
-const realLocks = globalThis.navigator.locks;
 const open = vi.fn<(url: string) => Promise<void>>();
 let storage: MemoryStorage;
-let shared: MemoryStorage;
 const windowOpen = vi.fn<(url: string, target: string, features: string) => unknown>();
 
 let clock = 0;
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/**
+ * The server's claim, as the connection manager grants it: once per operation,
+ * to the request id stamped on it. `failures` answers with transport errors first.
+ */
+function makeServer() {
+  const granted = new Set<string>();
+  let failures = 0;
+  const claim = vi.fn<ProviderSignInPageClaimer>(async (_environmentId, input) => {
+    if (failures > 0) {
+      failures -= 1;
+      throw new Error("The environment connection closed.");
+    }
+    if (granted.has(input.operationId)) return false;
+    granted.add(input.operationId);
+    return true;
+  });
+  return { claim, failNext: (count: number) => (failures = count) };
+}
+let server = makeServer();
 
 /** Starts a sign-in whose server stamps the request id on the operation it returns. */
 function start(
@@ -114,17 +128,21 @@ function startWithLostReply() {
 const observe = (current: ProviderConnectionOperation) =>
   observeProviderSignInSnapshots(environmentId, [provider(current)]);
 
+/** A renderer reload, or another window that starts with a copy of this session. */
+function reloadWith(session: MemoryStorage) {
+  vi.stubGlobal("window", { sessionStorage: session, open: windowOpen });
+  resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true, claim: server.claim });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   open.mockResolvedValue(undefined);
   storage = new MemoryStorage();
-  shared = new MemoryStorage();
   windowOpen.mockReset();
-  vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
-  // The real Web Locks, as every window of one browser shares them.
-  vi.stubGlobal("navigator", { locks: realLocks });
+  vi.stubGlobal("window", { sessionStorage: storage, open: windowOpen });
   clock = Date.now();
-  resetProviderSignInBrowserForTests({ open, now: () => clock });
+  server = makeServer();
+  resetProviderSignInBrowserForTests({ open, now: () => clock, claim: server.claim });
 });
 
 afterEach(() => {
@@ -132,16 +150,18 @@ afterEach(() => {
 });
 
 describe("provider sign-in page opening", () => {
-  it("opens the page of an operation this client started, once", async () => {
+  it("opens the page of an operation this client started, once the server grants it", async () => {
     await start(async (id) => operation({ signInRequestId: id }));
-    // The same snapshot streamed afterwards does not open it again.
-    observe(operation({ signInRequestId: "already-released" }));
-    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    expect(server.claim.mock.calls[0]![1]).toMatchObject({
+      instanceId,
+      operationId: "connect-1",
+    });
     expect(open.mock.calls).toEqual([[url]]);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("opens from the stream when the start reply is lost", async () => {
+  it("opens from the stream when the start reply is lost, once", async () => {
     const id = await startWithLostReply();
     const { authorizationUrl: _url, ...starting } = operation({
       status: "starting",
@@ -149,35 +169,74 @@ describe("provider sign-in page opening", () => {
     });
     observe(starting);
     await settle();
-    expect(open).not.toHaveBeenCalled();
+    expect(server.claim).not.toHaveBeenCalled();
 
     observe(operation({ signInRequestId: id }));
     observe(operation({ signInRequestId: id }));
     await settle();
     expect(open.mock.calls).toEqual([[url]]);
+    expect(server.claim).toHaveBeenCalledTimes(1);
   });
 
-  it("opens once after a renderer reload during the slow start", async () => {
+  it("opens once after a reload before any claim", async () => {
     const id = await startWithLostReply();
-    expect(storage.getItem(STORAGE_KEY)).toContain(id);
-
-    resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
+    reloadWith(storage);
     observe(operation({ signInRequestId: id }));
     await settle();
     expect(open).toHaveBeenCalledTimes(1);
-
-    // Another reload after the page opened does not open it again.
-    resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
+    reloadWith(storage);
     observe(operation({ signInRequestId: id }));
     await settle();
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("never opens another client's sign-in", async () => {
+  it("does not open again after a reload whose session still holds an id already granted", async () => {
+    const id = await startWithLostReply();
+    // A copy of the session from before the grant: a crash, or a copied window.
+    const before = storage.clone();
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+
+    reloadWith(before);
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(before.getItem(STORAGE_KEY)).toBeNull();
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  it("opens once across two windows sharing a copied session", async () => {
+    const id = await startWithLostReply();
+    const copied = storage.clone();
+    vi.resetModules();
+    vi.stubGlobal("window", { sessionStorage: copied, open: windowOpen });
+    const second = await import("./providerSignInBrowser");
+    expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
+    second.resetProviderSignInBrowserForTests({
+      open,
+      now: () => clock,
+      reload: true,
+      claim: server.claim,
+    });
+    second.observeProviderSignInSnapshots(environmentId, [
+      provider(operation({ signInRequestId: id })),
+    ]);
+    vi.stubGlobal("window", { sessionStorage: storage, open: windowOpen });
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  it("never claims or opens another client's sign-in", async () => {
     await startWithLostReply();
     observe(operation({ signInRequestId: "another-client-request" }));
     observe(operation());
     await settle();
+    expect(server.claim).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
   });
 
@@ -198,17 +257,60 @@ describe("provider sign-in page opening", () => {
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("drops ids of expired or finished operations", async () => {
-    const expired = await startWithLostReply();
-    clock += 16 * 60_000;
-    observe(operation({ signInRequestId: expired }));
+  it.each(["cancelled", "failed", "connected"] as const)(
+    "releases the id of an operation %s, by reply or snapshot, opening and offering nothing",
+    async (status) => {
+      await start(async (id) => operation({ status, signInRequestId: id }));
+      const id = await startWithLostReply();
+      observe(operation({ status, signInRequestId: id }));
+      await settle();
+      expect(server.claim).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(toast.add).not.toHaveBeenCalled();
+      expect(storage.getItem(STORAGE_KEY)).toBeNull();
+    },
+  );
+
+  it("releases a denied id silently", async () => {
+    const id = await startWithLostReply();
+    server.claim.mockResolvedValueOnce(false);
+    observe(operation({ signInRequestId: id }));
     await settle();
     expect(open).not.toHaveBeenCalled();
+    expect(toast.add).not.toHaveBeenCalled();
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
 
-    const finished = await startWithLostReply();
-    observe(operation({ status: "failed", signInRequestId: finished }));
-    observe(operation({ signInRequestId: finished }));
+  it("keeps the id after an unknown claim outcome and asks again on the next snapshot", async () => {
+    const id = await startWithLostReply();
+    server.failNext(1);
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(storage.getItem(STORAGE_KEY)).toContain(id);
+
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the claim command before claiming", async () => {
+    resetProviderSignInBrowserForTests({ open, now: () => clock, claim: null });
+    const id = await startWithLostReply();
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    setProviderSignInPageClaimer(server.claim);
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops ids of expired operations", async () => {
+    const id = await startWithLostReply();
+    clock += 16 * 60_000;
+    observe(operation({ signInRequestId: id }));
     await settle();
     expect(open).not.toHaveBeenCalled();
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
@@ -235,14 +337,14 @@ describe("provider sign-in page opening", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("does not open what must not open", async () => {
+  it("does not claim what must not open", async () => {
     for (const current of [
       operation({ authorizationUrlKind: "manual_fallback" }),
       operation({ status: "verifying" }),
-      operation({ status: "cancelled" }),
     ]) {
       await start(async (id) => ({ ...current, signInRequestId: id }));
     }
+    expect(server.claim).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
   });
 
@@ -251,218 +353,13 @@ describe("provider sign-in page opening", () => {
     expect(open).not.toHaveBeenCalled();
     await start(async () => operation());
     await start(async () => operation());
+    expect(server.claim).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledTimes(1);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
-  });
-
-  /** A second window opened from this one: a copy of its session storage, the same local storage. */
-  async function openSecondWindow(
-    options: { readonly beforeClaimRecord?: () => Promise<void> } = {},
-  ) {
-    const copied = storage.clone();
-    vi.resetModules();
-    vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
-    const second = await import("./providerSignInBrowser");
-    expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
-    second.resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true, ...options });
-    vi.stubGlobal("window", { sessionStorage: storage, localStorage: shared, open: windowOpen });
-    return {
-      observe: (current: ProviderConnectionOperation) => {
-        vi.stubGlobal("window", { sessionStorage: copied, localStorage: shared, open: windowOpen });
-        second.observeProviderSignInSnapshots(environmentId, [provider(current)]);
-        vi.stubGlobal("window", {
-          sessionStorage: storage,
-          localStorage: shared,
-          open: windowOpen,
-        });
-      },
-    };
-  }
-
-  it("opens once across windows whose claims overlap, under the real Web Locks", async () => {
-    const id = await startWithLostReply();
-    // The first window pauses inside its claim, between the check and the record.
-    let resume!: () => void;
-    let paused!: () => void;
-    const inside = new Promise<void>((resolve) => (paused = resolve));
-    resetProviderSignInBrowserForTests({
-      open,
-      now: () => clock,
-      reload: true,
-      beforeClaimRecord: () =>
-        new Promise<void>((resolve) => {
-          resume = resolve;
-          paused();
-        }),
-    });
-    const second = await openSecondWindow();
-
-    observe(operation({ signInRequestId: id }));
-    await inside;
-    second.observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(open).not.toHaveBeenCalled();
-    resume();
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    await settle();
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(toast.add).not.toHaveBeenCalled();
-  });
-
-  /** Starts a sign-in whose second window takes the claim first and pauses inside it. */
-  async function claimHeldBySecondWindow() {
-    const id = await startWithLostReply();
-    let release!: (outcome: "record" | "abandon") => void;
-    let paused!: () => void;
-    const inside = new Promise<void>((resolve) => (paused = resolve));
-    const second = await openSecondWindow({
-      beforeClaimRecord: () =>
-        new Promise<void>((resolve, reject) => {
-          release = (outcome) =>
-            outcome === "record" ? resolve() : reject(new Error("The window closed."));
-          paused();
-        }),
-    });
-    second.observe(operation({ signInRequestId: id }));
-    await inside;
-    return { id, release };
-  }
-
-  it("opens once when the window holding the claim gives it up before opening", async () => {
-    const { id, release } = await claimHeldBySecondWindow();
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(open).not.toHaveBeenCalled();
-
-    // Its lock goes with it, as when its page closes; the record says nobody opened.
-    release("abandon");
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(open).toHaveBeenCalledTimes(1);
-  });
-
-  it("does nothing, and shows nothing, when the holding window opens the page", async () => {
-    const { id, release } = await claimHeldBySecondWindow();
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    release("record");
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    await settle();
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(toast.add).not.toHaveBeenCalled();
-    expect(storage.getItem(STORAGE_KEY)).toBeNull();
-  });
-
-  it("offers the page when waiting for another window's claim runs out", async () => {
-    const { id, release } = await claimHeldBySecondWindow();
-    // The id is about to expire: the wait ends without the lock.
-    clock += 15 * 60_000 - 50;
-    observe(operation({ signInRequestId: id }));
-    await vi.waitFor(() => expect(toast.add).toHaveBeenCalledTimes(1));
-    expect(open).not.toHaveBeenCalled();
-    expect((toast.add.mock.calls[0]![0] as { readonly title: string }).title).toBe(
-      "Open the sign-in page to continue",
-    );
-    release("record");
-    await settle();
-  });
-
-  /** Another window holds the claim lock for operation "connect-1" until released. */
-  async function holdClaimLockElsewhere() {
-    const name = `scient.providerSignIn.opened.v1:${environmentId} ${instanceId} connect-1`;
-    let release!: () => void;
-    let granted!: () => void;
-    const held = new Promise<void>((resolve) => (granted = resolve));
-    void realLocks.request(name, () => {
-      granted();
-      return new Promise<void>((resolve) => (release = resolve));
-    });
-    await held;
-    const pendingRequests = async () =>
-      ((await realLocks.query()).pending ?? []).filter((lock) => lock.name === name).length;
-    return { release: () => release(), pendingRequests };
-  }
-
-  it.each([
-    ["cancelled", operation({ status: "cancelled" })],
-    ["failed", operation({ status: "failed" })],
-    ["connected", operation({ status: "connected" })],
-    // Another start's operation replaces this one.
-    [
-      "superseded",
-      operation({ operationId: "connect-2", signInRequestId: "another-client-request" }),
-    ],
-  ])(
-    "withdraws a waiting claim whose operation is %s, opening and offering nothing",
-    async (_name, next) => {
-      const id = await startWithLostReply();
-      const holder = await holdClaimLockElsewhere();
-      observe(operation({ signInRequestId: id }));
-      await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
-
-      observe(next.signInRequestId ? next : { ...next, signInRequestId: id });
-      await settle();
-      // Node lists a withdrawn request until the lock is released; Chromium drops it at once.
-      holder.release();
-      await settle();
-      await settle();
-      expect(await holder.pendingRequests()).toBe(0);
-      expect(open).not.toHaveBeenCalled();
-      expect(toast.add).not.toHaveBeenCalled();
-    },
-  );
-
-  it("withdraws a waiting claim when its provider leaves the snapshot", async () => {
-    const id = await startWithLostReply();
-    const holder = await holdClaimLockElsewhere();
-    observe(operation({ signInRequestId: id }));
-    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
-    observeProviderSignInSnapshots(environmentId, []);
-    await settle();
-    holder.release();
-    await settle();
-    await settle();
-    expect(await holder.pendingRequests()).toBe(0);
-    expect(open).not.toHaveBeenCalled();
-    expect(toast.add).not.toHaveBeenCalled();
-  });
-
-  it("re-reads the operation once the lock is held, and opens only if it still waits", async () => {
-    const id = await startWithLostReply();
-    const holder = await holdClaimLockElsewhere();
-    observe(operation({ signInRequestId: id }));
-    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
-    // A lagging snapshot still says "starting": the claim waits on, then opens.
-    const { authorizationUrl: _url, ...starting } = operation({
-      status: "starting",
-      signInRequestId: id,
-    });
-    observe(starting);
-    expect(await holder.pendingRequests()).toBe(1);
-    observe(operation({ signInRequestId: id }));
-    holder.release();
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-  });
-
-  it("opens once after a reload while another window holds the claim, if it still waits", async () => {
-    const id = await startWithLostReply();
-    const holder = await holdClaimLockElsewhere();
-    resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true });
-    observe(operation({ signInRequestId: id }));
-    observe(operation({ signInRequestId: id }));
-    await vi.waitFor(async () => expect(await holder.pendingRequests()).toBe(1));
-    // The holder closes without recording an opening.
-    holder.release();
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(toast.add).not.toHaveBeenCalled();
   });
 
   it("closes the blank window when navigating it fails, and offers the page again", async () => {
-    resetProviderSignInBrowserForTests({ now: () => clock });
+    resetProviderSignInBrowserForTests({ now: () => clock, claim: server.claim });
     const opened = {
       closed: false,
       opener: {} as unknown,
@@ -484,42 +381,8 @@ describe("provider sign-in page opening", () => {
     expect(notice.title).toBe("Couldn’t open the sign-in page");
     expect(notice.actionProps.children).toBe("Open");
   });
-
-  it("opens once when a second window claims after the first recorded its opening", async () => {
-    const id = await startWithLostReply();
-    const second = await openSecondWindow();
-    observe(operation({ signInRequestId: id }));
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    second.observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(open).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ["Web Locks are unavailable", () => vi.stubGlobal("navigator", {})],
-    [
-      "local storage throws",
-      () =>
-        vi.spyOn(shared, "setItem").mockImplementation(() => {
-          throw new Error("QuotaExceededError");
-        }),
-    ],
-  ])("never opens automatically when %s, and offers the page instead", async (_name, arrange) => {
-    arrange();
-    await start(async (id) => operation({ signInRequestId: id }));
-    expect(open).not.toHaveBeenCalled();
-    expect(toast.add).toHaveBeenCalledTimes(1);
-    const notice = toast.add.mock.calls[0]![0] as {
-      readonly title: string;
-      readonly actionProps: { readonly children: string; readonly onClick: () => void };
-    };
-    expect(notice.title).toBe("Open the sign-in page to continue");
-    notice.actionProps.onClick();
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-  });
-
   it("treats a blocked popup as failed and offers the user's own click", async () => {
-    resetProviderSignInBrowserForTests({ now: () => clock });
+    resetProviderSignInBrowserForTests({ now: () => clock, claim: server.claim });
     windowOpen.mockReturnValue(null);
     await start(async (id) => operation({ signInRequestId: id }));
     expect(windowOpen).toHaveBeenCalledWith("about:blank", "_blank", "popup");

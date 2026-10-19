@@ -1074,6 +1074,11 @@ ACP request in the local trace. Opening sign-in pages for the client that starte
 Settings row's one-click sign-in, live in Scient-owned web modules
 (`scient/providerConnection/providerSignInBrowser.ts`), with one marked mount of
 `ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
+The server-side claim of a sign-in page adds one Scient RPC,
+`server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts`; its
+group entry in `contracts/src/rpc.ts`, its scope in `server/src/auth/RpcAuthorization.ts`, its
+aggregate in `server/src/observability/RpcInstrumentation.ts` and its command in
+`client-runtime/src/state/server.ts` are marked lines.
 `components/settings/ProviderInstanceCard.tsx` carries two marked blocks: its lifecycle
 presentation comes from a Scient hook, so a sign-in started here reads as starting from the
 click, and a failed sign-in or setup takes the error status dot. See

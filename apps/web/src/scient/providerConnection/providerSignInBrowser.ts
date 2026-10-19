@@ -6,18 +6,22 @@
  * the view that started it may close or remount meanwhile, or the start reply
  * may be lost to a brief disconnect. Before sending a start, the client records
  * a random sign-in request id here and sends it along; the server stamps it on
- * the operation it creates. The page opens when the start reply or a streamed
- * provider snapshot shows an operation with an id this client holds, waiting
- * on a primary sign-in page. Other clients see the id but do not hold it, so
- * they never open the page. Ids held for a sign-in still starting survive a
- * renderer reload in session storage; a full quit leaves the card's
- * "Open sign-in page" action.
+ * the operation it creates. When the start reply or a streamed provider
+ * snapshot shows an operation with an id this client holds, waiting on a
+ * primary sign-in page, the client asks the server to claim the opening, and
+ * opens the page only if the server grants it. The server grants once per
+ * operation, so windows sharing a copied session, a reload, or a second
+ * snapshot never open it again, and clients without the id never get a grant.
+ * Ids live in session storage until the server answers, the operation ends, or
+ * they expire; an unknown answer keeps the id for the next snapshot. A window
+ * that dies between the grant and the opening leaves the card's open action.
  */
 import type {
   EnvironmentId,
   ProviderConnectionMethod,
   ProviderConnectionOperation,
   ProviderInstanceId,
+  ProviderSignInPageClaimInput,
   ServerProvider,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
@@ -117,8 +121,6 @@ interface PendingRequest {
  */
 const PENDING_REQUEST_LIFETIME_MS = 15 * 60_000;
 const STORAGE_KEY = "scient.providerSignIn.pendingRequests.v1";
-const OPENED_RECORD_PREFIX = "scient.providerSignIn.opened.v1:";
-const OPENED_RECORD_LIFETIME_MS = PENDING_REQUEST_LIFETIME_MS;
 const MAX_RETAINED_OPENINGS = 64;
 
 const openings = new Map<string, ProviderSignInBrowserOpening>();
@@ -128,7 +130,6 @@ const startsInFlight = new Map<string, number>();
 const listeners = new Set<() => void>();
 let openPage: (url: string) => Promise<void> = openProviderAuthorizationPage;
 let now: () => number = Date.now;
-let beforeClaimRecord: () => Promise<void> = async () => {};
 let pendingKeysSnapshot: ReadonlyArray<ProviderSignInKey> = [];
 
 const keyOf = (key: ProviderSignInKey) => `${key.environmentId}\u0000${key.instanceId}`;
@@ -153,164 +154,25 @@ function sessionStore(): Storage | null {
   }
 }
 
-function sharedStore(): Storage | null {
-  try {
-    return typeof window === "undefined" ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-type AutomaticOpeningClaim = "claimed" | "elsewhere" | "unavailable" | "stale";
-type ClaimAttempt = AutomaticOpeningClaim | "held";
-
-interface OpeningTarget {
-  readonly key: ProviderSignInKey;
-  readonly operationId: string;
-  readonly url: string;
-  readonly providerName: string;
-}
-
-/** The operations each provider instance showed last, from snapshots and start replies. */
-const latestOperations = new Map<string, ReadonlyArray<ProviderConnectionOperation>>();
-
-function noteLatestOperations(
-  key: ProviderSignInKey,
-  operations: ReadonlyArray<ProviderConnectionOperation | null | undefined>,
-) {
-  latestOperations.set(
-    keyOf(key),
-    operations.filter((operation) => operation !== null && operation !== undefined),
-  );
-}
-
 /**
- * Whether the latest view of the target's operation still wants its page. A
- * snapshot that still says "starting" lags behind the waiting state that began
- * the claim, so it does not end it; another operation, a terminal or verifying
- * state, or a different page does.
+ * Asks the server for the one opening of an operation's page: true when this
+ * client may open it, false when another client or an earlier load has it. A
+ * rejected promise is an unknown outcome.
  */
-function stillWanted(target: OpeningTarget): boolean {
-  const latest = latestOperations.get(keyOf(target.key));
-  if (latest === undefined) return true;
-  const operation = latest.find((candidate) => candidate.operationId === target.operationId);
-  if (!operation || TERMINAL_STATUSES.has(operation.status) || operation.status === "verifying") {
-    return false;
-  }
-  return operation.authorizationUrl === undefined || operation.authorizationUrl === target.url;
+export type ProviderSignInPageClaimer = (
+  environmentId: EnvironmentId,
+  input: ProviderSignInPageClaimInput,
+) => Promise<boolean>;
+
+let claimPage: ProviderSignInPageClaimer | null = null;
+
+/** Registered by the app-level coordinator, which holds the command. */
+export function setProviderSignInPageClaimer(claimer: ProviderSignInPageClaimer | null): void {
+  claimPage = claimer;
 }
 
-/**
- * Claims the automatic opening of one operation across this browser's windows.
- * A window opened from this one starts with a copy of its session storage and
- * so holds the same request ids; only one of them may open the page. The
- * check-and-record of the shared record runs inside an exclusive Web Lock, so
- * two windows can never both see it absent. A window that finds the lock held
- * waits for it, until `waitUntil`: the holder releases it once it has recorded
- * the opening, given up, or closed (a closed page drops its locks), and the
- * record then says whether anyone opened the page. A wait also ends, without a
- * claim, as soon as the operation no longer wants its page (`signal`), and the
- * operation is checked again once the lock is held. Without Web Locks or
- * storage, or when the wait runs out, there is no safe claim, and the page is
- * left for the user to open.
- */
-async function claimAutomaticOpening(
-  target: OpeningTarget,
-  waitUntil: number,
-  signal: AbortSignal,
-): Promise<AutomaticOpeningClaim> {
-  const storage = sharedStore();
-  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
-  if (!storage || !locks) return "unavailable";
-  const recordKey = `${OPENED_RECORD_PREFIX}${openingKeyOf(target.key, target.operationId)}`;
-  const attempt = (options: { readonly ifAvailable: true } | { readonly signal: AbortSignal }) =>
-    locks.request(recordKey, options, async (lock): Promise<ClaimAttempt> => {
-      if (lock === null) return "held";
-      if (signal.aborted || !stillWanted(target)) return "stale";
-      const cutoff = now();
-      for (let index = storage.length - 1; index >= 0; index -= 1) {
-        const name = storage.key(index);
-        if (!name?.startsWith(OPENED_RECORD_PREFIX)) continue;
-        if (!(Number(storage.getItem(name)) > cutoff)) storage.removeItem(name);
-      }
-      if (storage.getItem(recordKey) !== null) return "elsewhere";
-      await beforeClaimRecord();
-      if (signal.aborted || !stillWanted(target)) return "stale";
-      storage.setItem(recordKey, String(now() + OPENED_RECORD_LIFETIME_MS));
-      return "claimed";
-    });
-  try {
-    const first = await attempt({ ifAvailable: true });
-    if (first !== "held") return first;
-    const remaining = waitUntil - now();
-    if (remaining <= 0) return "unavailable";
-    const waited = await attempt({
-      signal: AbortSignal.any([signal, AbortSignal.timeout(remaining)]),
-    });
-    return waited === "held" ? "unavailable" : waited;
-  } catch {
-    // Ended because the operation no longer wants its page, not because time ran out.
-    return signal.aborted ? "stale" : "unavailable";
-  }
-}
-
-/** Offers the page to the user when this window could not safely open it itself. */
-function offerManualOpening(input: OpeningTarget) {
-  // A setup view that is showing already offers to open the page.
-  if ((surfaces.get(keyOf(input.key)) ?? 0) > 0) return;
-  toastManager.add({
-    type: "info",
-    title: "Open the sign-in page to continue",
-    actionProps: { children: "Open", onClick: () => void openFor(input) },
-  });
-}
-
-/** Claims in flight, by opening key; aborting one withdraws its lock request. */
-const claimsInFlight = new Map<
-  string,
-  { readonly target: OpeningTarget; readonly controller: AbortController }
->();
-
-/** Withdraws the claims of a provider instance whose operation no longer wants its page. */
-function withdrawStaleClaims(key: ProviderSignInKey) {
-  for (const claim of claimsInFlight.values()) {
-    if (keyOf(claim.target.key) === keyOf(key) && !stillWanted(claim.target)) {
-      claim.controller.abort();
-    }
-  }
-}
-
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  // A closing page drops its locks; its queued requests must not linger meanwhile.
-  window.addEventListener("pagehide", () => {
-    for (const claim of claimsInFlight.values()) claim.controller.abort();
-  });
-}
-
-/**
- * Opens the page if this window wins the claim; otherwise leaves it to the
- * window that opened it, or to the user. `onSettled` runs once the claim is
- * decided, before any opening. A claim withdrawn because its operation ended
- * or was superseded offers nothing.
- */
-async function openIfClaimed(
-  input: OpeningTarget & { readonly waitUntil: number; readonly onSettled?: () => void },
-): Promise<void> {
-  const openingKey = openingKeyOf(input.key, input.operationId);
-  // One claim per operation at a time; a later snapshot of it waits on this one.
-  if (claimsInFlight.has(openingKey)) return;
-  const controller = new AbortController();
-  claimsInFlight.set(openingKey, { target: input, controller });
-  let claim: AutomaticOpeningClaim;
-  try {
-    claim = await claimAutomaticOpening(input, input.waitUntil, controller.signal);
-  } finally {
-    claimsInFlight.delete(openingKey);
-  }
-  input.onSettled?.();
-  if (claim === "claimed") await openFor(input);
-  else if (claim === "unavailable") offerManualOpening(input);
-}
+/** One claim in flight per operation; a later snapshot asks again only after it settles. */
+const claimsInFlight = new Set<string>();
 
 function isPendingRequest(value: unknown): value is PendingRequest {
   return (
@@ -470,23 +332,36 @@ async function considerOwnOperation(
     return;
   }
   if (!opensPage(operation)) return;
-  if (openings.has(openingKeyOf(key, operation.operationId))) {
+  const openingKey = openingKeyOf(key, operation.operationId);
+  if (openings.has(openingKey)) {
     release(key, requestId);
     return;
   }
-  const createdAt =
-    (pending.get(keyOf(key)) ?? []).find((request) => request.id === requestId)?.createdAt ?? now();
-  // The id is kept until the claim is decided, so a window still waiting on
-  // another's claim survives a reload; the claim's record then prevents a
-  // second opening.
-  await openIfClaimed({
-    key,
-    operationId: operation.operationId,
-    url: operation.authorizationUrl,
-    providerName,
-    waitUntil: createdAt + PENDING_REQUEST_LIFETIME_MS,
-    onSettled: () => release(key, requestId),
-  });
+  // Without the command yet, the id waits for a snapshot after it is registered.
+  if (claimsInFlight.has(openingKey) || claimPage === null) return;
+  claimsInFlight.add(openingKey);
+  let granted: boolean | undefined;
+  try {
+    granted = await claimPage(key.environmentId, {
+      instanceId: key.instanceId,
+      operationId: operation.operationId,
+      signInRequestId: requestId,
+    });
+  } catch {
+    // An unknown outcome keeps the id; the next snapshot asks again.
+  } finally {
+    claimsInFlight.delete(openingKey);
+  }
+  if (granted === undefined) return;
+  release(key, requestId);
+  if (granted) {
+    await openFor({
+      key,
+      operationId: operation.operationId,
+      url: operation.authorizationUrl,
+      providerName,
+    });
+  }
 }
 
 /**
@@ -498,25 +373,15 @@ export function observeProviderSignInSnapshots(
   providers: ReadonlyArray<ServerProvider>,
 ): void {
   dropExpired();
-  const present = new Set<string>();
   for (const provider of providers) {
     const key = { environmentId, instanceId: provider.instanceId };
-    present.add(keyOf(key));
-    const operations = [provider.connection?.operation, provider.connection?.accountOperation];
-    noteLatestOperations(key, operations);
-    withdrawStaleClaims(key);
     if (!pending.has(keyOf(key))) continue;
     const providerName = provider.displayName?.trim() || String(provider.driver);
-    for (const operation of operations) {
+    for (const operation of [
+      provider.connection?.operation,
+      provider.connection?.accountOperation,
+    ]) {
       if (operation) void considerOwnOperation(key, operation, providerName);
-    }
-  }
-  // A provider instance gone from its environment takes its operations with it.
-  for (const claim of claimsInFlight.values()) {
-    const key = claim.target.key;
-    if (key.environmentId === environmentId && !present.has(keyOf(key))) {
-      noteLatestOperations(key, []);
-      withdrawStaleClaims(key);
     }
   }
 }
@@ -559,7 +424,6 @@ export async function startProviderSignIn<T>(input: {
     notify();
   }
   const operation = input.operationOf(result);
-  if (operation) noteLatestOperations(input.key, [operation]);
   if (operation?.signInRequestId !== undefined) {
     // A start this client joined to one already in flight shares that start's
     // operation, so its own id has nothing left to identify.
@@ -567,8 +431,8 @@ export async function startProviderSignIn<T>(input: {
     await considerOwnOperation(input.key, operation, input.providerName);
     return result;
   }
-  // A server that does not stamp request ids: the reply alone identifies the
-  // operation, and only when it is new.
+  // A server that does not stamp request ids has no claim either: the reply
+  // alone identifies the operation, and only when it is new.
   release(input.key, requestId);
   if (
     operation &&
@@ -576,12 +440,11 @@ export async function startProviderSignIn<T>(input: {
     opensPage(operation) &&
     !openings.has(openingKeyOf(input.key, operation.operationId))
   ) {
-    await openIfClaimed({
+    await openFor({
       key: input.key,
       operationId: operation.operationId,
       url: operation.authorizationUrl,
       providerName: input.providerName,
-      waitUntil: now() + PENDING_REQUEST_LIFETIME_MS,
     });
   }
   return result;
@@ -666,8 +529,8 @@ export function useProviderSignInBrowser(
 hydratePending();
 
 /**
- * Test seam: replaces how pages open and the clock, and forgets everything held
- * in memory. With `reload`, request ids come back from session storage as after
+ * Test seam: replaces how pages open, the clock and the server claim, and
+ * forgets everything held in memory. With `reload`, request ids come back from session storage as after
  * a renderer reload; otherwise session storage is cleared too.
  */
 export function resetProviderSignInBrowserForTests(
@@ -675,28 +538,20 @@ export function resetProviderSignInBrowserForTests(
     readonly open?: (url: string) => Promise<void>;
     readonly now?: () => number;
     readonly reload?: boolean;
-    /** Runs between a claim's check and its record, to interleave two windows. */
-    readonly beforeClaimRecord?: () => Promise<void>;
+    readonly claim?: ProviderSignInPageClaimer | null;
   } = {},
 ): void {
   openPage = options.open ?? openProviderAuthorizationPage;
   now = options.now ?? Date.now;
-  beforeClaimRecord = options.beforeClaimRecord ?? (async () => {});
+  claimPage = options.claim ?? null;
   openings.clear();
   surfaces.clear();
   startsInFlight.clear();
-  for (const claim of claimsInFlight.values()) claim.controller.abort();
   claimsInFlight.clear();
-  latestOperations.clear();
   if (options.reload) hydratePending();
   else {
     pending.clear();
     sessionStore()?.removeItem(STORAGE_KEY);
-    const shared = sharedStore();
-    for (let index = (shared?.length ?? 0) - 1; index >= 0; index -= 1) {
-      const name = shared?.key(index);
-      if (name?.startsWith(OPENED_RECORD_PREFIX)) shared?.removeItem(name);
-    }
     refreshPendingKeys();
   }
   notify();

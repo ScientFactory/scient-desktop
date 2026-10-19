@@ -1,20 +1,35 @@
 import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   observeProviderSignInSnapshots,
+  setProviderSignInPageClaimer,
   usePendingProviderSignInKeys,
 } from "./providerSignInBrowser";
 
 /**
- * Mounted once for the app. Watches the provider snapshots of each environment
- * in which this client is starting a sign-in, so its page opens even when the
- * start reply is lost or the view that started it is gone. Nothing is observed
- * while no sign-in started here is pending.
+ * Mounted once for the app. Lends the opener the server's claim command, and
+ * watches the provider snapshots of each environment in which this client is
+ * starting a sign-in, so its page opens even when the start reply is lost or the
+ * view that started it is gone. Nothing is observed while no sign-in started
+ * here is pending.
  */
 export function ProviderSignInPageCoordinator() {
+  const claim = useAtomCommand(serverEnvironment.claimProviderSignInPage, {
+    reportFailure: false,
+  });
+  useEffect(() => {
+    setProviderSignInPageClaimer(async (environmentId, input) => {
+      const result = await claim({ environmentId, input });
+      if (result._tag === "Success") return result.value.granted;
+      throw squashAtomCommandFailure(result);
+    });
+    return () => setProviderSignInPageClaimer(null);
+  }, [claim]);
   const keys = usePendingProviderSignInKeys();
   const environmentIds = [...new Set(keys.map((key) => key.environmentId))];
   return (

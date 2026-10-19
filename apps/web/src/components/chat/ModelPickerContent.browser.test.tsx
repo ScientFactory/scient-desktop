@@ -371,7 +371,7 @@ describe("actual picker provider setup", () => {
       },
     };
     const openPage = vi.fn(async () => undefined);
-    resetProviderSignInBrowserForTests({ open: openPage });
+    resetProviderSignInBrowserForTests({ open: openPage, claim: async () => true });
     // A dropped connection: the outcome is unknown, not a server rejection.
     commands.accountCommand.mockResolvedValue({
       _tag: "Failure",

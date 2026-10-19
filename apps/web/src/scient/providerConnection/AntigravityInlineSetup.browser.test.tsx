@@ -64,6 +64,17 @@ const controller = {
   refresh: vi.fn<ProviderLifecycleController["refresh"]>(),
 } satisfies ProviderLifecycleController;
 
+/** The server's claim: granted once per operation. */
+function grantOncePerOperation() {
+  const granted = new Set<string>();
+  return async (_environmentId: unknown, input: { readonly operationId: string }) => {
+    if (granted.has(input.operationId)) return false;
+    granted.add(input.operationId);
+    return true;
+  };
+}
+let claim = grantOncePerOperation();
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -161,7 +172,8 @@ beforeEach(() => {
   latest = snapshot();
   requestId = undefined;
   openPage.mockResolvedValue(undefined);
-  resetProviderSignInBrowserForTests({ open: openPage });
+  claim = grantOncePerOperation();
+  resetProviderSignInBrowserForTests({ open: openPage, claim });
   serverStart.mockImplementation(async () => snapshot(mine()));
   controller.cancelConnection.mockResolvedValue(snapshot());
   controller.submitAuthorizationCode.mockResolvedValue(snapshot());
@@ -227,7 +239,7 @@ describe("Antigravity sign-in page", () => {
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     closeView(snapshot(starting()));
 
-    resetProviderSignInBrowserForTests({ open: openPage, reload: true });
+    resetProviderSignInBrowserForTests({ open: openPage, reload: true, claim });
     renderProvider(snapshot(starting()));
     await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
     observeProviderSignInSnapshots(signInKey.environmentId, [snapshot(mine())]);
@@ -296,7 +308,7 @@ describe("Antigravity sign-in page", () => {
 
   it("says a blocked popup was blocked and opens it from the user's click", async () => {
     // The real opener, in a browser tab: a delayed window.open is blocked.
-    resetProviderSignInBrowserForTests();
+    resetProviderSignInBrowserForTests({ claim });
     const open = vi.spyOn(window, "open").mockReturnValueOnce(null);
     serverStart.mockImplementation(async () => {
       renderProvider(snapshot(mine()));
