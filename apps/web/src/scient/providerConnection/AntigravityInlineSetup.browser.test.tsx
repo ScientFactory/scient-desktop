@@ -64,13 +64,13 @@ const controller = {
   refresh: vi.fn<ProviderLifecycleController["refresh"]>(),
 } satisfies ProviderLifecycleController;
 
-/** The server's claim: granted once per operation. */
+/** The server's claim: granted once per operation, with the page to open. */
 function grantOncePerOperation() {
   const granted = new Set<string>();
   return async (_environmentId: unknown, input: { readonly operationId: string }) => {
-    if (granted.has(input.operationId)) return false;
+    if (granted.has(input.operationId)) return { granted: false as const };
     granted.add(input.operationId);
-    return true;
+    return { granted: true as const, authorizationUrl: AUTHORIZATION_URL };
   };
 }
 let claim = grantOncePerOperation();

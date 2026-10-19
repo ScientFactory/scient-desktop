@@ -64,7 +64,10 @@ it.each([
   await new Promise((resolve) => setTimeout(resolve, 50));
   // The real opener: a browser tab whose popup is blocked, or a page that fails to open.
   resetProviderSignInBrowserForTests({
-    claim: async () => true,
+    claim: async () => ({
+      granted: true,
+      authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test",
+    }),
     ...(outcome === "failed"
       ? { open: () => Promise.reject(new Error("The system browser refused.")) }
       : {}),

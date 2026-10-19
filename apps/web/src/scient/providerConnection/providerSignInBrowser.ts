@@ -9,12 +9,15 @@
  * the operation it creates. When the start reply or a streamed provider
  * snapshot shows an operation with an id this client holds, waiting on a
  * primary sign-in page, the client asks the server to claim the opening, and
- * opens the page only if the server grants it. The server grants once per
- * operation, so windows sharing a copied session, a reload, or a second
- * snapshot never open it again, and clients without the id never get a grant.
- * Ids live in session storage until the server answers, the operation ends, or
- * they expire; an unknown answer keeps the id for the next snapshot. A window
- * that dies between the grant and the opening leaves the card's open action.
+ * opens the page the grant names only if the server grants it. The server
+ * decides whether the operation is still current: it grants once per
+ * operation, while the operation waits on that page, so windows sharing a
+ * copied session, a reload, a second report, or a replaced or cancelled
+ * operation never open it again, and clients without the id never get a grant.
+ * Ids live in session storage until the server answers, a reply or snapshot
+ * shows the operation ended, the start is rejected, or they expire; an unknown
+ * answer keeps the id for the next report. A window that dies between the grant
+ * and the opening leaves the card's open action.
  */
 import type {
   EnvironmentId,
@@ -22,6 +25,7 @@ import type {
   ProviderConnectionOperation,
   ProviderInstanceId,
   ProviderSignInPageClaimInput,
+  ProviderSignInPageClaimResult,
   ServerProvider,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
@@ -112,8 +116,6 @@ export function navigateWithoutReferrer(target: Window, url: string): void {
 interface PendingRequest {
   readonly id: string;
   readonly createdAt: number;
-  /** The operation the server stamped this id on, once a reply or snapshot showed it. */
-  readonly operationId?: string;
 }
 
 /**
@@ -157,85 +159,31 @@ function sessionStore(): Storage | null {
 }
 
 /**
- * Asks the server for the one opening of an operation's page: true when this
- * client may open it, false when another client or an earlier load has it. A
- * rejected promise is an unknown outcome.
+ * Asks the server for the one opening of an operation's page. A grant carries
+ * the page to open; a denial means another client or an earlier load has it, or
+ * the operation no longer waits on it. A rejected promise is an unknown outcome.
  */
 export type ProviderSignInPageClaimer = (
   environmentId: EnvironmentId,
   input: ProviderSignInPageClaimInput,
-) => Promise<boolean>;
+) => Promise<ProviderSignInPageClaimResult>;
 
 let claimPage: ProviderSignInPageClaimer | null = null;
 
-/**
- * The operations each provider instance showed last. Once a snapshot of the
- * instance has arrived, snapshots alone say what is current: a start reply can
- * be overtaken by the stream, so it only seeds an instance no snapshot has shown
- * yet. A claim is asked for and acted on only while its operation is current,
- * and a claimer registered after a snapshot arrived replays them.
- */
-const latestOperations = new Map<
-  string,
-  {
-    readonly key: ProviderSignInKey;
-    readonly providerName: string;
-    readonly fromSnapshot: boolean;
-    readonly operations: ReadonlyArray<ProviderConnectionOperation>;
-  }
->();
-
-function noteSnapshotOperations(
-  key: ProviderSignInKey,
-  providerName: string,
-  operations: ReadonlyArray<ProviderConnectionOperation>,
-) {
-  latestOperations.set(keyOf(key), { key, providerName, fromSnapshot: true, operations });
-}
-
-function noteReplyOperation(
-  key: ProviderSignInKey,
-  providerName: string,
-  operation: ProviderConnectionOperation,
-) {
-  const known = latestOperations.get(keyOf(key));
-  if (known?.fromSnapshot) return;
-  // Never replaces a different operation another reply seeded.
-  if (known && !known.operations.some((entry) => entry.operationId === operation.operationId)) {
-    return;
-  }
-  latestOperations.set(keyOf(key), {
-    key,
-    providerName,
-    fromSnapshot: false,
-    operations: [operation],
-  });
-}
-
-/** The operation as last shown, or undefined when it is no longer current. */
-function currentOperation(key: ProviderSignInKey, operationId: string) {
-  return latestOperations
-    .get(keyOf(key))
-    ?.operations.find((operation) => operation.operationId === operationId);
-}
-
-/**
- * Registered by the app-level coordinator, which holds the command. Operations
- * already seen while it was missing are considered again, so the order in which
- * the coordinator and its observers mount does not matter.
- */
+/** Registered by the app-level coordinator, which holds the command. */
 export function setProviderSignInPageClaimer(claimer: ProviderSignInPageClaimer | null): void {
   claimPage = claimer;
-  if (claimer === null) return;
-  for (const latest of latestOperations.values()) {
-    if (!pending.has(keyOf(latest.key))) continue;
-    for (const operation of latest.operations) {
-      void considerOwnOperation(latest.key, operation, latest.providerName);
-    }
-  }
+  notify();
 }
 
-/** One claim in flight per operation; a later snapshot asks again only after it settles. */
+const readClaimerReady = () => claimPage !== null;
+
+/** Whether the claim command is registered, so snapshots can be observed. */
+export function useProviderSignInPageClaimerReady(): boolean {
+  return useSyncExternalStore(subscribe, readClaimerReady, readClaimerReady);
+}
+
+/** One claim in flight per operation; a later report asks again only after it settles. */
 const claimsInFlight = new Set<string>();
 
 function isPendingRequest(value: unknown): value is PendingRequest {
@@ -246,8 +194,7 @@ function isPendingRequest(value: unknown): value is PendingRequest {
     typeof value.id === "string" &&
     /^[A-Za-z0-9-]{8,64}$/.test(value.id) &&
     "createdAt" in value &&
-    typeof value.createdAt === "number" &&
-    (!("operationId" in value) || typeof value.operationId === "string")
+    typeof value.createdAt === "number"
   );
 }
 
@@ -330,42 +277,6 @@ function release(key: ProviderSignInKey, requestId: string) {
   notify();
 }
 
-/**
- * Records which operation the server stamped a held id on. The same id on a
- * different operation means its own has gone, so the id is released: false.
- */
-function stampOrRelease(key: ProviderSignInKey, requestId: string, operationId: string): boolean {
-  const id = keyOf(key);
-  const requests = pending.get(id) ?? [];
-  const request = requests.find((entry) => entry.id === requestId);
-  if (request === undefined) return false;
-  if (request.operationId === operationId) return true;
-  if (request.operationId !== undefined) {
-    release(key, requestId);
-    return false;
-  }
-  setPending(
-    id,
-    requests.map((entry) => (entry === request ? { ...entry, operationId } : entry)),
-  );
-  return true;
-}
-
-/** Releases the held ids whose operation a snapshot of their instance no longer shows. */
-function releaseIdsOfGoneOperations(
-  key: ProviderSignInKey,
-  operations: ReadonlyArray<ProviderConnectionOperation>,
-) {
-  for (const request of pending.get(keyOf(key)) ?? []) {
-    if (
-      request.operationId !== undefined &&
-      !operations.some((operation) => operation.operationId === request.operationId)
-    ) {
-      release(key, request.id);
-    }
-  }
-}
-
 function setOpening(id: string, opening: ProviderSignInBrowserOpening) {
   openings.delete(id);
   openings.set(id, opening);
@@ -422,23 +333,12 @@ const TERMINAL_STATUSES = new Set<ProviderConnectionOperation["status"]>([
   "cancelled",
 ]);
 
-/** Whether the operation is still current, still this id's, and still waiting on the same page. */
-function stillWaiting(
-  key: ProviderSignInKey,
-  operation: ProviderConnectionOperation & { readonly authorizationUrl: string },
-  requestId: string,
-): boolean {
-  const current = currentOperation(key, operation.operationId);
-  return (
-    current !== undefined &&
-    holds(key, requestId) &&
-    current.signInRequestId === requestId &&
-    opensPage(current) &&
-    current.authorizationUrl === operation.authorizationUrl
-  );
-}
-
-/** Acts on an operation that carries one of this client's request ids. */
+/**
+ * Acts on a reply or snapshot showing an operation stamped with one of this
+ * client's request ids. Whether the operation is still current is the server's
+ * call when it answers the claim; the client releases an id only on an answer,
+ * an operation shown ended, a rejected start, or expiry.
+ */
 async function considerOwnOperation(
   key: ProviderSignInKey,
   operation: ProviderConnectionOperation,
@@ -446,7 +346,6 @@ async function considerOwnOperation(
 ): Promise<void> {
   const requestId = operation.signInRequestId;
   if (requestId === undefined || !holds(key, requestId)) return;
-  if (!stampOrRelease(key, requestId, operation.operationId)) return;
   if (TERMINAL_STATUSES.has(operation.status)) {
     release(key, requestId);
     return;
@@ -457,32 +356,29 @@ async function considerOwnOperation(
     release(key, requestId);
     return;
   }
-  // Without the command yet, the id waits for a snapshot after it is registered.
   if (claimsInFlight.has(openingKey) || claimPage === null) return;
-  // A reply the stream already overtook waits for the snapshot that shows it.
-  if (!stillWaiting(key, operation, requestId)) return;
   claimsInFlight.add(openingKey);
-  let granted: boolean | undefined;
+  let result: ProviderSignInPageClaimResult | undefined;
   try {
-    granted = await claimPage(key.environmentId, {
+    result = await claimPage(key.environmentId, {
       instanceId: key.instanceId,
       operationId: operation.operationId,
       signInRequestId: requestId,
     });
   } catch {
-    // An unknown outcome keeps the id; the next snapshot asks again.
+    // An unknown outcome keeps the id; the next reply or snapshot asks again.
   } finally {
     claimsInFlight.delete(openingKey);
   }
-  if (granted === undefined) return;
-  // The operation may have ended or moved on while the claim was answered.
-  const current = stillWaiting(key, operation, requestId);
+  if (result === undefined) return;
+  // An id released meanwhile saw its operation end: nothing to open.
+  const stillHeld = holds(key, requestId);
   release(key, requestId);
-  if (granted && current) {
+  if (result.granted && stillHeld) {
     await openFor({
       key,
       operationId: operation.operationId,
-      url: operation.authorizationUrl,
+      url: result.authorizationUrl,
       providerName,
     });
   }
@@ -499,16 +395,13 @@ export function observeProviderSignInSnapshots(
   dropExpired();
   for (const provider of providers) {
     const key = { environmentId, instanceId: provider.instanceId };
+    if (!pending.has(keyOf(key))) continue;
     const providerName = provider.displayName?.trim() || String(provider.driver);
-    const operations = [
+    for (const operation of [
       provider.connection?.operation,
       provider.connection?.accountOperation,
-    ].filter((operation) => operation !== null && operation !== undefined);
-    noteSnapshotOperations(key, providerName, operations);
-    if (!pending.has(keyOf(key))) continue;
-    releaseIdsOfGoneOperations(key, operations);
-    for (const operation of operations) {
-      void considerOwnOperation(key, operation, providerName);
+    ]) {
+      if (operation) void considerOwnOperation(key, operation, providerName);
     }
   }
 }
@@ -551,7 +444,6 @@ export async function startProviderSignIn<T>(input: {
     notify();
   }
   const operation = input.operationOf(result);
-  if (operation) noteReplyOperation(input.key, input.providerName, operation);
   if (operation?.signInRequestId !== undefined) {
     // A start this client joined to one already in flight shares that start's
     // operation, so its own id has nothing left to identify.
@@ -676,7 +568,6 @@ export function resetProviderSignInBrowserForTests(
   surfaces.clear();
   startsInFlight.clear();
   claimsInFlight.clear();
-  latestOperations.clear();
   if (options.reload) hydratePending();
   else {
     pending.clear();

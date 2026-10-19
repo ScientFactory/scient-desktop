@@ -38,7 +38,7 @@ function operation(patch: Partial<ProviderConnectionOperation> = {}): ProviderCo
   };
 }
 
-function provider(current: ProviderConnectionOperation): ServerProvider {
+function provider(current: ProviderConnectionOperation | null): ServerProvider {
   return {
     instanceId,
     driver: ProviderDriverKind.make("antigravity"),
@@ -82,26 +82,71 @@ let clock = 0;
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /**
- * The server's claim, as the connection manager grants it: once per operation,
- * to the request id stamped on it. `failures` answers with transport errors first.
+ * The server, as the connection manager runs it: `current` is its operation for
+ * the instance, which the client's replies and snapshots may lag behind. The
+ * claim is granted once per operation, to the request id stamped on the current
+ * operation while it waits on a primary page, with that page's URL. `failures`
+ * answers with transport errors first; `hold` defers the next answer until the
+ * test releases it, and decides it then.
  */
 function makeServer() {
   const granted = new Set<string>();
   let failures = 0;
+  let held: (() => void) | null = null;
+  const state = { current: null as ProviderConnectionOperation | null };
+  const decide = (input: Parameters<ProviderSignInPageClaimer>[1]) => {
+    const current = state.current;
+    if (
+      current === null ||
+      current.operationId !== input.operationId ||
+      current.signInRequestId !== input.signInRequestId ||
+      current.status !== "waiting_for_browser" ||
+      current.authorizationUrlKind !== "primary" ||
+      current.authorizationUrl === undefined ||
+      granted.has(input.operationId)
+    ) {
+      return { granted: false as const };
+    }
+    granted.add(input.operationId);
+    return { granted: true as const, authorizationUrl: current.authorizationUrl };
+  };
+  let holdNext = false;
   const claim = vi.fn<ProviderSignInPageClaimer>(async (_environmentId, input) => {
     if (failures > 0) {
       failures -= 1;
       throw new Error("The environment connection closed.");
     }
-    if (granted.has(input.operationId)) return false;
-    granted.add(input.operationId);
-    return true;
+    if (!holdNext) return decide(input);
+    holdNext = false;
+    await new Promise<void>((resolve) => (held = resolve));
+    return decide(input);
   });
-  return { claim, failNext: (count: number) => (failures = count) };
+  return {
+    claim,
+    state,
+    failNext: (count: number) => (failures = count),
+    /** Defers the next claim's answer; the returned function lets the server decide it. */
+    hold: () => {
+      holdNext = true;
+      return async () => {
+        held!();
+        await settle();
+      };
+    },
+  };
 }
 let server = makeServer();
 
-/** Starts a sign-in whose server stamps the request id on the operation it returns. */
+/** The server's operation changes, and a reply now would say so. */
+const serve = (current: ProviderConnectionOperation | null) => {
+  server.state.current = current;
+  return current;
+};
+
+/**
+ * Starts a sign-in whose server stamps the request id on the operation it
+ * returns; the operation the reply shows is the server's when it answers.
+ */
 function start(
   reply: (signInRequestId: string) => Promise<ProviderConnectionOperation | null>,
   previousOperationId: string | null = null,
@@ -110,7 +155,7 @@ function start(
     key,
     providerName: "Antigravity",
     previousOperationId,
-    start: reply,
+    start: async (id) => serve(await reply(id)),
     operationOf: (value) => value,
   });
 }
@@ -118,14 +163,27 @@ function start(
 /** A start whose reply never arrives; resolves with the id the server received. */
 function startWithLostReply() {
   return new Promise<string>((received) => {
-    void start((signInRequestId) => {
-      received(signInRequestId);
-      return new Promise<never>(() => undefined);
+    void startProviderSignIn({
+      key,
+      providerName: "Antigravity",
+      previousOperationId: null,
+      start: (signInRequestId) => {
+        received(signInRequestId);
+        return new Promise<never>(() => undefined);
+      },
+      operationOf: () => null,
     });
   });
 }
 
-const observe = (current: ProviderConnectionOperation) =>
+/** A snapshot that shows the server's operation as it is now. */
+const observe = (current: ProviderConnectionOperation) => {
+  serve(current);
+  observeLagging(current);
+};
+
+/** A snapshot from before the server's latest change. */
+const observeLagging = (current: ProviderConnectionOperation | null) =>
   observeProviderSignInSnapshots(environmentId, [provider(current)]);
 
 /** A renderer reload, or another window that starts with a copy of this session. */
@@ -161,6 +219,15 @@ describe("provider sign-in page opening", () => {
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });
 
+  it("opens the page the grant names", async () => {
+    const current = "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-current";
+    const id = await startWithLostReply();
+    serve(operation({ signInRequestId: id, authorizationUrl: current }));
+    observeLagging(operation({ signInRequestId: id }));
+    await settle();
+    expect(open.mock.calls).toEqual([[current]]);
+  });
+
   it("opens from the stream when the start reply is lost, once", async () => {
     const id = await startWithLostReply();
     const { authorizationUrl: _url, ...starting } = operation({
@@ -173,6 +240,42 @@ describe("provider sign-in page opening", () => {
 
     observe(operation({ signInRequestId: id }));
     observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(open.mock.calls).toEqual([[url]]);
+    expect(server.claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens once when snapshots lag behind the start reply", async () => {
+    observe(operation({ operationId: "connect-0", status: "failed" }));
+    let id!: string;
+    await start(async (requestId) => {
+      id = requestId;
+      return operation({ signInRequestId: requestId });
+    });
+    observeLagging(operation({ operationId: "connect-0", status: "failed" }));
+    observeLagging(null);
+    observeLagging(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls).toEqual([[url]]);
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("keeps a pending grant through a lagging snapshot, and opens once", async () => {
+    observe(operation({ operationId: "connect-0", status: "failed" }));
+    const answer = server.hold();
+    let id!: string;
+    const started = start(async (requestId) => {
+      id = requestId;
+      return operation({ signInRequestId: requestId });
+    });
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    observeLagging(operation({ operationId: "connect-0", status: "failed" }));
+    await answer();
+    await started;
+    observeLagging(operation({ signInRequestId: id }));
     await settle();
     expect(open.mock.calls).toEqual([[url]]);
     expect(server.claim).toHaveBeenCalledTimes(1);
@@ -219,6 +322,7 @@ describe("provider sign-in page opening", () => {
       reload: true,
       claim: server.claim,
     });
+    serve(operation({ signInRequestId: id }));
     second.observeProviderSignInSnapshots(environmentId, [
       provider(operation({ signInRequestId: id })),
     ]);
@@ -273,9 +377,20 @@ describe("provider sign-in page opening", () => {
 
   it("releases a denied id silently", async () => {
     const id = await startWithLostReply();
-    server.claim.mockResolvedValueOnce(false);
+    server.claim.mockResolvedValueOnce({ granted: false });
     observe(operation({ signInRequestId: id }));
     await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("is denied, silently, when the server cancelled before the claim", async () => {
+    const id = await startWithLostReply();
+    serve(operation({ status: "cancelled", signInRequestId: id }));
+    observeLagging(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
     expect(open).not.toHaveBeenCalled();
     expect(toast.add).not.toHaveBeenCalled();
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
@@ -295,64 +410,53 @@ describe("provider sign-in page opening", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("claims the operations it already saw once the claim command arrives", async () => {
+  it("keeps the id while the claim command is missing, and claims on the next report", async () => {
     resetProviderSignInBrowserForTests({ open, now: () => clock, claim: null });
     const id = await startWithLostReply();
     observe(operation({ signInRequestId: id }));
     await settle();
-    expect(open).not.toHaveBeenCalled();
-    // No further snapshot: registering the command replays what was seen.
+    expect(storage.getItem(STORAGE_KEY)).toContain(id);
     setProviderSignInPageClaimer(server.claim);
+    observe(operation({ signInRequestId: id }));
     await settle();
     expect(server.claim).toHaveBeenCalledTimes(1);
-    expect(open).toHaveBeenCalledTimes(1);
-    setProviderSignInPageClaimer(server.claim);
-    await settle();
     expect(open).toHaveBeenCalledTimes(1);
   });
 
   it.each(["cancelled", "failed", "connected"] as const)(
-    "does not open a page granted after its operation was %s",
+    "does not open a page granted when a snapshot shows its operation %s first",
     async (status) => {
-      let grant!: (granted: boolean) => void;
-      server.claim.mockImplementationOnce(
-        () => new Promise<boolean>((resolve) => (grant = resolve)),
-      );
+      const answer = server.hold();
       const id = await startWithLostReply();
       observe(operation({ signInRequestId: id }));
       await settle();
       expect(server.claim).toHaveBeenCalledTimes(1);
 
-      // The operation ends while the claim is still being answered.
+      // The server granted the claim, then the operation ended; the snapshot
+      // saying so arrives before the grant does.
+      const current = server.state.current;
       observe(operation({ status, signInRequestId: id }));
-      grant(true);
-      await settle();
+      serve(current);
+      await answer();
       expect(open).not.toHaveBeenCalled();
       expect(toast.add).not.toHaveBeenCalled();
       expect(storage.getItem(STORAGE_KEY)).toBeNull();
     },
   );
 
-  it("does not open a page granted after its operation was replaced", async () => {
-    let grant!: (granted: boolean) => void;
-    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
-    const id = await startWithLostReply();
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
-    grant(true);
-    await settle();
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("does not let a delayed start reply revive an operation a snapshot replaced", async () => {
-    let grant!: (granted: boolean) => void;
-    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
+  it("opens nothing for an operation replaced before its delayed claim and reply", async () => {
+    const answer = server.hold();
     let id!: string;
     let reply!: (operation: ProviderConnectionOperation) => void;
-    const started = start((requestId) => {
-      id = requestId;
-      return new Promise((resolve) => (reply = resolve));
+    const started = startProviderSignIn({
+      key,
+      providerName: "Antigravity",
+      previousOperationId: null,
+      start: (requestId) => {
+        id = requestId;
+        return new Promise<ProviderConnectionOperation>((resolve) => (reply = resolve));
+      },
+      operationOf: (value) => value,
     });
     observe(operation({ signInRequestId: id }));
     await settle();
@@ -361,53 +465,11 @@ describe("provider sign-in page opening", () => {
     observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
     reply(operation({ signInRequestId: id }));
     await started;
-    grant(true);
-    await settle();
+    await answer();
+    expect(server.claim).toHaveBeenCalledTimes(1);
     expect(open).not.toHaveBeenCalled();
     expect(toast.add).not.toHaveBeenCalled();
-    expect(server.claim).toHaveBeenCalledTimes(1);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
-  });
-
-  it("lets a start reply seed the operation while no snapshot has shown the instance", async () => {
-    let grant!: (granted: boolean) => void;
-    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
-    const started = start(async (id) => operation({ signInRequestId: id }));
-    await settle();
-    expect(server.claim).toHaveBeenCalledTimes(1);
-    grant(true);
-    await started;
-    expect(open.mock.calls).toEqual([[url]]);
-  });
-
-  it("waits for the snapshot that shows a reply's operation once snapshots have arrived", async () => {
-    observe(operation({ operationId: "connect-0", status: "failed" }));
-    let id!: string;
-    await start(async (requestId) => {
-      id = requestId;
-      return operation({ signInRequestId: requestId });
-    });
-    expect(server.claim).not.toHaveBeenCalled();
-    expect(storage.getItem(STORAGE_KEY)).toContain(id);
-
-    observe(operation({ signInRequestId: id }));
-    await settle();
-    expect(server.claim).toHaveBeenCalledTimes(1);
-    expect(open.mock.calls).toEqual([[url]]);
-  });
-
-  it("releases a held id once a snapshot no longer shows the operation it was stamped on", async () => {
-    const id = await startWithLostReply();
-    const { authorizationUrl: _url, ...starting } = operation({
-      status: "starting",
-      signInRequestId: id,
-    });
-    observe(starting);
-    expect(storage.getItem(STORAGE_KEY)).toContain(id);
-    observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
-    await settle();
-    expect(storage.getItem(STORAGE_KEY)).toBeNull();
-    expect(server.claim).not.toHaveBeenCalled();
   });
 
   it("drops ids of expired operations", async () => {

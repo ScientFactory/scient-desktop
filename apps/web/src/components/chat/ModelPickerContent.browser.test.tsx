@@ -371,7 +371,13 @@ describe("actual picker provider setup", () => {
       },
     };
     const openPage = vi.fn(async () => undefined);
-    resetProviderSignInBrowserForTests({ open: openPage, claim: async () => true });
+    resetProviderSignInBrowserForTests({
+      open: openPage,
+      claim: async () => ({
+        granted: true,
+        authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=synthetic",
+      }),
+    });
     // A dropped connection: the outcome is unknown, not a server rejection.
     commands.accountCommand.mockResolvedValue({
       _tag: "Failure",

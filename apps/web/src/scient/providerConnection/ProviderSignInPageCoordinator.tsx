@@ -9,6 +9,7 @@ import {
   observeProviderSignInSnapshots,
   setProviderSignInPageClaimer,
   usePendingProviderSignInKeys,
+  useProviderSignInPageClaimerReady,
 } from "./providerSignInBrowser";
 import { claimProviderSignInPage } from "./providerSignInCommands";
 
@@ -17,7 +18,7 @@ import { claimProviderSignInPage } from "./providerSignInCommands";
  * watches the provider snapshots of each environment in which this client is
  * starting a sign-in, so its page opens even when the start reply is lost or the
  * view that started it is gone. Nothing is observed while no sign-in started
- * here is pending.
+ * here is pending, or before the command is registered.
  */
 export function ProviderSignInPageCoordinator() {
   const claim = useAtomCommand(claimProviderSignInPage, {
@@ -26,13 +27,15 @@ export function ProviderSignInPageCoordinator() {
   useEffect(() => {
     setProviderSignInPageClaimer(async (environmentId, input) => {
       const result = await claim({ environmentId, input });
-      if (result._tag === "Success") return result.value.granted;
+      if (result._tag === "Success") return result.value;
       throw squashAtomCommandFailure(result);
     });
     return () => setProviderSignInPageClaimer(null);
   }, [claim]);
   const keys = usePendingProviderSignInKeys();
-  const environmentIds = [...new Set(keys.map((key) => key.environmentId))];
+  // Observers mount after the command is registered, so their first snapshot can claim.
+  const ready = useProviderSignInPageClaimerReady();
+  const environmentIds = ready ? [...new Set(keys.map((key) => key.environmentId))] : [];
   return (
     <>
       {environmentIds.map((environmentId) => (

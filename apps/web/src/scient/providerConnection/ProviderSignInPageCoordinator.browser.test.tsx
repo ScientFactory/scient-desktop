@@ -28,6 +28,7 @@ import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./provi
 
 const environmentId = EnvironmentId.make("local");
 const instanceId = ProviderInstanceId.make("antigravity");
+const url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test";
 
 function waiting(signInRequestId: string): ProviderConnectionOperation {
   return {
@@ -37,7 +38,7 @@ function waiting(signInRequestId: string): ProviderConnectionOperation {
     startedAt: "2026-10-19T00:00:00.000Z",
     finishedAt: null,
     message: "Finish signing in.",
-    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test",
+    authorizationUrl: url,
     authorizationUrlKind: "primary",
     signInRequestId,
   };
@@ -87,7 +88,10 @@ it("claims and opens a page already waiting when it mounts, with no further snap
       connection: { methods: ["antigravity_google"], canDisconnect: false, operation: waiting(id) },
     } satisfies ServerProvider,
   ];
-  state.claim.mockResolvedValue({ _tag: "Success", value: { granted: true } });
+  state.claim.mockResolvedValue({
+    _tag: "Success",
+    value: { granted: true, authorizationUrl: url },
+  });
 
   host = document.createElement("div");
   document.body.append(host);
@@ -95,6 +99,7 @@ it("claims and opens a page already waiting when it mounts, with no further snap
   flushSync(() => root!.render(<ProviderSignInPageCoordinator />));
 
   await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  expect(open).toHaveBeenCalledWith(url);
   expect(state.claim).toHaveBeenCalledTimes(1);
   expect(state.claim.mock.calls[0]![0]).toMatchObject({
     environmentId,

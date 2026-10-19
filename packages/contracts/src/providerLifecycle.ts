@@ -305,7 +305,14 @@ export const ProviderSignInPageClaimInput = Schema.Struct({
 });
 export type ProviderSignInPageClaimInput = typeof ProviderSignInPageClaimInput.Type;
 
-export const ProviderSignInPageClaimResult = Schema.Struct({ granted: Schema.Boolean });
+/** A grant carries the page to open: the operation's primary URL when it was granted. */
+export const ProviderSignInPageClaimResult = Schema.Union([
+  Schema.Struct({
+    granted: Schema.Literal(true),
+    authorizationUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+  }),
+  Schema.Struct({ granted: Schema.Literal(false) }),
+]);
 export type ProviderSignInPageClaimResult = typeof ProviderSignInPageClaimResult.Type;
 
 const authorizationCodeHasNoControlCharacters = Schema.makeFilter((value: string) => {

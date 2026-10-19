@@ -51,6 +51,7 @@ export interface ProviderConnectionManagerShape {
   /**
    * Grants the opening of an operation's sign-in page once: to a holder of the
    * request id stamped on the current operation while it waits on a primary page.
+   * A grant carries that page's URL, so the client opens what is current now.
    */
   readonly claimSignInPage: (
     input: ProviderSignInPageClaimInput,
@@ -728,12 +729,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     "ProviderConnectionManager.claimSignInPage",
   )(function* (input) {
     const active = (yield* Ref.get(activeRef)).get(input.instanceId);
-    if (!active || active.operationId !== input.operationId) return { granted: false };
+    if (!active || active.operationId !== input.operationId) return { granted: false } as const;
     // Under the operation's transition lock, so its state cannot change between
     // the check and the grant.
     return yield* active.transitionLock.withPermits(1)(
       Effect.gen(function* () {
-        if ((yield* Ref.get(activeRef)).get(input.instanceId) !== active) return { granted: false };
+        if ((yield* Ref.get(activeRef)).get(input.instanceId) !== active)
+          return { granted: false } as const;
         const published = publishedProviderConnectionOperation(
           (yield* providerRegistry.getProviders).find(
             (provider) => provider.instanceId === input.instanceId,
@@ -746,8 +748,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           published.authorizationUrlKind === "primary" &&
           published.authorizationUrl !== undefined &&
           published.signInRequestId === input.signInRequestId;
-        if (!waitsOnPage) return { granted: false };
-        return { granted: !(yield* Ref.getAndSet(active.pageClaimedRef, true)) };
+        if (!waitsOnPage || (yield* Ref.getAndSet(active.pageClaimedRef, true))) {
+          return { granted: false } as const;
+        }
+        return { granted: true, authorizationUrl: published.authorizationUrl } as const;
       }),
     );
   });

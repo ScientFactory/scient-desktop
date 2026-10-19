@@ -154,27 +154,27 @@ every state of the operation it creates. When the start reply or a streamed
 provider snapshot shows an operation carrying an id this client holds, waiting on
 a `primary` URL, the client asks the server to claim the opening
 (`claimProviderSignInPage`) and opens the page only if the server grants it, so a
-reply lost to a brief disconnect does not lose the opening.
+reply lost to a brief disconnect does not lose the opening. Replies and snapshots
+count alike, and the client keeps no view of which operation is current: snapshots
+can lag behind a reply, so that is the server's call.
 `ProviderSignInPageCoordinator`, mounted once in the root route, lends the opener
-that command and watches the provider snapshots of the environments where this
-client holds an id; registering the command replays the operations already seen,
-so the order in which they mount does not matter. Once a snapshot of an instance
-has arrived, snapshots alone say which of its operations is current; a start reply,
-which the stream can overtake, only seeds an instance no snapshot has shown yet.
-The client claims, and opens after a grant, only while the operation is current
-and still waits on the same page, so a grant that arrives after its operation
-ended or was replaced opens nothing. The connection manager grants the claim once per operation,
+that command and, once it is registered, watches the provider snapshots of the
+environments where this client holds an id, so the first snapshot it sees can
+claim. The connection manager grants the claim once per operation,
 under the operation's transition lock, and only to the request id stamped on the
-current operation while it waits on that page: windows that share a copied
-session, a reload after a grant, or a repeated snapshot are denied, and clients
-without the id never ask. Other clients' setup views offer to open the page and do
+current operation while it waits on that page; the grant carries that page's URL,
+which the client opens. Windows that share a copied session, a reload after a
+grant, a repeated report, and an operation replaced or cancelled before the claim are
+denied, and clients without the id never ask. A cancel the server processes after
+the grant opens nothing if the snapshot showing it arrives before the grant;
+otherwise the page opens, as if the user cancelled just after it opened. Other clients' setup views offer to open the page and do
 not claim it is open. A server can only run one connection operation per
 instance, so a second start from another client is rejected and releases its id;
 a second start from the same client joins the in-flight command, shares its
 operation, and releases its own id. An id is released when the server answers the
-claim, when its operation ends, when a snapshot no longer shows that operation or
-a reply or snapshot shows the id on a different one, when the server rejects its start, or 15 minutes
-after it was made; an unknown answer keeps it for the next snapshot. Held ids live
+claim, when a reply or snapshot shows its operation ended, when the server rejects
+its start, or 15 minutes after it was made, never because a snapshot does not show
+its operation yet; an unknown answer keeps it for the next report. Held ids live
 in session storage, so a renderer reload before the claim still opens the page; a
 window that dies between the grant and the opening, or a full quit, leaves the
 card's open action. Against a server that does not stamp ids, the reply alone

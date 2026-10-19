@@ -2246,7 +2246,7 @@ describe("ProviderConnectionManager sign-in page claims", () => {
   const operationOf = (providers: ReadonlyArray<ServerProvider>) =>
     providers[0]?.connection?.operation ?? null;
 
-  it.effect("grants exactly one of concurrent claims, and none after", () =>
+  it.effect("grants exactly one of concurrent claims, with the page to open, and none after", () =>
     Effect.gen(function* () {
       const { manager, providersRef } = yield* makeHarness({ actions: waitingActions() });
       yield* manager.start({
@@ -2262,8 +2262,11 @@ describe("ProviderConnectionManager sign-in page claims", () => {
       });
       // Two windows that share the request id claim at once.
       const results = yield* Effect.all([claim, claim, claim], { concurrency: "unbounded" });
-      assert.strictEqual(results.filter((result) => result.granted).length, 1);
-      assert.isFalse((yield* claim).granted);
+      const grants = results.filter((result) => result.granted);
+      assert.deepStrictEqual(grants, [
+        { granted: true, authorizationUrl: "https://auth.openai.com/" },
+      ]);
+      assert.deepStrictEqual(yield* claim, { granted: false });
     }),
   );
 
