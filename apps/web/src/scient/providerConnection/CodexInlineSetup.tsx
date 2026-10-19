@@ -49,7 +49,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
+import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -112,28 +112,8 @@ export function CodexInlineSetup(props: {
     activeConnectionOperation,
     props.displayName,
   );
-  const browserOpening = browser.opening;
-  const pageOpenFailure = browserOpening?.status === "failed" ? browserOpening.error : null;
-  const pageBlocked = pageOpenFailure !== null && browserOpening?.blocked === true;
-  // Nothing is open here, or opening failed: the next step is the user's.
-  const userMustOpen =
-    activeConnectionOperation?.authorizationUrlKind === "primary" &&
-    (activeConnectionOperation.status === "waiting_for_browser" ||
-      activeConnectionOperation.status === "waiting_for_device_code") &&
-    ((browserOpening === null && !browser.startedHere) || pageOpenFailure !== null);
-  // What the waiting view may say about the Codex page: only this client opens it.
-  const browserPageCopy = pageBlocked
-    ? "Open the sign-in page to continue."
-    : (pageOpenFailure ??
-      (browserOpening?.status === "opened"
-        ? "Complete sign-in in your browser."
-        : browserOpening !== null || browser.startedHere
-          ? "Opening the sign-in page in your browser…"
-          : "Open the sign-in page to continue."));
-  const reopenLabel =
-    (browserOpening === null && !browser.startedHere) || browserOpening?.blocked === true
-      ? "Open sign-in page"
-      : "Reopen sign-in page";
+  // Only this window opens the Codex page; others offer it.
+  const page = browserSignInWaitingView(browser, activeConnectionOperation);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;
@@ -382,7 +362,7 @@ export function CodexInlineSetup(props: {
     const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
     const usingDeviceCode = activeConnectionOperation?.method === "codex_device_code";
-    const openFailure = !starting && !verifying ? pageOpenFailure : null;
+    const openFailure = !starting && !verifying ? page.failure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -393,12 +373,12 @@ export function CodexInlineSetup(props: {
                 ? "Confirming sign-in with Codex…"
                 : usingDeviceCode && !openFailure
                   ? "Enter this code on Codex’s secure sign-in page."
-                  : browserPageCopy
+                  : page.body
           }
           icon={
             openFailure ? (
               <TriangleAlertIcon className="size-5 text-warning" />
-            ) : userMustOpen ? (
+            ) : page.userMustOpen ? (
               <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             ) : (
               <LoaderIcon className="size-5 animate-spin text-primary" />
@@ -408,7 +388,7 @@ export function CodexInlineSetup(props: {
           title={
             verifying
               ? "Checking your account"
-              : pageBlocked && !starting
+              : page.blocked && !starting
                 ? "Sign-in page blocked"
                 : "Finish signing in"
           }
@@ -419,13 +399,14 @@ export function CodexInlineSetup(props: {
         {!verifying && activeConnectionOperation?.authorizationUrl ? (
           <AssistedSetupActions>
             <Button
-              disabled={browserOpening?.status === "opening"}
+              disabled={browser.opening?.status === "opening"}
               onClick={() => void browser.reopen()}
               size="sm"
               type="button"
-              variant={userMustOpen ? "ghost-primary" : "ghost-muted"}
+              variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
-              <ExternalLinkIcon aria-hidden /> {reopenLabel}
+              <ExternalLinkIcon aria-hidden />{" "}
+              {page.notOpenedHere || page.blocked ? "Open sign-in page" : "Reopen sign-in page"}
             </Button>
             {activeConnectionOperation ? (
               <Button

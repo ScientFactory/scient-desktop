@@ -50,7 +50,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
+import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -137,24 +137,8 @@ export function CursorInlineSetup(props: {
     activeConnectionOperation,
     props.displayName,
   );
-  const browserOpening = browser.opening;
-  const pageOpenFailure = browserOpening?.status === "failed" ? browserOpening.error : null;
-  const pageBlocked = pageOpenFailure !== null && browserOpening?.blocked === true;
-  // Nothing is open here, or opening failed: the next step is the user's.
-  const userMustOpen =
-    activeConnectionOperation?.authorizationUrlKind === "primary" &&
-    (activeConnectionOperation.status === "waiting_for_browser" ||
-      activeConnectionOperation.status === "waiting_for_device_code") &&
-    ((browserOpening === null && !browser.startedHere) || pageOpenFailure !== null);
-  // What the waiting view may say about the Cursor page: only this client opens it.
-  const browserPageCopy = pageBlocked
-    ? "Open the sign-in page to continue."
-    : (pageOpenFailure ??
-      (browserOpening?.status === "opened"
-        ? "Complete sign-in in your browser."
-        : browserOpening !== null || browser.startedHere
-          ? "Opening the sign-in page in your browser…"
-          : "Open the sign-in page to continue."));
+  // Only this window opens the Cursor page; others offer it.
+  const page = browserSignInWaitingView(browser, activeConnectionOperation);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -382,7 +366,7 @@ export function CursorInlineSetup(props: {
   if (activeConnectionOperation || pendingAction === "sign-in") {
     const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
-    const openFailure = !starting && !verifying ? pageOpenFailure : null;
+    const openFailure = !starting && !verifying ? page.failure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -391,12 +375,12 @@ export function CursorInlineSetup(props: {
               ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
               : verifying
                 ? "Finding models for your account…"
-                : browserPageCopy
+                : page.body
           }
           icon={
             openFailure ? (
               <TriangleAlertIcon className="size-5 text-warning" />
-            ) : userMustOpen ? (
+            ) : page.userMustOpen ? (
               <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             ) : (
               <LoaderIcon className="size-5 animate-spin text-primary" />
@@ -406,7 +390,7 @@ export function CursorInlineSetup(props: {
           title={
             verifying
               ? "Checking your account"
-              : pageBlocked && !starting
+              : page.blocked && !starting
                 ? "Sign-in page blocked"
                 : "Finish signing in"
           }
@@ -414,16 +398,14 @@ export function CursorInlineSetup(props: {
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
             <Button
-              disabled={browserOpening?.status === "opening"}
+              disabled={browser.opening?.status === "opening"}
               onClick={() => void browser.reopen()}
               size="sm"
               type="button"
-              variant={userMustOpen ? "ghost-primary" : "ghost-muted"}
+              variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
               <ExternalLinkIcon aria-hidden />{" "}
-              {(browserOpening === null && !browser.startedHere) || browserOpening?.blocked === true
-                ? "Open Cursor sign-in"
-                : "Reopen Cursor sign-in"}
+              {page.notOpenedHere || page.blocked ? "Open Cursor sign-in" : "Reopen Cursor sign-in"}
             </Button>
           ) : null}
           {activeConnectionOperation ? (

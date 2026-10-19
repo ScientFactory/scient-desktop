@@ -54,3 +54,47 @@ export function useProviderSignInBrowser(
   }, [environmentId, instanceId, operationId, providerName, requestId, url]);
   return { opening, startedHere, reopen };
 }
+
+/**
+ * What a setup view can say about this window's opening of a sign-in page.
+ * `notOpenedHere`: not opened here and not about to be, so the user opens it.
+ */
+export function providerSignInPageState(
+  opening: ProviderSignInOpening | null,
+  startedHere: boolean,
+) {
+  const failure = opening?.status === "failed" ? opening.error : null;
+  return {
+    failure,
+    blocked: failure !== null && opening?.blocked === true,
+    notOpenedHere: opening === null && !startedHere,
+    opened: opening?.status === "opened",
+  };
+}
+
+/**
+ * The waiting view of a browser sign-in with the shared copy (Codex, Cursor).
+ * `userMustOpen`: nothing is open here, or opening failed.
+ */
+export function browserSignInWaitingView(
+  browser: ReturnType<typeof useProviderSignInBrowser>,
+  operation: ProviderConnectionOperation | null,
+) {
+  const page = providerSignInPageState(browser.opening, browser.startedHere);
+  return {
+    ...page,
+    userMustOpen:
+      operation?.authorizationUrlKind === "primary" &&
+      (operation.status === "waiting_for_browser" ||
+        operation.status === "waiting_for_device_code") &&
+      (page.notOpenedHere || page.failure !== null),
+    body: page.blocked
+      ? "Open the sign-in page to continue."
+      : (page.failure ??
+        (page.opened
+          ? "Complete sign-in in your browser."
+          : page.notOpenedHere
+            ? "Open the sign-in page to continue."
+            : "Opening the sign-in page in your browser…")),
+  };
+}

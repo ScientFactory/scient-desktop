@@ -56,7 +56,7 @@ import {
   ProviderAuthorizationCodeForm,
 } from "./ProviderAuthorizationCodeForm";
 import { DiagnosticsSettingsLink } from "./DiagnosticsSettingsLink";
-import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
+import { providerSignInPageState, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -530,23 +530,23 @@ export function AntigravityInlineSetup(props: {
     const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying =
       !starting && (activeConnectionOperation?.status === "verifying" || usesCredentials);
-    const openingFailure =
-      !verifying && browserOpening?.status === "failed" ? browserOpening.error : null;
-    const blocked = openingFailure !== null && browserOpening?.blocked === true;
+    const page = providerSignInPageState(browserOpening, browser.startedHere);
+    const openingFailure = !verifying ? page.failure : null;
+    const blocked = !verifying && page.blocked;
     // Nothing is open here, or opening failed: the next step is the user's.
     const userMustOpen =
       !starting &&
       !verifying &&
       activeConnectionOperation?.authorizationUrlKind === "primary" &&
-      ((browserOpening === null && !browser.startedHere) || openingFailure !== null);
+      (page.notOpenedHere || openingFailure !== null);
     const waitingBody = blocked
       ? "Open Google sign-in to continue."
       : (openingFailure ??
-        (browserOpening?.status === "opened"
+        (page.opened
           ? "Complete the official Antigravity sign-in in your browser."
-          : browserOpening !== null || browser.startedHere
-            ? "Opening Google sign-in in your browser…"
-            : "Open the Google sign-in page to continue."));
+          : page.notOpenedHere
+            ? "Open the Google sign-in page to continue."
+            : "Opening Google sign-in in your browser…"));
     const waitingForAuthorizationCode =
       (activeConnectionOperation?.acceptsAuthorizationCode === true ||
         (activeConnectionOperation?.acceptsAuthorizationCode === undefined &&
@@ -628,7 +628,7 @@ export function AntigravityInlineSetup(props: {
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
                   ? "Open sign-in help"
-                  : (browserOpening === null && !browser.startedHere) || blocked
+                  : page.notOpenedHere || blocked
                     ? "Open Google sign-in"
                     : "Reopen Google sign-in"}
               </Button>
