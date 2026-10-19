@@ -112,6 +112,8 @@ export function navigateWithoutReferrer(target: Window, url: string): void {
 interface PendingRequest {
   readonly id: string;
   readonly createdAt: number;
+  /** The operation the server stamped this id on, once a reply or snapshot showed it. */
+  readonly operationId?: string;
 }
 
 /**
@@ -167,32 +169,51 @@ export type ProviderSignInPageClaimer = (
 let claimPage: ProviderSignInPageClaimer | null = null;
 
 /**
- * The operations each provider instance showed last, from snapshots and start
- * replies. A claim answered after the operation moved on is checked against
- * them, and a claimer registered after a snapshot arrived replays them.
+ * The operations each provider instance showed last. Once a snapshot of the
+ * instance has arrived, snapshots alone say what is current: a start reply can
+ * be overtaken by the stream, so it only seeds an instance no snapshot has shown
+ * yet. A claim is asked for and acted on only while its operation is current,
+ * and a claimer registered after a snapshot arrived replays them.
  */
 const latestOperations = new Map<
   string,
   {
     readonly key: ProviderSignInKey;
     readonly providerName: string;
+    readonly fromSnapshot: boolean;
     readonly operations: ReadonlyArray<ProviderConnectionOperation>;
   }
 >();
 
-function noteLatestOperations(
+function noteSnapshotOperations(
   key: ProviderSignInKey,
   providerName: string,
-  operations: ReadonlyArray<ProviderConnectionOperation | null | undefined>,
+  operations: ReadonlyArray<ProviderConnectionOperation>,
 ) {
+  latestOperations.set(keyOf(key), { key, providerName, fromSnapshot: true, operations });
+}
+
+function noteReplyOperation(
+  key: ProviderSignInKey,
+  providerName: string,
+  operation: ProviderConnectionOperation,
+) {
+  const known = latestOperations.get(keyOf(key));
+  if (known?.fromSnapshot) return;
+  // Never replaces a different operation another reply seeded.
+  if (known && !known.operations.some((entry) => entry.operationId === operation.operationId)) {
+    return;
+  }
   latestOperations.set(keyOf(key), {
     key,
     providerName,
-    operations: operations.filter((operation) => operation !== null && operation !== undefined),
+    fromSnapshot: false,
+    operations: [operation],
   });
 }
 
-function latestOperation(key: ProviderSignInKey, operationId: string) {
+/** The operation as last shown, or undefined when it is no longer current. */
+function currentOperation(key: ProviderSignInKey, operationId: string) {
   return latestOperations
     .get(keyOf(key))
     ?.operations.find((operation) => operation.operationId === operationId);
@@ -225,7 +246,8 @@ function isPendingRequest(value: unknown): value is PendingRequest {
     typeof value.id === "string" &&
     /^[A-Za-z0-9-]{8,64}$/.test(value.id) &&
     "createdAt" in value &&
-    typeof value.createdAt === "number"
+    typeof value.createdAt === "number" &&
+    (!("operationId" in value) || typeof value.operationId === "string")
   );
 }
 
@@ -308,6 +330,42 @@ function release(key: ProviderSignInKey, requestId: string) {
   notify();
 }
 
+/**
+ * Records which operation the server stamped a held id on. The same id on a
+ * different operation means its own has gone, so the id is released: false.
+ */
+function stampOrRelease(key: ProviderSignInKey, requestId: string, operationId: string): boolean {
+  const id = keyOf(key);
+  const requests = pending.get(id) ?? [];
+  const request = requests.find((entry) => entry.id === requestId);
+  if (request === undefined) return false;
+  if (request.operationId === operationId) return true;
+  if (request.operationId !== undefined) {
+    release(key, requestId);
+    return false;
+  }
+  setPending(
+    id,
+    requests.map((entry) => (entry === request ? { ...entry, operationId } : entry)),
+  );
+  return true;
+}
+
+/** Releases the held ids whose operation a snapshot of their instance no longer shows. */
+function releaseIdsOfGoneOperations(
+  key: ProviderSignInKey,
+  operations: ReadonlyArray<ProviderConnectionOperation>,
+) {
+  for (const request of pending.get(keyOf(key)) ?? []) {
+    if (
+      request.operationId !== undefined &&
+      !operations.some((operation) => operation.operationId === request.operationId)
+    ) {
+      release(key, request.id);
+    }
+  }
+}
+
 function setOpening(id: string, opening: ProviderSignInBrowserOpening) {
   openings.delete(id);
   openings.set(id, opening);
@@ -364,6 +422,22 @@ const TERMINAL_STATUSES = new Set<ProviderConnectionOperation["status"]>([
   "cancelled",
 ]);
 
+/** Whether the operation is still current, still this id's, and still waiting on the same page. */
+function stillWaiting(
+  key: ProviderSignInKey,
+  operation: ProviderConnectionOperation & { readonly authorizationUrl: string },
+  requestId: string,
+): boolean {
+  const current = currentOperation(key, operation.operationId);
+  return (
+    current !== undefined &&
+    holds(key, requestId) &&
+    current.signInRequestId === requestId &&
+    opensPage(current) &&
+    current.authorizationUrl === operation.authorizationUrl
+  );
+}
+
 /** Acts on an operation that carries one of this client's request ids. */
 async function considerOwnOperation(
   key: ProviderSignInKey,
@@ -372,6 +446,7 @@ async function considerOwnOperation(
 ): Promise<void> {
   const requestId = operation.signInRequestId;
   if (requestId === undefined || !holds(key, requestId)) return;
+  if (!stampOrRelease(key, requestId, operation.operationId)) return;
   if (TERMINAL_STATUSES.has(operation.status)) {
     release(key, requestId);
     return;
@@ -384,6 +459,8 @@ async function considerOwnOperation(
   }
   // Without the command yet, the id waits for a snapshot after it is registered.
   if (claimsInFlight.has(openingKey) || claimPage === null) return;
+  // A reply the stream already overtook waits for the snapshot that shows it.
+  if (!stillWaiting(key, operation, requestId)) return;
   claimsInFlight.add(openingKey);
   let granted: boolean | undefined;
   try {
@@ -399,18 +476,9 @@ async function considerOwnOperation(
   }
   if (granted === undefined) return;
   // The operation may have ended or moved on while the claim was answered.
-  // Nothing newer known for the instance: the operation as it was claimed.
-  const current = latestOperations.has(keyOf(key))
-    ? latestOperation(key, operation.operationId)
-    : operation;
-  const stillWaiting =
-    current !== undefined &&
-    holds(key, requestId) &&
-    current.signInRequestId === requestId &&
-    opensPage(current) &&
-    current.authorizationUrl === operation.authorizationUrl;
+  const current = stillWaiting(key, operation, requestId);
   release(key, requestId);
-  if (granted && stillWaiting) {
+  if (granted && current) {
     await openFor({
       key,
       operationId: operation.operationId,
@@ -432,11 +500,15 @@ export function observeProviderSignInSnapshots(
   for (const provider of providers) {
     const key = { environmentId, instanceId: provider.instanceId };
     const providerName = provider.displayName?.trim() || String(provider.driver);
-    const operations = [provider.connection?.operation, provider.connection?.accountOperation];
-    noteLatestOperations(key, providerName, operations);
+    const operations = [
+      provider.connection?.operation,
+      provider.connection?.accountOperation,
+    ].filter((operation) => operation !== null && operation !== undefined);
+    noteSnapshotOperations(key, providerName, operations);
     if (!pending.has(keyOf(key))) continue;
+    releaseIdsOfGoneOperations(key, operations);
     for (const operation of operations) {
-      if (operation) void considerOwnOperation(key, operation, providerName);
+      void considerOwnOperation(key, operation, providerName);
     }
   }
 }
@@ -479,10 +551,7 @@ export async function startProviderSignIn<T>(input: {
     notify();
   }
   const operation = input.operationOf(result);
-  // A reply is no newer than a snapshot that already shows its operation.
-  if (operation && latestOperation(input.key, operation.operationId) === undefined) {
-    noteLatestOperations(input.key, input.providerName, [operation]);
-  }
+  if (operation) noteReplyOperation(input.key, input.providerName, operation);
   if (operation?.signInRequestId !== undefined) {
     // A start this client joined to one already in flight shares that start's
     // operation, so its own id has nothing left to identify.

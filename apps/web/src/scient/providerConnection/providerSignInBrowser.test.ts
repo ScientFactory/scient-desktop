@@ -345,6 +345,71 @@ describe("provider sign-in page opening", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("does not let a delayed start reply revive an operation a snapshot replaced", async () => {
+    let grant!: (granted: boolean) => void;
+    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
+    let id!: string;
+    let reply!: (operation: ProviderConnectionOperation) => void;
+    const started = start((requestId) => {
+      id = requestId;
+      return new Promise((resolve) => (reply = resolve));
+    });
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+
+    observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
+    reply(operation({ signInRequestId: id }));
+    await started;
+    grant(true);
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("lets a start reply seed the operation while no snapshot has shown the instance", async () => {
+    let grant!: (granted: boolean) => void;
+    server.claim.mockImplementationOnce(() => new Promise<boolean>((resolve) => (grant = resolve)));
+    const started = start(async (id) => operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    grant(true);
+    await started;
+    expect(open.mock.calls).toEqual([[url]]);
+  });
+
+  it("waits for the snapshot that shows a reply's operation once snapshots have arrived", async () => {
+    observe(operation({ operationId: "connect-0", status: "failed" }));
+    let id!: string;
+    await start(async (requestId) => {
+      id = requestId;
+      return operation({ signInRequestId: requestId });
+    });
+    expect(server.claim).not.toHaveBeenCalled();
+    expect(storage.getItem(STORAGE_KEY)).toContain(id);
+
+    observe(operation({ signInRequestId: id }));
+    await settle();
+    expect(server.claim).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls).toEqual([[url]]);
+  });
+
+  it("releases a held id once a snapshot no longer shows the operation it was stamped on", async () => {
+    const id = await startWithLostReply();
+    const { authorizationUrl: _url, ...starting } = operation({
+      status: "starting",
+      signInRequestId: id,
+    });
+    observe(starting);
+    expect(storage.getItem(STORAGE_KEY)).toContain(id);
+    observe(operation({ operationId: "connect-2", signInRequestId: "another-client-request" }));
+    await settle();
+    expect(storage.getItem(STORAGE_KEY)).toBeNull();
+    expect(server.claim).not.toHaveBeenCalled();
+  });
+
   it("drops ids of expired operations", async () => {
     const id = await startWithLostReply();
     clock += 16 * 60_000;
