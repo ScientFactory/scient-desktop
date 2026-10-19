@@ -634,7 +634,6 @@ test("workflow preserves full fallback, complete evidence, required shard names,
     mobile,
     /BASE_SHA: \$\{\{ github.event.pull_request.base.sha \|\| github.event.merge_group.base_sha \|\| github.event.before \}\}/,
   );
-  assert.match(mobile, /git diff --no-renames --name-only -z "\$BASE_SHA" "\$GITHUB_SHA"/);
   assert.match(mobile, /fetch-depth: 0/);
   assert.ok(!/gh api|pulls\//.test(mobile), "the mobile gate never reads a live PR file list");
   for (const gate of ["compute-ci-gate.mjs", "windows-packaging-ci-gate.mjs"]) {
@@ -645,4 +644,96 @@ test("workflow preserves full fallback, complete evidence, required shard names,
       `${gate} compares the event base with the tested commit`,
     );
   }
+});
+
+// The mobile gate's own script, as the workflow runs it.
+function mobileGateScript() {
+  const workflow = fs.readFileSync(path.join(__dirname, "../workflows/ci.yml"), "utf8");
+  const job = workflow.split(/^ {2}mobile_native_changes:\n/m)[1].split(/^ {2}[\w-]+:\n/m)[0];
+  const lines = [];
+  for (const line of job.split(/^ {8}run: \|\n/m)[1].split("\n")) {
+    if (line.trim() !== "" && !line.startsWith(" ".repeat(10))) break;
+    lines.push(line.slice(10));
+  }
+  return lines.join("\n");
+}
+
+test("the mobile gate classifies the tested diff, including renames and newline filenames", (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ci-mobile-gate-"));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const env = {
+    ...process.env,
+    GIT_INDEX_FILE: path.join(temp, "index"),
+    GIT_AUTHOR_NAME: "CI",
+    GIT_AUTHOR_EMAIL: "ci@example.invalid",
+    GIT_COMMITTER_NAME: "CI",
+    GIT_COMMITTER_EMAIL: "ci@example.invalid",
+  };
+  // Plumbing only, so a filename no file system accepts can still be committed.
+  const git = (args, input) =>
+    execFileSync("git", ["-c", "core.protectNTFS=false", ...args], {
+      cwd: temp,
+      env,
+      input,
+      encoding: "utf8",
+    }).trim();
+  git(["init", "-q"]);
+  const blob = git(["hash-object", "-w", "--stdin"], "x\n");
+  const commit = (files, parent) => {
+    fs.rmSync(env.GIT_INDEX_FILE, { force: true });
+    for (const file of files)
+      git(["update-index", "--add", "--cacheinfo", `100644,${blob},${file}`]);
+    const tree = git(["write-tree"]);
+    return git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", "change"]);
+  };
+  const script = mobileGateScript();
+  const gate = (base, head) => {
+    const output = path.join(temp, "output");
+    fs.writeFileSync(output, "");
+    execFileSync("bash", ["-c", script], {
+      cwd: temp,
+      env: { ...env, BASE_SHA: base, GITHUB_SHA: head, GITHUB_OUTPUT: output },
+      stdio: "pipe",
+    });
+    return fs.readFileSync(output, "utf8").trim();
+  };
+  const base = commit(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt"]);
+  const after = (files) => commit(files, base);
+  assert.equal(
+    gate(base, after(["docs/a.md", "docs/b.md", "samples/Foo.swift", "apps/mobile/Kept.kt"])),
+    "changed=false",
+  );
+  assert.equal(gate(base, base), "changed=false");
+  assert.equal(
+    gate(
+      base,
+      after(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt", "apps/mobile/Bar.swift"]),
+    ),
+    "changed=true",
+  );
+  // Renamed into, or out of, the native paths.
+  assert.equal(
+    gate(base, after(["docs/a.md", "apps/mobile/Foo.swift", "apps/mobile/Kept.kt"])),
+    "changed=true",
+  );
+  assert.equal(
+    gate(base, after(["docs/a.md", "samples/Foo.swift", "samples/Kept.kt"])),
+    "changed=true",
+  );
+  // A newline inside a filename must not split it into two unmatched lines.
+  assert.equal(
+    gate(
+      base,
+      after([
+        "docs/a.md",
+        "samples/Foo.swift",
+        "apps/mobile/Kept.kt",
+        "apps/mobile/Foo\nBar.swift",
+      ]),
+    ),
+    "changed=true",
+  );
+  // Anything unresolvable runs the lint.
+  assert.equal(gate("not-a-commit", base), "changed=true");
+  assert.equal(gate("0".repeat(40), base), "changed=true");
 });

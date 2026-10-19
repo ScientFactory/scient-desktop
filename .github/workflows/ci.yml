@@ -660,8 +660,9 @@ jobs:
 
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
           # Without rename detection a rename lists both paths: renaming a matched file
-          # out of the matched paths removes a lint input just like editing it.
-          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\0' '\n') \
+          # out of the matched paths removes a lint input just like editing it. A newline
+          # inside a filename becomes `?`, so each path stays on one line for the matcher.
+          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\n\0' '?\n') \
             || fail_open "Could not resolve changed files."
 
           # Sources scripts/mobile-native-static-check.ts lints, plus the tool
