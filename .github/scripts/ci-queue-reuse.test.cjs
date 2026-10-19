@@ -405,6 +405,7 @@ const queueMismatches = [
   ["a PR run of other content", "receipt", "treeSha", OTHER],
   ["a PR proof claiming reuse", "receipt", "reusedFrom", 7],
   ["a proof of another run", "receipt", "runId", 11],
+  ["a PR run whose workflow came from another commit", "receipt", "workflowSha", OTHER],
 ];
 for (const [name, change] of [
   ...queueMismatches.map(setter),
@@ -625,5 +626,23 @@ test("workflow preserves full fallback, complete evidence, required shard names,
       /if: \$\{\{ !cancelled\(\) && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' \}\}/,
     );
     assert.ok(!/uses: |vp run/.test(stand), `${job}_reused only reports the reused shard`);
+  }
+  // Reuse relies on every change gate comparing the event's base with the tested commit; a live
+  // PR file list can change during a run.
+  const mobile = sections.get("mobile_native_changes");
+  assert.match(
+    mobile,
+    /BASE_SHA: \$\{\{ github.event.pull_request.base.sha \|\| github.event.merge_group.base_sha \|\| github.event.before \}\}/,
+  );
+  assert.match(mobile, /git diff --no-renames --name-only -z "\$BASE_SHA" "\$GITHUB_SHA"/);
+  assert.match(mobile, /fetch-depth: 0/);
+  assert.ok(!/gh api|pulls\//.test(mobile), "the mobile gate never reads a live PR file list");
+  for (const gate of ["compute-ci-gate.mjs", "windows-packaging-ci-gate.mjs"]) {
+    const source = fs.readFileSync(path.join(__dirname, gate), "utf8");
+    assert.match(
+      source,
+      /const base = event\.pull_request\?\.base\.sha \?\? event\.merge_group\?\.base_sha \?\? event\.before;\n\s*const head = process\.env\.GITHUB_SHA;/,
+      `${gate} compares the event base with the tested commit`,
+    );
   }
 });

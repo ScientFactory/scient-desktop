@@ -636,16 +636,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: .github/scripts
       - name: Detect mobile native changes
         id: detect
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BEFORE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
+          # The same immutable comparison as the other change gates on every event. A PR's live
+          # file list can change during a run, and the merge queue reuses this decision.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           set -uo pipefail
 
@@ -655,40 +658,11 @@ jobs:
             exit 0
           }
 
-          count_rows() {
-            printf '%s\n' "$1" | grep -c . || true
-          }
-
-          # One row per changed file, holding the new path and, for a rename,
-          # the path it replaced: renaming a matched file out of the matched
-          # paths removes a lint input just like editing it.
-          row='[.filename, (.previous_filename // empty)] | @tsv'
-
-          if [[ -n "${PR_NUMBER}" ]]; then
-            # The PR files endpoint stops at 3000 files and pagination cannot
-            # extend it, so cross-check against the count the PR itself reports.
-            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
-              || fail_open "Could not read the pull request."
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -lt "$expected" ]]; then
-              fail_open "GitHub listed only ${listed} of ${expected} changed files."
-            fi
-          else
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            # The compare endpoint reports at most 300 files and pagination does
-            # not extend that list, so a full list may be hiding native changes.
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -ge 300 ]]; then
-              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
-            fi
-          fi
-
-          paths=$(tr '\t' '\n' <<< "$rows")
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
+          # Without rename detection a rename lists both paths: renaming a matched file
+          # out of the matched paths removes a lint input just like editing it.
+          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\0' '\n') \
+            || fail_open "Could not resolve changed files."
 
           # Sources scripts/mobile-native-static-check.ts lints, plus the tool
           # and rule configuration that decides how it lints them, plus the

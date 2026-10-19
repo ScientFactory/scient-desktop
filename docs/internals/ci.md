@@ -51,9 +51,10 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
   SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
   that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Renames are matched on both their old and new path. The gate fails
-  open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
-  gate job itself fails, the lint runs. The macOS job installs only the dependency closure needed
+  success for the required check. Like the other change gates, it diffs the event's base against the
+  tested commit with Git on every event, not a PR's live file list. Renames are matched on both their
+  old and new path. The gate fails open in every other case: if the base is missing, the
+  changed-file list cannot be resolved, or the gate job itself fails, the lint runs. The macOS job installs only the dependency closure needed
   by `@t3tools/scripts`, does not restore or save the repository-wide dependency cache, and fails if
   SwiftLint, ktlint, or detekt is unavailable before invoking the canonical native checker directly.
   It deliberately avoids `vp run` because Vite+ resolves task configuration for unrelated workspace
@@ -70,11 +71,11 @@ The receipt certifies all applicable lanes, including web browser tests and mobi
   tested the same content against the same base, and the PR head already holds that content:
   the PR contained the latest `main` when its CI ran, nothing has landed since, and nothing is
   queued ahead of it. The queue commit must merge exactly that PR head onto the group base, and
-  the PR run's tested merge commit must have the same tree and parents. Because the merge then
-  changes nothing, the PR's changed-file list equals the queue's diff for every change gate, and
-  a path-limited history read such as Compute recipe sealing follows the PR head rather than
-  the merge commit, whose timestamp differs between the two merges. Otherwise the candidate
-  runs normal CI.
+  the PR run's tested merge commit, which its workflow ran from, must have the same tree and
+  parents. Every change gate compares the event's base with the tested commit, so equal base and
+  content give each gate the same input. Because the merge then changes nothing, a path-limited
+  history read such as Compute recipe sealing follows the PR head rather than the merge commit,
+  whose timestamp differs between the two merges. Otherwise the candidate runs normal CI.
 - **Main push.** A push reuses queue qualification when every queue entry it lands qualified
   that exact commit from its first parent, back to the commit `main` held before the push. The
   queue lands up to `max_entries_to_merge` (4) entries in one push; a longer chain runs normal
