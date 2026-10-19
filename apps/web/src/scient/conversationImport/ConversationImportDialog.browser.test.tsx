@@ -87,8 +87,18 @@ vi.mock("../../state/environments", async (importOriginal) => {
     { environmentId: local, label: "Local", connection: { phase: "connected" } },
     { environmentId: remote, label: "Lab workstation", connection: { phase: "connected" } },
   ];
+  const entities = await import("../../state/entities");
   return {
     ...(await importOriginal<object>()),
+    // Provider statuses derive from the server configs, as the real atom does; the mocked
+    // configs are full server configs.
+    useEnvironmentProviders: () =>
+      new Map(
+        [...entities.useServerConfigs()].map(([id, config]) => [
+          id,
+          (config as ServerConfig).providers,
+        ]),
+      ),
     useEnvironments: () => ({ environments }),
     usePrimaryEnvironmentId: () => local,
   };

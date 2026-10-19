@@ -87,26 +87,31 @@ export function ManagedRuntimeComposerSetup(props: {
   const run = async (next: Pending) => {
     setLocalError(null);
     setPending(next);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      if (next === "cancel") {
-        if (active) await props.controller.cancelRuntime(active.operationId);
-      } else if (next === "external-update") {
-        await props.controller.updateExternalRuntime();
-      } else {
-        await startReviewedProviderRuntimeAction(props.controller, next);
+      try {
+        if (next === "cancel") {
+          if (active) await props.controller.cancelRuntime(active.operationId);
+        } else if (next === "external-update") {
+          await props.controller.updateExternalRuntime();
+        } else {
+          await startReviewedProviderRuntimeAction(props.controller, next);
+        }
+      } catch (cause) {
+        setLocalError(
+          providerLifecycleFailureMessage(
+            cause,
+            next === "cancel"
+              ? `Scient could not cancel ${name} setup.`
+              : `Scient could not ${next === "external-update" ? "update" : next} ${name}.`,
+          ),
+        );
       }
     } catch (cause) {
-      setLocalError(
-        providerLifecycleFailureMessage(
-          cause,
-          next === "cancel"
-            ? `Scient could not cancel ${name} setup.`
-            : `Scient could not ${next === "external-update" ? "update" : next} ${name}.`,
-        ),
-      );
-    } finally {
-      setPending(null);
+      actionFailure = { cause };
     }
+    setPending(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   /** Models need the tool's own probe, so the entry point waits for it. */

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
@@ -11,12 +11,12 @@ import { cn } from "../../lib/utils";
 export function FadeTruncate(props: { readonly text: string; readonly className?: string }) {
   const [overflowing, setOverflowing] = useState(false);
   // The observer reports once on attach and again on every resize.
-  const observe = useCallback((element: HTMLSpanElement | null) => {
+  const observe = (element: HTMLSpanElement | null) => {
     if (element === null) return;
     return observeResize(element, () => {
       setOverflowing(element.scrollWidth > element.clientWidth + 1);
     });
-  }, []);
+  };
 
   return (
     <span

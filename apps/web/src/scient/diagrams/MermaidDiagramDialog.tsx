@@ -9,7 +9,7 @@ import {
   PlusIcon,
   ScanIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -61,7 +61,7 @@ export function MermaidDiagramDialog({
   title,
 }: MermaidDiagramDialogProps) {
   const [zoom, setZoom] = useState<DiagramZoom>("fit");
-  const naturalWidth = useMemo(() => intrinsicSvgWidth(svg), [svg]);
+  const naturalWidth = intrinsicSvgWidth(svg);
   const numericZoom = zoom === "fit" ? 100 : zoom;
   const diagramWidth = zoom === "fit" ? "100%" : `${Math.round(naturalWidth * (zoom / 100))}px`;
 

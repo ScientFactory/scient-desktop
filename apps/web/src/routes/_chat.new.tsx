@@ -2,8 +2,6 @@
 import { parseScientNewThreadLink as parseNewThreadLink } from "@t3tools/shared/scientPromptLinks";
 // SCIENT-FORK:END
 import { createFileRoute, useLocation } from "@tanstack/react-router";
-import { useMemo } from "react";
-
 import { NewThreadLinkView } from "../components/promptLinks/NewThreadLinkView";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -11,7 +9,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 // The query is read raw: the router's own search parsing turns `prompt=123` into a number.
 function NewThreadLinkRoute() {
   const search = useLocation({ select: (location) => location.searchStr });
-  const parsed = useMemo(() => parseNewThreadLink(search), [search]);
+  const parsed = parseNewThreadLink(search);
   if (!parsed.ok) {
     return (
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">

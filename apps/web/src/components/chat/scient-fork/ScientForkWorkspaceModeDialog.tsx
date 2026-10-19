@@ -7,15 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
 import { SplitIcon } from "lucide-react";
-import {
-  type FormEvent,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
 import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
@@ -164,12 +156,9 @@ export function ScientForkDialog({
 }) {
   const originEnvironmentId = props.open ? (origin?.environmentId ?? null) : null;
   const environmentThreads = useEnvironmentThreadShells(originEnvironmentId);
-  const archiveEnvironmentIds = useMemo(
-    () => (originEnvironmentId === null ? [] : [originEnvironmentId]),
-    [originEnvironmentId],
-  );
+  const archiveEnvironmentIds = originEnvironmentId === null ? [] : [originEnvironmentId];
   const { snapshots: archivedSnapshots } = useArchivedThreadSnapshots(archiveEnvironmentIds);
-  const proposedTitle = useMemo(() => {
+  const proposedTitle = (() => {
     if (!props.open || origin === null) return "";
     const forkLineage =
       origin.source === undefined ? origin.forkLineage : origin.source.forkLineage;
@@ -183,7 +172,7 @@ export function ScientForkDialog({
         (thread) => thread.projectId === origin.projectId,
       ),
     });
-  }, [archivedSnapshots, environmentThreads, origin, props.open]);
+  })();
 
   return <ScientForkWorkspaceModeDialog {...props} proposedTitle={proposedTitle} />;
 }
@@ -212,7 +201,7 @@ export function ScientForkWorkspaceModeDialog({
   const [titleDraft, setTitleDraft] = useState(proposedTitle);
   const [titleEdited, setTitleEdited] = useState(false);
   const [newWorktree, setNewWorktree] = useState(false);
-  const wasOpenRef = useRef(false);
+  const [wasOpen, setWasOpen] = useState(false);
   const [closingForNavigation, setClosingForNavigation] = useState(false);
   const [skippedImages, setSkippedImages] = useState<ReadonlyArray<string> | null>(null);
   const finishImageConfirmation = useRef<((proceed: boolean) => void) | null>(null);
@@ -249,21 +238,19 @@ export function ScientForkWorkspaceModeDialog({
     complete?.(open && openSinceSubmit.current);
   }, [closingForNavigation, open]);
 
-  useEffect(() => {
-    if (open && !wasOpenRef.current) {
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
       setTitleDraft(proposedTitle);
       setTitleEdited(false);
       setNewWorktree(false);
     }
-    wasOpenRef.current = open;
-  }, [open, proposedTitle]);
+  }
 
   // Follow live sibling-title changes only until the user edits the proposal.
-  useEffect(() => {
-    if (open && !titleEdited && !disabled && !locked) {
-      setTitleDraft(proposedTitle);
-    }
-  }, [open, proposedTitle, titleEdited, disabled, locked]);
+  if (open && !titleEdited && !disabled && !locked && titleDraft !== proposedTitle) {
+    setTitleDraft(proposedTitle);
+  }
 
   const displayedTitle = locked && retryTitle !== undefined ? retryTitle : titleDraft;
   const selectedNewWorktree =
@@ -329,10 +316,12 @@ export function ScientForkWorkspaceModeDialog({
           description: "Fork from the same message again to resume it.",
         });
       }
-    } finally {
-      // A failed navigation reopens the same form with its saved retry state.
+    } catch (error) {
       setClosingForNavigation(false);
+      throw error;
     }
+    // A failed navigation reopens the same form with its saved retry state.
+    setClosingForNavigation(false);
   };
 
   if (closingForNavigation) return null;

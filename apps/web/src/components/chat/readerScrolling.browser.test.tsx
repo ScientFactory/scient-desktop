@@ -1,7 +1,8 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { StrictMode, createRef, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { StrictMode, createRef, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -774,25 +775,22 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   function Reader({ pending }: { pending: boolean }) {
     const isAtEndRef = useRef(true);
     const control = useTimelineEndControl({ isAtEndRef, onReachedEnd: () => {} });
-    const report = useCallback(
-      (atEnd: boolean) => {
-        const list = listRef.current;
-        const viewport = list?.getScrollableNode();
-        const state = list?.getState();
-        if (state && viewport)
-          reports.push({
-            atEnd,
-            measuredGap: readingEndGapOnScreen(state, viewport, base.contentInsetEndAdjustment),
-            predicate: readerAtReadingEnd(state, base.contentInsetEndAdjustment),
-            scrollTop: viewport.scrollTop,
-            virtualScroll: state.scroll,
-            virtualViewport: state.scrollLength,
-            positionedThreadKey,
-          });
-        control.onIsAtEndChange(atEnd);
-      },
-      [control.onIsAtEndChange],
-    );
+    const report = useStableCallback((atEnd: boolean) => {
+      const list = listRef.current;
+      const viewport = list?.getScrollableNode();
+      const state = list?.getState();
+      if (state && viewport)
+        reports.push({
+          atEnd,
+          measuredGap: readingEndGapOnScreen(state, viewport, base.contentInsetEndAdjustment),
+          predicate: readerAtReadingEnd(state, base.contentInsetEndAdjustment),
+          scrollTop: viewport.scrollTop,
+          virtualScroll: state.scroll,
+          virtualViewport: state.scrollLength,
+          positionedThreadKey,
+        });
+      control.onIsAtEndChange(atEnd);
+    });
     return (
       <div style={{ position: "relative", height: "100%" }}>
         <MessagesTimeline

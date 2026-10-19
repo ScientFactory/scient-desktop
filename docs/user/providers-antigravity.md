@@ -61,12 +61,11 @@ official agent:
 
 Gemini Enterprise resolves access for its configured project and location.
 Agent Platform can use Application Default Credentials on the environment.
-Configured keys are stored in that environment's provider settings and passed
-only to Antigravity. Ambient `GEMINI_API_KEY` and `GOOGLE_*` values do not
-silently change the selected method.
-
-Changing the method stops that provider instance's sessions. Disconnect or
-sign out before switching accounts.
+The environment stores the Antigravity API key outside its settings file, and
+clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
+ambient `GEMINI_API_KEY` and Google credential variables do not override them.
+Changing the method stops the instance's sessions. Sign out before replacing an
+account.
 
 ## Runtime ownership and updates
 
@@ -176,7 +175,7 @@ Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase
 that external credential store.
 
-Disconnect does not erase API keys saved in provider settings or Application
+Disconnect does not erase API keys saved for the instance or Application
 Default Credentials managed outside Scient. Remove those separately if you no
 longer want that credential method available.
 

@@ -17,7 +17,7 @@ import {
   type ThreadSectionProjectRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { filterSidebarV2VisibleThreads } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
@@ -168,15 +168,12 @@ export function useSidebarSections(input: {
     [] as string[],
     CollapsedSectionIds,
   );
-  const onSectionCreated = useCallback(
-    (section: SectionRef) => {
-      const groupId = sectionGroupId(section);
-      setCollapsedIds((current) =>
-        current.filter((id) => id !== groupId && id !== section.sectionId),
-      );
-    },
-    [setCollapsedIds],
-  );
+  const onSectionCreated = (section: SectionRef) => {
+    const groupId = sectionGroupId(section);
+    setCollapsedIds((current) =>
+      current.filter((id) => id !== groupId && id !== section.sectionId),
+    );
+  };
   const newSection = useNewSectionForThreads({ onCreated: onSectionCreated });
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
 
@@ -185,51 +182,37 @@ export function useSidebarSections(input: {
   const sectionsView = viewMode === "sections" && supported;
 
   // A project scope lists only that project's sections (see sectionGroupIdsInProjectScope).
-  const scopeProjectKeys = useMemo(
-    () =>
-      scopeProjectRefs === null
-        ? null
-        : new Set(scopeProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`)),
-    [scopeProjectRefs],
-  );
+  const scopeProjectKeys =
+    scopeProjectRefs === null
+      ? null
+      : new Set(scopeProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`));
   const loadedKey = useAtomValue(loadedThreadEnvironmentsKeyAtom);
-  const loadedEnvironmentIds = useMemo(
-    () => new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []),
-    [loadedKey],
-  );
-  const listedGroupIds = useMemo(
-    () =>
-      sectionGroupIdsInProjectScope({
-        layouts,
-        scopeProjectKeys,
-        loadedEnvironmentIds,
-        threads: input.threads,
-      }),
-    [input.threads, layouts, loadedEnvironmentIds, scopeProjectKeys],
-  );
-  const canonicalGroups = useMemo(
-    () =>
-      groupThreadsBySection({
-        layouts,
-        pinned: pinnedThreads,
-        active: activeThreads,
-        listedGroupIds,
-      }),
-    [activeThreads, layouts, listedGroupIds, pinnedThreads],
-  );
+  const loadedEnvironmentIds = new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []);
+  const listedGroupIds = sectionGroupIdsInProjectScope({
+    layouts,
+    scopeProjectKeys,
+    loadedEnvironmentIds,
+    threads: input.threads,
+  });
+  const canonicalGroups = groupThreadsBySection({
+    layouts,
+    pinned: pinnedThreads,
+    active: activeThreads,
+    listedGroupIds,
+  });
   // Saved before sections were environment-local, collapsed sections are
   // listed by section id alone; those still collapse every section with it.
-  const collapsedGroupIds = useMemo(() => {
+  const collapsedGroupIds = (() => {
     const stored = new Set(collapsedIds);
     const collapsed = new Set(collapsedIds);
     for (const group of canonicalGroups) {
       if (group.section !== null && stored.has(group.section.id)) collapsed.add(group.id);
     }
     return collapsed as ReadonlySet<string>;
-  }, [canonicalGroups, collapsedIds]);
+  })();
   // Machine names qualify section headers once the listed sections come from
   // more than one environment.
-  const environmentLabels = useMemo(() => {
+  const environmentLabels = (() => {
     const listed = new Set(
       canonicalGroups.flatMap((group) =>
         group.environmentId === null ? [] : [group.environmentId],
@@ -243,8 +226,8 @@ export function useSidebarSections(input: {
           : [],
       ),
     ) as ReadonlyMap<string, string>;
-  }, [canonicalGroups, environments]);
-  const completeGroups = useMemo(() => {
+  })();
+  const completeGroups = (() => {
     const now = input.now ?? new Date().toISOString();
     // The rows the sidebar can show, regardless of project scope; hidden subagents never place.
     const active = filterSidebarV2VisibleThreads(input.threads, null).filter((thread) => {
@@ -260,29 +243,21 @@ export function useSidebarSections(input: {
       pinned: [],
       active: sortActiveThreadsByOrderKey(active),
     });
-  }, [input.now, input.threads, layouts, serverConfigs]);
-  const placementInputs = useMemo(
-    () =>
-      completeGroups.map((group) => ({
-        id: group.id,
-        rows: group.threads.map((thread) => {
-          const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-          return {
-            key,
-            orderKey: thread.activeOrderKey ?? null,
-            eligible: placementEligible(thread, visits[key], input.now ?? new Date().toISOString()),
-          };
-        }),
-      })),
-    [completeGroups, input.now, visits],
-  );
-  const knownPlacementKeys = useMemo(
-    () =>
-      input.threads
-        .filter((thread) => thread.archivedAt === null)
-        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    [input.threads],
-  );
+  })();
+  const placementInputs = completeGroups.map((group) => ({
+    id: group.id,
+    rows: group.threads.map((thread) => {
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return {
+        key,
+        orderKey: thread.activeOrderKey ?? null,
+        eligible: placementEligible(thread, visits[key], input.now ?? new Date().toISOString()),
+      };
+    }),
+  }));
+  const knownPlacementKeys = input.threads
+    .filter((thread) => thread.archivedAt === null)
+    .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
   // Once, before placement first reads its storage.
   useState(() => migrateLegacyPlacement(() => window.localStorage, PLACEMENT_SCOPE));
   const placement = useAutomaticPlacement({
@@ -292,7 +267,7 @@ export function useSidebarSections(input: {
     ready: supported && snapshotsReady === true,
     knownKeys: knownPlacementKeys,
   });
-  const groups = useMemo(() => {
+  const groups = (() => {
     if (!placement.enabled) return canonicalGroups;
     return canonicalGroups.map((group) => {
       const order = placement.state.groups.find((entry) => entry.id === group.id)?.order;
@@ -308,280 +283,243 @@ export function useSidebarSections(input: {
         );
       return { ...group, threads: [...pinned, ...active] };
     });
-  }, [canonicalGroups, placement.enabled, placement.state]);
-  const canonicalGroupOrders = useMemo(
-    () =>
-      placement.enabled
-        ? new Map(
-            canonicalGroups.map((group) => [
-              group.id,
-              group.threads
-                .filter((thread) => thread.pinnedAt == null)
-                .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-            ]),
-          )
-        : undefined,
-    [canonicalGroups, placement.enabled],
-  );
-  const onManualPlacement = useCallback<NonNullable<SidebarSectionsViewProps["onManualPlacement"]>>(
-    (groupId, order, key, orderKeys) => {
-      const ref = parseScopedThreadKey(key);
-      const thread = ref === null ? null : readThreadShell(ref);
-      const movedRow =
-        thread === null
-          ? undefined
-          : {
-              key,
-              orderKey: thread.activeOrderKey ?? null,
-              eligible: placementEligible(
-                thread,
-                useUiStateStore.getState().threadLastVisitedAtById[key],
-                new Date().toISOString(),
-              ),
-            };
-      placement.onManualPlacement(groupId, order, key, orderKeys, movedRow);
-    },
-    [placement.onManualPlacement],
-  );
+  })();
+  const canonicalGroupOrders = placement.enabled
+    ? new Map(
+        canonicalGroups.map((group) => [
+          group.id,
+          group.threads
+            .filter((thread) => thread.pinnedAt == null)
+            .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+        ]),
+      )
+    : undefined;
+  const onManualPlacement = ((groupId, order, key, orderKeys) => {
+    const ref = parseScopedThreadKey(key);
+    const thread = ref === null ? null : readThreadShell(ref);
+    const movedRow =
+      thread === null
+        ? undefined
+        : {
+            key,
+            orderKey: thread.activeOrderKey ?? null,
+            eligible: placementEligible(
+              thread,
+              useUiStateStore.getState().threadLastVisitedAtById[key],
+              new Date().toISOString(),
+            ),
+          };
+    placement.onManualPlacement(groupId, order, key, orderKeys, movedRow);
+  }) as NonNullable<SidebarSectionsViewProps["onManualPlacement"]>;
   /** Rows in display order; a collapsed section still shows the open thread. */
-  const visibleGroupThreads = useMemo(
-    () =>
-      groups.flatMap((group) =>
-        collapsedGroupIds.has(group.id)
-          ? group.threads.filter(
-              (thread) =>
-                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-            )
-          : group.threads,
-      ),
-    [collapsedGroupIds, groups, routeThreadKey],
+  const visibleGroupThreads = groups.flatMap((group) =>
+    collapsedGroupIds.has(group.id)
+      ? group.threads.filter(
+          (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        )
+      : group.threads,
   );
 
   const { menuFor, handleMenuAction } = useThreadSectionMenu(newSection.request);
 
-  const applyPendingSection = useCallback(
-    async (threadRef: ScopedThreadRef, section: SectionRef) =>
-      (await setThreadSection(threadRef, section))._tag === "Success",
-    [setThreadSection],
-  );
+  const applyPendingSection = async (threadRef: ScopedThreadRef, section: SectionRef) =>
+    (await setThreadSection(threadRef, section))._tag === "Success";
   useApplyPendingNewThreadSections({ threads: input.threads, apply: applyPendingSection });
   useEmptySectionCleanup({ threads: input.threads });
 
   // General starts an ordinary thread; a section files the new thread, which
   // must therefore start on the section's environment.
-  const startNewThreadInSection = useCallback(
-    (group: SectionGroup<Shell> | null) => {
-      const contextProjectRef = resolveThreadActionProjectRef({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-      const projectRef =
-        group === null
-          ? contextProjectRef
-          : projectRefForSection(group, contextProjectRef, input.threads);
-      if (projectRef === null) {
-        if (group !== null && contextProjectRef !== null) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "No project to start the thread in",
-              description:
-                "This section is on another machine. Open a project there, then start the thread from the section.",
-            }),
-          );
-        }
-        return;
+  const startNewThreadInSection = (group: SectionGroup<Shell> | null) => {
+    const contextProjectRef = resolveThreadActionProjectRef({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+    const projectRef =
+      group === null
+        ? contextProjectRef
+        : projectRefForSection(group, contextProjectRef, input.threads);
+    if (projectRef === null) {
+      if (group !== null && contextProjectRef !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "No project to start the thread in",
+            description:
+              "This section is on another machine. Open a project there, then start the thread from the section.",
+          }),
+        );
       }
-      onBeforeNewThread();
-      void newThreadContext.handleNewThread(projectRef).then((draft) => {
-        if (draft !== null && group?.section != null && group.environmentId !== null) {
-          rememberSectionForNewThread(draft.threadId, {
-            environmentId: group.environmentId,
-            sectionId: group.section.id,
-          });
-        }
-      });
-    },
-    [input.threads, newThreadContext, onBeforeNewThread],
-  );
+      return;
+    }
+    onBeforeNewThread();
+    void newThreadContext.handleNewThread(projectRef).then((draft) => {
+      if (draft !== null && group?.section != null && group.environmentId !== null) {
+        rememberSectionForNewThread(draft.threadId, {
+          environmentId: group.environmentId,
+          sectionId: group.section.id,
+        });
+      }
+    });
+  };
 
-  const renameSection = useCallback(
-    (groupId: string, name: string) => {
-      setRenamingSectionId(null);
-      const ref = sectionRefFromGroupId(groupId);
-      if (ref === null) return;
-      void catalogs.rename(ref, name).then((result) => {
-        if (result === null) {
-          toastManager.add(
-            stackedThreadToast({ type: "error", title: "Failed to rename section" }),
-          );
-        } else if (result.kind === "duplicate") {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `A section named “${result.existing.name}” already exists`,
-            }),
-          );
-        }
-      });
-    },
-    [catalogs],
-  );
+  const renameSection = (groupId: string, name: string) => {
+    setRenamingSectionId(null);
+    const ref = sectionRefFromGroupId(groupId);
+    if (ref === null) return;
+    void catalogs.rename(ref, name).then((result) => {
+      if (result === null) {
+        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to rename section" }));
+      } else if (result.kind === "duplicate") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `A section named “${result.existing.name}” already exists`,
+          }),
+        );
+      }
+    });
+  };
 
   /**
    * Takes the new order of the listed groups; hidden sections keep their
    * slots. Each environment saves its own sections' order and General's place
    * among them; environments whose part is unchanged are not written.
    */
-  const reorderSections = useCallback(
-    (listedOrder: readonly string[]) => {
-      const before = canonicalGroups.map((group) => group.id);
-      const writes = layouts.flatMap((layout) => {
-        const next = environmentGroupOrder(layout.environmentId, listedOrder);
-        const previous = environmentGroupOrder(layout.environmentId, before);
-        if (
-          next === null ||
-          (previous !== null &&
-            next.length === previous.length &&
-            next.every((id, index) => id === previous[index]))
-        ) {
-          return [];
-        }
-        return [catalogs.reorder(layout.environmentId, next)];
-      });
-      void Promise.all(writes).then((saved) => {
-        if (saved.some((ok) => !ok)) {
-          toastManager.add(
-            stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),
-          );
-        }
-      });
-    },
-    [canonicalGroups, catalogs, layouts],
-  );
+  const reorderSections = (listedOrder: readonly string[]) => {
+    const before = canonicalGroups.map((group) => group.id);
+    const writes = layouts.flatMap((layout) => {
+      const next = environmentGroupOrder(layout.environmentId, listedOrder);
+      const previous = environmentGroupOrder(layout.environmentId, before);
+      if (
+        next === null ||
+        (previous !== null &&
+          next.length === previous.length &&
+          next.every((id, index) => id === previous[index]))
+      ) {
+        return [];
+      }
+      return [catalogs.reorder(layout.environmentId, next)];
+    });
+    void Promise.all(writes).then((saved) => {
+      if (saved.some((ok) => !ok)) {
+        toastManager.add(
+          stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),
+        );
+      }
+    });
+  };
 
-  const deleteSection = useCallback(
-    async (group: SectionGroup<Shell>) => {
-      const api = readLocalApi();
-      const section = group.section;
-      if (!api || section === null || group.environmentId === null) return;
-      const environmentId = EnvironmentId.make(group.environmentId);
-      const memberCount = input.threads.filter(
-        (thread) =>
-          thread.archivedAt === null &&
-          thread.environmentId === environmentId &&
-          thread.sectionId === section.id,
-      ).length;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          memberCount === 0
-            ? `Delete the section “${section.name}”?`
-            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to General. No conversations are deleted.`,
-          { variant: "destructive" },
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-      const removed = await catalogs.remove({ environmentId, sectionId: section.id });
-      if (removed === null) {
-        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to delete section" }));
+  const deleteSection = async (group: SectionGroup<Shell>) => {
+    const api = readLocalApi();
+    const section = group.section;
+    if (!api || section === null || group.environmentId === null) return;
+    const environmentId = EnvironmentId.make(group.environmentId);
+    const memberCount = input.threads.filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        thread.environmentId === environmentId &&
+        thread.sectionId === section.id,
+    ).length;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        memberCount === 0
+          ? `Delete the section “${section.name}”?`
+          : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to General. No conversations are deleted.`,
+        { variant: "destructive" },
+      ),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    const removed = await catalogs.remove({ environmentId, sectionId: section.id });
+    if (removed === null) {
+      toastManager.add(stackedThreadToast({ type: "error", title: "Failed to delete section" }));
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: `Deleted section “${section.name}”`,
+      actionProps: {
+        children: "Undo",
+        onClick: () => {
+          void catalogs.restore(environmentId, removed);
+        },
+      },
+    });
+  };
+
+  const openSectionMenu = async (
+    group: SectionGroup<Shell>,
+    position: { x: number; y: number },
+  ) => {
+    const api = readLocalApi();
+    if (!api || group.section === null) return;
+    // Moves step over General and the listed sections of the same
+    // environment: order between environments is not saved.
+    const order = groups
+      .filter(
+        (candidate) =>
+          candidate.id === GENERAL_SECTION_GROUP_ID ||
+          candidate.environmentId === group.environmentId,
+      )
+      .map((candidate) => candidate.id);
+    const index = order.indexOf(group.id);
+    placement.onInteractionChange(true);
+    const clicked = await settlePromise(() =>
+      api.contextMenu.show(
+        [
+          { id: "new-thread", label: "New thread in section", icon: "message-square-plus" },
+          { id: "rename", label: "Rename section", icon: "pencil", separatorBefore: true },
+          { id: "move-up", label: "Move up", disabled: index <= 0 },
+          {
+            id: "move-down",
+            label: "Move down",
+            disabled: index < 0 || index >= order.length - 1,
+          },
+          {
+            id: "delete",
+            label: "Delete section",
+            icon: "trash",
+            destructive: true,
+            separatorBefore: true,
+          },
+        ],
+        position,
+      ),
+    );
+    placement.onInteractionChange(false);
+    if (clicked._tag === "Failure" || clicked.value === null) return;
+    switch (clicked.value) {
+      case "new-thread":
+        startNewThreadInSection(group);
+        return;
+      case "rename":
+        setRenamingSectionId(group.id);
+        return;
+      case "move-up":
+      case "move-down": {
+        const ids = [...order];
+        const target = clicked.value === "move-up" ? index - 1 : index + 1;
+        ids.splice(index, 1);
+        ids.splice(target, 0, group.id);
+        reorderSections(ids);
         return;
       }
-      toastManager.add({
-        type: "success",
-        title: `Deleted section “${section.name}”`,
-        actionProps: {
-          children: "Undo",
-          onClick: () => {
-            void catalogs.restore(environmentId, removed);
-          },
-        },
-      });
-    },
-    [catalogs, input.threads],
-  );
+      case "delete":
+        await deleteSection(group);
+        return;
+    }
+  };
 
-  const openSectionMenu = useCallback(
-    async (group: SectionGroup<Shell>, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api || group.section === null) return;
-      // Moves step over General and the listed sections of the same
-      // environment: order between environments is not saved.
-      const order = groups
-        .filter(
-          (candidate) =>
-            candidate.id === GENERAL_SECTION_GROUP_ID ||
-            candidate.environmentId === group.environmentId,
-        )
-        .map((candidate) => candidate.id);
-      const index = order.indexOf(group.id);
-      placement.onInteractionChange(true);
-      const clicked = await settlePromise(() =>
-        api.contextMenu.show(
-          [
-            { id: "new-thread", label: "New thread in section", icon: "message-square-plus" },
-            { id: "rename", label: "Rename section", icon: "pencil", separatorBefore: true },
-            { id: "move-up", label: "Move up", disabled: index <= 0 },
-            {
-              id: "move-down",
-              label: "Move down",
-              disabled: index < 0 || index >= order.length - 1,
-            },
-            {
-              id: "delete",
-              label: "Delete section",
-              icon: "trash",
-              destructive: true,
-              separatorBefore: true,
-            },
-          ],
-          position,
-        ),
-      );
-      placement.onInteractionChange(false);
-      if (clicked._tag === "Failure" || clicked.value === null) return;
-      switch (clicked.value) {
-        case "new-thread":
-          startNewThreadInSection(group);
-          return;
-        case "rename":
-          setRenamingSectionId(group.id);
-          return;
-        case "move-up":
-        case "move-down": {
-          const ids = [...order];
-          const target = clicked.value === "move-up" ? index - 1 : index + 1;
-          ids.splice(index, 1);
-          ids.splice(target, 0, group.id);
-          reorderSections(ids);
-          return;
-        }
-        case "delete":
-          await deleteSection(group);
-          return;
-      }
-    },
-    [
-      deleteSection,
-      groups,
-      placement.onInteractionChange,
-      reorderSections,
-      startNewThreadInSection,
-    ],
-  );
-
-  const toggleGroup = useCallback(
-    (groupId: string) => {
-      const legacyId = sectionRefFromGroupId(groupId)?.sectionId;
-      const collapsed = collapsedGroupIds.has(groupId);
-      setCollapsedIds((current) => {
-        const rest = current.filter((id) => id !== groupId && id !== legacyId);
-        return collapsed ? rest : [...rest, groupId];
-      });
-    },
-    [collapsedGroupIds, setCollapsedIds],
-  );
+  const toggleGroup = (groupId: string) => {
+    const legacyId = sectionRefFromGroupId(groupId)?.sectionId;
+    const collapsed = collapsedGroupIds.has(groupId);
+    setCollapsedIds((current) => {
+      const rest = current.filter((id) => id !== groupId && id !== legacyId);
+      return collapsed ? rest : [...rest, groupId];
+    });
+  };
 
   const viewProps: SidebarSectionsOwnViewProps = {
     groups,

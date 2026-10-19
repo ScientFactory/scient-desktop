@@ -1,5 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { computeEnvironment } from "~/state/compute";
@@ -43,57 +43,51 @@ export function useCloseComputeOwnedSurfaces(input: {
     activeWorkspaceRoot,
     commands: { cancelComputeBatchRun, stopComputeSession, getComputeSession },
   } = input;
-  const computeContextIdForSurface = useCallback(
-    (surface: RightPanelSurface): ComputeContextId | null => {
-      if (surface.kind === "scient" && surface.module === "compute") {
-        return surface.contextId ?? null;
-      }
-      if (surface.kind === "file" && surface.attachment !== undefined) return null;
-      const relativePath =
-        surface.kind === "file"
-          ? surface.relativePath
-          : surface.kind === "scient" && surface.module === "file"
-            ? surface.path
-            : null;
-      if (
-        activeThreadRef === null ||
-        activeWorkspaceRoot === undefined ||
-        relativePath === null ||
-        computeSourceLanguageForPath(relativePath) === null
-      ) {
-        return null;
-      }
-      return computeFileContextId({
-        environmentId: activeThreadRef.environmentId,
-        threadId: activeThreadRef.threadId,
-        cwd: activeWorkspaceRoot,
-        relativePath,
+  const computeContextIdForSurface = (surface: RightPanelSurface): ComputeContextId | null => {
+    if (surface.kind === "scient" && surface.module === "compute") {
+      return surface.contextId ?? null;
+    }
+    if (surface.kind === "file" && surface.attachment !== undefined) return null;
+    const relativePath =
+      surface.kind === "file"
+        ? surface.relativePath
+        : surface.kind === "scient" && surface.module === "file"
+          ? surface.path
+          : null;
+    if (
+      activeThreadRef === null ||
+      activeWorkspaceRoot === undefined ||
+      relativePath === null ||
+      computeSourceLanguageForPath(relativePath) === null
+    ) {
+      return null;
+    }
+    return computeFileContextId({
+      environmentId: activeThreadRef.environmentId,
+      threadId: activeThreadRef.threadId,
+      cwd: activeWorkspaceRoot,
+      relativePath,
+    });
+  };
+  return useStableCallback(async (surfaces: readonly RightPanelSurface[]) => {
+    const contextIds = [
+      ...new Set(
+        surfaces
+          .map(computeContextIdForSurface)
+          .filter((contextId): contextId is ComputeContextId => contextId !== null),
+      ),
+    ];
+    for (const contextId of contextIds) {
+      const result = await closeComputeContext({
+        contextId,
+        stopSession: stopComputeSession,
+        getSession: getComputeSession,
+        cancelBatchRun: cancelComputeBatchRun,
       });
-    },
-    [activeThreadRef, activeWorkspaceRoot],
-  );
-  return useCallback(
-    async (surfaces: readonly RightPanelSurface[]) => {
-      const contextIds = [
-        ...new Set(
-          surfaces
-            .map(computeContextIdForSurface)
-            .filter((contextId): contextId is ComputeContextId => contextId !== null),
-        ),
-      ];
-      for (const contextId of contextIds) {
-        const result = await closeComputeContext({
-          contextId,
-          stopSession: stopComputeSession,
-          getSession: getComputeSession,
-          cancelBatchRun: cancelComputeBatchRun,
-        });
-        if (!result.closed) return false;
-        useComputeContextStore.getState().removeContext(contextId);
-        useComputeFilePresentationStore.getState().remove(contextId);
-      }
-      return true;
-    },
-    [computeContextIdForSurface, getComputeSession, stopComputeSession, cancelComputeBatchRun],
-  );
+      if (!result.closed) return false;
+      useComputeContextStore.getState().removeContext(contextId);
+      useComputeFilePresentationStore.getState().remove(contextId);
+    }
+    return true;
+  });
 }

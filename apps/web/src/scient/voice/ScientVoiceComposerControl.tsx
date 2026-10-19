@@ -2,7 +2,7 @@
 // Async lifecycle and stale-operation protection live in the controller hook;
 // this component only renders the current state into one explicit footer slot.
 
-import { memo, type ReactNode, useMemo, useEffect } from "react";
+import { memo, type ReactNode, useEffect } from "react";
 import {
   ArrowUpIcon,
   CircleAlertIcon,
@@ -214,7 +214,7 @@ export function ScientVoiceComposerControl({
   presentation = "composer",
   readyModelOnly = false,
 }: ScientVoiceComposerControlProps): ReactNode {
-  const client = useMemo(() => getVoiceBridge(), []);
+  const client = getVoiceBridge();
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
@@ -222,10 +222,7 @@ export function ScientVoiceComposerControl({
   const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
     reportFailure: false,
   });
-  const correctionClient = useMemo(
-    () => makeVoiceTranscriptCorrectionClient(runVoiceTranscriptCorrection),
-    [runVoiceTranscriptCorrection],
-  );
+  const correctionClient = makeVoiceTranscriptCorrectionClient(runVoiceTranscriptCorrection);
   const controller = useScientVoiceController({
     client,
     correctionClient,

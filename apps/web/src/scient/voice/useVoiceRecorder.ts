@@ -1,10 +1,11 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 // Microphone capture lifecycle for local voice dictation.
 //
 // The generation guard is the important invariant: a permission prompt or
 // AudioWorklet load may resolve after cancel/unmount. A stale generation stops
 // its stream immediately and never creates a hidden recording graph.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { VOICE_CLIP_SAMPLE_RATE_HZ, encodeWavClip, type VoiceWavClip } from "./voiceWavEncoder.ts";
 import {
@@ -102,46 +103,48 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     onAutoStopRef.current = options?.onAutoStop;
   }, [options?.onAutoStop]);
 
-  const setStatus = useCallback((next: VoiceRecorderStatus) => {
+  const setStatus = useStableCallback((next: VoiceRecorderStatus) => {
     statusRef.current = next;
     if (mountedRef.current) setStatusState(next);
-  }, []);
+  });
 
-  const flushLevels = useCallback(() => {
+  const flushLevels = useStableCallback(() => {
     levelsAnimationFrameRef.current = null;
     const additions = pendingLevelsRef.current.splice(0);
     if (additions.length === 0 || !mountedRef.current) return;
     setLevels((previous) => [...previous, ...additions].slice(-VOICE_WAVEFORM_LEVEL_COUNT));
-  }, []);
+  });
 
-  const clearLevelUpdates = useCallback(() => {
+  const clearLevelUpdates = useStableCallback(() => {
     pendingLevelsRef.current = [];
     if (levelsAnimationFrameRef.current !== null) {
       window.cancelAnimationFrame(levelsAnimationFrameRef.current);
       levelsAnimationFrameRef.current = null;
     }
-  }, []);
+  });
 
-  const requestWorkletFlush = useCallback(async (worklet: AudioWorkletNode): Promise<void> => {
-    const requestId = (flushSequenceRef.current += 1);
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        flushResolversRef.current.delete(requestId);
-        resolve();
-      };
-      const timeout = setTimeout(finish, WORKLET_FLUSH_TIMEOUT_MS);
-      flushResolversRef.current.set(requestId, finish);
-      const command: VoiceWorkletFlushCommand = { type: "flush", requestId };
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePort, not Window.postMessage.
-      worklet.port.postMessage(command);
-    });
-  }, []);
+  const requestWorkletFlush = useStableCallback(
+    async (worklet: AudioWorkletNode): Promise<void> => {
+      const requestId = (flushSequenceRef.current += 1);
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          flushResolversRef.current.delete(requestId);
+          resolve();
+        };
+        const timeout = setTimeout(finish, WORKLET_FLUSH_TIMEOUT_MS);
+        flushResolversRef.current.set(requestId, finish);
+        const command: VoiceWorkletFlushCommand = { type: "flush", requestId };
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePort, not Window.postMessage.
+        worklet.port.postMessage(command);
+      });
+    },
+  );
 
-  const teardownSession = useCallback(
+  const teardownSession = useStableCallback(
     async (session: VoiceAudioSession, flushFinalFrame: boolean): Promise<void> => {
       const worklet = session.worklet;
       if (flushFinalFrame && worklet) await requestWorkletFlush(worklet);
@@ -164,53 +167,46 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
       if (context && context.state !== "closed") await context.close().catch(() => undefined);
       releaseOwnedVoiceSession(sessionRef, session);
     },
-    [requestWorkletFlush],
   );
 
-  const teardownAudio = useCallback(
-    async (flushFinalFrame: boolean): Promise<void> => {
-      if (autoStopTimerRef.current !== null) {
-        clearTimeout(autoStopTimerRef.current);
-        autoStopTimerRef.current = null;
+  const teardownAudio = useStableCallback(async (flushFinalFrame: boolean): Promise<void> => {
+    if (autoStopTimerRef.current !== null) {
+      clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+    const session = sessionRef.current;
+    if (session) await teardownSession(session, flushFinalFrame);
+    for (const resolve of flushResolversRef.current.values()) resolve();
+    flushResolversRef.current.clear();
+    clearLevelUpdates();
+  });
+
+  const finalize = useStableCallback((produceClip: boolean): Promise<VoiceWavClip | null> => {
+    const activeFinalization = finalizeInFlightRef.current;
+    if (activeFinalization) return activeFinalization;
+
+    let finalization: Promise<VoiceWavClip | null>;
+    finalization = (async () => {
+      generationRef.current += 1;
+      await teardownAudio(produceClip);
+      const frames = framesRef.current;
+      const rate = inputRateRef.current;
+      framesRef.current = [];
+      if (mountedRef.current) setLevels([]);
+      setStatus("idle");
+      if (!produceClip || frames.length === 0) return null;
+      const clip = encodeWavClip(frames, rate);
+      return clip.durationMs > 0 ? clip : null;
+    })().finally(() => {
+      if (finalizeInFlightRef.current === finalization) {
+        finalizeInFlightRef.current = null;
       }
-      const session = sessionRef.current;
-      if (session) await teardownSession(session, flushFinalFrame);
-      for (const resolve of flushResolversRef.current.values()) resolve();
-      flushResolversRef.current.clear();
-      clearLevelUpdates();
-    },
-    [clearLevelUpdates, teardownSession],
-  );
+    });
+    finalizeInFlightRef.current = finalization;
+    return finalization;
+  });
 
-  const finalize = useCallback(
-    (produceClip: boolean): Promise<VoiceWavClip | null> => {
-      const activeFinalization = finalizeInFlightRef.current;
-      if (activeFinalization) return activeFinalization;
-
-      let finalization: Promise<VoiceWavClip | null>;
-      finalization = (async () => {
-        generationRef.current += 1;
-        await teardownAudio(produceClip);
-        const frames = framesRef.current;
-        const rate = inputRateRef.current;
-        framesRef.current = [];
-        if (mountedRef.current) setLevels([]);
-        setStatus("idle");
-        if (!produceClip || frames.length === 0) return null;
-        const clip = encodeWavClip(frames, rate);
-        return clip.durationMs > 0 ? clip : null;
-      })().finally(() => {
-        if (finalizeInFlightRef.current === finalization) {
-          finalizeInFlightRef.current = null;
-        }
-      });
-      finalizeInFlightRef.current = finalization;
-      return finalization;
-    },
-    [setStatus, teardownAudio],
-  );
-
-  const start = useCallback(async (): Promise<boolean> => {
+  const start = async (): Promise<boolean> => {
     if (statusRef.current === "recording" || statusRef.current === "requesting-permission") {
       return false;
     }
@@ -317,13 +313,13 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
       setStatus("error");
       return false;
     }
-  }, [clearLevelUpdates, finalize, flushLevels, setStatus, teardownSession]);
+  };
 
-  const stop = useCallback(() => finalize(true), [finalize]);
-  const cancel = useCallback(async (): Promise<void> => {
+  const stop = useStableCallback(() => finalize(true));
+  const cancel = useStableCallback(async (): Promise<void> => {
     generationRef.current += 1;
     await finalize(false);
-  }, [finalize]);
+  });
 
   useEffect(() => {
     mountedRef.current = true;

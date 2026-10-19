@@ -4,7 +4,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
 } from "@t3tools/contracts";
 import { AlertCircle, ChevronLeft, LoaderCircle, Plus, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "../../components/ui/field";
@@ -128,8 +128,8 @@ export function SourceEditor(props: {
   readonly onRefreshed: (record: SourceRecord) => void;
   readonly onSaved: (record: SourceRecord) => void;
 }) {
-  const originalMetadata = useMemo(() => metadataFromRecord(props.record), [props.record]);
-  const sourceTypeOptions = useMemo(() => {
+  const originalMetadata = metadataFromRecord(props.record);
+  const sourceTypeOptions = (() => {
     if (COMMON_SOURCE_TYPES.some(([type]) => type === props.record.type)) {
       return COMMON_SOURCE_TYPES;
     }
@@ -138,7 +138,7 @@ export function SourceEditor(props: {
       [props.record.type, SOURCE_TYPE_LABELS[props.record.type]] as const,
       COMMON_SOURCE_TYPES.at(-1)!,
     ];
-  }, [props.record.type]);
+  })();
   const [metadata, setMetadata] = useState<Metadata>(originalMetadata);
   const [yearText, setYearText] = useState(
     originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),

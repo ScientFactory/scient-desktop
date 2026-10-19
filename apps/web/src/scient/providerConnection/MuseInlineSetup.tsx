@@ -118,20 +118,40 @@ function MuseAccountSetup(props: {
     if (pending !== null) return false;
     setPending(action);
     setError(null);
-    try {
-      const result = await command();
-      if (result._tag === "Success") return true;
-      if (!isAtomCommandInterrupted(result)) {
-        const failure = squashAtomCommandFailure(result);
-        setError(failure instanceof Error ? failure.message : "Muse sign-in failed. Try again.");
+    let actionFailure: { readonly cause: unknown } | undefined;
+    let actionResult: boolean = false;
+    finishAction: {
+      try {
+        try {
+          const result = await command();
+          if (result._tag === "Success") {
+            actionResult = true;
+            break finishAction;
+          }
+          if (!isAtomCommandInterrupted(result)) {
+            const failure = squashAtomCommandFailure(result);
+            setError(
+              failure instanceof Error ? failure.message : "Muse sign-in failed. Try again.",
+            );
+          }
+          {
+            actionResult = false;
+            break finishAction;
+          }
+        } catch {
+          setError("Muse sign-in failed. Try again.");
+          {
+            actionResult = false;
+            break finishAction;
+          }
+        }
+      } catch (cause) {
+        actionFailure = { cause };
       }
-      return false;
-    } catch {
-      setError("Muse sign-in failed. Try again.");
-      return false;
-    } finally {
-      setPending(null);
     }
+    setPending(null);
+    if (actionFailure) throw actionFailure.cause;
+    return actionResult;
   }
 
   const begin = (method: typeof DEVICE_METHOD | typeof KEY_METHOD) => {

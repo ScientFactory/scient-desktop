@@ -62,8 +62,10 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
     expect(surfaceSource).toContain("setPreferredMode(request.mode)");
     expect(surfaceSource).toContain(
-      "props.onLatexPresentationRequestHandled(props.relativePath, request)",
+      "const acknowledgePresentation = props.onLatexPresentationRequestHandled;",
     );
+    expect(surfaceSource).toContain("acknowledgePresentation(props.relativePath, request)");
+    expect(surfaceSource).toContain("acknowledgePresentationRequest(");
     expect(surfaceSource).not.toMatch(/persist\([^)]*request\.mode/u);
   });
 
@@ -111,14 +113,16 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("column: 0");
     expect(surfaceSource).toContain("column: position.column");
     expect(surfaceSource).toContain("pageHint: pdfPageRef.current");
-    expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
+    expect(surfaceSource).toContain("const pdfPageChange = useStableCallback(handlePdfPageChange)");
+    expect(surfaceSource).toContain("onPageChange: pdfPageChange");
   });
 
   it("keeps plain double-click navigation inside an already-open split", () => {
     expect(surfaceSource).toContain('if (mode !== "split") return;');
     expect(surfaceSource).toContain(
-      '...(mode === "split" ? { onInverseSearch: handleInverseSync } : {})',
+      '...(mode === "split" ? { onInverseSearch: inverseSync } : {})',
     );
+    expect(surfaceSource).toContain("const inverseSync = useStableCallback(handleInverseSync)");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
     expect(surfaceSource).not.toMatch(/event\.(?:ctrlKey|metaKey)/u);
   });

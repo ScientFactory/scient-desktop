@@ -166,8 +166,15 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
+// SCIENT-FORK:START - transport-neutral native sessions retain per-thread browser ownership.
+/**
+ * One agent: a provider session on one thread. Codex and OpenCode run every
+ * thread of a provider instance in one session, so the session alone would
+ * share one current tab, tab budget, and tab ownership across chats.
+ */
 const hostAssignmentKey = (scope: AgentInvocationContext.AgentInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.nativeSessionId !== undefined ? `native:${scope.nativeSessionId}` : `provider:${scope.providerSessionId}`}`;
+  `${scope.environmentId}\u0000${scope.nativeSessionId !== undefined ? `native:${scope.nativeSessionId}` : `provider:${scope.providerSessionId}`}\u0000${scope.threadId}`;
+// SCIENT-FORK:END
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 const decodeControlReason = Schema.decodeUnknownOption(PreviewAutomationControlReason);

@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -31,14 +30,11 @@ export function SidebarRowWindow({
   const [hasOpenControl, setHasOpenControl] = useState(false);
   const renderBody =
     alwaysRender || isNearViewport || hasFocus || hasPointer || hasNativeDrag || hasOpenControl;
-  const ref = useCallback(
-    (node: HTMLLIElement | null) => {
-      element.current = node;
-      rowRef(node);
-      sortableRef?.(node);
-    },
-    [rowRef, sortableRef],
-  );
+  const ref = (node: HTMLLIElement | null) => {
+    element.current = node;
+    rowRef(node);
+    sortableRef?.(node);
+  };
 
   useLayoutEffect(() => {
     if (!renderBody || !restoreFocus.current) return;

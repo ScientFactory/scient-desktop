@@ -2,31 +2,9 @@ import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-/**
- * Multi-instance validation slices for the live `ProviderInstanceRegistry`.
- *
- * Two axes of the driver/registry refactor are exercised here:
- *
- *  1. **Same driver, many instances** — the "multi-instance codex slice"
- *     describe block below configures two independent `codex` instances and
- *     asserts each gets its own closures and identity. This is the
- *     multi-codex capability the refactor exists to unlock.
- *
- *  2. **Many drivers, one registry** — the "all drivers slice" describe
- *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `droid`, `grok`, `opencode`) in a single
- *     `ProviderInstanceConfigMap` and asserts the registry boots them all
- *     without cross-contamination. This proves the driver SPI is uniform
- *     across every provider — any driver plugs into the registry through
- *     the same `ProviderDriver` value contract.
- *
- * Every instance in these tests is configured with `enabled: false` so the
- * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `droid` / `grok` / `opencode`
- * binaries. That keeps the assertions focused on registry routing
- * behaviour rather than the runtime details of each provider.
- */
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
@@ -50,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -87,6 +66,8 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
+
+vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -502,6 +483,141 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-a" } }),
+      );
+      const claudeId = ProviderInstanceId.make("claude_probe_recovery");
+      let probeCount = 0;
+      let successfulProbeCount = 0;
+      let failProbe = false;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              probeCount++;
+              if (failProbe) return Promise.reject(new Error("initialization failed"));
+              successfulProbeCount++;
+              return Promise.resolve({
+                commands: [
+                  {
+                    name: successfulProbeCount === 1 ? "last-good" : "recovered",
+                    description: "",
+                    argumentHint: "",
+                  },
+                ],
+                account: {
+                  email:
+                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
+                  subscriptionType: "pro",
+                  tokenSource: "oauth",
+                },
+              });
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
+              },
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const first = yield* claude!.snapshot.refresh;
+      expect(first).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-a@example.com", workspaceId: "org-a" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      });
+      expect(first.usageLimits?.unavailable).toBeUndefined();
+      expect(probeCount).toBe(1);
+
+      yield* TestClock.adjust("1 second");
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
+      );
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const accountChangedFailure = yield* claude!.snapshot.refresh;
+
+      expect(accountChangedFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
+      });
+      expect(accountChangedFailure.checkedAt).not.toBe(first.checkedAt);
+      expect(accountChangedFailure.usageLimits).toBeUndefined();
+      expect(accountChangedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      );
+      const failedProbeCount = probeCount;
+      expect(failedProbeCount).toBeGreaterThan(1);
+
+      failProbe = false;
+      const recovered = yield* claude!.snapshot.refresh;
+      expect(recovered).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      const recoveredProbeCount = probeCount;
+      expect(recoveredProbeCount).toBeGreaterThan(failedProbeCount);
+
+      yield* TestClock.adjust("1 second");
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const sameAccountFailure = yield* claude!.snapshot.refresh;
+      expect(sameAccountFailure).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(sameAccountFailure.usageLimits?.checkedAt).toBe(recovered.usageLimits?.checkedAt);
+      expect(sameAccountFailure.usageLimits?.windows).toEqual(recovered.usageLimits?.windows);
+      const sameAccountFailureProbeCount = probeCount;
+      expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
+
+      const repeatedFailure = yield* claude!.snapshot.refresh;
+      expect(repeatedFailure).toMatchObject({
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Claude Agent CLI failed while checking account status.",
+      });
+      expect(repeatedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      );
+      expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
     }).pipe(Effect.provide(testLayer)),
   );
 

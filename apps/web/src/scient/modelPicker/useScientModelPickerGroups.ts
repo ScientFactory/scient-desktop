@@ -4,7 +4,7 @@ import {
 } from "@t3tools/client-runtime/antigravity-model-presentation";
 import { groupDroidModelRows } from "@t3tools/client-runtime/droid-model-presentation";
 import type { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { ModelPickerItem } from "~/components/chat/ModelPickerContent";
 import { modelPickerModelKey } from "~/components/chat/modelPickerKeys";
@@ -61,7 +61,7 @@ export function useModelSourceSectionState(input: {
  * into one row per family, Droid splits into its own sections, and Oh My Pi
  * and Pi models split by source into collapsible sections.
  */
-export function useScientModelPickerGroups(input: {
+export function deriveScientModelPickerGroups(input: {
   readonly ungroupedFilteredModels: ReadonlyArray<ModelPickerItem>;
   readonly selectedInstanceId: ProviderInstanceId | "favorites";
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -86,7 +86,7 @@ export function useScientModelPickerGroups(input: {
     revealedModelSources,
     setRevealedModelSources,
   } = input.sourceSectionState;
-  const filteredModels = useMemo(() => {
+  const filteredModels = (() => {
     // Favorites remain exact model/effort shortcuts, including pre-existing bookmarks.
     if (
       selectedInstanceId === "favorites" ||
@@ -109,15 +109,9 @@ export function useScientModelPickerGroups(input: {
       const shown = visible.get(providerModelKey(row.instanceId, row.slug));
       return shown ? [shown] : [];
     });
-  }, [
-    ungroupedFilteredModels,
-    selectedInstanceId,
-    instanceEntries,
-    activeInstanceId,
-    activeModelSlug,
-  ]);
+  })();
 
-  const droidGroups = useMemo(() => {
+  const droidGroups = (() => {
     if (
       isSearching ||
       selectedInstanceId === "favorites" ||
@@ -126,9 +120,9 @@ export function useScientModelPickerGroups(input: {
     )
       return null;
     return groupDroidModelRows(filteredModels);
-  }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
+  })();
 
-  const sourceSectionRows = useMemo(() => {
+  const sourceSectionRows = (() => {
     const showsFavorites = selectedInstanceId === "favorites";
     if (
       showsFavorites ||
@@ -149,33 +143,21 @@ export function useScientModelPickerGroups(input: {
           modelKey: (model) => modelPickerModelKey(model.instanceId, model.slug),
         })
       : null;
-  }, [
-    collapsedModelSources,
-    entryByInstanceId,
-    filteredModels,
-    isSearching,
-    revealedModelSources,
-    selectedInstanceId,
-  ]);
+  })();
 
-  const toggleModelSourceSection = useCallback(
-    (key: string) => {
-      const expanded = sourceSectionRows?.sections.get(key)?.expanded ?? true;
-      setRevealedModelSources((revealed) => {
-        const next = new Set(revealed);
-        next.delete(key);
-        return next;
-      });
-      setCollapsedModelSources((collapsed) =>
-        expanded
-          ? [...collapsed.filter((entry) => entry !== key), key]
-          : collapsed.filter((entry) => entry !== key),
-      );
-    },
-    // setRevealedModelSources is a stable state setter, listed because it now
-    // arrives as a parameter.
-    [setCollapsedModelSources, setRevealedModelSources, sourceSectionRows],
-  );
+  const toggleModelSourceSection = (key: string) => {
+    const expanded = sourceSectionRows?.sections.get(key)?.expanded ?? true;
+    setRevealedModelSources((revealed) => {
+      const next = new Set(revealed);
+      next.delete(key);
+      return next;
+    });
+    setCollapsedModelSources((collapsed) =>
+      expanded
+        ? [...collapsed.filter((entry) => entry !== key), key]
+        : collapsed.filter((entry) => entry !== key),
+    );
+  };
 
   return { filteredModels, droidGroups, sourceSectionRows, toggleModelSourceSection };
 }

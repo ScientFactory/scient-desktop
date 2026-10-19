@@ -50,8 +50,8 @@ const source = PdfSourceDescriptor.make({
 
 let saveCopy: ((source: PdfSourceDescriptor) => Promise<AssetCopyResult>) | null = null;
 
-function CaptureHook() {
-  saveCopy = usePdfSaveCopy(environmentId);
+function CaptureHook({ capture }: { capture: (callback: NonNullable<typeof saveCopy>) => void }) {
+  capture(usePdfSaveCopy(environmentId));
   return null;
 }
 
@@ -70,7 +70,13 @@ describe("usePdfSaveCopy", () => {
       },
     });
     mocks.saveAssetCopy.mockResolvedValue({ _tag: "saved", path: "/tmp/Report.pdf" });
-    renderToStaticMarkup(<CaptureHook />);
+    renderToStaticMarkup(
+      <CaptureHook
+        capture={(callback) => {
+          saveCopy = callback;
+        }}
+      />,
+    );
   });
 
   it("authorizes the generated revision and delegates to the existing Save Copy host", async () => {
@@ -99,7 +105,13 @@ describe("usePdfSaveCopy", () => {
 
   it("fails before opening a Save dialog when the environment is disconnected", async () => {
     mocks.httpBaseUrl = null;
-    renderToStaticMarkup(<CaptureHook />);
+    renderToStaticMarkup(
+      <CaptureHook
+        capture={(callback) => {
+          saveCopy = callback;
+        }}
+      />,
+    );
 
     await expect(saveCopy?.(source)).rejects.toThrow("environment connection is unavailable");
     expect(mocks.createAssetUrl).not.toHaveBeenCalled();

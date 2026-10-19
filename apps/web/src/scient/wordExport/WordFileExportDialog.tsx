@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -46,56 +46,70 @@ export function WordFileExportDialog(props: {
   const tool = usePandocTool(environmentId);
   const refreshTool = tool.refresh;
 
-  const run = useCallback(async () => {
+  const run = async () => {
     if (runningRef.current) return;
     runningRef.current = true;
     setBusy(true);
     setError(null);
+    let operationFailure: { error: unknown } | null = null;
     try {
-      const revision = await savedRevision();
-      if (revision === null) {
-        setError("Save the file before exporting it to Word.");
-        return;
+      completeOperation: {
+        try {
+          const revision = await savedRevision();
+          if (revision === null) {
+            setError("Save the file before exporting it to Word.");
+            break completeOperation;
+          }
+          const result =
+            rootRelativePath === undefined
+              ? await exportWordFile(environmentId, {
+                  cwd,
+                  relativePath,
+                  revision,
+                  diagramCapture: await captureWordDiagrams(
+                    await prepareWordFileDiagrams(environmentId, { cwd, relativePath, revision }),
+                  ),
+                })
+              : await exportWordLatex(environmentId, {
+                  cwd,
+                  relativePath,
+                  rootRelativePath,
+                  revision,
+                });
+          const saved = await saveConversationExport(environmentId, result.file);
+          if (saved._tag === "cancelled") break completeOperation;
+          if (saved._tag === "failed") {
+            setError(saveFailureMessage(saved));
+            break completeOperation;
+          }
+          toastManager.add({
+            type: "success",
+            title: saved._tag === "saved" ? "Word file saved" : "Download started",
+            description: saved._tag === "saved" ? saved.path : result.file.fileName,
+          });
+          if (result.warnings.length > 0) {
+            toastManager.add({
+              type: "warning",
+              title: "Exported with notes",
+              description: result.warnings.map((warning) => warning.message).join("\n"),
+            });
+          }
+          onClose();
+        } catch (cause) {
+          setError(errorMessage(cause));
+          // A Pandoc that no longer starts is reported as needing a reinstall.
+          refreshTool();
+        }
       }
-      const result =
-        rootRelativePath === undefined
-          ? await exportWordFile(environmentId, {
-              cwd,
-              relativePath,
-              revision,
-              diagramCapture: await captureWordDiagrams(
-                await prepareWordFileDiagrams(environmentId, { cwd, relativePath, revision }),
-              ),
-            })
-          : await exportWordLatex(environmentId, { cwd, relativePath, rootRelativePath, revision });
-      const saved = await saveConversationExport(environmentId, result.file);
-      if (saved._tag === "cancelled") return;
-      if (saved._tag === "failed") {
-        setError(saveFailureMessage(saved));
-        return;
-      }
-      toastManager.add({
-        type: "success",
-        title: saved._tag === "saved" ? "Word file saved" : "Download started",
-        description: saved._tag === "saved" ? saved.path : result.file.fileName,
-      });
-      if (result.warnings.length > 0) {
-        toastManager.add({
-          type: "warning",
-          title: "Exported with notes",
-          description: result.warnings.map((warning) => warning.message).join("\n"),
-        });
-      }
-      onClose();
-    } catch (cause) {
-      setError(errorMessage(cause));
-      // A Pandoc that no longer starts is reported as needing a reinstall.
-      refreshTool();
-    } finally {
-      runningRef.current = false;
-      setBusy(false);
+    } catch (error) {
+      operationFailure = { error };
     }
-  }, [cwd, environmentId, onClose, refreshTool, relativePath, rootRelativePath, savedRevision]);
+
+    runningRef.current = false;
+    setBusy(false);
+
+    if (operationFailure !== null) throw operationFailure.error;
+  };
   const installed = tool.status?.installed === true;
   useEffect(() => {
     if (!installed || startedRef.current) return;

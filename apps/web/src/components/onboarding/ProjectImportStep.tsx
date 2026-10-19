@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
@@ -8,7 +9,7 @@ import { CommandId } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   partitionOnboardingProjects,
@@ -77,15 +78,22 @@ export function ProjectImportStep({
   );
   const importGenerationRef = useRef(0);
 
+  const [previousEnvironmentId, setPreviousEnvironmentId] = useState(environmentId);
+  if (previousEnvironmentId !== environmentId) {
+    setPreviousEnvironmentId(environmentId);
+    setDeselected(new Set());
+    setIsImporting(false);
+    setLandingProject(null);
+  }
+
+  const importEnvironmentRef = useRef(environmentId);
   // Candidate paths are per-environment; a target switch would otherwise
   // leave stale entries in the deselection set (and stale success records).
   useEffect(() => {
     importGenerationRef.current += 1;
-    setDeselected(new Set());
-    setIsImporting(false);
+    importEnvironmentRef.current = environmentId;
     importWarningRef.current = "";
     importedThreadCountRef.current = 0;
-    setLandingProject(null);
     importedProjectsRef.current = new Map();
     projectsWithImportedHistoryRef.current = new Map();
     lastImportSelectionRef.current = [];
@@ -95,6 +103,12 @@ export function ProjectImportStep({
     };
   }, [environmentId]);
 
+  const finishLanding = useStableCallback((projectRef: ScopedProjectRef) => {
+    setLandingProject(null);
+    void onDone(projectRef, importWarningRef.current, importedThreadCountRef.current).finally(() =>
+      setIsImporting(false),
+    );
+  });
   useEffect(() => {
     if (
       landingProject !== null &&
@@ -105,16 +119,12 @@ export function ProjectImportStep({
           project.environmentId === landingProject.environmentId,
       )
     ) {
-      setLandingProject(null);
-      void onDone(landingProject, importWarningRef.current, importedThreadCountRef.current).finally(
-        () => setIsImporting(false),
-      );
+      finishLanding(landingProject);
     }
-  }, [environmentId, landingProject, onDone, projects]);
+  }, [environmentId, landingProject, finishLanding, projects]);
 
-  const { available: candidates, recent } = useMemo(
-    () => partitionOnboardingProjects(scan.data?.candidates ?? []),
-    [scan.data],
+  const { available: candidates, recent } = partitionOnboardingProjects(
+    scan.data?.candidates ?? [],
   );
   const more = candidates.length - recent.length;
   const scanTruncated = scan.data?.truncated === true;
@@ -165,6 +175,7 @@ export function ProjectImportStep({
     for (const candidate of selection) {
       if (
         importGeneration !== importGenerationRef.current ||
+        importEnvironmentRef.current !== environmentId ||
         importedProjects !== importedProjectsRef.current
       ) {
         return;
@@ -195,6 +206,7 @@ export function ProjectImportStep({
         });
         if (
           importGeneration !== importGenerationRef.current ||
+          importEnvironmentRef.current !== environmentId ||
           importedProjects !== importedProjectsRef.current
         ) {
           return;
@@ -214,6 +226,7 @@ export function ProjectImportStep({
       });
       if (
         importGeneration !== importGenerationRef.current ||
+        importEnvironmentRef.current !== environmentId ||
         importedProjects !== importedProjectsRef.current
       ) {
         return;

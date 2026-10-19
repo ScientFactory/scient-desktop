@@ -209,19 +209,24 @@ function CodexBrowserSignInButton(props: {
 
   const signIn = async () => {
     setPending(true);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startCodexBrowserSignIn(controller);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not sign in to ${props.displayName}`,
-          description: actionErrorMessage(error),
-        }),
-      );
-    } finally {
-      setPending(false);
+      try {
+        await startCodexBrowserSignIn(controller);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not sign in to ${props.displayName}`,
+            description: actionErrorMessage(error),
+          }),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPending(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   return (
@@ -260,21 +265,26 @@ function ManagedRuntimeActionButton(props: {
     }
     pendingRef.current = true;
     setPending(true);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const plan = await controller.planRuntime(props.action);
-      await controller.startRuntime(plan);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not ${props.action} ${props.displayName}`,
-          description: actionErrorMessage(error),
-        }),
-      );
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
+      try {
+        const plan = await controller.planRuntime(props.action);
+        await controller.startRuntime(plan);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not ${props.action} ${props.displayName}`,
+            description: actionErrorMessage(error),
+          }),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    pendingRef.current = false;
+    setPending(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const label =

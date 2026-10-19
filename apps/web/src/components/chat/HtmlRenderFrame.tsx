@@ -8,7 +8,7 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon, PanelRightIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
@@ -49,16 +49,13 @@ export function HtmlRenderFrame(props: {
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId,
-      fileName,
-      mimeType: "text/html",
-      disposition: "inline" as const,
-    }),
-    [attachmentId, fileName],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId,
+    fileName,
+    mimeType: "text/html",
+    disposition: "inline" as const,
+  };
   // A cached URL with life left is reused, so the browser's cache serves the
   // page again; one near expiry is minted afresh, since a frame cannot report a
   // failed load.
@@ -66,11 +63,11 @@ export function HtmlRenderFrame(props: {
   const srcExpiresAt = useRef(0);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const showPage = useCallback(() => setReady(true), []);
-  const fitPage = useCallback((contentHeight: number) => {
+  const showPage = () => setReady(true);
+  const fitPage = (contentHeight: number) => {
     setContentHeight(contentHeight);
     setReady(true);
-  }, []);
+  };
   const { onFullscreenChange } = props;
   // SCIENT-FORK:START
   const { onOpen } = props;

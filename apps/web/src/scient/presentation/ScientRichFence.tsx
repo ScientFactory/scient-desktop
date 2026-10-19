@@ -1,5 +1,5 @@
-import { use, useCallback, useEffect, useState } from "react";
-import { MarkdownFindContext, useFindRevealRef } from "~/components/chat/markdownFindContext";
+import { use, useState } from "react";
+import { MarkdownFindContext, findRevealRef } from "~/components/chat/markdownFindContext";
 import { MermaidDiagramCard } from "../diagrams/MermaidDiagramCard";
 import { PlotlyChartCard } from "../visualizations/PlotlyChartCard";
 import { VegaLiteChartCard } from "../visualizations/VegaLiteChartCard";
@@ -27,6 +27,22 @@ interface ScientRichFenceProps {
   readonly title: string | null;
 }
 
+/** Mounted only during Find, so closing it resets transient reveal state by unmounting. */
+function ScientRichFenceFindSource({ source }: { readonly source: string }) {
+  const [visible, setVisible] = useState(false);
+  const revealRef = findRevealRef(() => setVisible(true));
+  return (
+    <pre
+      data-scient-rich-fence-find-source
+      ref={revealRef}
+      hidden={!visible}
+      className="scient-mermaid-source my-2 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed"
+    >
+      <code>{source}</code>
+    </pre>
+  );
+}
+
 export function ScientRichFence({
   authoringActions,
   sourceEditor,
@@ -39,12 +55,6 @@ export function ScientRichFence({
 }: ScientRichFenceProps) {
   const Renderer = SCIENT_RICH_FENCE_RENDERERS[kind];
   const searching = use(MarkdownFindContext);
-  const [findSourceVisible, setFindSourceVisible] = useState(false);
-  const revealSource = useCallback(() => setFindSourceVisible(true), []);
-  const sourceRevealRef = useFindRevealRef(revealSource);
-  useEffect(() => {
-    if (!searching) setFindSourceVisible(false);
-  }, [searching]);
 
   return (
     <>
@@ -59,16 +69,7 @@ export function ScientRichFence({
           title={title}
         />
       </div>
-      {searching ? (
-        <pre
-          data-scient-rich-fence-find-source
-          ref={sourceRevealRef}
-          hidden={!findSourceVisible}
-          className="scient-mermaid-source my-2 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed"
-        >
-          <code>{source}</code>
-        </pre>
-      ) : null}
+      {searching ? <ScientRichFenceFindSource source={source} /> : null}
     </>
   );
 }

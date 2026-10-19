@@ -17,7 +17,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, PencilIcon, QuoteIcon, XIcon } from "lucide-react";
 // SCIENT-FORK:END
 import {
-  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -325,18 +324,15 @@ export function AssistantCitationChip({
 
 function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = useCallback((element: HTMLElement) => {
+  const updateFade = (element: HTMLElement) => {
     const top = element.scrollTop > 1;
     const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
     setFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-  }, []);
-  const observeFade = useCallback(
-    (element: HTMLDivElement | null) =>
-      element ? observeResize(element, () => updateFade(element)) : undefined,
-    [updateFade],
-  );
+  };
+  const observeFade = (element: HTMLDivElement | null) =>
+    element ? observeResize(element, () => updateFade(element)) : undefined;
   return (
     <div
       ref={observeFade}

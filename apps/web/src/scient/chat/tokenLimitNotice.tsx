@@ -1,6 +1,5 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
 import {
@@ -16,7 +15,7 @@ const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
  * A response that stopped at a token limit shows a composer notice instead of
  * the thread error banner, once the thread is no longer working.
  */
-export function useTokenLimitNotice(input: {
+export function deriveTokenLimitNotice(input: {
   readonly routeThreadKey: string;
   readonly visibleThreadError: string | null;
   readonly threadErrorBannerKey: string | null;
@@ -33,15 +32,11 @@ export function useTokenLimitNotice(input: {
     runtimeStatus,
   } = input;
   const isTokenLimitError = isTokenLimitThreadError(visibleThreadError);
-  const truncationNoticeKey = useMemo(
-    () =>
-      getTruncationNoticeKey(
-        routeThreadKey,
-        turnItems ?? EMPTY_TURN_ITEMS,
-        latestRunId,
-        runtimeStatus,
-      ),
-    [routeThreadKey, turnItems, latestRunId, runtimeStatus],
+  const truncationNoticeKey = getTruncationNoticeKey(
+    routeThreadKey,
+    turnItems ?? EMPTY_TURN_ITEMS,
+    latestRunId,
+    runtimeStatus,
   );
   const tokenLimitNoticeKey =
     truncationNoticeKey ?? (isTokenLimitError ? threadErrorBannerKey : null);

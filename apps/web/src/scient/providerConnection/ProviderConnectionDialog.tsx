@@ -19,7 +19,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -336,22 +336,41 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
   const canCancel = isActiveProviderConnectionOperation(operation);
   const { copyToClipboard } = useCopyToClipboard();
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setLocalOperation(null);
     setLocalError(null);
     setAuthorizationCode("");
     setPendingAction(null);
-  }, [props.provider.instanceId]);
+  }
 
-  useEffect(() => {
+  const [previousLifecycle, setPreviousLifecycle] = useState(
+    () =>
+      [
+        props.provider.auth.status,
+        props.provider.connection?.runtime?.operation?.operationId,
+        props.provider.connection?.runtime?.operation?.status,
+        props.provider.connection?.runtime?.source,
+        props.provider.installed,
+      ] as const,
+  );
+  if (
+    !Object.is(previousLifecycle[0], props.provider.auth.status) ||
+    !Object.is(previousLifecycle[1], props.provider.connection?.runtime?.operation?.operationId) ||
+    !Object.is(previousLifecycle[2], props.provider.connection?.runtime?.operation?.status) ||
+    !Object.is(previousLifecycle[3], props.provider.connection?.runtime?.source) ||
+    !Object.is(previousLifecycle[4], props.provider.installed)
+  ) {
+    setPreviousLifecycle([
+      props.provider.auth.status,
+      props.provider.connection?.runtime?.operation?.operationId,
+      props.provider.connection?.runtime?.operation?.status,
+      props.provider.connection?.runtime?.source,
+      props.provider.installed,
+    ]);
     setLocalError(null);
-  }, [
-    props.provider.auth.status,
-    props.provider.connection?.runtime?.operation?.operationId,
-    props.provider.connection?.runtime?.operation?.status,
-    props.provider.connection?.runtime?.source,
-    props.provider.installed,
-  ]);
+  }
 
   const accountLabel = providerAccountIdentity(props.provider) ?? props.provider.auth.type ?? null;
   const acceptsAuthorizationCode = operation?.acceptsAuthorizationCode === true;

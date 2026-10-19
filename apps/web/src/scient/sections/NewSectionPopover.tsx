@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle } from "../../components/ui/popover";
@@ -39,14 +39,14 @@ export function NewSectionPopover(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly onSubmit: (name: string) => Promise<boolean>;
 }) {
-  const anchor = useMemo(() => {
+  const anchor = (() => {
     const origin = props.anchor;
     return origin === null || "getBoundingClientRect" in origin
       ? origin
       : {
           getBoundingClientRect: () => DOMRect.fromRect({ x: origin.x, y: origin.y }),
         };
-  }, [props.anchor]);
+  })();
   return (
     <Popover open={props.open} onOpenChange={props.onOpenChange} modal={false}>
       <PopoverPopup
@@ -92,14 +92,23 @@ function NewSectionForm(props: {
         if (saving || name.trim().length === 0) return;
         setSaving(true);
         setError(null);
+        let operationFailure: { error: unknown } | null = null;
         try {
-          if (await onSubmit(name)) onOpenChange(false);
-          else setError("The section could not be saved. Try again.");
-        } catch {
-          setError("The section could not be saved. Try again.");
-        } finally {
-          setSaving(false);
+          {
+            try {
+              if (await onSubmit(name)) onOpenChange(false);
+              else setError("The section could not be saved. Try again.");
+            } catch {
+              setError("The section could not be saved. Try again.");
+            }
+          }
+        } catch (error) {
+          operationFailure = { error };
         }
+
+        setSaving(false);
+
+        if (operationFailure !== null) throw operationFailure.error;
       }}
     >
       <div className="sr-only">

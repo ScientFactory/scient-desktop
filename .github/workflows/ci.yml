@@ -243,6 +243,31 @@ jobs:
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
+      # The browser project runs React tests in headless Chromium. Same cache key as
+      # test_server, so both jobs share one downloaded browser.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
       - name: Test
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
@@ -261,29 +286,6 @@ jobs:
           path: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
           if-no-files-found: ignore
           retention-days: 14
-
-  test_web_layout:
-    name: Test Web layout
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Install Chromium
-        run: apps/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
-
-      - name: Test layout
-        run: vp run --filter @t3tools/web test:layout
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of

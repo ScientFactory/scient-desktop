@@ -10,7 +10,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
@@ -74,23 +73,20 @@ export function useStartProviderRuntimeAction(): (input: {
   const startProviderRuntime = useAtomCommand(serverEnvironment.startProviderRuntime, {
     reportFailure: false,
   });
-  return useCallback(
-    async ({ environmentId, instanceId, action }) => {
-      const plan = resultValue(
-        await planProviderRuntime({ environmentId, input: { instanceId, action } }),
-        "Scient could not prepare the provider runtime action.",
-      );
-      const started = resultValue(
-        await startProviderRuntime({
-          environmentId,
-          input: { instanceId, action: plan.action, catalogRevision: plan.catalogRevision },
-        }),
-        "Scient could not start the provider runtime action.",
-      );
-      return providerFromResult(started.providers, instanceId);
-    },
-    [planProviderRuntime, startProviderRuntime],
-  );
+  return async ({ environmentId, instanceId, action }) => {
+    const plan = resultValue(
+      await planProviderRuntime({ environmentId, input: { instanceId, action } }),
+      "Scient could not prepare the provider runtime action.",
+    );
+    const started = resultValue(
+      await startProviderRuntime({
+        environmentId,
+        input: { instanceId, action: plan.action, catalogRevision: plan.catalogRevision },
+      }),
+      "Scient could not start the provider runtime action.",
+    );
+    return providerFromResult(started.providers, instanceId);
+  };
 }
 
 /**
@@ -134,52 +130,46 @@ export function useProviderLifecycleController(input: {
   const instanceId = input.provider.instanceId;
   const providerDriver = input.provider.driver;
 
-  const startConnection = useCallback(
-    async (method: ProviderConnectionMethod, mode?: "connect" | "reauthenticate") => {
-      const result = await startProviderConnection({
-        environmentId: input.environmentId,
-        input: { instanceId, method, ...(mode ? { mode } : {}) },
-      });
-      const value = resultValue(result, "Scient could not start provider sign in.");
-      return providerFromResult(value.providers, instanceId);
-    },
-    [input.environmentId, instanceId, startProviderConnection],
-  );
+  const startConnection = async (
+    method: ProviderConnectionMethod,
+    mode?: "connect" | "reauthenticate",
+  ) => {
+    const result = await startProviderConnection({
+      environmentId: input.environmentId,
+      input: { instanceId, method, ...(mode ? { mode } : {}) },
+    });
+    const value = resultValue(result, "Scient could not start provider sign in.");
+    return providerFromResult(value.providers, instanceId);
+  };
 
-  const cancelConnection = useCallback(
-    async (operationId: string) => {
-      const result = await cancelProviderConnection({
-        environmentId: input.environmentId,
-        input: { instanceId, operationId },
-      });
-      const value = resultValue(result, "Scient could not cancel provider sign in.");
-      return providerFromResult(value.providers, instanceId);
-    },
-    [cancelProviderConnection, input.environmentId, instanceId],
-  );
+  const cancelConnection = async (operationId: string) => {
+    const result = await cancelProviderConnection({
+      environmentId: input.environmentId,
+      input: { instanceId, operationId },
+    });
+    const value = resultValue(result, "Scient could not cancel provider sign in.");
+    return providerFromResult(value.providers, instanceId);
+  };
 
-  const submitAuthorizationCode = useCallback(
-    async (operationId: string, authorizationCode: string) => {
-      const result = await submitProviderAuthorizationCode({
-        environmentId: input.environmentId,
-        input: { instanceId, operationId, authorizationCode },
-      });
-      const value = resultValue(result, "Scient could not submit the provider authorization code.");
-      return providerFromResult(value.providers, instanceId);
-    },
-    [input.environmentId, instanceId, submitProviderAuthorizationCode],
-  );
+  const submitAuthorizationCode = async (operationId: string, authorizationCode: string) => {
+    const result = await submitProviderAuthorizationCode({
+      environmentId: input.environmentId,
+      input: { instanceId, operationId, authorizationCode },
+    });
+    const value = resultValue(result, "Scient could not submit the provider authorization code.");
+    return providerFromResult(value.providers, instanceId);
+  };
 
-  const disconnect = useCallback(async () => {
+  const disconnect = async () => {
     const result = await disconnectProvider({
       environmentId: input.environmentId,
       input: { instanceId },
     });
     const value = resultValue(result, "Scient could not disconnect the provider account.");
     return providerFromResult(value.providers, instanceId);
-  }, [disconnectProvider, input.environmentId, instanceId]);
+  };
 
-  const openAuthorizationPage = useCallback(async (url: string) => {
+  const openAuthorizationPage = async (url: string) => {
     if (!isSafeProviderAuthorizationUrl(url)) {
       throw new Error("Scient refused an invalid or insecure provider sign-in link.");
     }
@@ -190,97 +180,77 @@ export function useProviderLifecycleController(input: {
     // Preview hosts distinguish a popup from a new-tab link. Preserve the
     // originating setup page and isolate the authorization page from its opener.
     window.open(url, "_blank", "popup,noopener,noreferrer");
-  }, []);
+  };
 
-  const planRuntime = useCallback(
-    async (action: ProviderManagedRuntimeAction) => {
-      const result = await planProviderRuntime({
-        environmentId: input.environmentId,
-        input: { instanceId, action },
-      });
-      return resultValue(result, "Scient could not prepare the provider runtime action.");
-    },
-    [input.environmentId, instanceId, planProviderRuntime],
-  );
+  const planRuntime = async (action: ProviderManagedRuntimeAction) => {
+    const result = await planProviderRuntime({
+      environmentId: input.environmentId,
+      input: { instanceId, action },
+    });
+    return resultValue(result, "Scient could not prepare the provider runtime action.");
+  };
 
-  const startRuntime = useCallback(
-    async (plan: ProviderRuntimePlan, options?: { readonly acceptOlderThanSystem?: boolean }) => {
-      const start = async (currentPlan: ProviderRuntimePlan) =>
-        resultValue(
-          await startProviderRuntime({
-            environmentId: input.environmentId,
-            input: {
-              instanceId,
-              action: currentPlan.action,
-              catalogRevision: currentPlan.catalogRevision,
-              ...(options?.acceptOlderThanSystem === true ? { acceptOlderThanSystem: true } : {}),
-            },
-          }),
-          "Scient could not start the provider runtime action.",
-        );
-      const value = await start(plan).catch(async (cause: unknown) => {
-        if (plan.action === "remove" || !isRuntimePlanStale(cause)) throw cause;
-        return start(await planRuntime(plan.action));
-      });
-      return providerFromResult(value.providers, instanceId);
-    },
-    [input.environmentId, instanceId, planRuntime, startProviderRuntime],
-  );
+  const startRuntime = async (
+    plan: ProviderRuntimePlan,
+    options?: { readonly acceptOlderThanSystem?: boolean },
+  ) => {
+    const start = async (currentPlan: ProviderRuntimePlan) =>
+      resultValue(
+        await startProviderRuntime({
+          environmentId: input.environmentId,
+          input: {
+            instanceId,
+            action: currentPlan.action,
+            catalogRevision: currentPlan.catalogRevision,
+            ...(options?.acceptOlderThanSystem === true ? { acceptOlderThanSystem: true } : {}),
+          },
+        }),
+        "Scient could not start the provider runtime action.",
+      );
+    const value = await start(plan).catch(async (cause: unknown) => {
+      if (plan.action === "remove" || !isRuntimePlanStale(cause)) throw cause;
+      return start(await planRuntime(plan.action));
+    });
+    return providerFromResult(value.providers, instanceId);
+  };
 
-  const cancelRuntime = useCallback(
-    async (operationId: string) => {
-      const result = await cancelProviderRuntime({
-        environmentId: input.environmentId,
-        input: { instanceId, operationId },
-      });
-      const value = resultValue(result, "Scient could not cancel the provider runtime action.");
-      return providerFromResult(value.providers, instanceId);
-    },
-    [cancelProviderRuntime, input.environmentId, instanceId],
-  );
+  const cancelRuntime = async (operationId: string) => {
+    const result = await cancelProviderRuntime({
+      environmentId: input.environmentId,
+      input: { instanceId, operationId },
+    });
+    const value = resultValue(result, "Scient could not cancel the provider runtime action.");
+    return providerFromResult(value.providers, instanceId);
+  };
 
-  const updateExternalRuntime = useCallback(async () => {
+  const updateExternalRuntime = async () => {
     const result = await updateProvider({
       environmentId: input.environmentId,
       input: { provider: providerDriver, instanceId },
     });
     const value = resultValue(result, "Scient could not update the provider.");
     return providerFromResult(value.providers, instanceId);
-  }, [input.environmentId, instanceId, providerDriver, updateProvider]);
+  };
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     const result = await refreshProviders({
       environmentId: input.environmentId,
       input: { instanceId },
     });
     const value = resultValue(result, "Scient could not check the provider.");
     return providerFromResult(value.providers, instanceId);
-  }, [input.environmentId, instanceId, refreshProviders]);
+  };
 
-  return useMemo(
-    () => ({
-      startConnection,
-      cancelConnection,
-      submitAuthorizationCode,
-      disconnect,
-      openAuthorizationPage,
-      planRuntime,
-      startRuntime,
-      cancelRuntime,
-      updateExternalRuntime,
-      refresh,
-    }),
-    [
-      cancelConnection,
-      cancelRuntime,
-      disconnect,
-      openAuthorizationPage,
-      planRuntime,
-      refresh,
-      startConnection,
-      submitAuthorizationCode,
-      startRuntime,
-      updateExternalRuntime,
-    ],
-  );
+  return {
+    startConnection,
+    cancelConnection,
+    submitAuthorizationCode,
+    disconnect,
+    openAuthorizationPage,
+    planRuntime,
+    startRuntime,
+    cancelRuntime,
+    updateExternalRuntime,
+    refresh,
+  };
 }

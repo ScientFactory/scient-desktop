@@ -8,7 +8,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -88,10 +88,12 @@ export function CodexInlineSetup(props: {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
-  }, [props.provider.instanceId]);
+  }
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
@@ -135,90 +137,122 @@ export function CodexInlineSetup(props: {
   const install = async () => {
     setLocalError(null);
     setPendingAction("install");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startReviewedCodexRuntimeAction(props.controller, "install");
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await startReviewedCodexRuntimeAction(props.controller, "install");
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const update = async () => {
     setLocalError(null);
     setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await updateCodexRuntime(props.controller, props.provider);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await updateCodexRuntime(props.controller, props.provider);
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const repair = async () => {
     setLocalError(null);
     setPendingAction("repair");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await startReviewedCodexRuntimeAction(props.controller, "repair");
-      if (
-        provider.connection?.runtime?.operation?.action === "repair" &&
-        provider.connection.runtime.operation.status === "succeeded"
-      ) {
-        props.onRepairSucceeded?.();
+      try {
+        const provider = await startReviewedCodexRuntimeAction(props.controller, "repair");
+        if (
+          provider.connection?.runtime?.operation?.action === "repair" &&
+          provider.connection.runtime.operation.status === "succeeded"
+        ) {
+          props.onRepairSucceeded?.();
+        }
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
       }
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
     setPendingAction("cancel-runtime");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const signIn = async (method: "codex_browser" | "codex_device_code" | null = signInMethod) => {
     if (!method) return;
     setLocalError(null);
     setPendingAction(method === "codex_device_code" ? "device-sign-in" : "sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      if (method === "codex_device_code") {
-        await startCodexDeviceSignIn(props.controller);
-      } else {
-        await startCodexBrowserSignIn(props.controller);
+      try {
+        if (method === "codex_device_code") {
+          await startCodexDeviceSignIn(props.controller);
+        } else {
+          await startCodexBrowserSignIn(props.controller);
+        }
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
+        );
       }
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelSignIn = async () => {
     if (!activeConnectionOperation) return;
     setLocalError(null);
     setPendingAction("cancel-sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelConnection(activeConnectionOperation.operationId);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelConnection(activeConnectionOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (
@@ -454,18 +488,23 @@ export function CodexInlineSetup(props: {
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
   const canInstallManaged =
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
-  const useManaged = async () => {
+  const switchToManaged = async () => {
     setLocalError(null);
     setPendingAction("install");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startReviewedCodexRuntimeAction(props.controller, "install");
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await startReviewedCodexRuntimeAction(props.controller, "install");
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
   return (
     <SetupFrame>
@@ -516,7 +555,7 @@ export function CodexInlineSetup(props: {
         <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
-          onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
+          onUseManaged={canInstallManaged ? () => void switchToManaged() : undefined}
           provider={props.provider}
         />
       ) : null}

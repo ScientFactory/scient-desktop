@@ -1,10 +1,8 @@
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
 } from "react";
 import { resizeCursorForPlatform } from "~/lib/utils";
@@ -47,10 +45,8 @@ export function useScientSplit(options: UseScientSplitOptions) {
   const primaryPaneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const axis = options.axis ?? "x";
-  const bounds = useMemo(
-    () => ({ minimum: options.minimum, fallback: options.fallback }),
-    [options.fallback, options.minimum],
-  );
+  const previousAxisRef = useRef(axis);
+  const bounds = { minimum: options.minimum, fallback: options.fallback };
 
   useLayoutEffect(() => {
     const pane = primaryPaneRef.current;
@@ -58,7 +54,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
     pane.style.flexBasis = options.active ? `${options.fraction * 100}%` : "";
   }, [options.active, options.fraction]);
 
-  const releaseDrag = useCallback((drag: DragState) => {
+  const releaseDrag = (drag: DragState) => {
     if (drag.frame !== null) cancelAnimationFrame(drag.frame);
     try {
       if (drag.target.hasPointerCapture(drag.pointerId)) {
@@ -70,7 +66,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
     dragRef.current = null;
-  }, []);
+  };
 
   useEffect(
     () => () => {
@@ -88,111 +84,98 @@ export function useScientSplit(options: UseScientSplitOptions) {
   }, [options.active, releaseDrag]);
 
   useEffect(() => {
+    if (previousAxisRef.current === axis) return;
+    previousAxisRef.current = axis;
     const drag = dragRef.current;
     if (drag !== null) releaseDrag(drag);
   }, [axis, releaseDrag]);
 
-  const onPointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const container = containerRef.current;
-      if (container === null || event.button !== 0) return;
-      const rect = container.getBoundingClientRect();
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        return;
-      }
-      dragRef.current = {
-        pointerId: event.pointerId,
-        target: event.currentTarget,
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-        startFraction: options.fraction,
-        pendingFraction: options.fraction,
-        frame: null,
-      };
-      document.body.style.cursor = resizeCursorForPlatform(
-        axis === "y" ? "vertical" : "horizontal",
-        navigator.platform,
-      );
-      document.body.style.userSelect = "none";
-      event.preventDefault();
-    },
-    [axis, options.fraction],
-  );
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+    if (container === null || event.button !== 0) return;
+    const rect = container.getBoundingClientRect();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      return;
+    }
+    dragRef.current = {
+      pointerId: event.pointerId,
+      target: event.currentTarget,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      startFraction: options.fraction,
+      pendingFraction: options.fraction,
+      frame: null,
+    };
+    document.body.style.cursor = resizeCursorForPlatform(
+      axis === "y" ? "vertical" : "horizontal",
+      navigator.platform,
+    );
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  };
 
-  const onPointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (drag === null || drag.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      drag.pendingFraction =
-        axis === "y"
-          ? scientSplitFractionFromPointer(
-              {
-                pointerY: event.clientY,
-                top: drag.top,
-                height: drag.height,
-              },
-              bounds,
-            )
-          : scientSplitFractionFromPointer(
-              {
-                pointerX: event.clientX,
-                left: drag.left,
-                width: drag.width,
-              },
-              bounds,
-            );
-      if (drag.frame !== null) return;
-      drag.frame = requestAnimationFrame(() => {
-        const active = dragRef.current;
-        if (active === null) return;
-        active.frame = null;
-        primaryPaneRef.current?.style.setProperty("flex-basis", `${active.pendingFraction * 100}%`);
-      });
-    },
-    [axis, bounds],
-  );
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    drag.pendingFraction =
+      axis === "y"
+        ? scientSplitFractionFromPointer(
+            {
+              pointerY: event.clientY,
+              top: drag.top,
+              height: drag.height,
+            },
+            bounds,
+          )
+        : scientSplitFractionFromPointer(
+            {
+              pointerX: event.clientX,
+              left: drag.left,
+              width: drag.width,
+            },
+            bounds,
+          );
+    if (drag.frame !== null) return;
+    drag.frame = requestAnimationFrame(() => {
+      const active = dragRef.current;
+      if (active === null) return;
+      active.frame = null;
+      primaryPaneRef.current?.style.setProperty("flex-basis", `${active.pendingFraction * 100}%`);
+    });
+  };
 
-  const onPointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (drag === null || drag.pointerId !== event.pointerId) return;
-      const next = drag.pendingFraction;
-      releaseDrag(drag);
-      options.onCommit(next);
-    },
-    [options.onCommit, releaseDrag],
-  );
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    const next = drag.pendingFraction;
+    releaseDrag(drag);
+    options.onCommit(next);
+  };
 
-  const onPointerCancel = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (drag === null || drag.pointerId !== event.pointerId) return;
-      releaseDrag(drag);
-      primaryPaneRef.current?.style.setProperty("flex-basis", `${drag.startFraction * 100}%`);
-    },
-    [releaseDrag],
-  );
+  const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    releaseDrag(drag);
+    primaryPaneRef.current?.style.setProperty("flex-basis", `${drag.startFraction * 100}%`);
+  };
 
-  const onKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const next = nudgeScientSplitFraction(
-        options.fraction,
-        event.key,
-        bounds,
-        options.keyboardStep,
-        axis,
-      );
-      if (next === null) return;
-      event.preventDefault();
-      options.onCommit(next);
-    },
-    [axis, bounds, options.fraction, options.keyboardStep, options.onCommit],
-  );
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const next = nudgeScientSplitFraction(
+      options.fraction,
+      event.key,
+      bounds,
+      options.keyboardStep,
+      axis,
+    );
+    if (next === null) return;
+    event.preventDefault();
+    options.onCommit(next);
+  };
 
   return {
     containerRef,

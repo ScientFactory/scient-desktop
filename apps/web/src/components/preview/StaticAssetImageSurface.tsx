@@ -56,10 +56,16 @@ export function StaticAssetImageSurface(props: {
     previousReloadKeyRef.current = reloadKey;
     autoRetriedRevisionRef.current = null;
     refreshAsset();
-  }, [refreshAsset, reloadKey]);
+  }, [refreshAsset, reloadKey, previousReloadKeyRef]);
 
-  useEffect(() => {
-    if (assetUrl === null) return;
+  if (
+    assetUrl !== null &&
+    (resolvedImage?.surfaceId !== props.image.surfaceId ||
+      resolvedImage.source.url !== assetUrl ||
+      resolvedImage.source.alt !== props.image.label ||
+      resolvedImage.source.revisionKey !== contentKey ||
+      resolvedImage.source.loadKey !== loadKey)
+  ) {
     setResolvedImage((current) => {
       const next: ResolvedPreviewImage = {
         surfaceId: props.image.surfaceId,
@@ -78,7 +84,7 @@ export function StaticAssetImageSurface(props: {
         ? current
         : next;
     });
-  }, [assetUrl, contentKey, loadKey, props.image.label, props.image.surfaceId]);
+  }
 
   const visibleImage =
     resolvedImage?.surfaceId === props.image.surfaceId ? resolvedImage.source : null;

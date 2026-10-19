@@ -1,12 +1,11 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import type { GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
 import type { Editor } from "@pierre/diffs/edit";
 import { MessageSquarePlus } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   type KeyboardEvent,
   type MutableRefObject,
@@ -54,6 +53,9 @@ export function useScientFileEditorBindings<Annotation>({
   onEditorSelectionChange: ((selection: EditorSelection | null) => void) | undefined;
   onRunShortcut: ((selection: EditorSelection | null) => void) | undefined;
 }) {
+  const reportExternalVersion = useStableCallback((version: number) =>
+    externalBindings.current.onExternalVersionApplied?.(version),
+  );
   useLayoutEffect(
     () =>
       externalPersistence?.registerExternalProjection((update) => {
@@ -69,18 +71,21 @@ export function useScientFileEditorBindings<Annotation>({
         if (!prepared) return null;
         return () => {
           applyingExternal.current = true;
-          try {
-            prepared();
-            externalBindings.current.onExternalVersionApplied?.(update.editVersion);
-          } finally {
-            applyingExternal.current = false;
-          }
+          applyExternalProjection(
+            () => {
+              prepared();
+              reportExternalVersion(update.editVersion);
+            },
+            () => {
+              applyingExternal.current = false;
+            },
+          );
         };
       }),
-    [applyingExternal, editor, externalPersistence],
+    [applyingExternal, editor, externalPersistence, reportExternalVersion],
   );
 
-  const reportEditorSelection = useCallback(() => {
+  const reportEditorSelection = () => {
     if (onEditorSelectionChange === undefined) return;
     if (editorSelectionFrameRef.current !== null) {
       cancelAnimationFrame(editorSelectionFrameRef.current);
@@ -89,25 +94,28 @@ export function useScientFileEditorBindings<Annotation>({
       editorSelectionFrameRef.current = null;
       onEditorSelectionChange(editor?.getViewState().selections?.at(-1) ?? null);
     });
-  }, [editor, editorSelectionFrameRef, onEditorSelectionChange]);
+  };
   const mathEditable = useRef(!editingBlocked);
-  mathEditable.current = !editingBlocked;
-  const mathInput = useMemo(() => {
+  useLayoutEffect(() => {
+    mathEditable.current = !editingBlocked;
+  });
+  const canEditMath = useStableCallback(() => mathEditable.current);
+  const mathInput = (() => {
     const format = /\.tex$/iu.test(relativePath)
       ? "latex"
       : /\.(?:md|markdown)$/iu.test(relativePath)
         ? "markdown"
         : null;
-    return format && editor
-      ? sourceMathController(editor, format, () => mathEditable.current)
-      : null;
-  }, [editor, relativePath]);
+    return format && editor ? sourceMathController(editor, format, canEditMath) : null;
+  })();
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
-  reportEditorSelectionRef.current = reportEditorSelection;
+  useLayoutEffect(() => {
+    reportEditorSelectionRef.current = reportEditorSelection;
+  });
 
   useEffect(() => {
     if (onEditorSelectionChange === undefined) return;
@@ -222,4 +230,12 @@ export function scientEditorGutterUtility(
           </div>
         ),
       };
+}
+
+function applyExternalProjection(apply: () => void, finish: () => void) {
+  try {
+    apply();
+  } finally {
+    finish();
+  }
 }

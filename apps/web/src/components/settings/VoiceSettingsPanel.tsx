@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -8,7 +9,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   VOICE_LANGUAGE_NAMES,
   type VoiceLanguagePreference,
@@ -29,7 +30,7 @@ import {
 } from "../ui/popover";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 function formatBytes(bytes: number): string {
@@ -375,12 +376,11 @@ function VoiceModelCard({
 }
 
 export function VoiceSettingsPanel(): ReactNode {
-  const client = useMemo(() => getVoiceBridge(), []);
+  const [client] = useState(() => getVoiceBridge());
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
-  const updateClientSettings = useUpdateClientSettings();
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
   const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
@@ -393,18 +393,15 @@ export function VoiceSettingsPanel(): ReactNode {
   const cancelledDownloadRef = useRef<VoiceModelId | null>(null);
   const localDownloadModelIdRef = useRef<VoiceModelId | null>(null);
 
-  const refresh = useCallback(
-    async (clearError = false) => {
-      if (!client) return;
-      try {
-        setSnapshot(await client.getModelsState());
-        if (clearError) setErrorMessage(null);
-      } catch {
-        setErrorMessage("Voice settings could not be loaded.");
-      }
-    },
-    [client],
-  );
+  const refresh = useStableCallback(async (clearError = false) => {
+    if (!client) return;
+    try {
+      setSnapshot(await client.getModelsState());
+      if (clearError) setErrorMessage(null);
+    } catch {
+      setErrorMessage("Voice settings could not be loaded.");
+    }
+  });
 
   useEffect(() => {
     void refresh(true);
@@ -416,93 +413,85 @@ export function VoiceSettingsPanel(): ReactNode {
     return () => window.clearInterval(interval);
   }, [busyModelId, refresh, snapshot?.activeDownloadModelId]);
 
-  const run = useCallback(
-    async (modelId: VoiceModelId, operation: () => Promise<VoiceModelsSnapshot>) => {
-      setBusyModelId(modelId);
-      setErrorMessage(null);
+  const run = async (modelId: VoiceModelId, operation: () => Promise<VoiceModelsSnapshot>) => {
+    setBusyModelId(modelId);
+    setErrorMessage(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
+    try {
       try {
         setSnapshot(await operation());
       } catch (error) {
         if (cancelledDownloadRef.current !== modelId) {
           setErrorMessage(describeVoiceError(error));
         }
-      } finally {
-        if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
-        setBusyModelId(null);
       }
-    },
-    [],
-  );
+    } catch (cause) {
+      actionFailure = { cause };
+    }
+    if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
+    setBusyModelId(null);
+    if (actionFailure) throw actionFailure.cause;
+  };
 
-  const startDownload = useCallback(
-    (modelId: VoiceModelId, selectOnSuccess: boolean) => {
-      if (!client) return;
-      cancelledDownloadRef.current = null;
-      localDownloadModelIdRef.current = modelId;
-      setLocalDownloadModelId(modelId);
-      void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess })).finally(() => {
-        if (localDownloadModelIdRef.current !== modelId) return;
-        localDownloadModelIdRef.current = null;
-        setLocalDownloadModelId(null);
-      });
-    },
-    [client, run],
-  );
+  const startDownload = useStableCallback((modelId: VoiceModelId, selectOnSuccess: boolean) => {
+    if (!client) return;
+    cancelledDownloadRef.current = null;
+    localDownloadModelIdRef.current = modelId;
+    setLocalDownloadModelId(modelId);
+    void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess })).finally(() => {
+      if (localDownloadModelIdRef.current !== modelId) return;
+      localDownloadModelIdRef.current = null;
+      setLocalDownloadModelId(null);
+    });
+  });
 
   const observedActiveDownloadModelId =
     localDownloadModelId ?? snapshot?.activeDownloadModelId ?? null;
 
-  const handleDownload = useCallback(
-    (modelId: VoiceModelId, selectOnSuccess: boolean) => {
-      const activeModelId =
-        localDownloadModelIdRef.current ?? snapshot?.activeDownloadModelId ?? null;
-      if (activeModelId !== null && activeModelId !== modelId) {
-        setQueuedDownload({ modelId, selectOnSuccess });
-        return;
-      }
-      startDownload(modelId, selectOnSuccess);
-    },
-    [snapshot?.activeDownloadModelId, startDownload],
-  );
+  const handleDownload = (modelId: VoiceModelId, selectOnSuccess: boolean) => {
+    const activeModelId =
+      localDownloadModelIdRef.current ?? snapshot?.activeDownloadModelId ?? null;
+    if (activeModelId !== null && activeModelId !== modelId) {
+      setQueuedDownload({ modelId, selectOnSuccess });
+      return;
+    }
+    startDownload(modelId, selectOnSuccess);
+  };
 
+  const startQueuedDownload = useStableCallback((next: NonNullable<typeof queuedDownload>) => {
+    setQueuedDownload(null);
+    startDownload(next.modelId, next.selectOnSuccess);
+  });
   useEffect(() => {
     if (queuedDownload === null || observedActiveDownloadModelId !== null || busyModelId !== null) {
       return;
     }
-    const next = queuedDownload;
-    setQueuedDownload(null);
-    startDownload(next.modelId, next.selectOnSuccess);
-  }, [busyModelId, observedActiveDownloadModelId, queuedDownload, startDownload]);
+    startQueuedDownload(queuedDownload);
+  }, [busyModelId, observedActiveDownloadModelId, queuedDownload, startQueuedDownload]);
 
-  const handleCancel = useCallback(
-    async (modelId: VoiceModelId) => {
-      if (!client) return;
-      cancelledDownloadRef.current = modelId;
-      try {
-        await client.cancelModelDownload({ modelId });
-        await refresh();
-      } catch (error) {
-        if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
-        setErrorMessage(describeVoiceError(error));
-      }
-    },
-    [client, refresh],
-  );
+  const handleCancel = async (modelId: VoiceModelId) => {
+    if (!client) return;
+    cancelledDownloadRef.current = modelId;
+    try {
+      await client.cancelModelDownload({ modelId });
+      await refresh();
+    } catch (error) {
+      if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
+      setErrorMessage(describeVoiceError(error));
+    }
+  };
 
-  const handleSelect = useCallback(
-    (modelId: VoiceModelId) => {
-      if (!client) return;
-      void run(modelId, () => client.selectModel({ modelId }));
-    },
-    [client, run],
-  );
+  const handleSelect = (modelId: VoiceModelId) => {
+    if (!client) return;
+    void run(modelId, () => client.selectModel({ modelId }));
+  };
 
-  const replacementModel = useMemo(() => {
+  const replacementModel = (() => {
     if (!removeTarget || !snapshot || snapshot.selectedModelId !== removeTarget.id) return null;
     return findVoiceReplacementModel(snapshot.models, removeTarget.id);
-  }, [removeTarget, snapshot]);
+  })();
 
-  const confirmRemove = useCallback(async () => {
+  const confirmRemove = async () => {
     if (!client || !removeTarget) return;
     const target = removeTarget;
     setRemoveTarget(null);
@@ -513,7 +502,7 @@ export function VoiceSettingsPanel(): ReactNode {
       });
       return next;
     });
-  }, [client, removeTarget, replacementModel, run]);
+  };
 
   if (!client) return null;
 

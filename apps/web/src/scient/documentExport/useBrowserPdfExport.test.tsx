@@ -68,8 +68,12 @@ import { useBrowserPdfExport } from "./useBrowserPdfExport";
 
 let exportPdf: ((target: BrowserPdfExportTarget) => Promise<unknown>) | null = null;
 
-function CaptureHook(): ReactElement | null {
-  exportPdf = useBrowserPdfExport();
+function CaptureHook({
+  capture,
+}: {
+  capture: (callback: NonNullable<typeof exportPdf>) => void;
+}): ReactElement | null {
+  capture(useBrowserPdfExport());
   return null;
 }
 
@@ -131,7 +135,13 @@ describe("useBrowserPdfExport", () => {
       _tag: "Success",
       value: { source: generatedSource, receipt: { warnings: [] } },
     });
-    renderToStaticMarkup(<CaptureHook />);
+    renderToStaticMarkup(
+      <CaptureHook
+        capture={(callback) => {
+          exportPdf = callback;
+        }}
+      />,
+    );
   });
 
   it("replaces an existing generated-PDF revision without activating its tab", async () => {

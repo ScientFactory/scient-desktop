@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { layerKnownWorkspacesAllowAll } from "../scient/workspace/knownWorkspaces.testkit.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -33,9 +34,14 @@ const entriesStub = Layer.succeed(
   }),
 );
 const TestLayer = Layer.mergeAll(
-  WorkspaceFileSystem.layer.pipe(Layer.provide(WorkspacePaths.layer), Layer.provide(entriesStub)),
+  WorkspaceFileSystem.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(entriesStub),
+    Layer.provide(layerKnownWorkspacesAllowAll),
+  ),
   WorkspacePaths.layer,
   entriesStub,
+  layerKnownWorkspacesAllowAll,
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const roots: string[] = [];

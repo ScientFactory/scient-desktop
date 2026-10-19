@@ -2,7 +2,7 @@ import type { FileCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { formatFileCitationHref, parseFileCitationHref } from "@t3tools/shared/composerCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { randomUUID } from "~/lib/utils";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -93,7 +93,7 @@ export function useFileCitationTarget(
   currentCwd: string | undefined,
   runAfterPendingSave: (surfaceId: string, run: () => void) => void,
 ): void {
-  const citation = useMemo(() => fileCitationFromLocation(location.href), [location.href]);
+  const citation = fileCitationFromLocation(location.href);
   const handled = useRef<string | null>(null);
   useEffect(() => {
     if (

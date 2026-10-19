@@ -516,7 +516,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(preview, "publish");
+      const previewChannel = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.41-preview.20260912.1589",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(preview.publish);
+      assert.isNull(previewChannel.publish);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -532,6 +543,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("disables electron-builder publish detection for local builds", () =>
+    Effect.gen(function* () {
+      const local = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(local.publish);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it("stages only the desktop main-process externals", () => {

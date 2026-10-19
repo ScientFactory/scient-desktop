@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { APP_VERSION } from "../../branding";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -57,29 +57,26 @@ export function useScientReleaseNotes(options?: {
     }
   }, [decision, setStorage]);
 
-  const acknowledge = useCallback(() => {
+  const acknowledge = () => {
     if (decision.kind !== "show") return;
     setStorage({ lastHandledVersion: decision.nextLastHandledVersion });
     setCardVisible(false);
-  }, [decision, setStorage]);
+  };
 
-  const openDialog = useCallback(() => {
+  const openDialog = () => {
     if (decision.kind === "show") {
       setDialogOpenState(true);
     }
-  }, [decision]);
+  };
 
-  const dismissCard = useCallback(() => {
+  const dismissCard = () => {
     acknowledge();
-  }, [acknowledge]);
+  };
 
-  const setDialogOpen = useCallback(
-    (open: boolean) => {
-      setDialogOpenState(open);
-      if (!open) acknowledge();
-    },
-    [acknowledge],
-  );
+  const setDialogOpen = (open: boolean) => {
+    setDialogOpenState(open);
+    if (!open) acknowledge();
+  };
 
   return {
     current: decision.kind === "show" ? decision.current : null,

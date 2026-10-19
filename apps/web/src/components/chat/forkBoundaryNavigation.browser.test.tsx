@@ -60,7 +60,6 @@ it.each(["run", "message"] as const)(
         environmentId={EnvironmentId.make("test-env")}
         createdAt={DateTime.formatIso(now)}
         timestampFormat="locale"
-        providerStatuses={[]}
         runs={[]}
         onOpenThread={onOpenThread}
       />,

@@ -5,7 +5,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import {
   composerTargetKey,
@@ -45,7 +45,9 @@ export function useScientVoiceDraftOrigin(input: {
 }): VoiceDraftOrigin {
   const navigate = useNavigate();
   const latestRef = useRef(input);
-  latestRef.current = input;
+  useLayoutEffect(() => {
+    latestRef.current = input;
+  });
   const key = composerTargetKey(input.target);
   const target = input.target;
   const environmentId = input.environmentId;
@@ -65,23 +67,20 @@ export function useScientVoiceDraftOrigin(input: {
     [key],
   );
 
-  return useMemo(
-    () => ({
-      key,
-      target,
-      environmentId,
-      title,
-      open: () => {
-        if (typeof target === "string") {
-          void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(target) });
-        } else {
-          void navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(target),
-          });
-        }
-      },
-    }),
-    [environmentId, key, navigate, target, title],
-  );
+  return {
+    key,
+    target,
+    environmentId,
+    title,
+    open: () => {
+      if (typeof target === "string") {
+        void navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(target) });
+      } else {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(target),
+        });
+      }
+    },
+  };
 }

@@ -1,5 +1,5 @@
 import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 /**
  * A failed response stays visible on the request it belongs to, so the
@@ -13,27 +13,21 @@ export function useRequestResponseErrors(input: {
 }) {
   const { environmentId, activeThreadId } = input;
   const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
-  const setRequestResponseError = useCallback(
-    (requestId: RuntimeRequestId, message: string) => {
-      const key = JSON.stringify([environmentId, activeThreadId, requestId]);
-      setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
-    },
-    [activeThreadId, environmentId],
-  );
+  const setRequestResponseError = (requestId: RuntimeRequestId, message: string) => {
+    const key = JSON.stringify([environmentId, activeThreadId, requestId]);
+    setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
+  };
   /** The requests with their failed-response message; the same array when none failed. */
-  const withResponseErrors = useCallback(
-    <T extends { readonly requestId: RuntimeRequestId }>(
-      requests: T[],
-    ): Array<T & { readonly responseError?: string }> => {
-      const errorFor = (request: T) =>
-        requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
-      if (!requests.some((request) => errorFor(request) !== undefined)) return requests;
-      return requests.map((request) => {
-        const responseError = errorFor(request);
-        return responseError ? { ...request, responseError } : request;
-      });
-    },
-    [activeThreadId, environmentId, requestResponseErrors],
-  );
+  const withResponseErrors = <T extends { readonly requestId: RuntimeRequestId }>(
+    requests: T[],
+  ): Array<T & { readonly responseError?: string }> => {
+    const errorFor = (request: T) =>
+      requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
+    if (!requests.some((request) => errorFor(request) !== undefined)) return requests;
+    return requests.map((request) => {
+      const responseError = errorFor(request);
+      return responseError ? { ...request, responseError } : request;
+    });
+  };
   return { setRequestResponseError, withResponseErrors };
 }

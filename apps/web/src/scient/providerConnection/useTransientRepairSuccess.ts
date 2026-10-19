@@ -1,5 +1,6 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { ProviderManagedRuntimeAction } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const REPAIR_SUCCESS_NOTICE_MS = 4_000;
 
@@ -7,17 +8,17 @@ export function useTransientRepairSuccess(open: boolean) {
   const [visible, setVisible] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const cancelTimer = useCallback(() => {
+  const cancelTimer = useStableCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = null;
-  }, []);
+  });
 
-  const clear = useCallback(() => {
+  const clear = useStableCallback(() => {
     cancelTimer();
     setVisible(false);
-  }, [cancelTimer]);
+  });
 
-  const reportRuntimeActionSucceeded = useCallback((action: ProviderManagedRuntimeAction) => {
+  const reportRuntimeActionSucceeded = (action: ProviderManagedRuntimeAction) => {
     if (action !== "repair") return;
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setVisible(true);
@@ -25,7 +26,7 @@ export function useTransientRepairSuccess(open: boolean) {
       setVisible(false);
       timeoutRef.current = null;
     }, REPAIR_SUCCESS_NOTICE_MS);
-  }, []);
+  };
 
   useEffect(() => cancelTimer, [cancelTimer]);
 

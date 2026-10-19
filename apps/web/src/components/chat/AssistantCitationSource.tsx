@@ -1,6 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { AssistantCitation, MessageId, ScopedThreadRef } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import {
   resolveAssistantCitationRange,
   type AssistantCitationSourceAnchor,
@@ -362,10 +362,7 @@ export function AssistantCitationSource({
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const citationSource = useMemo(
-    () => (threadRef ? { ...threadRef, messageId } : null),
-    [messageId, threadRef],
-  );
+  const citationSource = threadRef ? { ...threadRef, messageId } : null;
   useEffect(() => {
     const root = rootRef.current;
     const list = listRef.current;

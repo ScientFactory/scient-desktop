@@ -1,6 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronDown, Globe, History, RadioTower } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
@@ -41,14 +41,8 @@ export function PreviewEmptyState({
     environmentId,
     configuredUrls,
   });
-  const groups = useMemo(
-    () => groupPreviewServers({ servers, threadId, environmentHttpBaseUrl }),
-    [environmentHttpBaseUrl, servers, threadId],
-  );
-  const relevantServerKeys = useMemo(
-    () => new Set(groups.relevant.map(localServerKey)),
-    [groups.relevant],
-  );
+  const groups = groupPreviewServers({ servers, threadId, environmentHttpBaseUrl });
+  const relevantServerKeys = new Set(groups.relevant.map(localServerKey));
   const recents = recentEntries
     .filter((entry) => URL.canParse(entry.url))
     .filter((entry) => {

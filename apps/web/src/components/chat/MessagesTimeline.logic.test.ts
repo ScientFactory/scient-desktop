@@ -36,6 +36,14 @@ import {
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveTimelineIsAtEnd,
+  resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapHitStripWidth,
+  resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapInteractiveWidth,
+  resolveTimelineMinimapNavigationInteractive,
+  resolveTimelineMinimapTopPercent,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   threadReadLabelPrefix,
@@ -105,6 +113,33 @@ describe("expanded tool group scrolling", () => {
 });
 
 describe("work entry labels", () => {
+  it("allows a durable user message to be selected as a fork point", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-message" as never,
+            role: "user",
+            text: "Fork this request",
+            runId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.find((row) => row.kind === "message")?.canForkConversation).toBe(true);
+  });
+
   it("keeps context compaction visible outside folded work", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -133,6 +168,7 @@ describe("work entry labels", () => {
         id: "compaction-entry",
         createdAt: "2026-01-01T00:00:00Z",
         label: "Compacted context 899K → 19K tokens",
+        tokenCounts: null,
         active: false,
       },
     ]);
@@ -1806,6 +1842,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(completedRows.find((row) => row.kind === "context-compaction")).toMatchObject({
       active: false,
       label: "Context compacted 899K → 19K tokens",
+      tokenCounts: { before: "899K", after: "19K" },
     });
     expect(completedRows.at(-1)?.kind).toBe("thinking");
 
@@ -3024,6 +3061,123 @@ describe("deriveMessagesTimelineRows", () => {
       "work",
       "work",
       "assistant:resume-answer",
+    ]);
+  });
+
+  it("keeps answered questions in their own row outside tool groups and turn folds", () => {
+    const threadId = ThreadId.make("answered-question-thread");
+    const runId = RunId.make("answered-question-run");
+    const requestId = RuntimeRequestId.make("scope-question");
+    const at = (second: number) =>
+      DateTime.makeUnsafe(new Date(Date.UTC(2026, 9, 17, 12, 0, second)).toISOString());
+    const base = (id: string, ordinal: number, second: number) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at(second),
+      completedAt: at(second),
+      updatedAt: at(second),
+    });
+    const command = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "command_execution" as const,
+      input: `cat ${id}`,
+    });
+    const items = (settled: boolean) =>
+      [
+        {
+          ...base("prompt", 0, 0),
+          type: "user_message" as const,
+          messageId: MessageId.make("prompt"),
+          text: "Pick a repository",
+          attachments: [],
+          inputIntent: "turn_start" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        },
+        command("before", 1, 1),
+        {
+          ...base("question", 2, 2),
+          type: "user_input_request" as const,
+          requestId,
+          questions: [],
+          questionAnswer: {
+            requestId,
+            questionTextById: { scope: "Which repository?" },
+            answers: { scope: "The private one" },
+            attachmentsByQuestionId: {},
+          },
+        },
+        command("after", 3, 3),
+        settled
+          ? {
+              ...base("answer", 4, 5),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Done",
+              streaming: false,
+            }
+          : { ...command("running", 4, 4), status: "running" as const, completedAt: null },
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+    const rows = (settled: boolean, expandedRunIds?: ReadonlySet<RunId>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items(settled),
+          optimisticMessages: [],
+        }),
+        latestRun: {
+          runId,
+          status: settled ? "completed" : "running",
+          startedAt: DateTime.formatIso(at(0)),
+          completedAt: settled ? DateTime.formatIso(at(5)) : null,
+        },
+        runningRunId: settled ? null : runId,
+        isWorking: !settled,
+        activeTurnStartedAt: settled ? null : DateTime.formatIso(at(0)),
+        ...(expandedRunIds === undefined ? {} : { expandedRunIds }),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
+      timeline.map((row) =>
+        row.kind === "turn-fold"
+          ? "fold"
+          : row.kind === "message"
+            ? `${row.message.role}:${row.message.id}`
+            : row.kind === "work" || row.kind === "work-live"
+              ? `${row.kind}:${row.groupedEntries.map((entry) => entry.id).join(" + ")}`
+              : row.kind,
+      );
+
+    expect(shape(rows(true))).toEqual(["user:prompt", "fold", "work:question", "assistant:answer"]);
+    expect(shape(rows(true, new Set([runId])))).toEqual([
+      "user:prompt",
+      "fold",
+      "work:before",
+      "work:question",
+      "work:after",
+      "assistant:answer",
+    ]);
+    expect(shape(rows(false))).toEqual([
+      "user:prompt",
+      "working",
+      "work:before",
+      "work:question",
+      "work-live:after + running",
     ]);
   });
 
@@ -6641,4 +6795,212 @@ describe("shouldCollapseUserMessage", () => {
     expect(text.length).toBeGreaterThan(600);
     expect(shouldCollapseUserMessage(text)).toBe(false);
   });
+});
+
+describe("timeline end and minimap geometry", () => {
+  it("treats the follow re-arm band above the content bottom as the live edge", () => {
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+    expect(
+      resolveTimelineIsAtEnd({
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 1170,
+        scrollLength: 800,
+      }),
+    ).toBe(true);
+    expect(
+      resolveTimelineIsAtEnd({
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 900,
+        scrollLength: 800,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineIsAtEnd({
+        isAtEnd: true,
+        contentLength: 2100,
+        scroll: 1170,
+        scrollLength: 800,
+      }),
+    ).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
+  });
+
+  it("maps the minimap rail to rows and sizes its hit strip from the free gutter", () => {
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+    expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
+    const rail = { itemCount: 101, railTop: 100, railHeight: 500 };
+    expect(resolveTimelineMinimapIndexFromPointer({ ...rail, pointerY: 350 })).toBe(50);
+    expect(resolveTimelineMinimapIndexFromPointer({ ...rail, pointerY: 999 })).toBe(100);
+
+    expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(2560, 2560)).toBe(false);
+
+    expect(resolveTimelineMinimapHitStripWidth(768, 768)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(792, 768)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(820, 768)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(872, 768)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(1400, 768)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(2560, 2560)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(1204, 1152)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(0, 0)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(Number.NaN, 768)).toBe(0);
+
+    expect(resolveTimelineMinimapNavigationInteractive(40)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
+    expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
+
+    expect(resolveTimelineMinimapInteractiveWidth(0, false)).toBe(0);
+    expect(resolveTimelineMinimapInteractiveWidth(14, false)).toBe(14);
+    expect(resolveTimelineMinimapInteractiveWidth(40, false)).toBe(40);
+    for (const width of [0, 14, 40]) {
+      expect(resolveTimelineMinimapInteractiveWidth(width, true)).toBe("22rem");
+    }
+  });
+});
+
+it("treats only the strict list end as the live edge", async () => {
+  const {
+    resolveTimelineIsAtEnd,
+    resolveTimelineMinimapHasPersistentGutter,
+    resolveTimelineMinimapCurrentIndex,
+    resolveTimelineMinimapHeightStyle,
+    resolveTimelineMinimapHitStripWidth,
+    resolveTimelineMinimapIndexFromPointer,
+    resolveTimelineMinimapInteractiveWidth,
+    resolveTimelineMinimapNavigationInteractive,
+    resolveTimelineMinimapTopPercent,
+  } = await import("./MessagesTimeline.logic");
+
+  expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+  expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+  // Within the pixel band above the content bottom counts as the end...
+  expect(
+    resolveTimelineIsAtEnd({
+      isAtEnd: false,
+      contentLength: 2000,
+      scroll: 1170,
+      scrollLength: 800,
+    }),
+  ).toBe(true);
+  // ...but half a viewport up (LegendList's isNearEnd territory) does not.
+  expect(
+    resolveTimelineIsAtEnd({
+      isAtEnd: false,
+      contentLength: 2000,
+      scroll: 900,
+      scrollLength: 800,
+    }),
+  ).toBe(false);
+  // LegendList's isAtEnd is true anywhere within the composer-height band
+  // (it subtracts the inset); the last row is still hidden under the
+  // composer there, so the flag must not short-circuit the geometry.
+  expect(
+    resolveTimelineIsAtEnd({
+      isAtEnd: true,
+      contentLength: 2000,
+      scroll: 1100,
+      scrollLength: 800,
+    }),
+  ).toBe(false);
+  // Geometry missing (older state shape): fall back to the strict flag.
+  expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
+
+  expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+  expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
+  expect(
+    resolveTimelineMinimapIndexFromPointer({
+      itemCount: 101,
+      railTop: 100,
+      railHeight: 500,
+      pointerY: 350,
+    }),
+  ).toBe(50);
+  expect(
+    resolveTimelineMinimapIndexFromPointer({
+      itemCount: 101,
+      railTop: 100,
+      railHeight: 500,
+      pointerY: 999,
+    }),
+  ).toBe(100);
+  expect(
+    resolveTimelineMinimapCurrentIndex({
+      scrollTop: 100,
+      scrollBottom: 500,
+      itemBounds: [
+        { top: 80, height: 20 },
+        { top: 120, height: 20 },
+        { top: 220, height: 20 },
+      ],
+    }),
+  ).toBe(1);
+  expect(
+    resolveTimelineMinimapCurrentIndex({
+      scrollTop: 150,
+      scrollBottom: 200,
+      itemBounds: [
+        { top: 80, height: 20 },
+        { top: 120, height: 20 },
+        { top: 220, height: 20 },
+      ],
+    }),
+  ).toBe(1);
+  expect(
+    resolveTimelineMinimapCurrentIndex({
+      scrollTop: 0,
+      scrollBottom: 50,
+      itemBounds: [{ top: 80, height: 20 }],
+    }),
+  ).toBeNull();
+  // Comfortable width: the column is capped at 768px.
+  expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
+  expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
+  expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
+  // Wider Chat width settings consume the gutter the minimap relies on.
+  expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
+  expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);
+  expect(resolveTimelineMinimapHasPersistentGutter(2560, 2560)).toBe(false);
+
+  // No usable gutter (zoomed in / narrow pane): the strip must go inert
+  // instead of overlaying the centered content column.
+  expect(resolveTimelineMinimapHitStripWidth(768, 768)).toBe(0);
+  expect(resolveTimelineMinimapHitStripWidth(792, 768)).toBe(0);
+  // Partial gutter: strip shrinks to what fits between the viewport edge
+  // and the content column.
+  expect(resolveTimelineMinimapHitStripWidth(820, 768)).toBe(14);
+  // Full gutter: unchanged 40px-wide strip.
+  expect(resolveTimelineMinimapHitStripWidth(872, 768)).toBe(40);
+  expect(resolveTimelineMinimapHitStripWidth(1400, 768)).toBe(40);
+  // Full Chat width: the column spans the viewport, so the strip is inert
+  // however wide the window gets.
+  expect(resolveTimelineMinimapHitStripWidth(2560, 2560)).toBe(0);
+  // Wide Chat width on a window just wider than the column: partial strip.
+  expect(resolveTimelineMinimapHitStripWidth(1204, 1152)).toBe(14);
+  expect(resolveTimelineMinimapHitStripWidth(0, 0)).toBe(0);
+  expect(resolveTimelineMinimapHitStripWidth(Number.NaN, 768)).toBe(0);
+
+  // Prev/next buttons reach 14px past the strip's left edge; a narrower
+  // strip means they would sit on the content column.
+  expect(resolveTimelineMinimapNavigationInteractive(40)).toBe(true);
+  expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
+  expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
+  expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
+
+  // The collapsed target stays narrow, but an open preview keeps its full
+  // 20rem width plus the 2rem offset from the minimap rail interactive.
+  expect(resolveTimelineMinimapInteractiveWidth(0, false)).toBe(0);
+  expect(resolveTimelineMinimapInteractiveWidth(14, false)).toBe(14);
+  expect(resolveTimelineMinimapInteractiveWidth(40, false)).toBe(40);
+  expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
+  expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
+  expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
 });

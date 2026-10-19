@@ -5,15 +5,13 @@ export function useNearViewport(): {
   readonly isNearViewport: boolean;
 } {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
-  const [isNearViewport, setNearViewport] = useState(false);
+  const [observedNearViewport, setNearViewport] = useState(false);
+  const isNearViewport =
+    observedNearViewport || (element !== null && typeof IntersectionObserver === "undefined");
+  if (isNearViewport && !observedNearViewport) setNearViewport(true);
 
   useEffect(() => {
     if (element == null || isNearViewport) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNearViewport(true);
-      return;
-    }
-
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {

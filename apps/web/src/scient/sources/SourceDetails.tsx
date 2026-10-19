@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -324,18 +323,21 @@ function AbstractPreview(props: {
   const [mode, setMode] = useState<"compact" | "more" | "full">("compact");
   const [canExpand, setCanExpand] = useState(false);
 
-  useEffect(() => {
+  const [previousText, setPreviousText] = useState({ text: props.text });
+  if (previousText.text !== props.text) {
+    setPreviousText({ text: props.text });
     setMode("compact");
     setCanExpand(false);
-  }, [props.text]);
+  }
 
+  const measurement = { mode, text: props.text, sections: props.sections };
   useEffect(() => {
     const node = contentRef.current;
-    if (!node || mode !== "compact") return;
+    if (!node || measurement.mode !== "compact") return;
     const measure = () => setCanExpand(node.scrollHeight > node.clientHeight + 1);
     measure();
     return observeResize(node, measure);
-  }, [mode, props.sections, props.text]);
+  }, [measurement]);
 
   const normalizedSections = props.sections?.length
     ? props.sections
@@ -459,18 +461,21 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
   const [overflows, setOverflows] = useState(false);
   const identity = props.tags.join("\u241e");
 
-  useEffect(() => {
+  const [previousTagIdentity, setPreviousTagIdentity] = useState({ identity: identity });
+  if (previousTagIdentity.identity !== identity) {
+    setPreviousTagIdentity({ identity: identity });
     setExpanded(false);
-  }, [identity]);
+  }
 
+  const tagMeasurement = { expanded, identity };
   useEffect(() => {
-    if (expanded) return;
+    if (tagMeasurement.expanded) return;
     const row = rowRef.current;
     if (!row) return;
     const measure = () => setOverflows(row.scrollHeight > row.clientHeight + 1);
     measure();
     return observeResize(row, measure);
-  }, [expanded, identity]);
+  }, [tagMeasurement]);
 
   return (
     <div className="min-w-0">
@@ -511,21 +516,18 @@ function MetadataRefreshConfirmation(props: {
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const anchor = useMemo(
-    () => ({
-      getBoundingClientRect: () => ({
-        x: props.anchorPoint.x,
-        y: props.anchorPoint.y,
-        top: props.anchorPoint.y,
-        right: props.anchorPoint.x,
-        bottom: props.anchorPoint.y,
-        left: props.anchorPoint.x,
-        width: 0,
-        height: 0,
-      }),
+  const anchor = {
+    getBoundingClientRect: () => ({
+      x: props.anchorPoint.x,
+      y: props.anchorPoint.y,
+      top: props.anchorPoint.y,
+      right: props.anchorPoint.x,
+      bottom: props.anchorPoint.y,
+      left: props.anchorPoint.x,
+      width: 0,
+      height: 0,
     }),
-    [props.anchorPoint.x, props.anchorPoint.y],
-  );
+  };
 
   return (
     <Popover
