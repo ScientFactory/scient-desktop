@@ -1409,8 +1409,18 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
             yield* parent.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
           ),
         );
+        // SCIENT-FORK:START — the shell reaps exited children (dash does so after
+        // the `echo` builtin), so a child killed before its parent execs `sleep`
+        // vanishes instead of lingering. SIGKILL also takes effect asynchronously.
+        const waitUntil = (condition: string) =>
+          runScript(home, [
+            "-c",
+            `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 100 ] || exit 1; sleep 0.1; done`,
+          ]).pipe(Effect.map((result) => assert.equal(result.exitCode, 0, condition)));
+        yield* waitUntil(`ps -o comm= -p ${parent.pid} | grep -q sleep`);
         process.kill(zombie, "SIGKILL");
-        assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
+        yield* waitUntil(`ps -o stat= -p ${zombie} | grep -q Z`);
+        // SCIENT-FORK:END
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
           `${home}/.scient-next/userdata/server-runtime.json`,
