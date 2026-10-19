@@ -833,7 +833,9 @@ export function useThreadComposerState() {
           });
           if (admission.rejectedCount > 0) {
             await removePersistedComposerAttachmentFile(attachment.fileUri);
+            // SCIENT-FORK:START — the limit fallback is a helper for the compiler.
             setPendingConnectionError(attachmentLimitMessage(admission.limitError));
+            // SCIENT-FORK:END
           }
         } catch (error) {
           setPendingConnectionError(
@@ -918,7 +920,9 @@ export function useThreadComposerState() {
       });
       if (admission.rejectedCount > 0) {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
+        // SCIENT-FORK:START — the limit fallback is a helper for the compiler.
         setPendingConnectionError(attachmentLimitMessage(admission.limitError));
+        // SCIENT-FORK:END
       }
     } catch (error) {
       setPendingConnectionError(
