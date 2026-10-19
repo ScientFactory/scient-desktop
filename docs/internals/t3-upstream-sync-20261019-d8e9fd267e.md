@@ -21,8 +21,9 @@ Generated with `pnpm alignment:facts --merge e0e4158af1`:
   `9fa9b7e21d423ac42fc8dc1c2a08e2122ed81385` (Scient PR #588, sidebar sections
   placement), and `084ed94d45dd738705449e1f2f0421c7dc4d0c1a` merges owned main
   `ed678319ea687d78c00dab5797137271e5a07d7f` (Scient PRs #582 CI exact-commit reuse,
-  #595 one-click provider sign-in, #568/#569/#570 Oh My Pi fixes, #583, #594). None
-  changes the official merge.
+  #595 one-click provider sign-in, #568/#569/#570 Oh My Pi fixes, #583, #594), and
+  `deae770d82edab36ff892c2b9afab8a553b6ae8c` merges owned main `c145ae778f2e20057ca6ffe97f62bcf50a9bbcfc`
+  (Scient PRs #597 and #598, test flake fixes). None changes the official merge.
 - Branch: `codex/t3-sync-d8e9fd267e-20261019`; upstream push URL: `DISABLED`.
 - Scient PR: #593.
 
