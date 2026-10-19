@@ -1,6 +1,8 @@
 import type {
   ProviderConnectionAccount,
   ProviderConnectionOperation,
+  ProviderConnectionSubmitAuthorizationCodeInput,
+  ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
 
@@ -44,22 +46,46 @@ export function scientAgentAccountSections(
   };
 }
 
-/** What the user has typed, and the sign-in it was typed for. */
+/** What the user has typed, and the sign-in and question it was typed for. */
 export interface ScientAgentAnswerDraft {
   readonly operationId: string;
+  readonly questionId: string | undefined;
   readonly value: string;
 }
 
 /**
- * The typed answer for the sign-in now running. Another client can cancel a
- * sign-in and start one for a different account on the same provider; what was
- * typed for the first must not be sent to the second.
+ * The typed answer for the question now asked. Another client can cancel a
+ * sign-in and start one for a different account on the same provider, or
+ * answer a question so the agent asks the next; what was typed for one must
+ * not be sent to another.
  */
 export function scientAgentAnswerFor(
   draft: ScientAgentAnswerDraft,
   active: ProviderConnectionOperation | null,
 ): string {
-  return active !== null && draft.operationId === active.operationId ? draft.value : "";
+  return active !== null &&
+    draft.operationId === active.operationId &&
+    draft.questionId === active.questionId
+    ? draft.value
+    : "";
+}
+
+/**
+ * The submission of an answer to the question `current` shows. It names that
+ * question, so an answer the agent has moved past is refused, not taken as the
+ * answer to the next one.
+ */
+export function scientAgentAnswerInput(
+  instanceId: ProviderInstanceId,
+  current: ProviderConnectionOperation,
+  answer: string,
+): ProviderConnectionSubmitAuthorizationCodeInput {
+  return {
+    instanceId,
+    operationId: current.operationId,
+    authorizationCode: answer,
+    ...(current.questionId ? { questionId: current.questionId } : {}),
+  };
 }
 
 /** The agent's sign-in list, once the agent is installed and has been checked. */
