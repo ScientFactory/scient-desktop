@@ -152,6 +152,14 @@ export function appendReviewCommentToDraft(input: {
   }
 }
 
+// SCIENT-FORK:START — the React Compiler cannot compile a `??` inside a try block.
+function attachmentLimitMessage(limitError: string | null | undefined): string {
+  return (
+    limitError ?? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`
+  );
+}
+// SCIENT-FORK:END
+
 /**
  * Resolved per call rather than captured, so a callback created before the
  * edit began still writes to the right place.
@@ -825,10 +833,7 @@ export function useThreadComposerState() {
           });
           if (admission.rejectedCount > 0) {
             await removePersistedComposerAttachmentFile(attachment.fileUri);
-            setPendingConnectionError(
-              admission.limitError ??
-                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
-            );
+            setPendingConnectionError(attachmentLimitMessage(admission.limitError));
           }
         } catch (error) {
           setPendingConnectionError(
@@ -913,10 +918,7 @@ export function useThreadComposerState() {
       });
       if (admission.rejectedCount > 0) {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
-        setPendingConnectionError(
-          admission.limitError ??
-            `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
-        );
+        setPendingConnectionError(attachmentLimitMessage(admission.limitError));
       }
     } catch (error) {
       setPendingConnectionError(
