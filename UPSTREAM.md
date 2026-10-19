@@ -507,7 +507,7 @@ legacy database owners by process creation time, keeps archived and queued
 work out of storage cleanup, and routes text-generation fallback by provider
 instance. Release remains separate.
 
-The current alignment through
+The alignment through
 `a7025639c0e16aad3081106c935bf3025f601a1e` is recorded in
 [the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md)
 ([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)), which
@@ -522,6 +522,19 @@ write authority capped by the thread's current modes as upstream does (and, duri
 active run, additionally by the run's captured modes), and older clients' pull-request
 views by gating branch deletion until clients decode actions forward-compatibly.
 Release remains separate.
+
+The current alignment through
+`d8e9fd267e26b7680f035edc0b40db09d2685dbb` is recorded in
+[the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-d8e9fd267e.md)
+([Scient PR #593](https://github.com/ScientFactory/scient-desktop/pull/593)).
+Literal merge `e0e4158af17cacba28c2abc9e39457b194a964c8` has exact owned base
+`2be0d794d09273a338aeaad74eae7fa733d6bf97` and the frozen official target as
+parents, retaining all 575 donor commits. Every web file, and now mobile, compiles
+with the React Compiler, and web React tests run in headless Chromium. Scient keeps
+its read-acknowledgement policy, its revert dialog, the original database (which
+`doctor` never offers to delete), the V1 tables its history import reads, full
+SQLite durability and Scient-only update repositories; upstream's workspace write
+authorization also covers Scient's own file writes. Release remains separate.
 
 ## Receiving T3 updates
 
