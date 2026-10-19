@@ -19,7 +19,10 @@ Generated with `pnpm alignment:facts --merge e0e4158af1`:
   controls, #587 compute test wait, #590 release notes without the Windows notice),
   and `bf92e81eb1d52188e7faca8c994a57996f42524f` merges owned main
   `9fa9b7e21d423ac42fc8dc1c2a08e2122ed81385` (Scient PR #588, sidebar sections
-  placement). Neither changes the official merge.
+  placement), and `084ed94d45dd738705449e1f2f0421c7dc4d0c1a` merges owned main
+  `ed678319ea687d78c00dab5797137271e5a07d7f` (Scient PRs #582 CI exact-commit reuse,
+  #595 one-click provider sign-in, #568/#569/#570 Oh My Pi fixes, #583, #594). None
+  changes the official merge.
 - Branch: `codex/t3-sync-d8e9fd267e-20261019`; upstream push URL: `DISABLED`.
 - Scient PR: #593.
 
