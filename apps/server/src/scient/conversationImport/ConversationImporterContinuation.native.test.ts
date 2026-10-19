@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
 import {
@@ -65,6 +66,7 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 
 const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   handoff: OrchestrationV2ContextHandoff,
@@ -1111,6 +1113,24 @@ describe("native import continuation and forks", () => {
         const first = yield* store.getThreadProjection(result.threadId);
         assert.isTrue(
           first.contextHandoffs.every((handoff) => (handoff.history?.omittedItems ?? 0) === 0),
+        );
+        // The continued run checkpoints the imported project's own repository.
+        const project = Option.getOrThrow(
+          yield* Effect.flatMap(ProjectStoreV2, (projects) => projects.get(PROJECT_ID)),
+        );
+        const scope = first.checkpointScopes.find(
+          (candidate) => candidate.runId === first.runs.at(-1)?.id,
+        );
+        assert.strictEqual(scope?.cwd, project.workspaceRoot);
+        const checkpoint = first.checkpoints.find(
+          (candidate) => candidate.scopeId === scope?.id && candidate.status === "ready",
+        );
+        assert.isDefined(checkpoint);
+        assert.strictEqual(
+          NodeChildProcess.spawnSync("git", ["rev-parse", "--verify", "--quiet", checkpoint!.ref], {
+            cwd: project.workspaceRoot,
+          }).status,
+          0,
         );
         const firstProvider = first.providerThreads.find(
           (thread) => thread.id === first.thread.activeProviderThreadId,

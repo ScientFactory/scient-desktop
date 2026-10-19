@@ -155,9 +155,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       }).pipe(Effect.provide(adapterServices)),
     );
     const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
-      // The replay policy ignores project roots; without this cwd the run (and its
-      // checkpoint capture) falls back to process.cwd(), the host repository.
-      { name: `pi-observed-${name}`, runtimePolicyOverride: { cwd } },
+      { name: `pi-observed-${name}` },
       registry,
       { databaseLayer: database, layerServerConfig: configLayer, runContinuationWorker: true },
     );

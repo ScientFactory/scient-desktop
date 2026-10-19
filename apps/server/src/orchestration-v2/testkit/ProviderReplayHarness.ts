@@ -66,6 +66,9 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+// SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
+import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
+// SCIENT-FORK:END
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
@@ -419,13 +422,21 @@ export function layerWithRegistry<Error>(
       ServerConfig.ServerConfig,
       makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
     ).pipe(Layer.provide(NodeServices.layer));
+  // SCIENT-FORK:START — a local thread checkpoints its project, not process.cwd() (the checkout).
+  // Suspended: the stores it reads are built below.
+  const layerReplayPolicy = Layer.suspend(() =>
+    ScientReplayWorkspacePolicy.layer.pipe(
+      Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+    ),
+  );
   const layerRuntime =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
+      ? layerReplayPolicy
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
+          Layer.provide(layerReplayPolicy),
         ));
+  // SCIENT-FORK:END
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like

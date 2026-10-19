@@ -156,6 +156,12 @@ Marketing keeps `astro check` for Astro files.
 Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization
 expectations use Scient's shared client identity.
+Replay threads resolve their workspace as production does: their worktree, else their project
+root (a project-less test thread gets its disposable replay profile). Give a test that checks
+checkpoints a real repository with `checkpointWorkspace()` from
+`@t3tools/provider-testing/replayWorkspace`. Server tests run with `GIT_CEILING_DIRECTORIES` set to
+the checkout root (`apps/server/src/testUtils/checkoutIsolation.setup.ts`), so Git cannot find the
+source repository from inside it and no test can capture, restore or publish refs there.
 
 Complete Electron's dependency installation before running concurrent desktop suites:
 `pnpm --filter @t3tools/desktop exec install-electron`.
