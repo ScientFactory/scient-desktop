@@ -24,8 +24,9 @@ reading them does not install the update. On Windows, Scient can stay closed for
 a few minutes while the update installs, then reopens.
 
 On a narrow sidebar, **Import conversation** and **Usage** move into the
-three-dot **More sidebar actions** menu while the update control is active.
-Widening the sidebar brings their icons back into the footer row.
+three-dot **More sidebar actions** menu while the update control or the update
+circle is showing. Widening the sidebar brings their icons back into the footer
+row.
 
 Scient never installs an update on its own. Restarting interrupts running agent
 turns and terminal commands, so let them finish before choosing **Restart**.
@@ -50,6 +51,47 @@ Automatic update checks require an official packaged build and a configured
 release feed. On Linux they additionally require running the AppImage. If the
 updater is unavailable, download the current installer from the
 [official Scient download page](https://scientfactory.com/download/).
+
+## Update other machines and providers
+
+Updates for connected machines and providers have their own control: a small
+light-blue circle with an up arrow, beside the update control. It covers
+servers and desktop apps on connected machines, provider CLIs Scient can update
+in one step, and Scient-managed provider runtimes. Updates Scient can't run
+itself are listed in Settings instead. Hover, focus, or click the circle to open
+its card; a click keeps the card open.
+
+Each row names the item, its machine when that is not this one, and the version
+change. Choose **Update** on a row, or **Update all**. Neither restarts this
+app, so they start right away. When a server update would stop threads running
+on that machine, the card first shows how many, such as **Stops 2 running
+threads**; choose **Update** again to go ahead. While a provider on a machine is
+still updating, that machine's server shows **waiting** and **Update all** leaves
+it for later; it offers **Update** again once the provider is done. While updates
+run, the circle shows a spinning ring and each row shows a download percentage
+or its current step. A Scient-managed runtime that waits for running turns shows
+**waiting for idle** and switches on its own. A failure turns the circle red;
+its row shows the reason and **Retry**, which updates a server again to the
+version it tried while it is still eligible for it. Finished rows show **done**
+until you next open the card, and the circle shows a brief check before it
+disappears. Progress and result notifications appear as for updates started
+elsewhere.
+
+An SSH machine that Scient starts from this app's own package is not listed; it
+moves to the new version the next time it connects after this app updates.
+
+When this app also has an update to download, choosing **Update** on the update
+control includes everything else in one step: outdated providers first, then
+servers that are behind, then this desktop app. Servers move to the version this
+app is installing, or to your web app's version. A background service stays on
+its current release channel, and a remote desktop app installs the latest
+release from its own channel. If servers would stop running threads, a small
+card above **Update** says how many and waits for you to choose **Update** or
+**Cancel**; otherwise the step starts straight away. Progress appears in the
+circle. Once each server has started its own
+restart, a tooltip above **Restart** counts down to this app's restart: choose
+**Restart** to restart now, or **Later** to keep working and restart when you
+are ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 
@@ -102,16 +144,15 @@ Keep Scient open while the server restarts. The update is complete only when
 the replacement server reports ready, not merely when the initial update
 request is accepted. A failure remains visible for review and retry.
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
-| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
+| Action                     | What to do                                                                                                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Keep the client open while it installs and reconnects. For a desktop-hosted server, this also closes and relaunches the desktop app on the host.                            |
+| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                         |
+| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                               |
+| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update a globally installed server. |
 
-An older service installation may require one local repair or update first.
-Use the exact command supplied by Scient or the procedure
-in [Run Scient in the background](./background-service.md).
+A server you run without the desktop app is updated by restarting it from the
+newer release; see [Run a Scient server without the desktop app](./background-service.md).
 
 ## Troubleshooting
 
@@ -128,31 +169,27 @@ data directory and pair with the running server.
 
 ## Update providers
 
-The sidebar's **Update everything** action shows the eligible updates for each
-connected environment before you confirm. It updates providers first, then
-supported remote servers, and installs this desktop app last. Servers requiring
-an exact Scient release artifact are included only when that artifact is
-available from Scient's release repository. Disconnected environments, missing
-maintenance permissions, and incompatible release channels are excluded. The
-confirmation lists each environment it skips and why, such as one that is
-offline, lacks permission, needs a manual update, or needs a Scient server
-release that is not published yet. Use the notice or **Settings → Connections**
-for those.
+The sidebar's update circle lists provider updates for every connected
+environment beside its server updates. Servers requiring an exact Scient release
+artifact are listed only when that artifact is available from Scient's release
+repository. Disconnected environments, missing maintenance permissions, and
+incompatible release channels are left out. In the desktop app, the circle
+replaces the "update available" notices for providers; the web app keeps them.
 
-While the update runs, hover the control to see each environment's progress.
-When it finishes, one summary lists what was updated and each failure. When
-this desktop app installs last, the summary appears after it restarts.
-
-The confirmation identifies the servers that will restart and whether they can
-resume interrupted threads. Continuation still requires that server's supported
-capability and enabled setting; it does not revive stopped or settled work.
+After **Update all**, or a step that includes this app, one summary lists what
+was updated and each failure. When this desktop app installs last, the summary
+appears after it restarts. Threads on a server that can resume them after its
+update are not counted as stopped. Continuation still requires that server's
+supported capability and enabled setting; it does not revive stopped or settled
+work. If a server would stop more threads when its restart is due than when you
+chose **Update**, it waits in the circle instead.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Two kinds are left
 out on purpose: providers that only offer a manual update command, and
-Scient-managed runtimes, which keep their own qualified update and repair
-actions rather than a bulk path.
+Scient-managed runtimes, which update from their own actions or the sidebar
+circle.
 
 The provider update checks setting also controls whether Scient downloads model
 catalog updates. With it off, new models may not appear until you turn it on

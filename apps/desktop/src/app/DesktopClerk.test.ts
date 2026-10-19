@@ -39,7 +39,6 @@ import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
-/** Clerk forwards web links; tests that are not about links ignore them. */
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
   setRendererReady: () => Effect.void,
@@ -154,8 +153,6 @@ describe("DesktopClerk", () => {
         events.push("createClerkBridge");
         return { cleanup: vi.fn(), isPrimaryInstance: true };
       });
-      // runSync throws if the layer ever suspends, which would let Electron emit
-      // ready before the bridge exists. main.ts provides the same FileSystem.
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously; it.effect would mask a regression to async.
       Effect.runSync(
         Effect.scoped(
@@ -328,17 +325,17 @@ it.effect("deferred provider auth deep links do not navigate or start authentica
     const clerk = yield* DesktopClerk.DesktopClerk;
     yield* clerk.configure;
     const event = { preventDefault: vi.fn() };
-    listeners.get("open-url")!(event, "t3code-dev://app/auth/callback?code=clerk-code");
-    listeners.get("open-url")!(event, "t3code://app/welcome");
+    listeners.get("open-url")!(event, "scient-next-dev://app/auth/callback?code=clerk-code");
+    listeners.get("open-url")!(event, "scient://app/welcome");
     assert.equal(loadURL.mock.calls.length, 0);
     assert.equal(event.preventDefault.mock.calls.length, 0);
     listeners.get("second-instance")!({}, [
       "t3",
-      "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
+      "scient-next-dev://app/settings/providers?instanceId=work&code=never-forward",
     ]);
     yield* Effect.promise(() => revealed.promise);
     assert.deepEqual(loadURL.mock.calls, []);
-    listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
+    listeners.get("open-url")!(event, "scient-next-dev://app/welcome#agents:machine-id");
     listeners.get("open-url")!(event, "https://example.com");
     listeners.get("open-file")!(event, "/tmp/report.html");
     assert.equal(event.preventDefault.mock.calls.length, 0);
@@ -369,7 +366,7 @@ it.effect.each(["startup", "open-url"] as const)(
       const link = codexAuthHandoffUrl(
         {
           authorizationUrl: authorize.toString(),
-          returnUrl: "https://app.t3.codes/welcome#agents:remote-one",
+          returnUrl: "http://127.0.0.1:3773/welcome#agents:remote-one",
           environmentId: EnvironmentId.make("remote-one"),
           instanceId: ProviderInstanceId.make("work"),
           flowId: "flow-one",
@@ -437,7 +434,6 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       // Scient's default-browser activation is held.
       assert.strictEqual(open("https://example.com/page"), 0);
       assert.strictEqual(open("http://localhost:3000/"), 0);
-      // Prompt and thread links ride the same queue; the renderer routes them in the app.
       assert.strictEqual(open("scient://new?prompt=hi"), 1);
       assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 0);

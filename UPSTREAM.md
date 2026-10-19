@@ -166,6 +166,22 @@ sidebar and Settings. The notice and the shared install call live in
 carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment.
+The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
+and Scient-managed runtimes appear in a Scient-owned circle and card
+(`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
+`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
+that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
+servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
+are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
+the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+where a server is left for later while its machine still updates a provider or runtime, and is
+admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
+In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
+available" toasts to the circle; the browser client keeps them.
+Because a server waits while a provider update is queued, a marked seam in
+`apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
+one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
+the same gap, so this fix is worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
@@ -479,7 +495,7 @@ Hosted CI replaces duplicate covered local checks only under the owner's explici
 instruction for this pass; general qualification policy is unchanged. No cold
 full-suite or end-to-end alignment speedup is asserted. Release remains separate.
 
-The current alignment through
+The alignment through
 `7ac952c630ef8a60d14ca8f6a0c7adce33db4bae` (`v0.0.46-nightly.20261014.3118`) is
 recorded in [the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-7ac952c630.md)
 ([Scient PR #572](https://github.com/ScientFactory/scient-desktop/pull/572)).
@@ -490,6 +506,22 @@ durability around upstream's reader and checkpoint workers, checks Windows
 legacy database owners by process creation time, keeps archived and queued
 work out of storage cleanup, and routes text-generation fallback by provider
 instance. Release remains separate.
+
+The current alignment through
+`a7025639c0e16aad3081106c935bf3025f601a1e` is recorded in
+[the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md)
+([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)), which
+first integrated through `86f4a74c5d789f2b4973616775a6adf19525bf4d` (literal merge
+`36f81155864a8dec205da90b94f25fc205066360`, 86 donor commits) and was extended by
+literal merge `0ebeec9e509336fc22bb107148dbecf64d9e9163`, whose parents are the
+#574 head `e983657a24a7e75db5920dd1ce8950d1b028ec19` and the frozen official
+target, retaining all 176 further donor commits. Scient keeps its labels, product
+name and Stable/Beta channels, its publication workflows and CI structure, archived
+and queued work out of settled-worktree cleanup, mode authority across steering,
+write authority capped by the thread's current modes as upstream does (and, during an
+active run, additionally by the run's captured modes), and older clients' pull-request
+views by gating branch deletion until clients decode actions forward-compatibly.
+Release remains separate.
 
 ## Receiving T3 updates
 
@@ -1038,6 +1070,12 @@ and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
 already bypass grouping. See [provider architecture](docs/internals/providers.md).
 
+Claude's health-check commands, `claude --version` and Scient's `claude auth status` gate, use a
+20-second deadline instead of the shared 4-second probe deadline, in `SCIENT-FORK` regions of
+`ClaudeProvider.ts`. The native CLI needs 2-4 seconds to answer on Windows. Drop the version-check
+region once upstream gives that check an equivalent deadline. See
+[Claude health check](docs/internals/providers.md#claude-health-check).
+
 Desktop/web also reconciles historical Antigravity family selections in unstarted
 drafts against the instance's live native variants. Preserve its draft-store write,
 reasoning and visibility checks, and started-session guard; a render-only alias can
@@ -1329,6 +1367,46 @@ Production identity is a conscious Scient divergence: the package uses the
 canonical Scient bundle ID and protocol while retaining the established
 `scient-next` user-data location for compatibility. Future upstream merges must
 not restore T3 publication authority or a dependency on `t3@<Scient version>`.
+The server archive ships a `scient` command beside the retained `t3` one, and
+user instructions name `scient`. SSH launches run only the pinned Scient server
+release through that command (`packages/ssh/src/tunnel.ts`); they must not fall
+back to `t3@latest`, `t3@nightly`, or a `t3` already on the remote PATH.
+SSH launches also use Scient's remote home `~/.scient-next`, never T3's
+`~/.t3`: the launcher adopts only a server whose runtime record is in that
+home, and pairing, stop, log and archive-runtime paths live there too. A launch
+that finds no `~/.scient-next` but a `~/.t3` database stops before creating
+anything; the desktop then runs a separate SSH step with its own budget that
+copies an earlier Scient home's `userdata` out of `~/.t3` once
+(`packages/ssh/src/scientRemoteHome.ts`), and launches again. It copies only
+when the migration ledger records a Scient-only migration, after stopping the
+server this launcher started there (once its process identity is confirmed),
+while holding that home's ownership lock, through SQLite's backup API, and
+never through symbolic links. A host's preparation runs as a job the SSH
+environment manager owns (`packages/ssh/src/scientSshPreparation.ts`); saved
+connections pass the `boundedWait` ensure option so a retry waits for a running
+preparation only up to a bound below the renderer's attempt deadline, while
+adding a host still waits for the whole preparation. The steps after that wait
+(readiness, pairing) are not bounded by it.
+Worktrees, projects and scratch folders stay in place because the database and
+Git refer to them by absolute path; the data in `~/.t3` is left in place. Upstream
+merges must not restore `~/.t3` paths in these scripts. The
+Codex desktop handoff and its return addresses use Scient's registered
+`scient://` schemes, never `t3code://` or T3's hosted origin.
+
+Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
+`scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
+because process lists such as Windows Task Manager show those names.
+Upstream files spell the names in place, like other user-visible renames. The Rust
+crates keep T3's package names and `Cargo.lock` entries; a marked `[[bin]]` in
+each manifest sets the file name, so T3 dependency updates still merge cleanly.
+`scripts/scient-release-machinery.test.ts` checks each lookup, build, release and
+packaging site, and fails on a `t3-*` helper name outside marked migration code,
+so an alignment that brings a new helper path must use the Scient name. Capture setup reports a helper installed under T3's name
+as needing an update, and deletes it on reinstall or removal. Development
+checkouts look only for the Scient names, so rebuild older local helper builds.
+The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
+`t3-snap-shot-<hash>` keep T3's names: renaming them would drop users'
+compositor rules and approved shortcuts.
 
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its two

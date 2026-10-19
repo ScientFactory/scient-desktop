@@ -5,11 +5,27 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, test } from "vite-plus/test";
-import { checkEnvironment, selectBoundaries } from "./scient-alignment-checks.mjs";
+import {
+  checkEnvironment,
+  compareFailures,
+  readVitestReport,
+  selectBoundaries,
+  webUnitOutcome,
+} from "./scient-alignment-checks.mjs";
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-checks.mjs", import.meta.url));
 const ids = (paths) => selectBoundaries(paths).boundaries.map((row) => row.id);
-const all = ["provider", "stop", "queue", "settings", "persistence", "fork", "ownership", "reader"];
+const all = [
+  "provider",
+  "stop",
+  "adapters",
+  "queue",
+  "settings",
+  "persistence",
+  "fork",
+  "ownership",
+  "reader",
+];
 const directories = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -83,17 +99,93 @@ test("adapter, session and ChatView changes include their untouched authority co
   NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
 });
 
+test("provider protocol clients select every boundary, like the provider packages", () => {
+  for (const path of [
+    "packages/effect-acp/src/client.ts",
+    "packages/effect-codex-app-server/src/client.ts",
+    "packages/effect-omp-rpc/src/client.ts",
+  ]) {
+    NodeAssert.deepEqual(ids([path]), all, path);
+  }
+  const selected = selectBoundaries(["packages/effect-omp-rpc/src/client.ts"]).boundaries;
+  NodeAssert.ok(
+    selected
+      .find((row) => row.id === "fork")
+      .checks.server.includes(
+        "src/orchestration-v2/scient-fork/ConversationForkNativeAnswer.integration.test.ts",
+      ),
+  );
+  NodeAssert.ok(
+    selected
+      .find((row) => row.id === "provider")
+      .checks.server.some((check) => check.includes("OmpNativeConjunctions")),
+  );
+});
+
+test("adapter protocol and run-lifecycle changes select every adapter suite", () => {
+  for (const path of [
+    "packages/effect-codex-app-server/src/protocol.ts",
+    "apps/server/src/orchestration-v2/RunExecutionService.ts",
+  ]) {
+    const adapters = selectBoundaries([path]).boundaries.find((row) => row.id === "adapters");
+    NodeAssert.ok(adapters.checks.server.includes("src/orchestration-v2/Adapters/"), path);
+  }
+});
+
+test("every native provider integration suite, however nested, belongs to a boundary", () => {
+  const server = NodeURL.fileURLToPath(new URL("../apps/server/", import.meta.url));
+  const { boundaries } = JSON.parse(
+    NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url), "utf8"),
+  );
+  const mapped = boundaries.flatMap((row) => row.checks.server ?? []);
+  // A directory entry covers its nested suites; a file entry covers itself.
+  const covered = (path) =>
+    mapped.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+  const native = NodeFS.readdirSync(NodePath.join(server, "src"), { recursive: true })
+    .map((name) => `src/${String(name).split(NodePath.sep).join("/")}`)
+    .filter((path) => /(Native\w*|\.native)\.integration\.test\.ts$/u.test(path));
+  NodeAssert.ok(
+    native.includes("src/orchestration-v2/testkit/NativeReadingIdentity.integration.test.ts"),
+  );
+  NodeAssert.deepEqual(
+    native.filter((path) => !covered(path)),
+    [],
+  );
+});
+
+test("a directory entry keeps live suites behind --native", () => {
+  const commands = (...args) =>
+    JSON.parse(
+      NodeChildProcess.spawnSync(
+        process.execPath,
+        [cli, "--boundary", "adapters", "--boundary", "provider", ...args],
+        {
+          encoding: "utf8",
+        },
+      ).stdout,
+    ).commands;
+  const server = commands().find((command) => command.id === "server");
+  NodeAssert.ok(server.files.includes("src/orchestration-v2/Adapters/"));
+  NodeAssert.deepEqual(server.argv.slice(-2), ["--exclude", "**/*.live.test.ts"]);
+  const native = commands("--native").find((command) => command.id === "native");
+  NodeAssert.deepEqual(native.files, [
+    "src/orchestration-v2/Adapters/PiNativeRuntime.live.test.ts",
+  ]);
+  NodeAssert.ok(!native.argv.includes("--exclude"));
+  NodeAssert.equal(commands().find((command) => command.id === "native").included, false);
+});
+
 test("composer hosts include settings, Stop and queue consumers and existing client witnesses", () => {
   for (const host of ["ChatComposer.tsx", "ComposerPrimaryActions.tsx"]) {
     NodeAssert.deepEqual(ids([`apps/web/src/components/chat/${host}`]), all);
   }
-  const queue = selectBoundaries(["apps/web/src/components/chat/queuedRunShortcuts.ts"]).boundaries;
+  const queue = selectBoundaries(["apps/web/src/scient/threadQueue/queueShortcuts.ts"]).boundaries;
   NodeAssert.deepEqual(
     queue.map((row) => row.id),
     ["queue"],
   );
   NodeAssert.ok(
-    queue[0].checks["web-unit"].includes("src/components/chat/queuedRunShortcuts.test.tsx"),
+    queue[0].checks["web-unit"].includes("src/scient/threadQueue/queueShortcuts.test.tsx"),
   );
   NodeAssert.ok(queue[0].checks["web-unit"].includes("src/scient/threadQueue/disposition.test.ts"));
   const stop = selectBoundaries([
@@ -278,6 +370,16 @@ test("missing target suite refuses execution before running a substring-filtered
   );
   NodeAssert.equal(result.status, 2);
   NodeAssert.match(result.stderr, /Unavailable check in target checkout/);
+  const adapters = NodeChildProcess.spawnSync(
+    process.execPath,
+    [cli, "--cwd", cwd, "--boundary", "adapters", "--run"],
+    { encoding: "utf8" },
+  );
+  NodeAssert.equal(adapters.status, 2);
+  NodeAssert.match(
+    adapters.stderr,
+    /Unavailable check in target checkout: src\/orchestration-v2\/Adapters\//,
+  );
 });
 
 test("a failing group does not hide later groups", () => {
@@ -322,5 +424,195 @@ test("invalid scope and parent traversal are refused", () => {
       encoding: "utf8",
     });
     NodeAssert.equal(result.status, 2);
+  }
+});
+
+test("Vitest failures are named by test and file error; only a clean, non-empty exit-0 run passes", () => {
+  const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-web-unit-report-"));
+  directories.push(cwd);
+  const path = NodePath.join(cwd, "vitest.json");
+  const read = (report) => {
+    NodeFS.writeFileSync(path, JSON.stringify(report));
+    return readVitestReport(path, cwd);
+  };
+  const failing = read(fakeVitestReport(cwd));
+  NodeAssert.deepEqual(failing, {
+    files: 3,
+    failures: ["src/a.test.ts > a fails", "src/broken.test.ts > (file error)"],
+  });
+  // A file error of its own is labeled beside the file's failed assertions.
+  const hooked = fakeVitestReport(cwd);
+  hooked.testResults[0].message = "Error: afterAll cleanup failed";
+  NodeAssert.ok(read(hooked).failures.includes("src/a.test.ts > (file error)"));
+  const clean = read({ testResults: [fakeVitestReport(cwd).testResults[2]] });
+  const empty = read({ testResults: [] });
+  const outcome = (status, report, signal = null) => webUnitOutcome({ status, signal }, report);
+  NodeAssert.equal(outcome(0, clean).passed, true);
+  for (const [result, reason] of [
+    [outcome(1, failing), /2 failure\(s\) \(exit 1\)/u],
+    // An interrupted run (Ctrl+C: 130, or Windows 0xC000013A) with a partial report.
+    [outcome(130, failing), /exit 130/u],
+    [outcome(3221225786, clean), /exit 3221225786/u],
+    [outcome(0, failing), /2 failure\(s\) \(exit 0\)/u],
+    [outcome(0, empty), /no test files/u],
+    [outcome(0, null), /no readable Vitest report/u],
+    [outcome(null, clean, "SIGKILL"), /terminated abnormally \(SIGKILL\)/u],
+    [outcome(1, clean), /^exit 1$/u],
+  ]) {
+    NodeAssert.equal(result.passed, false);
+    NodeAssert.match(result.reason, reason);
+  }
+  NodeAssert.equal(readVitestReport(NodePath.join(cwd, "missing.json"), cwd), null);
+  NodeAssert.deepEqual(compareFailures(["new", "old"], ["old", "gone"]), {
+    new: ["new"],
+    preexisting: ["old"],
+    noLongerFailing: ["gone"],
+  });
+});
+
+function fakeVitestReport(cwd) {
+  const file = (name) => `${cwd.split(NodePath.sep).join("/")}/${name}`;
+  return {
+    testResults: [
+      {
+        name: file("src/a.test.ts"),
+        status: "failed",
+        message: "",
+        assertionResults: [
+          { fullName: "a fails", status: "failed" },
+          { fullName: "a passes", status: "passed" },
+        ],
+      },
+      {
+        name: file("src/broken.test.ts"),
+        status: "failed",
+        message: "Failed to load",
+        assertionResults: [],
+      },
+      {
+        name: file("src/b.test.ts"),
+        status: "passed",
+        message: "",
+        assertionResults: [{ fullName: "b", status: "passed" }],
+      },
+    ],
+  };
+}
+
+/** A fixture checkout whose pnpm writes FAKE_REPORT as the Vitest report (none when empty) and exits FAKE_EXIT. */
+function webUnitFixture() {
+  const { cwd } = fixture();
+  NodeFS.mkdirSync(NodePath.join(cwd, "apps/web"), { recursive: true });
+  const bin = NodePath.join(cwd, "fake-bin");
+  NodeFS.mkdirSync(bin);
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "fake-pnpm.mjs"),
+    `import * as NodeFS from "node:fs";
+const out = process.argv.find((arg) => arg.startsWith("--outputFile.json="));
+if (process.env.FAKE_REPORT) NodeFS.writeFileSync(out.slice("--outputFile.json=".length), process.env.FAKE_REPORT);
+process.exit(Number(process.env.FAKE_EXIT));
+`,
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "pnpm"),
+    `#!/bin/sh\nexec "${process.execPath}" "${NodePath.join(bin, "fake-pnpm.mjs")}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "pnpm.cmd"),
+    `@"${process.execPath}" "%~dp0fake-pnpm.mjs" %*\r\n`,
+  );
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const web = `${NodeFS.realpathSync(cwd)}/apps/web`;
+  const run = ({ report = fakeVitestReport(web), exit = 1 } = {}, ...args) => {
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      [cli, "--cwd", cwd, "--web-unit", "--run", ...args],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          [pathKey]: `${bin}${NodePath.delimiter}${process.env[pathKey]}`,
+          FAKE_REPORT: report ? JSON.stringify(report) : "",
+          FAKE_EXIT: String(exit),
+        },
+      },
+    );
+    const match = /"failuresFile": "(.+web-unit-failures\.json)"/u.exec(result.stdout)?.[1];
+    const failuresPath = match && JSON.parse(`"${match}"`);
+    if (failuresPath) directories.push(NodePath.dirname(failuresPath));
+    return { ...result, failuresPath };
+  };
+  return Object.assign(run, { web });
+}
+
+test("the web unit lane fails on any failure; a baseline only labels new and pre-existing ones", () => {
+  const run = webUnitFixture();
+  const first = run();
+  NodeAssert.equal(first.status, 1, first.stderr);
+  NodeAssert.match(first.stdout, /Failed checks: web-unit-lane/u);
+  const recorded = JSON.parse(NodeFS.readFileSync(first.failuresPath, "utf8"));
+  NodeAssert.deepEqual(recorded.failures, [
+    "src/a.test.ts > a fails",
+    "src/broken.test.ts > (file error)",
+  ]);
+  NodeAssert.equal(recorded.passed, false);
+  // The same failures on the base are labeled pre-existing, and the lane still fails.
+  const same = run({}, "--web-unit-baseline", first.failuresPath);
+  NodeAssert.equal(same.status, 1, same.stdout);
+  NodeAssert.match(same.stdout, /"new": \[\]/u);
+  NodeAssert.match(same.stdout, /"preexisting": \[\s+"src\/a\.test\.ts > a fails"/u);
+  // A failure the base did not have is labeled new.
+  const baseline = NodePath.join(NodeOS.tmpdir(), `scient-web-unit-baseline-${process.pid}.json`);
+  directories.push(baseline);
+  NodeFS.writeFileSync(
+    baseline,
+    JSON.stringify({ failures: ["src/broken.test.ts > (file error)", "src/gone"] }),
+  );
+  const worse = run({}, "--web-unit-baseline", baseline);
+  NodeAssert.equal(worse.status, 1, worse.stdout);
+  NodeAssert.match(worse.stdout, /"new": \[\s+"src\/a\.test\.ts > a fails"\s+\]/u);
+  NodeAssert.match(worse.stdout, /"noLongerFailing": \[\s+"src\/gone"\s+\]/u);
+});
+
+test("only a clean exit-0 web unit run with test files passes", () => {
+  const run = webUnitFixture();
+  const passing = { testResults: [fakeVitestReport(run.web).testResults[2]] };
+  const clean = run({ report: passing, exit: 0 });
+  NodeAssert.equal(clean.status, 0, clean.stdout);
+  NodeAssert.match(clean.stdout, /"passed": true/u);
+  const empty = run({ report: { testResults: [] }, exit: 0 });
+  NodeAssert.equal(empty.status, 1, empty.stdout);
+  NodeAssert.match(empty.stdout, /"reason": "the Vitest report has no test files \(exit 0\)"/u);
+  const interrupted = run({ report: passing, exit: 130 });
+  NodeAssert.equal(interrupted.status, 1, interrupted.stdout);
+  NodeAssert.match(interrupted.stdout, /"reason": "exit 130"/u);
+  const missing = run({ report: null });
+  NodeAssert.equal(missing.status, 1, missing.stdout);
+  NodeAssert.match(missing.stdout, /"reason": "no readable Vitest report \(exit 1\)"/u);
+});
+
+test("the web unit lane is opt-in and its baseline needs it", () => {
+  const plan = NodeChildProcess.spawnSync(process.execPath, [cli, "--web-unit"], {
+    encoding: "utf8",
+  });
+  NodeAssert.equal(plan.status, 0, plan.stderr);
+  const parsed = JSON.parse(plan.stdout);
+  NodeAssert.deepEqual(parsed.boundaries, []);
+  NodeAssert.match(parsed.webUnitLane.cost, /about 14 minutes/u);
+  const reader = JSON.parse(
+    NodeChildProcess.spawnSync(process.execPath, [cli, "--boundary", "reader"], {
+      encoding: "utf8",
+    }).stdout,
+  );
+  NodeAssert.equal(reader.webUnitLane, null);
+  for (const args of [
+    ["--web-unit-baseline", "base.json", "--all"],
+    ["--web-unit", "--web-unit"],
+  ]) {
+    NodeAssert.equal(
+      NodeChildProcess.spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" }).status,
+      2,
+    );
   }
 });

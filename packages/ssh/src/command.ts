@@ -1,7 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 
-import type { DesktopSshEnvironmentTarget, DesktopUpdateChannel } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import { scientServerPackageSpec } from "@t3tools/shared/scientRelease";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -75,7 +75,6 @@ export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string
   return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`;
 }
 
-/** Names the remote state directory for a target: the first 16 hex chars of its SHA-256 key. */
 export const remoteStateKey = Effect.fn("ssh/command.remoteStateKey")(function* (
   target: DesktopSshEnvironmentTarget,
 ): Effect.fn.Return<string, never, Crypto.Crypto> {
@@ -370,19 +369,18 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   );
 });
 
+// SCIENT-FORK:START — the remote runs only the Scient server published with
+// this exact desktop release. Development and unpublished builds get no
+// package, so the remote runner refuses to start rather than installing T3's
+// npm package.
 export function resolveRemoteT3CliPackageSpec(input: {
   readonly appVersion: string;
-  readonly updateChannel: DesktopUpdateChannel;
   readonly isDevelopment?: boolean;
-}): string {
+}): string | undefined {
   const appVersion = input.appVersion.trim();
   if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
     return scientServerPackageSpec(appVersion);
   }
-
-  if (input.isDevelopment) {
-    return "t3@nightly";
-  }
-
-  return input.updateChannel === "nightly" ? "t3@nightly" : "t3@latest";
+  return undefined;
 }
+// SCIENT-FORK:END

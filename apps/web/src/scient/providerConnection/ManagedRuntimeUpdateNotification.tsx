@@ -7,6 +7,7 @@ import type { ProviderUpdateToastId } from "~/components/ProviderUpdateLaunchNot
 import { useLocalEnvironmentUpdateGroups } from "~/components/ProviderUpdateLaunchNotification.environments";
 import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useDismissedProviderUpdateNotificationKeys } from "~/providerUpdateDismissal";
+import { offersProviderUpdateToasts } from "~/scient/desktopUpdate/updateAvailabilityToasts";
 
 import {
   collectManagedRuntimeUpdateCandidates,
@@ -14,9 +15,10 @@ import {
   getManagedRuntimeUpdateRunningToastView,
   getManagedRuntimeUpdateWaitingToastView,
   managedRuntimeUpdateNotificationKey,
+  managedRuntimeUpdateStartFailure,
   managedRuntimeUpdateTargets,
   settleManagedRuntimeUpdateRuns,
-  type ManagedRuntimeUpdateOutcome,
+  startedManagedRuntimeUpdate,
   type ManagedRuntimeUpdateRun,
   type ManagedRuntimeUpdateTarget,
 } from "./ManagedRuntimeUpdateNotification.logic";
@@ -46,20 +48,11 @@ function managedRuntimeSettingsSearch(targets: ReadonlyArray<ManagedRuntimeUpdat
     : undefined;
 }
 
-function startFailure(error: unknown): ManagedRuntimeUpdateOutcome {
-  return {
-    status: "failed",
-    message:
-      error instanceof Error
-        ? error.message
-        : "Scient could not start the update. Review the provider in Settings.",
-  };
-}
-
 /**
  * Offers a reviewed Scient-managed runtime update and starts it in place. The
  * server stages the update while turns run and switches runtimes once the
- * provider is idle; this notice follows that operation to its result.
+ * provider is idle; this notice follows that operation to its result. In the
+ * desktop app the sidebar's update circle makes the offer instead.
  */
 export function ManagedRuntimeUpdateNotification() {
   const navigate = useNavigate();
@@ -218,19 +211,10 @@ export function ManagedRuntimeUpdateNotification() {
             environmentId: target.environmentId,
             instanceId: target.instanceId,
             action: "update",
-          }).then(
-            (provider) => {
-              const operationId = provider.connection?.runtime?.operation?.operationId ?? null;
-              return {
-                operationId,
-                outcome:
-                  operationId === null
-                    ? startFailure(undefined)
-                    : ({ status: "pending" } as ManagedRuntimeUpdateOutcome),
-              };
-            },
-            (error: unknown) => ({ operationId: null, outcome: startFailure(error) }),
-          );
+          }).then(startedManagedRuntimeUpdate, (error: unknown) => ({
+            operationId: null,
+            outcome: managedRuntimeUpdateStartFailure(error),
+          }));
           const current = updateCurrent((active) => ({
             ...active,
             runs: active.runs.map((run, runIndex) =>
@@ -263,6 +247,7 @@ export function ManagedRuntimeUpdateNotification() {
     }
 
     if (
+      !offersProviderUpdateToasts() ||
       !notificationKey ||
       activeToastRef.current !== null ||
       dismissedNotificationKeys.has(notificationKey) ||

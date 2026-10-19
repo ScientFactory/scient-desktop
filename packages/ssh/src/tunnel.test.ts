@@ -1,8 +1,14 @@
 import * as NodeNet from "node:net";
+// SCIENT-FORK:START
+import * as NodeSqlite from "node:sqlite";
+// SCIENT-FORK:END
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { SCIENT_DESKTOP_RELEASE_REPOSITORY } from "@t3tools/shared/scientRelease";
+import {
+  SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  scientServerPackageSpec,
+} from "@t3tools/shared/scientRelease";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -22,6 +28,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SshAuth from "./auth.ts";
 import { SshCommandError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
+// SCIENT-FORK:START
+import {
+  buildRemoteScientHomeMigrationScript,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
+// SCIENT-FORK:END
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -113,7 +125,12 @@ describe("ssh tunnel scripts", () => {
       script,
       `T3_RELEASE_BASE_URL='https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases/download'`,
     );
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
+    // SCIENT-FORK: runtimes unpack under Scient's remote home, never T3's ~/.t3.
+    assert.include(
+      script,
+      'T3_RUNTIME_DIR="$HOME/.scient-next/runtime/versions/$T3_ARCHIVE_VERSION"',
+    );
+    assert.notInclude(script, "$HOME/.t3");
     assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
@@ -121,14 +138,10 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "npm exec");
     assert.notInclude(script, "t3@latest");
     assert.notInclude(script, 'exec t3 "$@"');
-    // Concurrent launches serialize on a per-version mkdir lock and recheck
-    // the completion marker after acquiring it.
     assert.include(
       script,
-      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
+      'T3_LOCK="$HOME/.scient-next/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
-    // mkdir is the exclusive create; the pid follows atomically. A dead owner
-    // is reclaimed at once, a never-published owner after a short grace.
     assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
     assert.include(script, 'mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"');
     assert.include(script, 'if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then');
@@ -143,8 +156,6 @@ describe("ssh tunnel scripts", () => {
       script.indexOf('"$T3_STAGING/t3" --version'),
       script.indexOf('> "$T3_STAGING/.install-complete"'),
     );
-    // Node discovery is defined for the dev path but only ever invoked inside
-    // the node-script branch, which the archive path skips entirely.
     assert.equal(script.split("ensure_remote_node_path || true").length - 1, 1);
     assert.isBelow(
       script.indexOf("ensure_remote_node_path || true"),
@@ -245,30 +256,45 @@ describe("ssh tunnel scripts", () => {
   // SCIENT-FORK:START — Scient's SSH product still installs the exact pinned
   // server package from its own signed release over npx/npm. Upstream deleted
   // this path, so these assertions have no upstream counterpart.
-  it("builds the remote t3 runner with npx and npm fallbacks", () => {
-    const script = SshTunnel.buildRemoteT3RunnerScript();
+  it("runs only the pinned Scient server package, with npx and npm fallbacks", () => {
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    const script = SshTunnel.buildRemoteT3RunnerScript({ packageSpec });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(script, 'exec t3 "$@"');
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
-    assert.include(script, "could not install 't3@latest'");
+    assert.include(script, "sh -c 'command -v scient'");
+    assert.include(script, `could not install the Scient server from '${packageSpec}'`);
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest'",
+      `require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package '${packageSpec}'`,
     );
     assert.include(
       script,
-      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest'",
+      `require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package '${packageSpec}'`,
     );
-    assert.include(script, "npm produced no t3 executable");
+    assert.include(script, "npm produced no scient executable");
+    // Neither a CLI already on the remote PATH nor T3's npm package may run.
+    assert.notInclude(script, "command -v t3");
+    assert.notInclude(script, 'exec t3 "$@"');
+    assert.notInclude(script, "t3@latest");
+    assert.notInclude(script, "t3@nightly");
     // The pairing script runs the runner directly, so the npm install block
-    // must do its own node discovery before it looks for an installed CLI.
-    assert.include(
-      script,
-      "ensure_remote_node_path || true\nif command -v t3 >/dev/null 2>&1; then",
-    );
+    // must do its own node discovery before it installs the CLI.
+    assert.include(script, `ensure_remote_node_path || true\nif [ -z '${packageSpec}' ]; then`);
     assert.notInclude(script, "SHA256SUMS");
     assert.notInclude(script, "T3_ARCHIVE_VERSION=");
+  });
+
+  it("refuses to start without a pinned Scient server release", () => {
+    const script = SshTunnel.buildRemoteT3RunnerScript();
+
+    assert.include(script, "if [ -z '' ]; then");
+    assert.include(script, "This Scient build has no published Scient server release");
+    assert.isBelow(
+      script.indexOf("This Scient build has no published Scient server release"),
+      script.indexOf("require_installed_t3_cli npx"),
+    );
+    assert.notInclude(script, "t3@latest");
   });
 
   it("shell-quotes package specs in the remote t3 runner", () => {
@@ -286,6 +312,71 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
+  });
+
+  it("keeps remote state in Scient's home and reads ~/.t3 only to copy it once", () => {
+    const stateKey = "711bc738002d72fd";
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    const launch = SshTunnel.buildRemoteLaunchScript({ packageSpec });
+    const pairing = SshTunnel.buildRemotePairingScript(stateKey, { packageSpec });
+    const stop = SshTunnel.buildRemoteStopScript(stateKey);
+
+    assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.scient-next"');
+    assert.include(launch, 'STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"');
+    assert.include(pairing, 'DEFAULT_SERVER_HOME="$HOME/.scient-next"');
+    assert.include(pairing, `STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/${stateKey}"`);
+    assert.include(stop, `STATE_DIR="$HOME/.scient-next/ssh-launch/${stateKey}"`);
+    assert.notInclude(pairing, "$HOME/.t3");
+    assert.notInclude(stop, "$HOME/.t3");
+    // The launch hands over to the copy before anything can create the new
+    // home, and that check is the only part of the launch that reads ~/.t3.
+    const handover = launch.indexOf(`printf '%s\\n' '{"scientHomeMigration":"required"}'`);
+    assert.isAbove(handover, 0);
+    assert.isBelow(handover, launch.indexOf('mkdir -p "$STATE_DIR"'));
+    assert.lengthOf(launch.match(/\$HOME\/\.t3/gu) ?? [], 1);
+    // The archive runner has no Node, so it never copies.
+    assert.notInclude(SshTunnel.buildRemoteLaunchScript(ARCHIVE), "$HOME/.t3");
+  });
+
+  it.effect("copies an earlier Scient home as its own step, then launches again", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    // The copy outlasts the launch budget; it has its own.
+    const outputs = [
+      makeSuccessfulProcess('loaded nvm default\n{"scientHomeMigration":"required"}\n'),
+      makeDelayedSuccessfulProcess("", 600_000),
+      makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed"}\n'),
+    ];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        spawnedCommands.push(commandArgs(command));
+        return outputs[spawnedCommands.length - 1] ?? makeSuccessfulProcess("");
+      }),
+    );
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.minutes(10));
+
+      const result = yield* Fiber.join(fiber);
+      assert.deepEqual(result, { remotePort: 3774, remoteServerKind: "managed" });
+      assert.lengthOf(spawnedCommands, 3);
+      for (const args of spawnedCommands) {
+        assert.deepEqual(args.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      }
+    }).pipe(Effect.provide(layerProcess));
   });
   // SCIENT-FORK:END
 
@@ -317,7 +408,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(launch, "server-home");
-    assert.include(launch, "Remote T3 server did not become ready");
+    assert.include(launch, "Remote Scient server did not become ready");
     assert.include(launch, 'wait_ready "60000"');
     assert.include(launch, 'if [ -s "$LOG_FILE" ]; then');
     assert.include(launch, "It wrote nothing to %s");
@@ -371,15 +462,10 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
     // SCIENT-FORK: the pinned package spec reaches both generated scripts.
-    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      SshTunnel.buildRemotePairingScript(stateKey, { packageSpec: "t3@nightly" }),
-      "t3@nightly",
-    );
-    assert.include(
-      SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }),
-      "T3_ARCHIVE_MODE=0",
-    );
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemotePairingScript(stateKey, { packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), "T3_ARCHIVE_MODE=0");
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -475,7 +561,9 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, { packageSpec: "t3@nightly" }),
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
       );
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(95));
@@ -671,7 +759,7 @@ describe("ssh tunnel scripts", () => {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
                 stderr: Stream.make(
-                  new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+                  new TextEncoder().encode("Remote Scient server did not stop within 2 seconds.\n"),
                 ),
               };
             }
@@ -713,7 +801,7 @@ describe("ssh tunnel scripts", () => {
             assert.instanceOf(disconnected.failure, SshCommandError);
             assert.equal(
               disconnected.failure.message,
-              "Remote T3 server did not stop within 2 seconds.",
+              "Remote Scient server did not stop within 2 seconds.",
             );
           }
         } else {
@@ -852,7 +940,7 @@ describe("ssh tunnel scripts", () => {
 // On macOS, Node can bind 127.0.0.1:<port> while another process (such as the
 // desktop app with network access on) listens on *:<port>. Linux refuses that
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
-// the picker's probe and the holder sets it too. macOS needs neither.
+// the picker's probe and the holder sets it too.
 const MACOS_BIND_PRELOAD = `const net = require("node:net");
 const listen = net.Server.prototype.listen;
 net.Server.prototype.listen = function (port, host, callback) {
@@ -921,7 +1009,6 @@ describe("remote port picker", () => {
   );
 });
 
-// Runs a generated script with an isolated HOME, as an SSH remote would.
 const runScript = (home: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -954,9 +1041,6 @@ const runScript = (home: string, args: ReadonlyArray<string>) =>
     return { stdout, stderr, exitCode };
   });
 
-// The archive runner is generated shell; string assertions cannot prove the
-// lock excludes concurrent installers. Run the real script against a tiny
-// fake archive served from a file:// mirror.
 describe("archive runner script", () => {
   const hostPlatform = HostProcess.Platform.defaultValue();
   const hostArch = HostProcess.Architecture.defaultValue();
@@ -965,8 +1049,6 @@ describe("archive runner script", () => {
 
   const runRunner = (home: string, runner: string) => runScript(home, [runner, "--version"]);
 
-  // A fake "executable" that answers --version, packed the way the release
-  // workflow packs the real archive: one top-level directory named after the
   // stem, checksummed in SHA256SUMS. When an installer validates it in its
   // staging directory, it checks the lock holds that live installer's numeric
   // pid and appends one line per installation to $HOME/install-owner.
@@ -986,7 +1068,7 @@ describe("archive runner script", () => {
         "#!/bin/sh",
         'case "$0" in',
         "  */.staging-*)",
-        `    owner="$(cat "$HOME/.t3/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
+        `    owner="$(cat "$HOME/.scient-next/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
         '    case "$owner" in ""|*[!0-9]*) echo "Invalid installer PID: $owner" >&2; exit 1 ;; esac',
         '    kill -0 "$owner" || exit 1',
         '    printf "%s\\n" "$owner" >> "$HOME/install-owner"',
@@ -1036,15 +1118,13 @@ describe("archive runner script", () => {
         const racedOwners = yield* installOwners;
         assert.lengthOf(racedOwners, 1, "concurrent launches installed more than once");
         assert.match(racedOwners[0] ?? "", /^[0-9]+$/);
-        const versionsDir = `${home}/.t3/runtime/versions`;
+        const versionsDir = `${home}/.scient-next/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),
           archiveVersion,
         );
 
-        // A lock left by a crashed installer (dead pid) must not block the
-        // next launch, and neither must one that never published a pid.
         const lock = `${versionsDir}/.${archiveVersion}.install.lock`;
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
         yield* fs.makeDirectory(lock);
@@ -1064,9 +1144,6 @@ describe("archive runner script", () => {
   );
 });
 
-// Reuse decisions also live in generated shell. Drive the real launch script
-// against a fake server that answers readiness probes and writes the default
-// runtime file the way `t3 serve` does.
 describe("launch script", () => {
   const windowsHost = HostProcess.Platform.defaultValue() === "win32";
   const FAKE_SERVER = `const fs = require("node:fs");
@@ -1092,7 +1169,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
   fs.mkdirSync(userdata, { recursive: true });
   fs.writeFileSync(
     path.join(userdata, "server-runtime.json"),
-    JSON.stringify({ version: 1, pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      port,
+      origin: "http://127.0.0.1:" + port,
+      startedAt: new Date().toISOString(),
+    }),
   );
   console.log(port);
 });
@@ -1117,8 +1200,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     });
   });
 
-  // Whether anything still accepts connections on the port. Unlike a PID
-  // check, this cannot mistake an unreaped, exited server for a running one.
   const isListening = (port: number) =>
     Effect.callback<boolean>((resume) => {
       const socket = NodeNet.connect(port, "127.0.0.1");
@@ -1131,14 +1212,11 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
 
   const launchResult = (stdout: string) => JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
 
-  // Writes the launch script for a fake server into a temporary HOME. The
-  // seeded remembered port keeps the test off the default 3773, which a live
-  // T3 on this machine may own.
   const prepareLaunch = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-script-" });
     const home = `${root}/home`;
-    const stateDir = `${home}/.t3/ssh-launch/test-state`;
+    const stateDir = `${home}/.scient-next/ssh-launch/test-state`;
     const fakeServer = `${root}/fake-t3.cjs`;
     const launch = `${root}/launch.sh`;
     yield* fs.makeDirectory(stateDir, { recursive: true });
@@ -1153,7 +1231,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       .pipe(Effect.map((pid) => Number(pid.trim())));
     // Launched servers outlive the script, so stop each PID the script
     // recorded, including one it recorded just before a failed assertion.
-    // SIGKILL also ends a server a test left stopped.
     const launchedPids: Array<number> = [];
     yield* Effect.addFinalizer(() =>
       readManagedPid.pipe(
@@ -1180,16 +1257,17 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.equal(launched.serverKind, "managed");
       return { launched, pid };
     });
-    // Starts a separate server on the default home, as a service would, and
-    // returns the port it reports. An unreaped server runs under a parent that
-    // never waits on it, so once it exits it lingers as a zombie.
+    // An unreaped server runs under a parent that never waits on it, so once it
+    // exits it lingers as a zombie.
+    // SCIENT-FORK: `baseDir` starts it on another home, such as T3's ~/.t3.
     const startDefaultHomeServer = (
       flags: ReadonlyArray<string>,
-      options?: { readonly unreaped?: boolean },
+      options?: { readonly unreaped?: boolean; readonly baseDir?: string },
     ) =>
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const args = [fakeServer, "serve", "--port", "0", "--base-dir", `${home}/.t3`, ...flags];
+        const baseDir = options?.baseDir ?? `${home}/.scient-next`;
+        const args = [fakeServer, "serve", "--port", "0", "--base-dir", baseDir, ...flags];
         const server = yield* spawner.spawn(
           options?.unreaped
             ? ChildProcess.make("sh", ["-c", 'node "$@" & exec sleep 600', "sh", ...args])
@@ -1223,14 +1301,10 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           yield* prepareLaunch;
         const { launched, pid: managedPid } = yield* launchManaged;
 
-        // The managed server wrote the default runtime file itself, so a
-        // reconnect must keep it rather than stop it as an external server.
         assert.deepEqual(yield* runLaunch, launched);
         assert.equal(yield* readManagedPid, managedPid);
         assert.isTrue(isAlive(managedPid));
 
-        // A remembered port that is stale must not hide our own server: the
-        // runtime file names its port.
         yield* fs.writeFileString(`${stateDir}/port`, `${yield* freeLoopbackPort}\n`);
         assert.deepEqual(yield* runLaunch, launched);
         assert.equal(yield* readManagedPid, managedPid);
@@ -1239,8 +1313,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           `${launched.remotePort}`,
         );
 
-        // A different server on the default home, such as a service, still
-        // takes over from the managed one.
         const servicePort = yield* startDefaultHomeServer([]);
         assert.deepEqual(yield* runLaunch, {
           remotePort: servicePort,
@@ -1252,8 +1324,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     60_000,
   );
 
-  // A stopped process keeps its listener but answers nothing, like a server
-  // stuck in a long SQLite stall.
   it.effect.skipIf(windowsHost)(
     "waits for its busy managed server instead of replacing it",
     () =>
@@ -1262,7 +1332,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         const { readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
         const { launched, pid } = yield* launchManaged;
 
-        // It resumes after the two 2-second probes that used to replace it.
         process.kill(pid, "SIGSTOP");
         yield* spawner.spawn(ChildProcess.make("sh", ["-c", `sleep 5; kill -CONT ${pid}`]));
         assert.deepEqual(yield* runLaunch, launched);
@@ -1281,7 +1350,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           yield* prepareLaunch;
         const { launched, pid } = yield* launchManaged;
 
-        // Shorten the one-minute readiness budget so the test stays fast.
         const script = yield* fs.readFileString(launch);
         assert.include(script, 'wait_ready "60000"');
         yield* fs.writeFileString(
@@ -1311,7 +1379,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         const { stateDir, readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
         const { pid: previousPid } = yield* launchManaged;
 
-        // A different runner on disk means the client updated: replace the server.
         yield* fs.writeFileString(`${stateDir}/run-t3.sh`, "# previous runner\n");
         assert.equal((yield* runLaunch).serverKind, "managed");
         const replacementPid = yield* readManagedPid;
@@ -1346,7 +1413,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
-          `${home}/.t3/userdata/server-runtime.json`,
+          `${home}/.scient-next/userdata/server-runtime.json`,
           JSON.stringify({
             version: 1,
             pid: zombie,
@@ -1371,9 +1438,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         const { stateDir, launchManaged, runLaunch } = yield* prepareLaunch;
         const { launched, pid } = yield* launchManaged;
 
-        // An interrupted launch, or a recycled PID, can leave a PID that matches
-        // the runtime file without the managed marker. A changed runner must not
-        // turn that into a restart of a server this launcher cannot claim.
         yield* fs.remove(`${stateDir}/managed`);
         yield* fs.writeFileString(`${stateDir}/run-t3.sh`, "# superseded runner\n");
         assert.deepEqual(yield* runLaunch, {
@@ -1391,12 +1455,9 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const { stateDir, runLaunch, startDefaultHomeServer } = yield* prepareLaunch;
-        // Ownership files from an earlier managed launch that lost its PID.
         yield* fs.writeFileString(`${stateDir}/managed`, "managed\n");
         const servicePort = yield* startDefaultHomeServer(["--answer-once"]);
 
-        // The server answers adoption and then stalls. A second readiness
-        // probe would launch another server on the same home.
         assert.deepEqual(yield* runLaunch, { remotePort: servicePort, serverKind: "external" });
         assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -1412,10 +1473,6 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         const { pid: previousPid } = yield* launchManaged;
         yield* startDefaultHomeServer(["--exit-after-answer"], { unreaped: true });
 
-        // The service answers adoption and then exits while the managed
-        // server is being stopped, staying a zombie, so the script must launch
-        // a new server rather than return the dead one. The freed port may be
-        // reused.
         const result = yield* runLaunch;
         assert.equal(result.serverKind, "managed");
         const replacementPid = yield* readManagedPid;
@@ -1424,4 +1481,80 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
   );
+
+  // SCIENT-FORK:START — Scient adopts only a server on its own home, and copies
+  // an earlier Scient home out of T3's ~/.t3 once.
+  it.effect.skipIf(windowsHost)(
+    "never adopts a server running on T3's ~/.t3",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, launchManaged, startDefaultHomeServer } = yield* prepareLaunch;
+        const t3Port = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+
+        const { launched } = yield* launchManaged;
+        assert.notEqual(launched.remotePort, t3Port);
+        assert.isTrue(yield* isListening(t3Port));
+        assert.isFalse(yield* fs.exists(`${home}/.t3/ssh-launch`));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "copies an earlier Scient home out of ~/.t3 after stopping its managed server",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, runLaunchScript, launchManaged, startDefaultHomeServer } =
+          yield* prepareLaunch;
+        yield* fs.remove(`${home}/.scient-next`, { recursive: true });
+        const legacyState = `${home}/.t3/userdata`;
+        const legacyLaunch = `${home}/.t3/ssh-launch/test-state`;
+        yield* fs.makeDirectory(legacyState, { recursive: true });
+        yield* fs.makeDirectory(legacyLaunch, { recursive: true });
+        // Only Scient's ledger records ProjectlessThreads.
+        const db = new NodeSqlite.DatabaseSync(`${legacyState}/statev2.sqlite`);
+        db.exec(`CREATE TABLE effect_sql_migrations (
+  migration_id integer PRIMARY KEY NOT NULL,
+  created_at datetime NOT NULL DEFAULT current_timestamp,
+  name VARCHAR(255) NOT NULL
+);
+INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ProjectlessThreads');`);
+        db.close();
+        yield* fs.writeFileString(`${legacyState}/settings.json`, '{"fixture":true}\n');
+        // The managed server an earlier Scient launcher left on ~/.t3.
+        const legacyPort = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+        const legacyRuntime = JSON.parse(
+          yield* fs.readFileString(`${legacyState}/server-runtime.json`),
+        );
+        yield* fs.writeFileString(`${legacyLaunch}/pid`, `${legacyRuntime.pid}\n`);
+        yield* fs.writeFileString(`${legacyLaunch}/port`, `${legacyPort}\n`);
+        yield* fs.writeFileString(`${legacyLaunch}/managed`, "managed\n");
+
+        // The launch hands over before creating anything; the copy runs as
+        // its own step, and the launch then runs again.
+        const handover = yield* runLaunchScript;
+        assert.equal(handover.exitCode, 0, handover.stderr);
+        assert.equal(handover.stdout.trim(), SCIENT_HOME_MIGRATION_REQUIRED);
+        assert.isFalse(yield* fs.exists(`${home}/.scient-next`));
+        const migration = `${home}/../migrate.sh`;
+        yield* fs.writeFileString(
+          migration,
+          buildRemoteScientHomeMigrationScript(SshTunnel.buildRemoteNodeEnvScript()),
+        );
+        const migrated = yield* runScript(home, [migration, "test-state"]);
+        assert.equal(migrated.exitCode, 0, migrated.stderr);
+        yield* launchManaged;
+        assert.isFalse(yield* isListening(legacyPort));
+        assert.equal(
+          yield* fs.readFileString(`${home}/.scient-next/userdata/settings.json`),
+          '{"fixture":true}\n',
+        );
+        assert.isTrue(yield* fs.exists(`${home}/.scient-next/userdata/statev2.sqlite`));
+        // A copy, so an older Scient app still finds its data in ~/.t3.
+        assert.isTrue(yield* fs.exists(`${legacyState}/settings.json`));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
+  );
+  // SCIENT-FORK:END
 });

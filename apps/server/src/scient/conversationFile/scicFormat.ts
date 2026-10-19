@@ -45,10 +45,8 @@ export const SCIC_ATTACHMENTS_DIRECTORY = "attachments/";
 export const SCIC_SNAPSHOT_MEDIA_TYPE = "application/json";
 export const SCIC_MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
 
-// ---------------------------------------------------------------------------
 // Limits. The writer refuses to exceed them; the reader rejects anything that
 // does. The per-import upload limit in the contracts covers all of them.
-// ---------------------------------------------------------------------------
 
 export const SCIC_MAX_ENTRIES = 10_000;
 export const SCIC_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
@@ -71,10 +69,6 @@ export const SCIC_MAX_UNCOMPRESSED_BYTES =
  */
 export const SCIC_MAX_COMPRESSION_RATIO = 500;
 export const SCIC_COMPRESSION_RATIO_FLOOR_BYTES = 1024 * 1024;
-
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
 
 /** The reader's limit, in code points, on the name after an attachment path's digest. */
 const SAFE_NAME_MAX_CODE_POINTS = 100;
@@ -123,10 +117,6 @@ export function scicAttachmentPathDigest(path: string): Sha256Digest | null {
   const match = ATTACHMENT_PATH_PATTERN.exec(path);
   return match && !match[2]!.startsWith(".") ? `sha256:${match[1]!}` : null;
 }
-
-// ---------------------------------------------------------------------------
-// Manifest
-// ---------------------------------------------------------------------------
 
 const ShortText = (max: number) => TrimmedNonEmptyString.check(Schema.isMaxLength(max));
 
@@ -183,10 +173,6 @@ export const ScicManifest = Schema.Struct({
   warnings: Schema.Array(DocumentWarning),
 });
 export type ScicManifest = typeof ScicManifest.Type;
-
-// ---------------------------------------------------------------------------
-// Attachment media policy
-// ---------------------------------------------------------------------------
 
 /** Bytes needed to recognise every type `sniffMediaType` knows. */
 export const SNIFF_BYTES = 16;

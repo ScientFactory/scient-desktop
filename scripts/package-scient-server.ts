@@ -11,6 +11,7 @@ import { parse as parseYaml } from "yaml";
 
 import {
   SCIENT_SERVER_ALLOWED_INSTALL_SCRIPTS,
+  SCIENT_SERVER_CLI_NAME,
   SCIENT_SERVER_PACKAGE_NAME,
   scientServerAssetName,
 } from "@t3tools/shared/scientRelease";
@@ -50,6 +51,18 @@ function readFlag(args: ReadonlyArray<string>, flag: string, fallback?: string):
   return value;
 }
 
+/** `scient` is the documented command; `t3` stays for remote setups that already invoke it. */
+function scientServerBin(sourceBin: unknown): Record<string, string> {
+  const entry =
+    typeof sourceBin === "object" && sourceBin !== null && "t3" in sourceBin
+      ? sourceBin.t3
+      : undefined;
+  if (typeof entry !== "string") {
+    throw new Error("apps/server/package.json must declare the server's t3 bin.");
+  }
+  return { [SCIENT_SERVER_CLI_NAME]: entry, t3: entry };
+}
+
 export function createScientServerPackageJson(input: {
   readonly source: Record<string, unknown> & {
     readonly dependencies?: Record<string, string>;
@@ -80,7 +93,7 @@ export function createScientServerPackageJson(input: {
       url: "https://github.com/ScientFactory/scient-desktop.git",
       directory: "apps/server",
     },
-    bin: input.source.bin,
+    bin: scientServerBin(input.source.bin),
     files: ["dist", "npm-shrinkwrap.json"],
     type: "module",
     engines: input.source.engines,

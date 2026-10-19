@@ -3,6 +3,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  SCIENT_COMPUTE_BRIDGES,
+  SCIENT_MANAGED_PYTHON_SPEC_FILES,
+} from "../../../scripts/scientServerAssets.ts";
 import { type ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
@@ -126,22 +130,13 @@ describe("MATLAB compute bridge location", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("agrees with the release build about both staged bridge scripts", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const cli = yield* fs.readFileString(
-        NodePath.join(moduleDirectory(), "..", "..", "..", "scripts", "cli.ts"),
-      );
-      const specifications = yield* fs.readFileString(
-        NodePath.join(moduleDirectory(), "managed-python", "specifications.ts"),
-      );
-      expect(cli).toContain(`dist/${STAGED_BRIDGE_DIRECTORY}/${MATLAB_BRIDGE_SCRIPT_NAME}`);
-      expect(cli).toContain(`dist/${STAGED_BRIDGE_DIRECTORY}/scient_compute_bridge.py`);
-      expect(cli).toContain("MANAGED_PYTHON_SPECIFICATIONS.flatMap");
-      expect(specifications).toContain('purpose: "matlab-connection"');
-      expect(specifications).toContain('relativeDirectory: "matlab-connection"');
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+  it("agrees with the release build about both staged bridge scripts", () => {
+    const assets = SCIENT_COMPUTE_BRIDGES.map((bridge) => bridge.asset);
+    expect(assets).toContain(`dist/${STAGED_BRIDGE_DIRECTORY}/${MATLAB_BRIDGE_SCRIPT_NAME}`);
+    expect(assets).toContain(`dist/${STAGED_BRIDGE_DIRECTORY}/scient_compute_bridge.py`);
+    expect(SCIENT_MANAGED_PYTHON_SPEC_FILES).toContain("matlab-connection/pyproject.toml");
+    expect(SCIENT_MANAGED_PYTHON_SPEC_FILES).toContain("matlab-connection/uv.lock");
+  });
 
   it("finds the checked-in MATLAB connection helper specification", async () => {
     const resolved = await resolveManagedPythonSpecPath(moduleDirectory(), "matlab-connection");

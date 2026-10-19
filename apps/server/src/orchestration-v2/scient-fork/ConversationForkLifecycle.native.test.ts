@@ -68,7 +68,7 @@ import { ConversationForkService } from "./ConversationForkService.ts";
 // still needs durable setup: a new-worktree fork is accepted `pending` with a
 // `scient-fork.provision` job; a local fork is `ready` at acceptance.
 
-// --- New-worktree forks: a real Git workspace with saved checkpoints. ---
+// New-worktree forks: a real Git workspace with saved checkpoints.
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -807,7 +807,7 @@ it.live.each(
   ),
 );
 
-// --- Local forks: an imported conversation with attachments. ---
+// Local forks: an imported conversation with attachments.
 
 const importRegistry = makeLayer([
   {

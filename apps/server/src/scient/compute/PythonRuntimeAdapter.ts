@@ -28,16 +28,10 @@ import {
 import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnvironmentPolicy.ts";
 import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 
-// ---------------------------------------------------------------------------
-// Language and transport identity
-// ---------------------------------------------------------------------------
-
 export const PYTHON_LANGUAGE_ID = ComputeLanguageId.make("python");
 export const JUPYTER_BRIDGE_TRANSPORT_KIND = ComputeTransportKind.make("jupyter-bridge");
 
-// ---------------------------------------------------------------------------
 // Minimum version requirements (from Phase 2 plan §2.6)
-// ---------------------------------------------------------------------------
 
 /**
  * 3.10 is the floor because the bridge builds an `asyncio.Event` before a loop
@@ -89,10 +83,6 @@ export const OBSERVED_PYTHON_PACKAGES = [
   "pyfaidx",
 ] as const;
 
-// ---------------------------------------------------------------------------
-// Probe schema
-// ---------------------------------------------------------------------------
-
 const ProbeResult = Schema.Struct({
   executable: Schema.String,
   executableRealpath: Schema.String,
@@ -108,10 +98,6 @@ const ProbeResult = Schema.Struct({
 type ProbeResult = typeof ProbeResult.Type;
 
 const decodeProbe = Schema.decodeUnknownSync(ProbeResult);
-
-// ---------------------------------------------------------------------------
-// Version comparison
-// ---------------------------------------------------------------------------
 
 interface ComparablePythonVersion {
   readonly release: ReadonlyArray<number>;
@@ -156,10 +142,6 @@ export function meetsPythonMinimumVersion(actual: string, minimum: string): bool
   );
 }
 
-// ---------------------------------------------------------------------------
-// Probe script
-// ---------------------------------------------------------------------------
-
 /**
  * A standard-library-only Python script that prints one JSON object describing
  * the interpreter.  Run with `<python> -I -c PROBE_SCRIPT` to avoid project
@@ -187,9 +169,7 @@ export const PROBE_SCRIPT = [
   "print(json.dumps(r))",
 ].join("\n");
 
-// ---------------------------------------------------------------------------
 // Pure functions (testable without Python)
-// ---------------------------------------------------------------------------
 
 /**
  * Parses the JSON output of the probe script.
@@ -409,10 +389,6 @@ export function discoverCandidates(
     return true;
   });
 }
-
-// ---------------------------------------------------------------------------
-// Adapter factory
-// ---------------------------------------------------------------------------
 
 function runtimeError(
   operation: ComputeRuntimeError["operation"],

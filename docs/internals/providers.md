@@ -225,6 +225,15 @@ list instead of persisting `error` over a working install. The built-in `grok-bu
 CLI's product name, not an ACP model id. `applyGrokAcpModelSelection` treats it as "keep the
 session's current model" and never sends it in `session/set_model`.
 
+### Claude health check
+
+`checkClaudeProviderStatus` runs `claude --version` and, for first-party accounts,
+`claude auth status --json` before reading capabilities. Each command gets 20 seconds rather than
+the shared 4-second probe deadline. The native CLI takes 2-4 seconds to answer either command on
+Windows, so the shorter deadline reported a healthy install as failing whenever the machine was
+busy, and the composer then offered setup for a provider whose conversations kept working. A
+command that still does not answer reports `error` or an unverified account as before.
+
 ## Antigravity ownership and protocol
 
 [`AntigravityDriver`][antigravity] uses Google's official ACP executable. The instance config

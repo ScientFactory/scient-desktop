@@ -70,7 +70,6 @@ export function resolveSelectedProviderEnvironmentId(
 
 export type ProviderEnvironmentAccess =
   | { readonly kind: "editable" }
-  /** `reason` distinguishes waiting on the device from waiting on permissions. */
   | { readonly kind: "loading"; readonly reason: "config" | "permissions" }
   | { readonly kind: "read-only" }
   | { readonly kind: "unavailable" }
@@ -85,11 +84,10 @@ export type ProviderEnvironmentAccess =
  *
  * `providerInstances` is always sent explicitly, even as `{}`, because the
  * server keeps a stored `providerInstances` map when an incoming entry omits
- * the key (so older clients that don't know the field cannot wipe it by
- * editing another setting). Omitting it here would undo the very clear this
- * function means to make.
+ * the key (so older clients that don't know the field cannot wipe it by editing
+ * another setting).
  */
-/** Every checkout of a project on one environment shares the same choice. */
+
 export function buildProviderInstanceOverridePatch(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectIds: readonly ProjectId[],

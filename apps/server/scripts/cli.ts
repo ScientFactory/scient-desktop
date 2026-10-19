@@ -8,94 +8,24 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as Schema from "effect/Schema";
 
-import {
-  DEVELOPMENT_ICON_OVERRIDES,
-  resolveWebAssetBrandForPackageVersion,
-  resolveWebIconOverrides,
-} from "../../../scripts/lib/brand-assets.ts";
-import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import { fromYaml } from "@t3tools/shared/schemaYaml";
+import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import serverPackageJson from "../package.json" with { type: "json" };
 import {
   ServerCliBuildAssetMissingError,
   ServerCliCommandExitError,
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
-  ServerCliPublishIconSourceMissingError,
-  ServerCliPublishIconTargetMissingError,
 } from "./cliErrors.ts";
-import { MANAGED_PYTHON_SPECIFICATIONS } from "../src/scient/compute/managed-python/specifications.ts";
-
-/**
- * The compute bridge, in the source tree and in a built server.
- *
- * `STAGED_BRIDGE_DIRECTORY` in `PythonComputeRuntime.ts` is the runtime half of
- * this agreement: the server looks for the bridge here, so the build has to put
- * it here. Spelled out rather than imported because a build script that pulled
- * in a server module would pull in its dependencies with it.
- */
-const SCIENT_COMPUTE_BRIDGES = [
-  {
-    source: "src/scient/compute/bridge/scient_compute_bridge.py",
-    asset: "dist/scient-compute-bridge/scient_compute_bridge.py",
-  },
-  {
-    source: "src/scient/compute/bridge/scient_matlab_engine_bridge.py",
-    asset: "dist/scient-compute-bridge/scient_matlab_engine_bridge.py",
-  },
-] as const;
-const SCIENT_MANAGED_PYTHON_SOURCE = "src/scient/compute/managed-python";
-const SCIENT_MANAGED_PYTHON_ASSET = "dist/scient-managed-python";
-const SCIENT_MANAGED_PYTHON_SPEC_FILES = MANAGED_PYTHON_SPECIFICATIONS.flatMap(
-  ({ relativeDirectory }) =>
-    ["pyproject.toml", "uv.lock"].map((file) =>
-      relativeDirectory === "." ? file : `${relativeDirectory}/${file}`,
-    ),
-);
-
-interface PackageJson {
-  name: string;
-  repository: {
-    type: string;
-    url: string;
-    directory: string;
-  };
-  bin: Record<string, string>;
-  type: string;
-  version: string;
-  engines: Record<string, string>;
-  files: string[];
-  dependencies: Record<string, string>;
-  overrides: Record<string, string>;
-}
-
-const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
-const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
-
-const WorkspaceConfig = Schema.Struct({
-  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-});
-type WorkspaceConfig = typeof WorkspaceConfig.Type;
-const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
+// SCIENT-FORK:START — stage the scient-compute-bridge and managed Python specifications
+import { stageScientServerAssets } from "./scientServerAssets.ts";
+// SCIENT-FORK:END
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
 );
-
-const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const repoRoot = yield* RepoRoot;
-  const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
-  return yield* decodeWorkspaceConfig(workspaceYaml);
-});
 
 const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.StandardCommand) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -110,36 +40,6 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
       exitCode,
     });
   }
-});
-
-const preparePublishIcons = Effect.fn("preparePublishIcons")(function* (
-  repoRoot: string,
-  serverDir: string,
-  version: string,
-) {
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const brand = resolveWebAssetBrandForPackageVersion(version);
-  const icons = resolveWebIconOverrides(brand, "dist/client").map((override) => ({
-    sourcePath: path.join(repoRoot, override.sourceRelativePath),
-    targetPath: path.join(serverDir, override.targetRelativePath),
-  }));
-
-  for (const icon of icons) {
-    if (!(yield* fs.exists(icon.sourcePath))) {
-      return yield* new ServerCliPublishIconSourceMissingError({ sourcePath: icon.sourcePath });
-    }
-    if (!(yield* fs.exists(icon.targetPath))) {
-      return yield* new ServerCliPublishIconTargetMissingError({ targetPath: icon.targetPath });
-    }
-  }
-
-  return yield* Effect.forEach(icons, (icon) =>
-    Effect.all({
-      original: fs.readFile(icon.targetPath),
-      publish: fs.readFile(icon.sourcePath),
-    }).pipe(Effect.map((contents) => ({ ...icon, ...contents }))),
-  );
 });
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
@@ -165,10 +65,6 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
 
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
-
-// ---------------------------------------------------------------------------
-// build subcommand
-// ---------------------------------------------------------------------------
 
 const buildCmd = Command.make(
   "build",
@@ -203,41 +99,11 @@ const buildCmd = Command.make(
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
       }
 
-      // Bridges are runtime data; stage their scripts, never their tests.
-      for (const bridge of SCIENT_COMPUTE_BRIDGES) {
-        const bridgeSource = path.join(serverDir, bridge.source);
-        const bridgeTarget = path.join(serverDir, bridge.asset);
-        if (!(yield* fs.exists(bridgeSource))) {
-          return yield* new ServerCliBuildAssetMissingError({ assetPath: bridgeSource });
-        }
-        yield* fs.makeDirectory(path.dirname(bridgeTarget), { recursive: true });
-        yield* fs.copyFile(bridgeSource, bridgeTarget);
-        yield* Effect.log(`[cli] Staged the compute bridge into ${bridge.asset}`);
-      }
-
-      // The locked Scientific Python project is also runtime data. The server
-      // copies these exact reviewed inputs into each private generation; it
-      // must never resolve a package graph from source code or user config.
-      const managedPythonSource = path.join(serverDir, SCIENT_MANAGED_PYTHON_SOURCE);
-      const managedPythonTarget = path.join(serverDir, SCIENT_MANAGED_PYTHON_ASSET);
-      for (const file of SCIENT_MANAGED_PYTHON_SPEC_FILES) {
-        const source = path.join(managedPythonSource, file);
-        if (!(yield* fs.exists(source))) {
-          return yield* new ServerCliBuildAssetMissingError({ assetPath: source });
-        }
-        const target = path.join(managedPythonTarget, file);
-        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-        yield* fs.copyFile(source, target);
-      }
-      yield* Effect.log(
-        `[cli] Staged Scientific Python and MATLAB connection specifications into ${SCIENT_MANAGED_PYTHON_ASSET}`,
-      );
+      // SCIENT-FORK:START — compute bridges and managed Python specifications are runtime data
+      yield* stageScientServerAssets(serverDir);
+      // SCIENT-FORK:END
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
-
-// ---------------------------------------------------------------------------
-// build-exe subcommand
-// ---------------------------------------------------------------------------
 
 const buildExeCmd = Command.make(
   "build-exe",
@@ -294,41 +160,19 @@ const buildExeCmd = Command.make(
   ),
 );
 
-// ---------------------------------------------------------------------------
-// publish subcommand
-// ---------------------------------------------------------------------------
-
-interface PublishCommandConfig {
-  readonly access: string;
-  readonly tag: string;
-  readonly provenance: boolean;
-  readonly dryRun: boolean;
-}
-
-const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
-  const args = [
-    "publish",
-    "--filter",
-    "t3",
-    "--access",
-    config.access,
-    "--tag",
-    config.tag,
-    "--no-git-checks",
-  ];
-
-  if (config.provenance) args.push("--provenance");
-  if (config.dryRun) args.push("--dry-run");
-
-  return args;
-};
-
+/**
+ * Publishes the `t3.tgz` launcher scripts/build-npm-launcher.ts produced. The
+ * launcher downloads its executable from the GitHub Release, so the release
+ * workflow runs this only after that release is published.
+ */
 const publishCmd = Command.make(
   "publish",
   {
+    packagesDir: Flag.String("packages-dir").pipe(
+      Flag.withDescription("Output dir of scripts/build-npm-launcher.ts."),
+    ),
     tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
     access: Flag.String("access").pipe(Flag.withDefault("public")),
-    appVersion: Flag.String("app-version").pipe(Flag.optional),
     provenance: Flag.Boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
@@ -337,96 +181,27 @@ const publishCmd = Command.make(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const repoRoot = yield* RepoRoot;
-      const serverDir = path.join(repoRoot, "apps/server");
-      const packageJsonPath = path.join(serverDir, "package.json");
-
-      // Assert build assets exist
-      for (const relPath of [
-        "dist/bin.mjs",
-        "dist/service-launcher.mjs",
-        "dist/client/index.html",
-        ...SCIENT_COMPUTE_BRIDGES.map((bridge) => bridge.asset),
-        ...SCIENT_MANAGED_PYTHON_SPEC_FILES.map((file) => `${SCIENT_MANAGED_PYTHON_ASSET}/${file}`),
-      ]) {
-        const abs = path.join(serverDir, relPath);
-        if (!(yield* fs.exists(abs))) {
-          return yield* new ServerCliBuildAssetMissingError({ assetPath: abs });
-        }
+      const packagesDir = path.resolve(config.packagesDir);
+      const launcherTarball = path.join(packagesDir, "t3.tgz");
+      if (!(yield* fs.exists(launcherTarball))) {
+        return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
       }
 
-      yield* Effect.acquireUseRelease(
-        // Acquire: resolve publish metadata and read every original before mutation.
-        Effect.gen(function* () {
-          const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
-          const workspaceConfig = yield* readWorkspaceConfig();
-          const workspaceCatalog = workspaceConfig.catalog ?? {};
-          const workspaceOverrides = workspaceConfig.overrides ?? {};
-          const pkg: PackageJson = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
-            type: serverPackageJson.type,
-            version,
-            engines: serverPackageJson.engines,
-            files: serverPackageJson.files,
-            dependencies: resolveCatalogDependencies(
-              serverPackageJson.dependencies,
-              workspaceCatalog,
-              "apps/server",
-            ),
-            overrides: resolveCatalogDependencies(
-              workspaceOverrides,
-              workspaceCatalog,
-              "apps/server",
-            ),
-          };
-
-          return {
-            packageJsonString: yield* encodePackageJson(pkg),
-            originalPackageJson: yield* fs.readFile(packageJsonPath),
-            icons: yield* preparePublishIcons(repoRoot, serverDir, version),
-          };
+      const args = ["publish", "--access", config.access, "--tag", config.tag];
+      if (config.provenance) args.push("--provenance");
+      if (config.dryRun) args.push("--dry-run");
+      const spawnCommand = yield* resolveSpawnCommand("npm", [...args, launcherTarball]);
+      yield* Effect.log(`[cli] npm ${args.join(" ")} t3.tgz`);
+      yield* runCommand(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: packagesDir,
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          shell: spawnCommand.shell,
         }),
-        // Use: pnpm publish from the workspace root so pnpm-only workspace
-        // config, including override selectors, is interpreted correctly.
-        (resource) =>
-          Effect.gen(function* () {
-            yield* fs.writeFileString(packageJsonPath, `${resource.packageJsonString}\n`);
-            for (const icon of resource.icons) {
-              yield* fs.writeFile(icon.targetPath, icon.publish);
-            }
-            yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
-
-            const args = createVpPmPublishArgs(config);
-            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
-
-            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
-            yield* runCommand(
-              ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-                cwd: repoRoot,
-                stdout: config.verbose ? "inherit" : "ignore",
-                stderr: "inherit",
-                shell: spawnCommand.shell,
-              }),
-            );
-          }),
-        // Release: restore every file even if applying overrides or publishing fails.
-        (resource) =>
-          Effect.gen(function* () {
-            yield* fs.writeFile(packageJsonPath, resource.originalPackageJson);
-            for (const icon of resource.icons) {
-              yield* fs.writeFile(icon.targetPath, icon.original);
-            }
-            if (config.verbose) yield* Effect.log("[cli] Restored original publish assets");
-          }),
       );
     }),
-).pipe(Command.withDescription("Publish the server package to npm."));
-
-// ---------------------------------------------------------------------------
-// root command
-// ---------------------------------------------------------------------------
+).pipe(Command.withDescription("Publish the t3 launcher to npm."));
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),

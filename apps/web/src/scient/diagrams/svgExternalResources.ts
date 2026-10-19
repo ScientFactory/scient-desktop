@@ -51,7 +51,6 @@ const ANIMATION_ELEMENTS = new Set([
   "discard",
   "set",
 ]);
-/** The values an animation sets. */
 const ANIMATION_VALUE_ATTRIBUTES = ["from", "to", "by", "values"];
 
 /** The bytes are already here, or the reference stays inside the SVG. */

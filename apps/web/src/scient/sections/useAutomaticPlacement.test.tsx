@@ -128,6 +128,81 @@ it("commits a manual cross-section drop with fresh membership and honours its po
   act(() => value.onInteractionChange(false));
   expect(value.state.groups[1]!.order).toEqual(["c", "a"]);
 });
+it("sets aside an active thread dropped from another section without re-forming the destination", () => {
+  const row = (key: string, eligible: boolean) => ({ key, eligible, orderKey: key });
+  input = {
+    ...input,
+    groups: [
+      { id: "general", rows: [row("x", false), row("a", true), row("y", false)] },
+      { id: "other", rows: [row("d", true)] },
+    ],
+  };
+  render();
+  // x is deliberately held above active a.
+  act(() => value.onManualPlacement("general", ["x", "a", "y"], "x", new Map()));
+  expect(order()).toEqual(["x", "a", "y"]);
+  act(() => value.onManualPlacement("general", ["x", "a", "y", "d"], "d", new Map()));
+  expect(order()).toEqual(["x", "a", "y", "d"]);
+  expect(value.state.groups[0]!.aside).toEqual(["d"]);
+});
+it("places a dropped thread from an offline machine by its last known activity", () => {
+  const row = (key: string, eligible: boolean, orderKey = key) => ({ key, eligible, orderKey });
+  const groups = (r: ReturnType<typeof row>) => [
+    { id: "general", rows: [row("local:x", false), r] },
+  ];
+  input = { ...input, groups: groups(row("remote:r", true)) };
+  render();
+  expect(order()).toEqual(["remote:r", "local:x"]);
+  // Offline: its stale copy says inactive, which is not believed.
+  input = { ...input, groups: groups(row("remote:r", false)), frozenEnvironmentIds: ["remote"] };
+  render();
+  act(() =>
+    value.onManualPlacement(
+      "general",
+      ["local:x", "remote:r"],
+      "remote:r",
+      new Map([["remote:r", "z"]]),
+    ),
+  );
+  expect(value.state.groups[0]!.aside).toEqual(["remote:r"]);
+  // Back online and still active, it stays where it was dropped.
+  input = { ...input, groups: groups(row("remote:r", true, "z")), frozenEnvironmentIds: [] };
+  render();
+  expect(order()).toEqual(["local:x", "remote:r"]);
+});
+it("keeps live review deadlines running while an offline machine's deadline waits", async () => {
+  const groups = (active: string[]) => [
+    {
+      id: "general",
+      rows: ["remote:r", "local:l", "local:x"].map((key) => ({
+        key,
+        orderKey: key,
+        eligible: active.includes(key),
+      })),
+    },
+  ];
+  input = { ...input, groups: groups(["remote:r", "local:l"]) };
+  render();
+  // Read r, then leave: its deadline is 3000.
+  input = { ...input, groups: groups(["local:l"]), openKey: "remote:r" };
+  render();
+  input = { ...input, openKey: null };
+  render();
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  // Read l, then leave: its deadline is 4000.
+  input = { ...input, groups: groups([]), openKey: "local:l" };
+  render();
+  input = { ...input, openKey: null };
+  render();
+  // r's machine goes offline before its deadline.
+  input = { ...input, frozenEnvironmentIds: ["remote"] };
+  render();
+  // Past r's deadline, l's must still be armed.
+  await act(() => vi.advanceTimersByTimeAsync(2100));
+  expect(vi.getTimerCount()).toBeGreaterThan(0);
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(value.state.groups[0]!.upper).toEqual(["remote:r"]);
+});
 it("continues working with corrupt or unavailable local storage", () => {
   act(() => renderer.unmount());
   storage.set("scient:sidebar:placement-order:test", "{broken");

@@ -29,10 +29,6 @@ import { handoffMetadataSql } from "./ContextHistorySql.ts";
 import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
 import { runScientMigrations, SCIENT_MIGRATIONS } from "./scientMigrator.ts";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 interface TableColumn {
   readonly name: string;
   readonly type: string;
@@ -311,9 +307,7 @@ const removePostMigrationThreeAnalysisSchema = (sql: SqlClient.SqlClient) =>
     yield* sql`DROP TABLE IF EXISTS scient_analysis_run_index`;
   });
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-01: Fresh install creates canonical Scient schema
-// ---------------------------------------------------------------------------
 
 it.effect("fresh install creates canonical Scient schema with ledger and indexes", () =>
   withMemory(
@@ -523,9 +517,7 @@ it.effect("migration 13 adds root identity once and converges an earlier candida
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-02: Pre-bootstrap prototype rows fail closed without fabrication
-// ---------------------------------------------------------------------------
 
 it.effect("pre-bootstrap prototype lineage is quarantined without fabricating a baseline", () =>
   withMemory(
@@ -572,9 +564,7 @@ it.effect("pre-bootstrap prototype lineage is quarantined without fabricating a 
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-03: Current schema upgrade preserves valid lifecycle state
-// ---------------------------------------------------------------------------
 
 it.effect("current schema upgrade preserves valid lifecycle state", () =>
   withMemory(
@@ -675,9 +665,7 @@ it.effect("current schema upgrade preserves valid lifecycle state", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-04: Legacy ledger history is immutable
-// ---------------------------------------------------------------------------
 
 it.effect("legacy ledger IDs 1/2 with names and timestamps remain intact", () =>
   withMemory(
@@ -755,9 +743,7 @@ it.effect("legacy ledger IDs 1/2 with names and timestamps remain intact", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-05: Only unapplied migrations run in order
-// ---------------------------------------------------------------------------
 
 it.effect("only unapplied migrations run in ascending order", () =>
   withMemory(
@@ -831,9 +817,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-06: Malformed rows are quarantined, not fatal
-// ---------------------------------------------------------------------------
 
 /** Helper: create a full schema with a malformed row, pre-seed ledger with 1+2. */
 function setupMalformedDatabase(
@@ -964,9 +948,7 @@ it.effect("malformed rows are quarantined with evidence while valid rows normali
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-07: Restart is idempotent and retryable
-// ---------------------------------------------------------------------------
 
 it.effect("second clean run returns empty with no schema changes", () =>
   withMemory(
@@ -1231,9 +1213,7 @@ it.effect("migration 4 quarantines decoder-invalid rows by rowid", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-08: Concurrent startup fails closed without duplication
-// ---------------------------------------------------------------------------
 
 it.effect("concurrent runners on the same file apply each migration at most once", () => {
   const tempFile = NodePath.join(
@@ -1301,9 +1281,7 @@ it.effect("concurrent runners on the same file apply each migration at most once
   });
 });
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-09: T3 ledger is isolated
-// ---------------------------------------------------------------------------
 
 it.effect("Scient and T3 migration ledgers remain isolated", () =>
   withMemory(
@@ -1374,9 +1352,7 @@ it.effect("running Scient migrations first does not affect T3 migrations", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-10: Malformed rows are quarantined (startup stays safe)
-// ---------------------------------------------------------------------------
 
 interface QuarantinedRow {
   readonly thread_id: string;
@@ -1492,9 +1468,7 @@ it.effect("invalid status is quarantined with evidence", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-11: Canonical active defaults are universal
-// ---------------------------------------------------------------------------
 
 it.effect("all normalized rows have canonical active defaults", () =>
   withMemory(
@@ -1566,9 +1540,7 @@ it.effect("all normalized rows have canonical active defaults", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-12: Physical compatibility columns remain in first pass
-// ---------------------------------------------------------------------------
 
 it.effect("physical compatibility columns provider_mode and fidelity_mode remain queryable", () =>
   withMemory(
@@ -1607,9 +1579,7 @@ it.effect("physical compatibility columns provider_mode and fidelity_mode remain
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-14: Canonically valid active lineage is preserved
-// ---------------------------------------------------------------------------
 
 it.effect("provider-bootstrap lineage is preserved across normalization", () =>
   withMemory(
@@ -1705,9 +1675,7 @@ it.effect("no valid lineage rows are discarded across current schema upgrade", (
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-15: applied_at column reconciled with Effect Migrator created_at
-// ---------------------------------------------------------------------------
 
 it.effect("applied_at ledger is reconciled to created_at preserving all values", () =>
   withMemory(
@@ -1808,9 +1776,7 @@ it.effect("fresh database uses created_at without applied_at column", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // Regression: Concurrent startup against an applied_at ledger
-// ---------------------------------------------------------------------------
 
 it.effect(
   "concurrent runners against an applied_at ledger do not fail on duplicate created_at",
@@ -1928,10 +1894,6 @@ it.effect(
     });
   },
 );
-
-// ---------------------------------------------------------------------------
-// Regression: Crash/retry-safe timestamp preservation
-// ---------------------------------------------------------------------------
 
 it.effect("partial reconciliation is recovered on retry without timestamp loss", () =>
   withMemory(
@@ -2064,9 +2026,7 @@ it.effect("reconciled ledger with all created_at populated is idempotent on retr
   ),
 );
 
-// ---------------------------------------------------------------------------
 // Regression: NULL workspace_mode is quarantined without fabrication
-// ---------------------------------------------------------------------------
 
 it.effect("NULL workspace_mode is quarantined without fabrication", () =>
   withMemory(
@@ -2110,9 +2070,7 @@ it.effect("NULL workspace_mode is quarantined without fabrication", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // VAL-MIGRATE-05 (duplicate check): Manifest has no duplicates
-// ---------------------------------------------------------------------------
 
 it.effect("manifest has no duplicate migration IDs", () =>
   withMemory(
@@ -2128,10 +2086,8 @@ it.effect("manifest has no duplicate migration IDs", () =>
   ),
 );
 
-// ---------------------------------------------------------------------------
 // Ledger integrity preflight: gaps, name mismatches, and future IDs fail
 // closed before the standard Migrator's high-water mark can hide them.
-// ---------------------------------------------------------------------------
 
 it.effect("a gapped ledger fails closed before any migration runs", () =>
   withMemory(

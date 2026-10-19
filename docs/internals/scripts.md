@@ -74,11 +74,15 @@ authenticated.
 `pnpm alignment:checks` selects existing consumer suites for early composition feedback.
 The maintained [boundary map](../../scripts/scient-alignment-checks.json) records affected
 owners and untouched consumers, deciding assertions, commands, prerequisites and limits
-for provider guidance/skills/MCP/native input, Stop/Resume ownership, queue admission and
+for provider guidance/skills/MCP/native input, Stop/Resume ownership, provider adapters and
+native process lifecycle (every suite under `orchestration-v2/Adapters/`, with every native
+provider integration suite mapped to its owning boundary), queue admission and
 restart, settings precedence and instance identity, immutable persistence, native
 conversation-fork capture, one server owner per state directory, and chat reader
 interaction. Maintain the assertions and consumer triggers together when those contracts move.
 This is a bounded impact map, not an exhaustive dependency graph or a qualification policy.
+A check entry ending in `/` runs every suite in a directory the boundary owns, except
+`*.live.test.ts` suites, which run only as listed native checks behind `--native`.
 
 Print a plan before executing it:
 
@@ -99,7 +103,7 @@ selection mode. Unknown paths and shared contracts, client runtime, execution/pr
 cores, mobile surfaces, shared ChatComposer/ComposerPrimaryActions hosts, dependencies
 or test setup select all boundaries. Recognized chat reader owners select reader
 checks; other chat paths retain the unknown-path fallback. ChatView also selects settings;
-queuedRunShortcuts selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
+Scient `threadQueue/queueShortcuts` selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
 `docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
 instructions such as `AGENTS.md` are not. Review all exclusions for the actual range.
 
@@ -125,6 +129,30 @@ Every command runs without the variables a Scient desktop host gives its agents
 temporary directory, so a check cannot fall back to a live profile. Explicit test inputs
 such as `SCIENT_PI_TEST_BINARY` pass through.
 
+`--web-unit` adds the whole web `unit` project, which hosted CI shards as Test Web and the
+boundary map otherwise samples only through mapped suites (a source-text assertion elsewhere
+in it is otherwise first seen in hosted CI). It runs alone or beside one selection mode. It is
+opt-in because it is slow: about 14 minutes (811 s measured) on a Windows 11 workstation,
+where a few suites also fail or flake on unmodified main. The lane fails on any failure: it
+passes only when Vitest exits 0 with a readable report covering at least one test file, so an
+interrupted, empty or partial run never passes. With `--run` it writes the failing tests
+(`file > test name`, and `file > (file error)` for a file's own import or hook error) to
+`web-unit-failures.json` in a new temporary directory. To tell which failures the candidate
+introduced, run the lane once against an unmodified base checkout with `--cwd` and pass that
+file to the candidate's run:
+
+```sh
+node /absolute/candidate/scripts/scient-alignment-checks.mjs \
+  --cwd /absolute/base-checkout --web-unit --run
+pnpm alignment:checks --base <owned-base-sha> --web-unit \
+  --web-unit-baseline /absolute/tmp/scient-web-unit-lane-XXXX/web-unit-failures.json --run
+```
+
+The baseline never changes the verdict. It labels each failure as new or pre-existing for the
+reader and lists baseline failures that no longer fail (fixed, removed or skipped). Labels are
+best effort: a hook error inside a suite may appear only as its tests' failures, and a flaky
+test can appear new; rerun its file before attributing it to the candidate.
+
 ## Alignment gates and receipt facts
 
 `pnpm alignment:gates` runs the final local gate list from the
@@ -132,13 +160,18 @@ such as `SCIENT_PI_TEST_BINARY` pass through.
 the same environment, each gate with its own temporary home. It continues past failures,
 writes `results.json` and a log per gate to a new temporary directory after every gate,
 and prints a Markdown table with the candidate commit, tree, platform and tool versions.
+The knip gate runs `knip:check`, the unused files, dependencies and exports check that hosted
+CI runs before `vp check`.
 Typecheck uses `pnpm -r --no-bail`, so one run reports every failing package. A desktop
 smoke run that leaves its temporary home empty resolved state elsewhere and fails.
 `--only fmt,lint` runs a subset and labels the result partial.
 
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate
 is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test
-qualification of the pushed candidate remains pending. `--tests` runs it anyway.
+qualification of the pushed candidate remains pending. `--tests` runs it anyway. Run
+Windows-sensitive focused suites by name instead, for example
+`scripts/managed-provider-runtime-workflow.test.ts` (publication guards) from `scripts/`
+with `pnpm exec vp test run --config ../vite.config.ts --dir . managed-provider-runtime-workflow.test.ts`.
 
 `pnpm alignment:facts --merge <upstream-merge>` prints the receipt's boundary facts for
 a committed upstream merge: owned base, previous boundary, target and its exact tags,

@@ -18,7 +18,6 @@ export interface RuntimeInstructionsInput {
 
 /**
  * Shared runtime context; omit model and effort when the harness manages them dynamically.
- * `modelName` is the display name users see in the model picker; `model` is the slug.
  */
 // SCIENT-FORK:START — accept the host-extensible input at the shared formatter signature.
 export function buildRuntimeInstructions(runtime: RuntimeInstructionsInput): string {
