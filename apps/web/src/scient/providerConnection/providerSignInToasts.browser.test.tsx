@@ -53,7 +53,7 @@ function titleLines(text: string): number {
 
 it.each([
   ["blocked", "Antigravity sign-in page blocked"],
-  ["failed", "Antigravity sign-in page didn’t open"],
+  ["failed", "Antigravity sign-in didn’t open"],
 ] as const)("keeps the %s notification title on one line", async (outcome, title) => {
   await page.viewport(1000, 650);
   host = document.createElement("div");

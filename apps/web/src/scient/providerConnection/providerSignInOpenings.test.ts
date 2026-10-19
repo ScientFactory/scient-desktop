@@ -47,7 +47,7 @@ describe("provider sign-in page opening failures", () => {
       readonly title: string;
       readonly actionProps: { readonly children: string };
     };
-    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
+    expect(notice.title).toBe("Antigravity sign-in didn’t open");
     expect(notice.actionProps.children).toBe("Open");
   });
 
@@ -91,7 +91,7 @@ describe("provider sign-in page opening failures", () => {
       readonly description: string;
       readonly actionProps: { readonly children: string; readonly onClick: () => void };
     };
-    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
+    expect(notice.title).toBe("Antigravity sign-in didn’t open");
     expect(notice.description).toBeUndefined();
     expect(notice.actionProps.children).toBe("Open");
     notice.actionProps.onClick();

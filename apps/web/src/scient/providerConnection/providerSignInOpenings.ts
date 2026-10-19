@@ -70,7 +70,7 @@ export async function openProviderSignInPage(input: {
       type: blocked ? "warning" : "error",
       title: blocked
         ? `${input.providerName} sign-in page blocked`
-        : `${input.providerName} sign-in page didn’t open`,
+        : `${input.providerName} sign-in didn’t open`,
       actionProps: { children: "Open", onClick: () => void openProviderSignInPage(input) },
     });
   }
