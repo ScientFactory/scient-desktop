@@ -14,10 +14,10 @@ import {
   observeProviderSignInSnapshots,
   openProviderSignInPageByHand,
   type ProviderSignInPageClaimer,
-  resetProviderSignInBrowserForTests,
+  resetProviderSignInForTests,
   setProviderSignInPageClaimer,
   startProviderSignIn,
-} from "./providerSignInBrowser";
+} from "./providerSignInFlow";
 
 const environmentId = EnvironmentId.make("environment-1");
 const instanceId = ProviderInstanceId.make("antigravity");
@@ -77,7 +77,6 @@ class MemoryStorage {
 
 const open = vi.fn<(url: string) => Promise<void>>();
 let storage: MemoryStorage;
-const windowOpen = vi.fn<(url: string, target: string, features: string) => unknown>();
 
 let clock = 0;
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -189,19 +188,18 @@ const observeLagging = (current: ProviderConnectionOperation | null) =>
 
 /** A renderer reload, or another window that starts with a copy of this session. */
 function reloadWith(session: MemoryStorage) {
-  vi.stubGlobal("window", { sessionStorage: session, open: windowOpen });
-  resetProviderSignInBrowserForTests({ open, now: () => clock, reload: true, claim: server.claim });
+  vi.stubGlobal("window", { sessionStorage: session });
+  resetProviderSignInForTests({ open, now: () => clock, reload: true, claim: server.claim });
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
   open.mockResolvedValue(undefined);
   storage = new MemoryStorage();
-  windowOpen.mockReset();
-  vi.stubGlobal("window", { sessionStorage: storage, open: windowOpen });
+  vi.stubGlobal("window", { sessionStorage: storage });
   clock = Date.now();
   server = makeServer();
-  resetProviderSignInBrowserForTests({ open, now: () => clock, claim: server.claim });
+  resetProviderSignInForTests({ open, now: () => clock, claim: server.claim });
 });
 
 afterEach(() => {
@@ -314,10 +312,10 @@ describe("provider sign-in page opening", () => {
     const id = await startWithLostReply();
     const copied = storage.clone();
     vi.resetModules();
-    vi.stubGlobal("window", { sessionStorage: copied, open: windowOpen });
-    const second = await import("./providerSignInBrowser");
+    vi.stubGlobal("window", { sessionStorage: copied });
+    const second = await import("./providerSignInFlow");
     expect(second.observeProviderSignInSnapshots).not.toBe(observeProviderSignInSnapshots);
-    second.resetProviderSignInBrowserForTests({
+    second.resetProviderSignInForTests({
       open,
       now: () => clock,
       reload: true,
@@ -327,7 +325,7 @@ describe("provider sign-in page opening", () => {
     second.observeProviderSignInSnapshots(environmentId, [
       provider(operation({ signInRequestId: id })),
     ]);
-    vi.stubGlobal("window", { sessionStorage: storage, open: windowOpen });
+    vi.stubGlobal("window", { sessionStorage: storage });
     observe(operation({ signInRequestId: id }));
     await settle();
     await settle();
@@ -412,7 +410,7 @@ describe("provider sign-in page opening", () => {
   });
 
   it("keeps the id while the claim command is missing, and claims on the next report", async () => {
-    resetProviderSignInBrowserForTests({ open, now: () => clock, claim: null });
+    resetProviderSignInForTests({ open, now: () => clock, claim: null });
     const id = await startWithLostReply();
     observe(operation({ signInRequestId: id }));
     await settle();
@@ -551,74 +549,5 @@ describe("provider sign-in page opening", () => {
     expect(server.claim).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledTimes(1);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
-  });
-
-  it("closes the blank window when navigating it fails, and offers the page again", async () => {
-    resetProviderSignInBrowserForTests({ now: () => clock, claim: server.claim });
-    const opened = {
-      closed: false,
-      opener: {} as unknown,
-      close: vi.fn(),
-      document: {
-        createElement: () => {
-          throw new Error("Navigation refused.");
-        },
-      },
-    };
-    windowOpen.mockReturnValue(opened);
-    await start(async (id) => operation({ signInRequestId: id }));
-    expect(opened.close).toHaveBeenCalledTimes(1);
-    expect(toast.add).toHaveBeenCalledTimes(1);
-    const notice = toast.add.mock.calls[0]![0] as {
-      readonly title: string;
-      readonly actionProps: { readonly children: string };
-    };
-    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
-    expect(notice.actionProps.children).toBe("Open");
-  });
-  it("treats a blocked popup as failed and offers the user's own click", async () => {
-    resetProviderSignInBrowserForTests({ now: () => clock, claim: server.claim });
-    windowOpen.mockReturnValue(null);
-    await start(async (id) => operation({ signInRequestId: id }));
-    expect(windowOpen).toHaveBeenCalledWith("about:blank", "_blank", "popup");
-    expect(toast.add).toHaveBeenCalledTimes(1);
-    const notice = toast.add.mock.calls[0]![0] as {
-      readonly type: string;
-      readonly title: string;
-      readonly description: string;
-      readonly actionProps: { readonly children: string; readonly onClick: () => void };
-    };
-    expect(notice).toMatchObject({ type: "warning", title: "Antigravity sign-in page blocked" });
-    expect(notice.description).toBeUndefined();
-    expect(notice.actionProps.children).toBe("Open");
-
-    // The toast's button is a click, so the browser lets that open through.
-    const link = { href: "", rel: "", click: vi.fn() };
-    const opened = {
-      closed: false,
-      opener: {} as unknown,
-      document: { createElement: () => link, body: { append: vi.fn() } },
-    };
-    windowOpen.mockReturnValue(opened);
-    notice.actionProps.onClick();
-    await vi.waitFor(() => expect(link.click).toHaveBeenCalledTimes(1));
-    expect(opened.opener).toBeNull();
-    expect(link).toMatchObject({ href: url, rel: "noreferrer" });
-  });
-
-  it("reports an opening failure as a toast with a retry when no setup view shows it", async () => {
-    open.mockRejectedValueOnce(new Error("Unable to open /private/profile?code=private-code"));
-    await start(async (id) => operation({ signInRequestId: id }));
-    expect(toast.add).toHaveBeenCalledTimes(1);
-    const notice = toast.add.mock.calls[0]![0] as {
-      readonly title: string;
-      readonly description: string;
-      readonly actionProps: { readonly children: string; readonly onClick: () => void };
-    };
-    expect(notice.title).toBe("Antigravity sign-in page didn’t open");
-    expect(notice.description).toBeUndefined();
-    expect(notice.actionProps.children).toBe("Open");
-    notice.actionProps.onClick();
-    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
   });
 });

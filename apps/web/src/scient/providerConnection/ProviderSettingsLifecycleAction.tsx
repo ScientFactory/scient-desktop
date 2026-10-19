@@ -20,7 +20,7 @@ import {
   isProviderRuntimePresentedAsInstalled,
 } from "./providerConnectionPresentation";
 import { useEnvironmentIsOnThisDevice } from "./environmentLocality";
-import { oneClickSignInMethod } from "./providerSignInBrowser";
+import { oneClickSignInMethod } from "./oneClickSignIn";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 export type ProviderSettingsPrimaryAction =

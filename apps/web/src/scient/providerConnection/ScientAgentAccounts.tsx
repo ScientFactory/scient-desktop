@@ -28,7 +28,8 @@ import {
   isActiveProviderConnectionOperation,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import { startProviderSignIn, useProviderSignInBrowser } from "./providerSignInBrowser";
+import { startProviderSignIn } from "./providerSignInFlow";
+import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import {
   type ScientAgentAnswerDraft,
   scientAgentAccountOperation,

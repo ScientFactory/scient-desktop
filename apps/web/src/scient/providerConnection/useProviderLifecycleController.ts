@@ -15,11 +15,9 @@ import { useCallback, useMemo } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isRuntimePlanStale } from "./isRuntimePlanStale";
-import {
-  openProviderAuthorizationPage,
-  type ProviderSignInKey,
-  startProviderSignIn,
-} from "./providerSignInBrowser";
+import { startProviderSignIn } from "./providerSignInFlow";
+import { openProviderAuthorizationPage } from "./providerSignInPage";
+import type { ProviderSignInKey } from "./providerSignInRequests";
 
 export interface ProviderLifecycleController {
   /** The environment and instance whose sign-in page openings this controller shares. */

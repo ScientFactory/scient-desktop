@@ -49,7 +49,7 @@ import {
   ScientGettingStartedShell,
 } from "../onboarding/ScientGettingStartedView";
 import { ProviderSettingsLifecycleAction } from "./ProviderSettingsLifecycleAction";
-import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
+import { resetProviderSignInForTests, startProviderSignIn } from "./providerSignInFlow";
 
 function snapshot(): ServerProvider {
   return {
@@ -390,7 +390,7 @@ describe("row sign-in", () => {
   });
 
   it("shows the server's starting state from the click", async () => {
-    resetProviderSignInBrowserForTests({ open: async () => undefined });
+    resetProviderSignInForTests({ open: async () => undefined });
     const onManage = vi.fn();
     const provider = {
       ...signedOut("antigravity", ["antigravity_google"]),
@@ -418,7 +418,7 @@ describe("row sign-in", () => {
     await expect
       .element(page.getByText("Antigravity can take up to a minute to start."))
       .toBeVisible();
-    resetProviderSignInBrowserForTests();
+    resetProviderSignInForTests();
   });
 
   it("retries a failed sign-in, with the reason on hover", async () => {

@@ -24,7 +24,7 @@ vi.mock("../../state/server", () => ({ serverEnvironment: { providersValueAtom: 
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.claim }));
 
 import { ProviderSignInPageCoordinator } from "./ProviderSignInPageCoordinator";
-import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
+import { resetProviderSignInForTests, startProviderSignIn } from "./providerSignInFlow";
 
 const environmentId = EnvironmentId.make("local");
 const instanceId = ProviderInstanceId.make("antigravity");
@@ -52,12 +52,12 @@ afterEach(() => {
   host?.remove();
   root = undefined;
   host = undefined;
-  resetProviderSignInBrowserForTests();
+  resetProviderSignInForTests();
 });
 
 it("claims and opens a page already waiting when it mounts, with no further snapshot", async () => {
   const open = vi.fn(async () => undefined);
-  resetProviderSignInBrowserForTests({ open });
+  resetProviderSignInForTests({ open });
   // This client holds an id whose start reply was lost.
   const id = await new Promise<string>((received) => {
     void startProviderSignIn({

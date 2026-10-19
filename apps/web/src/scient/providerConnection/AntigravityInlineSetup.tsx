@@ -56,7 +56,7 @@ import {
   ProviderAuthorizationCodeForm,
 } from "./ProviderAuthorizationCodeForm";
 import { DiagnosticsSettingsLink } from "./DiagnosticsSettingsLink";
-import { useProviderSignInBrowser } from "./providerSignInBrowser";
+import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =

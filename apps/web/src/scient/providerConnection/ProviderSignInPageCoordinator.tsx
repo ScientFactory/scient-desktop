@@ -8,9 +8,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   observeProviderSignInSnapshots,
   setProviderSignInPageClaimer,
-  usePendingProviderSignInKeys,
   useProviderSignInPageClaimerReady,
-} from "./providerSignInBrowser";
+} from "./providerSignInFlow";
+import { usePendingProviderSignInKeys } from "./providerSignInRequests";
 import { claimProviderSignInPage } from "./providerSignInCommands";
 
 /**

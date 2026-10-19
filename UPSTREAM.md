@@ -1072,7 +1072,7 @@ post-authentication message from `scient/providerLifecycle/antigravityAuthDiagno
 lifecycle bridge can mark the failure `failedAfterSignIn`; the same module records the failed
 ACP request in the local trace. Opening sign-in pages for the client that started them, and the
 Settings row's one-click sign-in, live in Scient-owned web modules
-(`scient/providerConnection/providerSignInBrowser.ts`), with one marked mount of
+(`scient/providerConnection/providerSignIn*.ts` and `oneClickSignIn.ts`), with one marked mount of
 `ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
 The server-side claim of a sign-in page adds one Scient RPC,
 `server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts` and

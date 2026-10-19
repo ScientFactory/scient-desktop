@@ -13,7 +13,7 @@ import { page } from "vitest/browser";
 vi.mock("@tanstack/react-router", () => ({ useParams: () => null }));
 
 import { ToastProvider } from "../../components/ui/toast";
-import { resetProviderSignInBrowserForTests, startProviderSignIn } from "./providerSignInBrowser";
+import { resetProviderSignInForTests, startProviderSignIn } from "./providerSignInFlow";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -23,7 +23,7 @@ afterEach(() => {
   host?.remove();
   root = undefined;
   host = undefined;
-  resetProviderSignInBrowserForTests();
+  resetProviderSignInForTests();
 });
 
 function waiting(signInRequestId: string, operationId: string): ProviderConnectionOperation {
@@ -63,7 +63,7 @@ it.each([
   // The provider must be listening before the notification is added.
   await new Promise((resolve) => setTimeout(resolve, 50));
   // The real opener: a browser tab whose popup is blocked, or a page that fails to open.
-  resetProviderSignInBrowserForTests({
+  resetProviderSignInForTests({
     claim: async () => ({
       granted: true,
       authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-test",

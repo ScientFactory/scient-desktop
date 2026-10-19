@@ -15,11 +15,11 @@ import { page } from "vitest/browser";
 import { toastManager } from "../../components/ui/toast";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import {
-  navigateWithoutReferrer,
   observeProviderSignInSnapshots,
-  resetProviderSignInBrowserForTests,
+  resetProviderSignInForTests,
   startProviderSignIn,
-} from "./providerSignInBrowser";
+} from "./providerSignInFlow";
+import { navigateWithoutReferrer } from "./providerSignInPage";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const INSTANCE_ID = ProviderInstanceId.make("antigravity");
@@ -173,7 +173,7 @@ beforeEach(() => {
   requestId = undefined;
   openPage.mockResolvedValue(undefined);
   claim = grantOncePerOperation();
-  resetProviderSignInBrowserForTests({ open: openPage, claim });
+  resetProviderSignInForTests({ open: openPage, claim });
   serverStart.mockImplementation(async () => snapshot(mine()));
   controller.cancelConnection.mockResolvedValue(snapshot());
   controller.submitAuthorizationCode.mockResolvedValue(snapshot());
@@ -239,7 +239,7 @@ describe("Antigravity sign-in page", () => {
     await page.getByRole("button", { name: "Sign in with Google" }).click();
     closeView(snapshot(starting()));
 
-    resetProviderSignInBrowserForTests({ open: openPage, reload: true, claim });
+    resetProviderSignInForTests({ open: openPage, reload: true, claim });
     renderProvider(snapshot(starting()));
     await expect.element(page.getByText("Starting Google sign-in")).toBeVisible();
     observeProviderSignInSnapshots(signInKey.environmentId, [snapshot(mine())]);
@@ -308,7 +308,7 @@ describe("Antigravity sign-in page", () => {
 
   it("says a blocked popup was blocked and opens it from the user's click", async () => {
     // The real opener, in a browser tab: a delayed window.open is blocked.
-    resetProviderSignInBrowserForTests({ claim });
+    resetProviderSignInForTests({ claim });
     const open = vi.spyOn(window, "open").mockReturnValueOnce(null);
     serverStart.mockImplementation(async () => {
       renderProvider(snapshot(mine()));

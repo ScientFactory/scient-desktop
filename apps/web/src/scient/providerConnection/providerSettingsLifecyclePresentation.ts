@@ -14,7 +14,7 @@ import {
   needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
 import { hasExternalProviderUpdate } from "./providerLifecycleActions";
-import { useProviderSignInStartingHere } from "./providerSignInBrowser";
+import { useProviderSignInStartingHere } from "./providerSignInStarting";
 
 export interface ProviderSettingsVersionAdvisory {
   readonly title: string;

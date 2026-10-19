@@ -24,8 +24,8 @@ import { isInsideRestingComposerControlScope } from "./composerEventScope";
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker";
 import {
   observeProviderSignInSnapshots,
-  resetProviderSignInBrowserForTests,
-} from "../../scient/providerConnection/providerSignInBrowser";
+  resetProviderSignInForTests,
+} from "../../scient/providerConnection/providerSignInFlow";
 import { createRoot, type Root } from "react-dom/client";
 import * as Cause from "effect/Cause";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -371,7 +371,7 @@ describe("actual picker provider setup", () => {
       },
     };
     const openPage = vi.fn(async () => undefined);
-    resetProviderSignInBrowserForTests({
+    resetProviderSignInForTests({
       open: openPage,
       claim: async () => ({
         granted: true,
@@ -411,7 +411,7 @@ describe("actual picker provider setup", () => {
       },
     ]);
     await expect.poll(() => openPage.mock.calls.length).toBe(1);
-    resetProviderSignInBrowserForTests();
+    resetProviderSignInForTests();
   });
 
   it("does not turn hidden ready models into installation or sign-in", async () => {

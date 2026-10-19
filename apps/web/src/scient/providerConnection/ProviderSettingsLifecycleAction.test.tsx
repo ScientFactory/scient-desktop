@@ -38,8 +38,8 @@ vi.mock("./useProviderLifecycleController", () => ({
 }));
 
 vi.mock("./environmentLocality", () => ({ useEnvironmentIsOnThisDevice: () => true }));
-vi.mock("./providerSignInBrowser", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./providerSignInBrowser")>()),
+vi.mock("./providerSignInStarting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./providerSignInStarting")>()),
   useProviderSignInStartingHere: () => false,
 }));
 
