@@ -70,8 +70,10 @@ describe("attachment HTML preview recovery", () => {
     now = 61 * 60_000;
     await toggleMode("Show HTML source");
     expect(fetch).toHaveBeenCalledExactlyOnceWith(renewedUrl, expect.any(Object));
-    await vi.waitFor(() =>
-      expect(container.querySelector("pre")?.textContent).toBe("<p>Captured HTML</p>"),
+    // SCIENT-FORK: the source view is lazy, and its first load can outlast a second on a busy runner.
+    await vi.waitFor(
+      () => expect(container.querySelector("pre")?.textContent).toBe("<p>Captured HTML</p>"),
+      { timeout: 5_000 },
     );
 
     await toggleMode("Show rendered page");

@@ -300,6 +300,9 @@ describe("update restart flow", () => {
     expect(document.activeElement).toBe(elsewhere);
 
     await userEvent.unhover(footerButton());
+    // Leaving starts the trigger's 150 ms hover-close timer, and an imperative open does not
+    // cancel it. Focus later, as a person would, or that timer closes the focus-opened popover.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await userEvent.tab();
     expect(document.activeElement).toBe(footerButton());
     // Under 12x CPU throttling the focus-opened popover appears after the default
