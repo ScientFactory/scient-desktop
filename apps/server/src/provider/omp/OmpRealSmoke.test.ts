@@ -100,7 +100,6 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       expect(session.providerThread.appThreadId).toBe(ThreadId.make("real-omp-thread"));
       yield* session.close;
       expect(session.runtime.providerSession.status).toBe("stopped");
-      NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -150,7 +149,6 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
         );
         yield* resumed.close;
         expect(resumed.runtime.providerSession.status).toBe("stopped");
-        NodeFS.rmSync(root, { recursive: true, force: true });
       }).pipe(
         Effect.scoped,
         Effect.provide(

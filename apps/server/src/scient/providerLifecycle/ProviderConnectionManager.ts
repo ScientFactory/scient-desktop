@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
   ProviderConnectionError,
   ProviderDriverKind,
   publishedProviderConnectionOperation,
@@ -7,9 +8,12 @@ import {
   type ProviderConnectionOperation,
   type ProviderConnectionStartInput,
   type ProviderConnectionSubmitAuthorizationCodeInput,
+  type ProviderSignInPageClaimInput,
+  type ProviderSignInPageClaimResult,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -44,6 +48,14 @@ export interface ProviderConnectionManagerShape {
     { readonly providers: ReadonlyArray<ServerProvider> },
     ProviderConnectionError
   >;
+  /**
+   * Grants the opening of an operation's sign-in page once: to a holder of the
+   * request id stamped on the current operation while it waits on a primary page.
+   * A grant carries that page's URL, so the client opens what is current now.
+   */
+  readonly claimSignInPage: (
+    input: ProviderSignInPageClaimInput,
+  ) => Effect.Effect<ProviderSignInPageClaimResult>;
   readonly submitAuthorizationCode: (
     input: ProviderConnectionSubmitAuthorizationCodeInput,
   ) => Effect.Effect<
@@ -68,7 +80,16 @@ interface ActiveConnection {
   readonly scope: Scope.Closeable;
   readonly attemptRef: Ref.Ref<ProviderConnectionAttempt | undefined>;
   readonly authorizationCodeSubmittedRef: Ref.Ref<boolean>;
+  /**
+   * Questions published so far; the latest is the one open. An answer names
+   * it, and cannot hide the next one.
+   */
+  readonly questionsAskedRef: Ref.Ref<number>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
+  /** Whether a client has been granted the opening of this operation's page. */
+  readonly pageClaimedRef: Ref.Ref<boolean>;
+  /** The manager-owned startup, until it hands off to its supervisor. */
+  readonly startupRef: Ref.Ref<Fiber.Fiber<unknown, unknown> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
 }
 
@@ -91,6 +112,9 @@ function operation(input: {
   readonly userCode?: string;
   readonly account?: string | undefined;
   readonly instructions?: string | undefined;
+  readonly failedAfterSignIn?: boolean | undefined;
+  readonly signInRequestId?: string | undefined;
+  readonly questionId?: string | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -110,8 +134,14 @@ function operation(input: {
     ...(input.userCode ? { userCode: input.userCode } : {}),
     ...(input.account ? { account: input.account } : {}),
     ...(input.instructions ? { instructions: input.instructions } : {}),
+    ...(input.failedAfterSignIn === true ? { failedAfterSignIn: true } : {}),
+    ...(input.signInRequestId ? { signInRequestId: input.signInRequestId } : {}),
+    ...(input.questionId ? { questionId: input.questionId } : {}),
   };
 }
+
+/** The id the `count`th question of an operation is published and answered under. */
+const questionIdFor = (count: number) => `question-${count}`;
 
 const makeError = (input: {
   readonly provider: ProviderDriverKind;
@@ -210,6 +240,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   });
 
   yield* Effect.addFinalizer(() => cleanupAll);
+  // Accepted startups run here, not in the request that asked for them.
+  const managerScope = yield* Scope.Scope;
 
   const cleanupInterruptedStart = Effect.fn("ProviderConnectionManager.cleanupInterruptedStart")(
     function* (input: {
@@ -217,6 +249,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       readonly operationId: string;
       readonly method: ProviderConnectionStartInput["method"];
       readonly account: string | undefined;
+      readonly signInRequestId: string | undefined;
       readonly startedAt: string;
     }) {
       const active = yield* takeIfCurrent(input.instanceId, input.operationId);
@@ -238,6 +271,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId: input.operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               status: "cancelled",
               startedAt: input.startedAt,
               finishedAt,
@@ -337,14 +371,20 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const scope = yield* Scope.make();
     const attemptRef = yield* Ref.make<ProviderConnectionAttempt | undefined>(undefined);
     const authorizationCodeSubmittedRef = yield* Ref.make(false);
+    const questionsAskedRef = yield* Ref.make(0);
     const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
     const transitionLock = yield* Semaphore.make(1);
+    const startupRef = yield* Ref.make<Fiber.Fiber<unknown, unknown> | undefined>(undefined);
+    const pageClaimedRef = yield* Ref.make(false);
     const active: ActiveConnection = {
       operationId,
       scope,
       attemptRef,
       authorizationCodeSubmittedRef,
+      questionsAskedRef,
       fiberRef,
+      pageClaimedRef,
+      startupRef,
       transitionLock,
     };
     const lifecycleReserved = yield* lifecycleCoordinator.reserve({
@@ -380,25 +420,44 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
 
-    return yield* Effect.gen(function* () {
-      yield* providerRegistry.setProviderConnectionOperation({
+    // Once accepted, startup belongs to the manager: a provider can take a minute
+    // to reach its browser step, and a reload or brief disconnect of the client
+    // that asked only detaches it from the reply. Cancel, the operation's own
+    // failure, and manager teardown still stop it.
+    yield* providerRegistry
+      .setProviderConnectionOperation({
         instanceId: input.instanceId,
         operation: operation({
           operationId,
           method: input.method,
           account: input.account,
+          signInRequestId: input.signInRequestId,
           status: "starting",
           startedAt,
-          message: "Starting secure provider sign in.",
+          message: actions.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE,
         }),
-      });
-
+      })
+      .pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : cleanupInterruptedStart({
+                instanceId: input.instanceId,
+                operationId,
+                method: input.method,
+                account: input.account,
+                signInRequestId: input.signInRequestId,
+                startedAt,
+              }),
+        ),
+      );
+    const startup = yield* Effect.gen(function* () {
       const attemptResult = yield* actions.start(input.method, input.account).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.result,
         Effect.catchCause(() =>
           Effect.succeed(
-            Result.fail({
+            Result.fail<ProviderConnectionActionFailure>({
               message: "The provider sign-in flow stopped unexpectedly.",
             }),
           ),
@@ -422,10 +481,12 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               status: "failed",
               startedAt,
               finishedAt,
               message: attemptResult.failure.message,
+              failedAfterSignIn: attemptResult.failure.afterSignIn,
             }),
           }),
         );
@@ -457,13 +518,17 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             return undefined;
           }
           yield* Ref.set(attemptRef, attempt);
+          const asking = attempt.submitAuthorizationCode !== undefined;
+          if (asking) yield* Ref.set(questionsAskedRef, 1);
           return yield* providerRegistry.setProviderConnectionOperation({
             instanceId: input.instanceId,
             operation: operation({
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               instructions: attempt.instructions,
+              ...(asking ? { questionId: questionIdFor(1) } : {}),
               status: waitingStatus,
               startedAt,
               message: waitingMessage,
@@ -475,7 +540,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                       : {}),
                   }
                 : {}),
-              acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
+              acceptsAuthorizationCode: asking,
               ...(attempt.authorizationResponseKind
                 ? { authorizationResponseKind: attempt.authorizationResponseKind }
                 : {}),
@@ -488,10 +553,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         return { providers: yield* providerRegistry.getProviders };
       }
 
-      if (attempt.laterQuestion) {
-        // The provider can ask its first question after the link was shown.
-        // Publish it on the operation that is still waiting, and nothing else.
-        yield* attempt.laterQuestion.pipe(
+      if (attempt.nextQuestion) {
+        // The provider can ask after the link was shown, and again after each
+        // answer. Publish every question on the operation that is still
+        // waiting for it, and nothing else.
+        yield* attempt.nextQuestion.pipe(
           Effect.flatMap((question) =>
             transitionLock.withPermits(1)(
               Effect.gen(function* () {
@@ -502,10 +568,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     (provider) => provider.instanceId === input.instanceId,
                   )?.connection,
                 );
+                // `verifying` here is an answer being finished: the completion
+                // publishes its own `verifying` and its result in one claim.
                 if (
                   published?.operationId !== operationId ||
                   (published.status !== "waiting_for_browser" &&
-                    published.status !== "waiting_for_device_code")
+                    published.status !== "waiting_for_device_code" &&
+                    published.status !== "verifying")
                 ) {
                   return;
                 }
@@ -513,17 +582,22 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   ...attempt,
                   submitAuthorizationCode: question.submitAuthorizationCode,
                 });
+                const asked = yield* Ref.updateAndGet(questionsAskedRef, (count) => count + 1);
                 yield* providerRegistry.setProviderConnectionOperation({
                   instanceId: input.instanceId,
                   operation: {
                     ...published,
+                    status: waitingStatus,
+                    message: waitingMessage,
                     acceptsAuthorizationCode: true,
+                    questionId: questionIdFor(asked),
                     ...(question.instructions ? { instructions: question.instructions } : {}),
                   },
                 });
               }),
             ),
           ),
+          Effect.forever,
           Effect.ignoreCause({ log: true }),
           Effect.forkIn(scope),
         );
@@ -549,6 +623,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     operationId,
                     method: input.method,
                     account: input.account,
+                    signInRequestId: input.signInRequestId,
                     status: "verifying",
                     startedAt,
                     message: "Verifying the connected provider account.",
@@ -576,6 +651,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   completion = Result.fail({
                     message:
                       "The provider finished sign in, but Scient could not verify the connected account.",
+                    afterSignIn: true,
                   });
                 }
               }
@@ -586,6 +662,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   operationId,
                   method: input.method,
                   account: input.account,
+                  signInRequestId: input.signInRequestId,
                   status: completion._tag === "Success" ? "connected" : "failed",
                   startedAt,
                   finishedAt,
@@ -593,6 +670,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     completion._tag === "Success"
                       ? "Provider account connected."
                       : completion.failure.message,
+                  failedAfterSignIn:
+                    completion._tag === "Failure" ? completion.failure.afterSignIn : undefined,
                 }),
               });
               yield* cleanupIfCurrent(input.instanceId, operationId, "complete");
@@ -612,6 +691,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     operationId,
                     method: input.method,
                     account: input.account,
+                    signInRequestId: input.signInRequestId,
                     status: "failed",
                     startedAt,
                     finishedAt,
@@ -655,9 +735,48 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               operationId,
               method: input.method,
               account: input.account,
+              signInRequestId: input.signInRequestId,
               startedAt,
             }),
       ),
+      Effect.forkIn(managerScope),
+    );
+    yield* Ref.set(startupRef, startup);
+    const outcome = yield* Fiber.await(startup);
+    // A cancelled startup answers with the cancelled state.
+    return Exit.isFailure(outcome) && Cause.hasInterruptsOnly(outcome.cause)
+      ? { providers: yield* providerRegistry.getProviders }
+      : yield* outcome;
+  });
+
+  const claimSignInPage: ProviderConnectionManagerShape["claimSignInPage"] = Effect.fn(
+    "ProviderConnectionManager.claimSignInPage",
+  )(function* (input) {
+    const active = (yield* Ref.get(activeRef)).get(input.instanceId);
+    if (!active || active.operationId !== input.operationId) return { granted: false } as const;
+    // Under the operation's transition lock, so its state cannot change between
+    // the check and the grant.
+    return yield* active.transitionLock.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* Ref.get(activeRef)).get(input.instanceId) !== active)
+          return { granted: false } as const;
+        const published = publishedProviderConnectionOperation(
+          (yield* providerRegistry.getProviders).find(
+            (provider) => provider.instanceId === input.instanceId,
+          )?.connection,
+        );
+        const waitsOnPage =
+          published?.operationId === input.operationId &&
+          (published.status === "waiting_for_browser" ||
+            published.status === "waiting_for_device_code") &&
+          published.authorizationUrlKind === "primary" &&
+          published.authorizationUrl !== undefined &&
+          published.signInRequestId === input.signInRequestId;
+        if (!waitsOnPage || (yield* Ref.getAndSet(active.pageClaimedRef, true))) {
+          return { granted: false } as const;
+        }
+        return { granted: true, authorizationUrl: published.authorizationUrl } as const;
+      }),
     );
   });
 
@@ -693,6 +812,22 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               message: "This provider sign-in flow does not accept an authorization code.",
             });
           }
+          // An answer names the question it was typed for. Only the first
+          // question takes one from a client that predates question ids.
+          const questionsAsked = yield* Ref.get(active.questionsAskedRef);
+          if (
+            input.questionId === undefined
+              ? questionsAsked > 1
+              : input.questionId !== questionIdFor(questionsAsked)
+          ) {
+            return yield* makeError({
+              provider: target.provider,
+              instanceId: input.instanceId,
+              reason: "authorization_code_not_supported",
+              message:
+                "That answer was for an earlier question. Answer the question the provider is asking now.",
+            });
+          }
 
           const claimed = yield* Ref.modify(
             active.authorizationCodeSubmittedRef,
@@ -706,7 +841,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               message: "Another one-time authorization code is being submitted.",
             });
           }
-          return { active, submitAuthorizationCode: attempt.submitAuthorizationCode };
+          return {
+            active,
+            submitAuthorizationCode: attempt.submitAuthorizationCode,
+            questionsAsked,
+          };
         }),
       );
       const submitted = yield* prepared
@@ -733,6 +872,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               reason: "operation_not_found",
               message: "The connection operation is no longer active.",
             });
+          }
+          // The provider already asked its next question, which stays shown.
+          if ((yield* Ref.get(active.questionsAskedRef)) !== prepared.questionsAsked) {
+            return { providers: yield* providerRegistry.getProviders };
           }
           const previous = publishedProviderConnectionOperation(
             (yield* providerRegistry.getProviders).find(
@@ -779,6 +922,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         message: "The connection operation is no longer active.",
       });
     }
+    // A startup still running stops with its operation; its own cleanup finds
+    // nothing left to do because the operation was taken above.
+    const startup = yield* Ref.get(active.startupRef);
+    if (startup) yield* Fiber.interrupt(startup).pipe(Effect.forkDetach);
     const providers = yield* settleActive(
       active,
       "interrupt",
@@ -939,7 +1086,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     );
   });
 
-  return ProviderConnectionManager.of({ start, cancel, submitAuthorizationCode, disconnect });
+  return ProviderConnectionManager.of({
+    start,
+    cancel,
+    claimSignInPage,
+    submitAuthorizationCode,
+    disconnect,
+  });
 });
 
 export const layer = Layer.effect(ProviderConnectionManager, make());

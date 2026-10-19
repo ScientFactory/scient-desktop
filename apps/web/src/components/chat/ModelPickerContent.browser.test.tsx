@@ -22,7 +22,12 @@ import { CustomModelConnectionDialog } from "../settings/CustomModelConnectionDi
 import { createPortal } from "react-dom";
 import { isInsideRestingComposerControlScope } from "./composerEventScope";
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker";
+import {
+  observeProviderSignInSnapshots,
+  resetProviderSignInForTests,
+} from "../../scient/providerConnection/providerSignInFlow";
 import { createRoot, type Root } from "react-dom/client";
+import * as Cause from "effect/Cause";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { ModelPickerContent } from "./ModelPickerContent";
@@ -47,6 +52,7 @@ vi.mock("../../scient/providerConnection/useProviderLifecycleController", () => 
     cancelConnection: vi.fn(),
     submitAuthorizationCode: vi.fn(),
     disconnect: vi.fn(),
+    signInKey: { environmentId: "environment-test", instanceId: "sign-in-test" },
     openAuthorizationPage: vi.fn(),
     updateExternalRuntime: vi.fn(),
     refresh: vi.fn(),
@@ -321,6 +327,7 @@ describe("actual picker provider setup", () => {
         instanceId: provider.instanceId,
         method: "scient_agent_account",
         account: "openai-codex",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     const waiting: ServerProvider = {
@@ -344,6 +351,67 @@ describe("actual picker provider setup", () => {
       .toContain("Finish signing in securely");
     expect(document.querySelector("[role=dialog]")?.textContent).toContain("Cancel");
     expect(commands.accountCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a Scient Agent sign-in recoverable when its start reply is lost", async () => {
+    const base = snapshot("scient", true);
+    const provider: ServerProvider = {
+      ...base,
+      connection: {
+        ...base.connection!,
+        accounts: [
+          {
+            id: "openai-codex",
+            name: "ChatGPT Plus/Pro",
+            kind: "account",
+            connected: false,
+            canDisconnect: false,
+          },
+        ],
+      },
+    };
+    const openPage = vi.fn(async () => undefined);
+    resetProviderSignInForTests({
+      open: openPage,
+      claim: async () => ({
+        granted: true,
+        authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=synthetic",
+      }),
+    });
+    // A dropped connection: the outcome is unknown, not a server rejection.
+    commands.accountCommand.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("The environment connection closed.")),
+    });
+    render(provider);
+    await setupButton();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => commands.accountCommand.mock.calls.length).toBe(1);
+    const signInRequestId = commands.accountCommand.mock.calls[0]![0].input.signInRequestId;
+
+    observeProviderSignInSnapshots(EnvironmentId.make("synthetic"), [
+      {
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          accountOperation: {
+            operationId: "account-1",
+            method: "scient_agent_account",
+            account: "openai-codex",
+            status: "waiting_for_browser",
+            startedAt: provider.checkedAt,
+            finishedAt: null,
+            message: "Finish signing in securely in your browser.",
+            authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=synthetic",
+            authorizationUrlKind: "primary",
+            signInRequestId,
+          },
+        },
+      },
+    ]);
+    await expect.poll(() => openPage.mock.calls.length).toBe(1);
+    resetProviderSignInForTests();
   });
 
   it("does not turn hidden ready models into installation or sign-in", async () => {
@@ -533,6 +601,7 @@ describe("composed picker Connect models overlay", () => {
         instanceId: ProviderInstanceId.make("scient_work"),
         method: "scient_agent_account",
         account: "account-39",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("");

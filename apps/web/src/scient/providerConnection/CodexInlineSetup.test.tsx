@@ -82,6 +82,10 @@ function controller(): ProviderLifecycleController {
     cancelConnection: vi.fn(async () => provider()),
     submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => runtimePlan),
     startRuntime: vi.fn(async () => provider()),
@@ -138,7 +142,7 @@ describe("CodexInlineSetup", () => {
 
     expect(markup).toContain("ABCD-EFGH");
     expect(markup).toContain('aria-label="Copy Codex device code"');
-    expect(markup).toContain("Reopen sign-in page");
+    expect(markup).toContain("Open sign-in page");
   });
 
   it("keeps managed installation compact without synthetic progress", () => {

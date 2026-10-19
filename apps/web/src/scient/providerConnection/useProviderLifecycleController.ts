@@ -11,13 +11,20 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isRuntimePlanStale } from "./isRuntimePlanStale";
-import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
+import { startProviderSignIn } from "./providerSignInFlow";
+import { openProviderAuthorizationPage } from "./providerSignInPage";
+import type { ProviderSignInKey } from "./providerSignInRequests";
 
 export interface ProviderLifecycleController {
+  /** The environment and instance whose sign-in page openings this controller shares. */
+  readonly signInKey: ProviderSignInKey;
+  /**
+   * Starts a sign-in. When it waits on a page Scient opens, this client opens
+   * it once, even if the view that asked has closed by then.
+   */
   readonly startConnection: (
     method: ProviderConnectionMethod,
     mode?: "connect" | "reauthenticate",
@@ -129,17 +136,28 @@ export function useProviderLifecycleController(input: {
 
   const instanceId = input.provider.instanceId;
   const providerDriver = input.provider.driver;
+  const signInKey = { environmentId: input.environmentId, instanceId };
+  const providerName = input.provider.displayName?.trim() || "provider";
+  const currentOperationId = input.provider.connection?.operation?.operationId ?? null;
 
   const startConnection = async (
     method: ProviderConnectionMethod,
     mode?: "connect" | "reauthenticate",
   ) => {
-    const result = await startProviderConnection({
-      environmentId: input.environmentId,
-      input: { instanceId, method, ...(mode ? { mode } : {}) },
+    return startProviderSignIn({
+      key: signInKey,
+      providerName,
+      previousOperationId: currentOperationId,
+      start: async (signInRequestId) => {
+        const result = await startProviderConnection({
+          environmentId: input.environmentId,
+          input: { instanceId, method, signInRequestId, ...(mode ? { mode } : {}) },
+        });
+        const value = resultValue(result, "Scient could not start provider sign in.");
+        return providerFromResult(value.providers, instanceId);
+      },
+      operationOf: (provider) => provider.connection?.operation,
     });
-    const value = resultValue(result, "Scient could not start provider sign in.");
-    return providerFromResult(value.providers, instanceId);
   };
 
   const cancelConnection = async (operationId: string) => {
@@ -167,19 +185,6 @@ export function useProviderLifecycleController(input: {
     });
     const value = resultValue(result, "Scient could not disconnect the provider account.");
     return providerFromResult(value.providers, instanceId);
-  };
-
-  const openAuthorizationPage = async (url: string) => {
-    if (!isSafeProviderAuthorizationUrl(url)) {
-      throw new Error("Scient refused an invalid or insecure provider sign-in link.");
-    }
-    if (window.desktopBridge) {
-      await ensureLocalApi().shell.openExternal(url);
-      return;
-    }
-    // Preview hosts distinguish a popup from a new-tab link. Preserve the
-    // originating setup page and isolate the authorization page from its opener.
-    window.open(url, "_blank", "popup,noopener,noreferrer");
   };
 
   const planRuntime = async (action: ProviderManagedRuntimeAction) => {
@@ -242,11 +247,12 @@ export function useProviderLifecycleController(input: {
   };
 
   return {
+    signInKey,
     startConnection,
     cancelConnection,
     submitAuthorizationCode,
     disconnect,
-    openAuthorizationPage,
+    openAuthorizationPage: openProviderAuthorizationPage,
     planRuntime,
     startRuntime,
     cancelRuntime,

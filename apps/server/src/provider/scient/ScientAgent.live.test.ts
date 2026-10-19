@@ -581,7 +581,6 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           }).pipe(Effect.flip);
           expect(refused._tag).toBe("ProviderAdapterResumeThreadError");
         }
-        NodeFS.rmSync(root, { recursive: true, force: true });
       }).pipe(Effect.scoped, Effect.provide(layer)),
     600_000,
   );

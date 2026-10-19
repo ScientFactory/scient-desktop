@@ -30,6 +30,15 @@ mobile app.
 Installation and sign-in continue if you leave the setup surface. Background
 status checks never open a browser or start a sign-in flow.
 
+With the Google account method, **Sign in** on the provider's row in **Settings >
+Providers** starts sign-in directly. Antigravity prepares itself each time it
+starts, so sign-in can take up to a minute before the Google page opens; Scient
+shows that it is starting. The page opens once, on the device where you started
+sign-in, even if you leave the setup surface meanwhile. Other windows and
+devices show the sign-in in progress and offer **Open Google sign-in** without
+opening it themselves. If the browser cannot open, the setup card says so, or a
+notification offers **Open sign-in page** when the card is closed.
+
 Google sign-in allows five minutes for runtime startup, browser authorization,
 and account verification. If Scient cannot open the browser, choose **Reopen
 Google sign-in** to retry the same attempt. Once the attempt expires, start a
@@ -193,6 +202,9 @@ switch authentication methods to bypass an account restriction.
   waiting. Helper preparation, runtime startup, and link-capture failures show
   which stage stopped; these failures require a new attempt. Passive refreshes
   intentionally do not launch a browser.
+- **Signed in, but Antigravity couldn't start:** Google accepted the sign-in,
+  but the agent could not start a session or load models with it. Try again; if
+  it keeps failing, the server log records the agent's reason.
 - **Remote sign-in stopped at localhost:** paste the full return URL through
   the collapsed remote-device control.
 - **Credentials are incomplete:** return to provider configuration and supply

@@ -41,6 +41,10 @@ function controller(): ProviderLifecycleController {
     cancelConnection: vi.fn(async () => provider),
     submitAuthorizationCode: vi.fn(async () => provider),
     disconnect: vi.fn(async () => provider),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async (action) => ({
       instanceId: provider.instanceId,
@@ -60,15 +64,13 @@ function controller(): ProviderLifecycleController {
 }
 
 describe("cursorLifecycleActions", () => {
-  it("opens the server-validated authorization URL after starting browser sign-in", async () => {
+  it("starts browser sign-in and leaves opening the page to the controller", async () => {
     const lifecycle = controller();
 
     await startCursorBrowserSignIn(lifecycle);
 
     expect(lifecycle.startConnection).toHaveBeenCalledWith("cursor_browser");
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith(
-      "https://cursor.com/loginDeepControl",
-    );
+    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
   });
 
   it("executes only the reviewed runtime plan returned by the server", async () => {
