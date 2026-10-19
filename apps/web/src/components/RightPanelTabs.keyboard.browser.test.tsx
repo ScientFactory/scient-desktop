@@ -189,11 +189,15 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
     // The menu hands focus back to its trigger once its close finishes, a few frames later.
     // Timers are fake here, so advance them instead of polling in real time.
+    // SCIENT-FORK: a loaded runner can also need real time, so poll while advancing frames.
     const trigger = container.querySelector('[aria-label="Add panel surface"]');
-    for (let frame = 0; frame < 10 && document.activeElement !== trigger; frame++) {
-      await act(() => vi.advanceTimersToNextFrame());
-    }
-    expect(document.activeElement).toBe(trigger);
+    await vi.waitFor(
+      async () => {
+        await act(() => vi.advanceTimersToNextFrame());
+        expect(document.activeElement).toBe(trigger);
+      },
+      { timeout: 5_000 },
+    );
     input.remove();
   });
 
