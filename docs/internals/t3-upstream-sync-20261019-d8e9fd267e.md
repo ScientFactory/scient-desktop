@@ -78,8 +78,11 @@ Meaningful compositions:
   write denial are adopted and apply to Scient's file mutations too (save, create,
   rename, write-target inspection). Because Scient's mutations resolve their target
   again, the Git-folder denial also runs on that resolution, including the one under
-  the write lock (review R1). Scient's writers (Word export, file exchange, compute, Markdown) write
-  under the thread's project or worktree; managed worktrees default to Scient's home.
+  the write lock (review R1). Scient's writers (editor saves, new files, renames,
+  Markdown image uploads, plan saves) use the thread's worktree or project; agents
+  write with their own tools and are not affected. The owner kept the check active
+  (2026-10-19); the cases it refuses are listed under follow-up and in
+  [the divergence map](./scient-fork-divergence.md#owner-decisions-on-upstream-behavior).
 - **Chat visits.** Upstream moved its visit watermark into a `ThreadVisitWatermark` leaf
   (#20860). Scient already removed upstream's writer: `useAcknowledgeAnswer` marks a
   thread visited only for a loaded completed answer in a visible, focused window. The
@@ -206,6 +209,16 @@ hand.
 - Offer the Windows drive-letter link fix upstream.
 - Enabling `doctor`'s original-database deletion needs a staleness check under the
   deletion lock and Windows-safe removal.
+- Retire the four kept V1 tables in a separate PR, after measuring their space on a
+  synthetic database: drop them only once every legacy import is complete at
+  `LEGACY_HISTORY_REPAIR_VERSION`, and end the per-start refresh from
+  `state.sqlite`. v0.6.21 (2026-10-02) is the last release that stored conversations
+  only there.
+- The workspace write check refuses saves for a scheduled task whose specific
+  checkout is not one of the project's Git worktrees, for a draft thread on a
+  hand-made worktree before its first message, and for outside worktrees when
+  `git worktree list` fails. Register those folders rather than loosen the check, and
+  give refused Markdown image uploads a specific error.
 - Watch the pull-request summary filter test and the port-scanner case for repeats.
 
 ## Publication boundary
