@@ -34,10 +34,6 @@ export const prepareAntigravitySkillLink = Effect.fn("prepareAntigravitySkillLin
       Effect.map((info) => info.type === "Directory"),
       Effect.orElseSucceed(() => false),
     );
-    const isLink = yield* fs.readLink(input.link).pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
     if (targetIsDirectory) {
       // Only a real directory, never a link or junction to one; rmdir refuses a
       // directory with anything in it, so no content can be lost.
@@ -47,6 +43,10 @@ export const prepareAntigravitySkillLink = Effect.fn("prepareAntigravitySkillLin
       }).pipe(Effect.ignore);
       return false;
     }
+    const isLink = yield* fs.readLink(input.link).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
     if (!isLink) return true;
     // `stat` follows the link, so only a link whose target is gone reports NotFound.
     const dangling = yield* fs.stat(input.link).pipe(

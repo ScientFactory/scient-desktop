@@ -1,25 +1,19 @@
 /**
- * Runs the Antigravity browser-helper preflight once per helper executable for
- * each server process.
+ * Runs the Antigravity browser-helper preflight once per helper executable and
+ * launch settings in each server process.
  *
  * The preflight proves that the `BROWSER` helper prints its marker and exits 0,
- * which keeps the agent from opening a browser of its own. Its result depends on
- * the executable, which cannot change while the server runs (an app update
- * restarts it), and on the launch settings that change how Node or Electron
- * starts, so a success is kept for that combination. A failure is not: the next
- * sign-in checks again.
+ * so the agent never opens a browser of its own. The result depends only on the
+ * executable, fixed while the server runs (an app update restarts it), and on
+ * the variables that change how Node or Electron starts, so a success is kept
+ * for that combination; after a failure the next sign-in checks again.
  *
- * Two costs made the old per-launch check slow under load, and its 5-second
- * bound did not hold:
- * - Creating the process is synchronous in Node on Windows. Starting Scient.exe
- *   as the helper can block the event loop for seconds, and no timer can fire
- *   meanwhile. Only running the check once removes that cost.
- * - A timeout used to wait for the helper's teardown, which on Windows runs
- *   `taskkill` and then waits for the process to exit without a bound. The
- *   teardown now continues in the background, bounded: if it stalls, one forced
- *   kill of the helper is tried, then it is left with a debug log. A fiber stuck
- *   in that platform wait cannot be stopped from here; the forced kill is what
- *   ends the process it waits for.
+ * On Windows, creating the process is synchronous and starting Scient.exe as the
+ * helper can block the event loop for seconds, which is why it runs once. A
+ * timeout does not wait for the helper's teardown (`taskkill`, then an
+ * unbounded wait for the exit): the teardown continues in the background, and if
+ * it stalls one forced kill ends the process, after which it is left with a
+ * debug log.
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - A synchronous digest keys an in-memory cache.
 import * as NodeCrypto from "node:crypto";
@@ -97,8 +91,8 @@ export const verifyAntigravityBrowserHelperOnce =
       if (verifiedHelpers.get(options.spawner)?.has(key)) return Effect.void;
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          // Started immediately so the process exists before the deadline is armed, as before:
-          // the bound applies to the helper's run, not to process creation.
+          // Started immediately, so the bound applies to the helper's run, not to
+          // creating its process.
           const slot: PreflightChildSlot = { current: undefined };
           const fiber = yield* Effect.forkDetach(
             Effect.scoped(verify).pipe(Effect.provideService(PreflightChild, slot)),

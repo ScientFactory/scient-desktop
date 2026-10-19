@@ -719,7 +719,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     );
     yield* Ref.set(startupRef, startup);
     const outcome = yield* Fiber.await(startup);
-    // A cancelled startup answers with the cancelled state, as before.
+    // A cancelled startup answers with the cancelled state.
     return Exit.isFailure(outcome) && Cause.hasInterruptsOnly(outcome.cause)
       ? { providers: yield* providerRegistry.getProviders }
       : yield* outcome;
