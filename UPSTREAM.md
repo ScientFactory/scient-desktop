@@ -1075,10 +1075,11 @@ Settings row's one-click sign-in, live in Scient-owned web modules
 (`scient/providerConnection/providerSignInBrowser.ts`), with one marked mount of
 `ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
 The server-side claim of a sign-in page adds one Scient RPC,
-`server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts`; its
-group entry in `contracts/src/rpc.ts`, its scope in `server/src/auth/RpcAuthorization.ts`, its
-aggregate in `server/src/observability/RpcInstrumentation.ts` and its command in
-`client-runtime/src/state/server.ts` are marked lines.
+`server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts` and
+imported in its existing marked block of `contracts/src/rpc.ts`; its group entry, scope
+(`server/src/auth/RpcAuthorization.ts`) and aggregate (`server/src/observability/RpcInstrumentation.ts`)
+sit with the existing provider-connection entries. The web defines its command in
+`scient/providerConnection/providerSignInCommands.ts`.
 `components/settings/ProviderInstanceCard.tsx` carries two marked blocks: its lifecycle
 presentation comes from a Scient hook, so a sign-in started here reads as starting from the
 click, and a failed sign-in or setup takes the error status dot. See

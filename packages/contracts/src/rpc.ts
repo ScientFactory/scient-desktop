@@ -2064,9 +2064,7 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
-  // SCIENT-FORK:START — one client opens an operation's sign-in page.
   WsServerClaimProviderSignInPageRpc,
-  // SCIENT-FORK:END
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,

@@ -10,6 +10,7 @@ import {
   setProviderSignInPageClaimer,
   usePendingProviderSignInKeys,
 } from "./providerSignInBrowser";
+import { claimProviderSignInPage } from "./providerSignInCommands";
 
 /**
  * Mounted once for the app. Lends the opener the server's claim command, and
@@ -19,7 +20,7 @@ import {
  * here is pending.
  */
 export function ProviderSignInPageCoordinator() {
-  const claim = useAtomCommand(serverEnvironment.claimProviderSignInPage, {
+  const claim = useAtomCommand(claimProviderSignInPage, {
     reportFailure: false,
   });
   useEffect(() => {

@@ -1203,12 +1203,6 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
-    // SCIENT-FORK:START — one client opens an operation's sign-in page.
-    claimProviderSignInPage: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:claim-provider-sign-in-page",
-      tag: WS_METHODS.serverClaimProviderSignInPage,
-    }),
-    // SCIENT-FORK:END
     submitProviderAuthorizationCode: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:submit-provider-authorization-code",
       tag: WS_METHODS.serverSubmitProviderAuthorizationCode,
