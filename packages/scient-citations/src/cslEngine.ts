@@ -35,10 +35,13 @@ import UntypedCiteproc from "citeproc";
 
 const Citeproc = UntypedCiteproc as CiteprocModule;
 
-type BibliographyEntryRenderer = (item: CslItem) => string;
+type BibliographyEntryRenderer = ((item: CslItem) => string) & { readonly seen: Set<string> };
 
 // Building an engine compiles its CSL style, which takes over a second for APA;
 // rendering with a built engine takes milliseconds. Build each style once.
+// citeproc keeps a little bookkeeping for every ID it has seen, even after the
+// item is removed, so an engine is rebuilt after this many different sources.
+const MAX_SOURCES_PER_ENGINE = 500;
 const renderersByStyle = new Map<ScientReferenceStyleId, BibliographyEntryRenderer>();
 
 function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRenderer {
@@ -53,7 +56,7 @@ function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRendere
   );
   engine.setOutputFormat("text");
 
-  return (item) => {
+  const render = (item: CslItem) => {
     current = item;
     try {
       // citeproc derives sort keys and name disambiguation when an item is first
@@ -67,15 +70,20 @@ function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRendere
       current = null;
     }
   };
+  return Object.assign(render, { seen: new Set<string>() });
 }
 
 export function renderCslBibliographyEntry(item: CslItem, style: ScientReferenceStyleId): string {
   let render = renderersByStyle.get(style);
+  if (render && !render.seen.has(item.id) && render.seen.size >= MAX_SOURCES_PER_ENGINE) {
+    render = undefined;
+  }
   if (!render) {
     render = createRenderer(style);
     renderersByStyle.set(style, render);
   }
   try {
+    render.seen.add(item.id);
     return render(item);
   } catch (error) {
     // A failed update can leave citeproc's registry inconsistent.
