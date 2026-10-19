@@ -1,10 +1,8 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { FileDown } from "lucide-react";
 import { useCallback, useRef } from "react";
 
-import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
@@ -12,7 +10,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { beginScientUiOperation } from "../analytics/client";
 import type { MarkdownPersistenceLease } from "../markdownEditor/persistence/markdownPersistenceRegistry";
-import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
+import { DocumentExportMenuItems } from "./DocumentExportMenuItems";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
 import {
   deliverDocumentPdf,
@@ -35,7 +33,7 @@ export interface MarkdownPdfExportTarget {
  * Exports the saved file and saves the PDF through the same Save dialog as
  * every other export; the notice's Open shows it in Scient's reader.
  */
-function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
+export function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(target.environmentId);
   const prepare = useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, {
     reportFailure: false,
@@ -129,26 +127,11 @@ export function MarkdownPdfExportMenuItems(
   const exportPdf = useMarkdownPdfExport(props);
   const availability = documentPdfAvailability();
   return (
-    <MenuSub>
-      <MenuSubTrigger>
-        <FileDown />
-        <span>Export</span>
-      </MenuSubTrigger>
-      <MenuSubPopup className="w-64">
-        <DockCommandItem
-          disabled={!availability.available}
-          onClick={() => void exportPdf()}
-          {...(availability.available ? {} : { title: availability.reason })}
-        >
-          <span className="flex min-w-0 flex-col">
-            <span>PDF</span>
-            {availability.available ? null : (
-              <span className="text-xs text-muted-foreground">{availability.reason}</span>
-            )}
-          </span>
-        </DockCommandItem>
-        <DockCommandItem onClick={props.onWordExport}>Word</DockCommandItem>
-      </MenuSubPopup>
-    </MenuSub>
+    <DocumentExportMenuItems
+      onPdfExport={() => void exportPdf()}
+      onWordExport={props.onWordExport}
+      pdfDisabled={!availability.available}
+      {...(availability.available ? {} : { pdfUnavailableReason: availability.reason })}
+    />
   );
 }

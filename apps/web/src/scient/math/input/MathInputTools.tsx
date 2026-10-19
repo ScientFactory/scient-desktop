@@ -12,7 +12,17 @@ import {
 import { labelKeys } from "../../keyboard/keys";
 import "./math-input.css";
 
-export function MathInputTools({ controller }: { readonly controller: MathInputController }) {
+/**
+ * The math palette. With `anchor`, it has no button of its own and opens next
+ * to that element (a Math menu in the bar, for example).
+ */
+export function MathInputTools({
+  controller,
+  anchor,
+}: {
+  readonly controller: MathInputController;
+  readonly anchor?: React.RefObject<HTMLElement | null>;
+}) {
   const panel = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
@@ -47,29 +57,31 @@ export function MathInputTools({ controller }: { readonly controller: MathInputC
           {panel.sequenceHint}
         </span>
       ) : null}
-      <ScientTooltip
-        content={
-          "Math and symbols" +
-          (shortcutLabel("math.palette") ? " (" + shortcutLabel("math.palette") + ")" : "")
-        }
-      >
-        <button
-          ref={trigger}
-          type="button"
-          aria-label="Insert math or symbol"
-          aria-expanded={panel.open}
-          aria-controls={panel.open ? panelId : undefined}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setError("");
-
-            if (panel.open) controller.close();
-            else controller.open();
-          }}
+      {anchor ? null : (
+        <ScientTooltip
+          content={
+            "Math and symbols" +
+            (shortcutLabel("math.palette") ? " (" + shortcutLabel("math.palette") + ")" : "")
+          }
         >
-          Ω
-        </button>
-      </ScientTooltip>
+          <button
+            ref={trigger}
+            type="button"
+            aria-label="Insert math or symbol"
+            aria-expanded={panel.open}
+            aria-controls={panel.open ? panelId : undefined}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setError("");
+
+              if (panel.open) controller.close();
+              else controller.open();
+            }}
+          >
+            Ω
+          </button>
+        </ScientTooltip>
+      )}
       <Popover
         open={panel.open}
         onOpenChange={(open, details) => {
@@ -79,7 +91,7 @@ export function MathInputTools({ controller }: { readonly controller: MathInputC
       >
         {panel.open ? (
           <PopoverPopup
-            anchor={trigger}
+            anchor={anchor ?? trigger}
             align="start"
             padding="none"
             initialFocus={searchInput}

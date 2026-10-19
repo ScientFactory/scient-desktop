@@ -154,6 +154,7 @@ overrides:
 packageExtensionsChecksum: sha256-EowbsmlBFaoO0Ypufw901RnvdyjKG5dcdk2FRbc7Dr0=
 
 patchedDependencies:
+  mathlive@0.108.2: 6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6
   '@clerk/expo-native-components@0.2.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@effect/vitest@4.0.5': 2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02
   '@expo/fingerprint@0.21.5': 8fba80d6bbce46c72de427fe8c7907462d262a0bfe50c6b2b7ee9c4e0c61e5e1
@@ -1085,6 +1086,9 @@ importers:
       mathjax:
         specifier: 3.2.2
         version: 3.2.2
+      mathlive:
+        specifier: 0.108.2
+        version: 0.108.2(patch_hash=6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6)
       mermaid:
         specifier: 12.0.0
         version: 12.0.0
@@ -3579,6 +3583,10 @@ packages:
     resolution: {integrity: sha512-iNKdJRi69YP3mq6AePRT8F/HrxWCewrhxnLMNm0vpqXAR8biwzRtO6Hjx80C6UvtKJ5sFmffQT7I4Baecz389w==}
     peerDependencies:
       '@bufbuild/protobuf': ^1.10.0
+
+  '@cortex-js/compute-engine@0.30.2':
+    resolution: {integrity: sha512-Zx+iisk9WWdbxjm8EYsneIBszvjfUs7BHNwf1jBtSINIgfWGpHrTTq9vW0J59iGCFt6bOFxbmWyxNMRSmksHMA==}
+    engines: {node: '>=21.7.3', npm: '>=10.5.0'}
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     resolution: {integrity: sha512-wT+f9lbE6IfSPs8unb7IHr6/V/EkB4SCMFisTtV3jsTseCKr4/vkgpI1LRdul2r+KrmgQ4JxRpUDVB25dmpqNw==}
@@ -9058,6 +9066,10 @@ packages:
     resolution: {integrity: sha512-pJDh5/4wrEnXX/VWRZvruAGHkzKdr46z11OlTPN+VrATlWWhSKewNCJ1futCO5C7eJB3nPMFZA1LeYtcFboZ2A==}
     engines: {node: '>=0.10.0'}
 
+  complex-esm@2.1.1-esm1:
+    resolution: {integrity: sha512-IShBEWHILB9s7MnfyevqNGxV0A1cfcSnewL/4uPFiSxkcQL4Mm3FxJ0pXMtCXuWLjYz3lRRyk6OfkeDZcjD6nw==}
+    engines: {node: '>=16.14.2', npm: '>=8.5.0'}
+
   compressible@2.0.18:
     resolution: {integrity: sha512-AF3r7P5dWxL8MxyITRMlORQNaOA2IkAFaTr4k7BUumjPtRpGDTZpl0Pb1XCO6JeDCBdp126Cgs9sMxqSjgYyRg==}
     engines: {node: '>= 0.6'}
@@ -11195,6 +11207,9 @@ packages:
 
   mathjax@3.2.2:
     resolution: {integrity: sha512-Bt+SSVU8eBG27zChVewOicYs7Xsdt40qm4+UpHyX7k0/O9NliPc+x77k1/FEsPsjKPZGJvtRZM1vO+geW0OhGw==}
+
+  mathlive@0.108.2:
+    resolution: {integrity: sha512-GIZkfprGTxrbHckOvwo92ZmOOxdD018BHDzlrEwYUU+pzR5KabhqI1s43lxe/vqXdF5RLiQKgDcuk5jxEjhkYg==}
 
   mdast-util-directive@3.1.0:
     resolution: {integrity: sha512-I3fNFt+DHmpWCYAT7quoM6lHf9wuqtI+oCOfvILnoicNIqjh5E3dEJWiXuYME2gNe8vl1iMQwyUHa7bgFmak6Q==}
@@ -15657,6 +15672,11 @@ snapshots:
   '@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0)':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
+
+  '@cortex-js/compute-engine@0.30.2':
+    dependencies:
+      complex-esm: 2.1.1-esm1
+      decimal.js: 10.6.0
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     optional: true
@@ -21052,6 +21072,8 @@ snapshots:
 
   compare-version@0.1.2: {}
 
+  complex-esm@2.1.1-esm1: {}
+
   compressible@2.0.18:
     dependencies:
       mime-db: 1.54.0
@@ -23313,6 +23335,10 @@ snapshots:
   math-intrinsics@1.1.0: {}
 
   mathjax@3.2.2: {}
+
+  mathlive@0.108.2(patch_hash=6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6):
+    dependencies:
+      '@cortex-js/compute-engine': 0.30.2
 
   mdast-util-directive@3.1.0:
     dependencies:

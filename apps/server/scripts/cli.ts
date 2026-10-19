@@ -101,6 +101,22 @@ const buildCmd = Command.make(
 
       // SCIENT-FORK:START — compute bridges and managed Python specifications are runtime data
       yield* stageScientServerAssets(serverDir);
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+            `--destination=${path.join(serverDir, "dist/file-exchange")}`,
+          ],
+          {
+            cwd: repoRoot,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: false,
+          },
+        ),
+      );
+      yield* Effect.log("[cli] Staged the host native publication adapter into dist/file-exchange");
       // SCIENT-FORK:END
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
@@ -150,8 +166,33 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      const nativeTarget = Option.match(config.target, {
+        onNone: () => [],
+        onSome: (target) => {
+          const split = target.lastIndexOf("-");
+          const platform = target.slice(0, split);
+          const arch = target.slice(split + 1);
+          return [`--platform=${platform === "win" ? "win32" : platform}`, `--arch=${arch}`];
+        },
+      });
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+            ...nativeTarget,
+            `--destination=${path.join(serverDir, "dist-exe/file-exchange")}`,
+          ],
+          {
+            cwd: repoRoot,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: false,
+          },
+        ),
+      );
       yield* Effect.log(
-        "[cli] Built dist-exe/scient (expects client/, resource-monitor/, and runtime externals beside it; the release packaging workflow assembles that tree)",
+        "[cli] Built dist-exe/scient (expects client/, resource-monitor/, file-exchange/, and runtime externals beside it; the release packaging workflow assembles that tree)",
       );
     }),
 ).pipe(

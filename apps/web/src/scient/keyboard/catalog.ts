@@ -1,8 +1,9 @@
+import { WRITING_COMMANDS, TABLE_COMMANDS } from "./writingCommands";
 import { MATH_COMMANDS } from "../math/input/catalog";
 import { defaultMathBindings } from "../math/input/keymap";
 import { SHORTCUTS } from "../markdownEditor/shortcutDefinitions";
 
-export type KeyboardScope = "markdown" | "math" | "pdf";
+export type KeyboardScope = "markdown" | "math" | "pdf" | "latex" | "table";
 export interface SurfaceCommand {
   readonly id: string;
   readonly label: string;
@@ -55,9 +56,23 @@ export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
   ])
     math.set(
       "math.matrix." + action,
-      "Matrix: " + action.replace(/([A-Z])/gu, " $1").toLowerCase(),
+      "Matrix: " +
+        action.replace(/([A-Z])/gu, " $1").toLowerCase() +
+        (/^(copy|swap)/u.test(action) ? " (Markdown)" : ""),
     );
   const commands: readonly SurfaceCommand[] = [
+    ...WRITING_COMMANDS.map(([id, label, defaultKeys]) => ({
+      id: "latex." + id,
+      label,
+      scope: "latex" as const,
+      defaultKeys,
+    })),
+    ...TABLE_COMMANDS.map(([id, label, defaultKeys]) => ({
+      id: "table." + id,
+      label,
+      scope: "table" as const,
+      defaultKeys,
+    })),
     ...markdownActions.map((id) => ({
       id: "markdown." + id,
       label: id.replace(/([A-Z0-9])/gu, " $1"),
@@ -94,7 +109,15 @@ export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
   commandCache.set(mac, commands);
   return commands;
 }
-/** Math may be nested in Markdown; PDF read mode is disjoint from authoring. */
+/**
+ * Math may be nested in Markdown or LaTeX. A LaTeX table's cells hold LaTeX
+ * text and math, so the same key reaches the table and what is in the cell.
+ * PDF read mode is disjoint from authoring.
+ */
 export function scopesOverlap(a: KeyboardScope, b: KeyboardScope) {
-  return a === b || (a !== "pdf" && b !== "pdf");
+  if (a === b) return true;
+  if (a === "pdf" || b === "pdf") return false;
+  if (a === "math" || b === "math") return true;
+  if (a === "table" || b === "table") return a === "latex" || b === "latex";
+  return false;
 }

@@ -251,6 +251,90 @@ describe("workspace refresh ownership", () => {
     expect(result.reloadNotice).toBeNull();
   });
 
+  it("does not erase a retained publication through equal reads, save echoes, or discard and retry actions", () => {
+    const publicationAttention = {
+      recoveryId: "retained-current",
+      mutationId: "original-mutation",
+      retainedPaths: [".scient/retained/previous-object.md"],
+      message: "The displaced object needs explicit review.",
+    };
+    mocks.file = {
+      authoritativeData: { ...file("Current", "r1"), publicationAttention },
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+    render({ sourcePending: true });
+    let result = render({ sourcePending: true });
+    expect(result.saveError).toMatchObject({
+      attention: "recovery_required",
+      error: publicationAttention,
+    });
+    expect(result.saveRetryReady).toBe(false);
+    result.handleSaveConfirmed("report.md", "Current", "r1");
+    result = render({ sourcePending: true });
+    result.handleExternalConflict("report.md", "Current", "r1");
+    result = render({ sourcePending: true });
+    result.requestRetrySave();
+    result.resolveReloadNotice("discard");
+    result.requestManualReload();
+    result = render({ sourcePending: true });
+    expect(result.saveResolution).toBeNull();
+    expect(result.saveError).toMatchObject({
+      attention: "recovery_required",
+      error: publicationAttention,
+    });
+    expect(mocks.clearFile).not.toHaveBeenCalled();
+    expect(mocks.file.data?.contents).toBe("My draft");
+
+    // Backend acceptance may have succeeded while its confirmation read failed.
+    mocks.file.authoritativeData = file("Current", "r1");
+    result.handleSaveFailure("report.md", Cause.fail(new Error("confirmation read disconnected")));
+    result = render({ sourcePending: true });
+    result.requestRetrySave();
+    result.resolveReloadNotice("discard");
+    expect(render({ sourcePending: true }).saveError).toMatchObject({
+      attention: "recovery_required",
+      error: publicationAttention,
+    });
+    expect(mocks.clearFile).not.toHaveBeenCalled();
+
+    // Only the mutation owner's guarded acceptance completion can clear it.
+    result.handleSaveResolutionApplied();
+    expect(render({ sourcePending: true }).saveError).toBeNull();
+    expect(mocks.file.data?.contents).toBe("My draft");
+  });
+
+  it("keeps proven unchanged refusals blocked until their owner completes an ordered review", () => {
+    mocks.file = {
+      authoritativeData: file("Current", "r1"),
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+    const refusal = new ProjectWriteFileError({
+      cwd: "/workspace",
+      relativePath: "report.md",
+      failure: "target_changed",
+      publicationOutcome: "unchanged",
+      mutationId: "refused-mutation",
+    });
+    render({ sourcePending: true }).handleSaveFailure("report.md", refusal);
+    let result = render({ sourcePending: true });
+    result.handleSaveFailure("report.md", Cause.fail(new Error("review read disconnected")));
+    result = render({ sourcePending: true });
+    result.requestRetrySave();
+    result.requestManualReload();
+    result.resolveReloadNotice("discard");
+    result = render({ sourcePending: true });
+    expect(result.saveResolution).toBeNull();
+    expect(result.saveError).toMatchObject({ attention: "target_changed", error: refusal });
+    expect(mocks.clearFile).not.toHaveBeenCalled();
+    result.handleSaveResolutionApplied();
+    expect(render({ sourcePending: true }).saveError).toBeNull();
+    expect(mocks.file.data?.contents).toBe("My draft");
+  });
+
   it("waits for the matching authoritative bytes after a revision-conflict response", () => {
     let result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
     result.handleSaveFailure(

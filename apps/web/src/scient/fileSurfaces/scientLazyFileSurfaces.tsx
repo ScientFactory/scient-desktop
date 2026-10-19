@@ -23,13 +23,18 @@ export const ScientComputeFileSurface = lazy(() =>
 );
 
 /** The loading state shared by the lazily loaded file surfaces. */
-export function ScientSurfaceSuspense(props: { readonly children: ReactNode }) {
+export function ScientSurfaceSuspense(props: {
+  readonly children: ReactNode;
+  readonly fallback?: ReactNode;
+}) {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-          <Spinner className="size-5" />
-        </div>
+        props.fallback ?? (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+            <Spinner className="size-5" />
+          </div>
+        )
       }
     >
       {props.children}

@@ -1,0 +1,280 @@
+import article from "./previews/article.png";
+import blank from "./previews/blank.png";
+import cv from "./previews/cv.png";
+import grantProposal from "./previews/grant-proposal.png";
+import labReport from "./previews/lab-report.png";
+import lectureNotes from "./previews/lecture-notes.png";
+import letter from "./previews/letter.png";
+import problemSet from "./previews/problem-set.png";
+import responseToReviewers from "./previews/response-to-reviewers.png";
+import thesis from "./previews/thesis.png";
+import articleExpanded from "./previews/full/article.png";
+import blankExpanded from "./previews/full/blank.png";
+import cvExpanded from "./previews/full/cv.png";
+import grantProposalExpanded from "./previews/full/grant-proposal.png";
+import labReportExpanded from "./previews/full/lab-report.png";
+import lectureNotesExpanded from "./previews/full/lecture-notes.png";
+import letterExpanded from "./previews/full/letter.png";
+import problemSetExpanded from "./previews/full/problem-set.png";
+import responseToReviewersExpanded from "./previews/full/response-to-reviewers.png";
+import thesisExpanded from "./previews/full/thesis.png";
+
+/**
+ * The first page of each built-in template, typeset. Rendered by
+ * scripts/render-template-previews.ts; run it again after changing a template.
+ */
+const BUILT_IN_PREVIEWS: Readonly<
+  Record<string, { src: string; expandedSrc: string; cropTop: number; cropScale?: number }>
+> = {
+  article: { src: article, expandedSrc: articleExpanded, cropTop: 0.12 },
+  blank: { src: blank, expandedSrc: blankExpanded, cropTop: 0, cropScale: 3 },
+  cv: { src: cv, expandedSrc: cvExpanded, cropTop: 0.07 },
+  "grant-proposal": { src: grantProposal, expandedSrc: grantProposalExpanded, cropTop: 0.12 },
+  "lab-report": { src: labReport, expandedSrc: labReportExpanded, cropTop: 0.12 },
+  "lecture-notes": { src: lectureNotes, expandedSrc: lectureNotesExpanded, cropTop: 0.12 },
+  letter: { src: letter, expandedSrc: letterExpanded, cropTop: 0.07 },
+  "problem-set": { src: problemSet, expandedSrc: problemSetExpanded, cropTop: 0.12 },
+  "response-to-reviewers": {
+    src: responseToReviewers,
+    expandedSrc: responseToReviewersExpanded,
+    cropTop: 0.12,
+  },
+  thesis: { src: thesis, expandedSrc: thesisExpanded, cropTop: 0.26, cropScale: 3 },
+};
+
+/** A template copied from a built-in one shows that one's page until it is updated. */
+const BUILT_IN_REFERENCE = "builtin:";
+
+export function builtInPreviewReference(id: string): string | null {
+  return BUILT_IN_PREVIEWS[id] ? `${BUILT_IN_REFERENCE}${id}` : null;
+}
+
+/** A template's picture: an image, or a page as Visual drew it. */
+export type TemplatePicture =
+  | {
+      readonly kind: "image";
+      readonly src: string;
+      readonly expandedSrc: string;
+      /** Trim blank top margin on hover; letter/CV headers start higher. */
+      readonly cropTop: number;
+      /** Sparse title pages are framed closer than pages with body text. */
+      readonly cropScale?: number;
+    }
+  | {
+      readonly kind: "page";
+      readonly html: string;
+      readonly width: number;
+      readonly height: number;
+    };
+
+/** The picture for a built-in template, or for a stored preview of the person's own. */
+export function templatePicture(
+  builtInId: string | null,
+  stored: string | null,
+): TemplatePicture | null {
+  if (builtInId !== null) {
+    const picture = BUILT_IN_PREVIEWS[builtInId];
+    return picture ? { kind: "image", ...picture } : null;
+  }
+  if (!stored) return null;
+  if (stored.startsWith(BUILT_IN_REFERENCE))
+    return templatePicture(stored.slice(BUILT_IN_REFERENCE.length), null);
+  const page = parsePage(stored);
+  return page ? { kind: "page", ...page } : null;
+}
+
+/** Elements a page picture never keeps: nothing that runs, loads or embeds. */
+const DROPPED =
+  "script, style, link, meta, iframe, frame, object, embed, base, form, audio, video, source, animate, animateMotion, animateTransform, set";
+
+/** CSS that can fetch something: a URL, an image function, or an import. */
+const LOADS = /url\s*\(|image-set\s*\(|image\s*\(|cross-fade\s*\(|element\s*\(|@import/iu;
+
+/**
+ * Inline styles that cannot fetch anything. Each declaration is read the way
+ * the browser parses it (escapes such as `u\72l(` decoded), so one that loads
+ * a resource is removed; if anything suspicious is still left in the attribute,
+ * the whole style goes.
+ */
+function keepStyleThatLoadsNothing(element: Element): void {
+  const style = (element as Partial<ElementCSSInlineStyle>).style;
+  if (style)
+    for (const property of Array.from(style))
+      if (LOADS.test(style.getPropertyValue(property))) style.removeProperty(property);
+  const left = element.getAttribute("style") ?? "";
+  if (!style || LOADS.test(left) || left.includes("\\")) element.removeAttribute("style");
+}
+
+/**
+ * Whether an attribute (an SVG paint, filter or marker) points at a resource
+ * outside the picture. Every `url()` in it must be a place inside (`#…`); one
+ * written with escapes is not read at all.
+ */
+function pointsOutside(value: string): boolean {
+  if (value.includes("\\") && value.includes("(")) return true;
+  return [...value.matchAll(/url\s*\(\s*(['"]?)([^'")\s]*)/giu)].some(
+    (reference) => !reference[2]!.startsWith("#"),
+  );
+}
+
+/**
+ * A page picture made safe to show: no element that runs or loads anything, no
+ * style or attribute that fetches a resource, no event handler, no script URL,
+ * nothing editable or focusable, and no ids to collide with the page around it.
+ */
+export function sanitizePage(root: Element): void {
+  for (const element of root.querySelectorAll(DROPPED)) element.remove();
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    if (element.hasAttribute("style")) keepStyleThatLoadsNothing(element);
+    // A copy: removing an attribute changes the live list.
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (
+        name.startsWith("on") ||
+        name === "id" ||
+        name === "contenteditable" ||
+        name === "tabindex" ||
+        name === "autofocus" ||
+        name === "srcdoc" ||
+        name === "srcset" ||
+        name === "poster" ||
+        name === "background" ||
+        // An SVG paint or filter may point only inside the picture (`url(#…)`).
+        (name !== "style" && pointsOutside(attribute.value)) ||
+        (name === "src" &&
+          !(
+            element.tagName.toLowerCase() === "img" &&
+            /^data:image\/(?:png|jpeg|webp);base64,/iu.test(attribute.value)
+          )) ||
+        ((name === "href" || name === "xlink:href") && !value.startsWith("#")) ||
+        ((name === "href" || name === "src" || name === "xlink:href" || name === "action") &&
+          (value.startsWith("javascript:") || value.startsWith("data:text/html")))
+      )
+        element.removeAttribute(attribute.name);
+    }
+  }
+}
+
+function parsePage(stored: string): { html: string; width: number; height: number } | null {
+  const document = new DOMParser().parseFromString(stored, "text/html");
+  const root = document.body.firstElementChild;
+  if (!root || root.tagName.toLowerCase() !== "div") return null;
+  const width = Number(root.getAttribute("data-page-width"));
+  const height = Number(root.getAttribute("data-page-height"));
+  if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) return null;
+  sanitizePage(root);
+  return { html: root.outerHTML, width, height };
+}
+
+/**
+ * The first page of the LaTeX document on screen, as Visual draws it, without
+ * the new document's own controls; null when no Visual page is showing.
+ */
+export async function captureVisualPage(): Promise<string | null> {
+  const paper = [...document.querySelectorAll<HTMLElement>(".scient-latex-visual-paper")].find(
+    (candidate) => candidate.getClientRects().length > 0,
+  );
+  if (!paper) return null;
+  const stage = paper.closest<HTMLElement>(".scient-latex-page-stage") ?? paper;
+  const width = stage.offsetWidth;
+  const declared = parseFloat(
+    getComputedStyle(stage).getPropertyValue("--scient-latex-paper-height"),
+  );
+  const height = declared > 0 ? declared : Math.round(width * Math.SQRT2);
+  if (!(width > 0)) return null;
+  const clone = stage.cloneNode(true) as HTMLElement;
+  clone.style.transform = "none";
+  // Persist figure pixels, never signed URLs that expire after the current session.
+  const images = [...stage.querySelectorAll<HTMLImageElement>("img")];
+  const figures = [...clone.querySelectorAll<HTMLImageElement>("img")].map(async (copy, index) => {
+    const image = images[index];
+    copy.removeAttribute("src");
+    copy.removeAttribute("srcset");
+    if (!image?.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const imageUrl = image.currentSrc || image.src;
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 600 / image.naturalWidth, 600 / image.naturalHeight);
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    try {
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      copy.src = canvas.toDataURL("image/png");
+      return;
+    } catch {
+      // Reading a displayed cross-origin element taints a canvas. A CORS-readable
+      // asset blob gives us independent pixels without changing the live figure.
+    }
+    try {
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) return;
+      const bitmap = await createImageBitmap(await response.blob());
+      try {
+        const clean = document.createElement("canvas");
+        clean.width = canvas.width;
+        clean.height = canvas.height;
+        const context = clean.getContext("2d");
+        if (!context) return;
+        context.drawImage(bitmap, 0, 0, clean.width, clean.height);
+        copy.src = clean.toDataURL("image/png");
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // Assets that cannot be read retain their caption, without a transient URL.
+    }
+  });
+  // A field is drawn as its text: what was typed, or its placeholder, faint.
+  const fields = [
+    ...stage.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input"),
+  ];
+  [...clone.querySelectorAll("textarea, input")].forEach((copy, index) => {
+    const field = fields[index];
+    const text = document.createElement("div");
+    text.className = copy.className;
+    const style = copy.getAttribute("style");
+    if (style) text.setAttribute("style", style);
+    if (field) {
+      // The field's own look comes from rules that name the field; keep it inline.
+      const look = getComputedStyle(field);
+      // Each part: the browser leaves the `font` shorthand empty when it cannot spell it.
+      text.style.fontFamily = look.fontFamily;
+      text.style.fontSize = look.fontSize;
+      text.style.fontWeight = look.fontWeight;
+      text.style.fontStyle = look.fontStyle;
+      text.style.lineHeight = look.lineHeight;
+      text.style.textAlign = look.textAlign;
+      text.style.letterSpacing = look.letterSpacing;
+      text.style.color = look.color;
+    }
+    if (field?.value) text.textContent = field.value;
+    else {
+      text.textContent = field?.placeholder ?? "";
+      text.style.opacity = "0.4";
+    }
+    text.style.whiteSpace = "pre-wrap";
+    copy.replaceWith(text);
+  });
+  for (const own of clone.querySelectorAll("[data-new-document-strip]")) own.remove();
+  // Only what reaches the first page: later blocks would only weigh the picture down.
+  const scale = paper.getBoundingClientRect().width / (paper.offsetWidth || 1);
+  const top = paper.getBoundingClientRect().top;
+  const blocks = paper.querySelector(".tiptap");
+  const copies = clone.querySelector(".tiptap");
+  if (blocks && copies) {
+    const originals = [...blocks.children];
+    [...copies.children].forEach((copy, index) => {
+      const original = originals[index];
+      if (original && (original.getBoundingClientRect().top - top) / scale > height) copy.remove();
+    });
+  }
+  await Promise.all(figures);
+  sanitizePage(clone);
+  const wrapper = document.createElement("div");
+  wrapper.setAttribute("data-page-width", String(width));
+  wrapper.setAttribute("data-page-height", String(height));
+  wrapper.append(clone);
+  return wrapper.outerHTML;
+}

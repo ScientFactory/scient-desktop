@@ -200,6 +200,8 @@ export interface ResolvedPdfSource {
   readonly expiresAt: number;
   readonly sourcePath?: string;
   readonly refresh: () => void;
+  /** The retained URL is being reauthorized, not yet admitted for a new load. */
+  readonly waiting?: boolean;
 }
 
 export type PdfSourceResolution =

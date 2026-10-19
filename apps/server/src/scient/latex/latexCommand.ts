@@ -15,6 +15,7 @@
  */
 
 export type LatexToolchainKind = "latexmk" | "tectonic";
+export type LatexEngine = "pdflatex" | "xelatex" | "lualatex";
 
 /**
  * `latexmk` drives `pdflatex`, `biber`, and friends by name, so a distribution
@@ -55,19 +56,17 @@ export interface DiscoveredLatexToolchain {
 export interface LatexInvocation {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** Generated UTF-8 entry point, kept with the compiler's private outputs. */
+  readonly inputWrapper?: { readonly path: string; readonly contents: string };
   /** Where the engine leaves the PDF for this invocation. */
   readonly pdfPath: string;
   /** Revision navigation index emitted beside the PDF when the engine supports it. */
   readonly syncTexPath: string;
-  /**
-   * Where the engine leaves its recorder output — the `INPUT`/`OUTPUT` list of
-   * every file the run touched, which is what tells the caller whether a
-   * published PDF still matches its sources. `latexmk` passes `-recorder` by
-   * default and writes `<jobname>.fls` beside the other aux files; tectonic has
-   * no equivalent, so it is `null` there and the caller falls back to what it
-   * can read out of the document itself.
-   */
-  readonly recorderManifestPath: string | null;
+  /** Engine-produced dependency evidence for the exact run. */
+  readonly dependencyManifest: {
+    readonly path: string;
+    readonly format: "fls" | "makefile";
+  };
 }
 
 function pdfBaseName(rootRelativePath: string): string {
@@ -77,6 +76,7 @@ function pdfBaseName(rootRelativePath: string): string {
 
 export function buildLatexInvocation(input: {
   readonly toolchain: DiscoveredLatexToolchain;
+  readonly engine?: LatexEngine;
   /**
    * Basename of the validated root document. The caller runs the process from
    * that document's directory, so keeping this argument relative avoids
@@ -85,6 +85,10 @@ export function buildLatexInvocation(input: {
    */
   readonly rootFileName: string;
   readonly workDirectory: string;
+  /** Windows launchers may convert Unicode arguments to the system code page. */
+  readonly windows?: boolean;
+  /** Same directory relative to the root's cwd, avoiding Unicode profile paths. */
+  readonly relativeWorkDirectory?: string;
   /**
    * Run the engine even where the driver believes nothing has changed. Set for
    * the compile that follows a package install: `latexmk` remembers, in the
@@ -98,36 +102,72 @@ export function buildLatexInvocation(input: {
    */
   readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {
-  const jobName = pdfBaseName(input.rootFileName.replaceAll("\\", "/"));
+  const wrapRoot =
+    input.toolchain.kind === "latexmk" &&
+    input.windows === true &&
+    /[^ -~]/u.test(input.rootFileName);
+  const wrapperName = "scient-unicode-root.tex";
+  const outputDirectory = wrapRoot
+    ? (input.relativeWorkDirectory ?? input.workDirectory).replaceAll("\\", "/")
+    : input.workDirectory;
+  const rootFileName = wrapRoot ? `${outputDirectory}/${wrapperName}` : input.rootFileName;
+  const jobName = pdfBaseName(rootFileName.replaceAll("\\", "/"));
   const pdfPath = `${input.workDirectory}/${jobName}.pdf`;
   const syncTexPath = `${input.workDirectory}/${jobName}.synctex.gz`;
 
   if (input.toolchain.kind === "tectonic") {
-    // tectonic keeps no cross-run decision state of its own; every run is a run.
+    // Tectonic keeps no cross-run decision state of its own; every run is a
+    // run. Its Make rule output is the run's complete dependency recorder.
+    const dependencyPath = `${input.workDirectory}/${jobName}.dependencies.mk`;
     return {
       command: input.toolchain.executable,
-      args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootFileName],
+      args: [
+        "--outdir",
+        input.workDirectory,
+        "--untrusted",
+        "--synctex",
+        "--keep-intermediates",
+        "--makefile-rules",
+        dependencyPath,
+        input.rootFileName,
+      ],
       pdfPath,
       syncTexPath,
-      recorderManifestPath: null,
+      dependencyManifest: { path: dependencyPath, format: "makefile" },
     };
   }
 
   return {
     command: input.toolchain.executable,
+    ...(wrapRoot
+      ? {
+          inputWrapper: {
+            path: `${input.workDirectory}/${wrapperName}`,
+            // TeX reads UTF-8 filenames itself; latexmk only sees the ASCII
+            // entry point. Running from the original root directory preserves
+            // relative inputs and real source locations in the recorder.
+            contents: `\\input{\\detokenize{${input.rootFileName}}}\n`,
+          },
+        }
+      : {}),
     args: [
-      "-pdf",
+      ({ pdflatex: "-pdf", xelatex: "-xelatex", lualatex: "-lualatex" } as const)[
+        input.engine ?? "pdflatex"
+      ],
       "-norc",
       "-interaction=nonstopmode",
       "-file-line-error",
       "-no-shell-escape",
       "-synctex=1",
       ...(input.forceReprocess === true ? ["-g"] : []),
-      `-outdir=${input.workDirectory}`,
-      input.rootFileName,
+      `-outdir=${outputDirectory}`,
+      rootFileName,
     ],
     pdfPath,
     syncTexPath,
-    recorderManifestPath: `${input.workDirectory}/${jobName}.fls`,
+    dependencyManifest: {
+      path: `${input.workDirectory}/${jobName}.fls`,
+      format: "fls",
+    },
   };
 }

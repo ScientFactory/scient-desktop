@@ -78,6 +78,7 @@ interface ScientComputeFileSurfaceProps {
   readonly relativePath: string;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly contents: string;
+  readonly initialSource: string;
   readonly revision: string;
   readonly resolvedTheme: "light" | "dark";
   readonly revealRequestId: number;
@@ -424,6 +425,7 @@ function ComputeFileSurfaceContent(
               relativePath={props.relativePath}
               composerDraftTarget={props.composerDraftTarget}
               contents={props.contents}
+              initialSource={props.initialSource}
               revision={props.revision}
               resolvedTheme={props.resolvedTheme}
               revealRequestId={props.revealRequestId}

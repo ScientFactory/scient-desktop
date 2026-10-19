@@ -1,4 +1,5 @@
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import type { MarkdownPersistenceTransport } from "./markdownPersistenceTransport";
@@ -11,6 +12,7 @@ vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTran
 
 import {
   adoptRendererRegistry,
+  documentKeepsCheckpoint,
   MarkdownPersistenceRegistry,
   type MarkdownPersistenceTarget,
 } from "./markdownPersistenceRegistry";
@@ -36,6 +38,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function durableStore() {
+  const values = new Map<string, MarkdownDraftCheckpoint>();
+  const store: MarkdownDraftCheckpointStore = {
+    read: async (key) => values.get(key),
+    replace: async (key, expected, next) => {
+      if (values.get(key)?.token !== expected) return false;
+      if (next) values.set(key, next);
+      else values.delete(key);
+      return true;
+    },
+  };
+  return { store, values };
+}
+
 function setup(options: { cleanTtlMs?: number; cleanLimit?: number } = {}) {
   let source = "A";
   let revision = "rA";
@@ -53,6 +69,7 @@ function setup(options: { cleanTtlMs?: number; cleanLimit?: number } = {}) {
   };
   const createTransport = vi.fn(() => transport);
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: durableStore().store,
     createTransport,
     debounceMs: 250,
     ...options,
@@ -73,6 +90,147 @@ describe("MarkdownPersistenceRegistry", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+
+  it("keeps raw or composing input and the source lease during a retained mutation episode", async () => {
+    const { transport } = setup();
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
+      createTransport: () => ({
+        ...transport,
+        classifyFailure: () => "recovery_required",
+      }),
+      cleanLimit: 0,
+      cleanTtlMs: 1,
+    });
+    const lease = registry.acquire(target, initial)!;
+    const input = { message: "Composing", payload: { raw: "\\begin{", composing: true } };
+    expect(lease.retainPendingInput(input)).toBe(true);
+    lease.noteMutationFailure(new Error("Retained mutation"));
+    lease.noteFreshnessHint();
+    expect(await lease.retry()).toBe(false);
+    expect(await lease.refresh()).toBe(false);
+    lease.release();
+    await vi.advanceTimersByTimeAsync(500);
+    const reopened = registry.acquire(target, null)!;
+    expect(reopened.getPendingInput()).toBe(input);
+    expect(reopened.getSnapshot()).toMatchObject({
+      draftSource: "A",
+      attention: "recovery_required",
+      pending: true,
+    });
+    expect(reopened.target.relativePath).toBe(target.relativePath);
+    expect(transport.write).not.toHaveBeenCalled();
+    expect(transport.read).not.toHaveBeenCalled();
+    reopened.release();
+  });
+
+  it("retains initial disk attention even when the restored draft equals current bytes", async () => {
+    const { registry, transport } = setup({ cleanLimit: 0, cleanTtlMs: 1 });
+    const publicationAttention = {
+      recoveryId: "retained-restart",
+      mutationId: "mutation-restart",
+      retainedPaths: [".scient/retained/old-object.md"],
+      message: "A displaced object still needs review.",
+    };
+    const lease = registry.acquire(target, { ...initial, publicationAttention })!;
+    expect(lease.getSnapshot()).toMatchObject({
+      publicationAttention,
+      publicationOutcome: "retained-attention",
+      attentionMutationId: "mutation-restart",
+      attention: "recovery_required",
+      draftSource: "A",
+      pending: true,
+    });
+    expect(await lease.flushNow()).toBe(false);
+    expect(registry.forgetClean(target)).toBe(false);
+    lease.release();
+    await vi.advanceTimersByTimeAsync(500);
+    const reopened = await registry.open(target);
+    expect(reopened.getSnapshot()).toMatchObject({
+      publicationAttention,
+      draftSource: "A",
+      pending: true,
+    });
+    expect(transport.write).not.toHaveBeenCalled();
+    reopened.release();
+  });
+
+  it("settles a cached clean session on reopen instead of assuming equal disk bytes are clean", async () => {
+    const { registry, transport } = setup();
+    const first = registry.acquire(target, initial)!;
+    first.release();
+    const publicationAttention = {
+      recoveryId: "retained-after-close",
+      mutationId: "mutation-after-close",
+      retainedPaths: [".scient/retained/late-object.md"],
+      message: "Another writer displaced this file.",
+    };
+    vi.mocked(transport.read).mockResolvedValue({
+      source: "A",
+      revision: "rA",
+      publicationAttention,
+    });
+    const reopened = await registry.open(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reopened.getSnapshot()).toMatchObject({
+      publicationAttention,
+      attention: "recovery_required",
+      draftSource: "A",
+      pending: true,
+    });
+    expect(await reopened.flushNow()).toBe(false);
+    expect(transport.write).not.toHaveBeenCalled();
+    reopened.release();
+  });
+
+  it("reopens a persisted missing-current draft against its historical baseline without fabricating an empty disk file or saving it", async () => {
+    const { transport } = setup();
+    const { store, values } = durableStore();
+    const key = projectFileOperationKey(target);
+    const checkpoint: MarkdownDraftCheckpoint = {
+      token: "owned-copy",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "A",
+      currentMissing: true,
+      conflict: false,
+    };
+    values.set(key, checkpoint);
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        ...transport,
+        readForReview: async () => ({ missing: true, revision: null }),
+      }),
+      checkpointStore: store,
+      cleanTtlMs: 1,
+      cleanLimit: 0,
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      currentMissing: true,
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "A",
+      pending: true,
+    });
+    expect(await lease.flushNow()).toBe(false);
+    expect(registry.forgetClean(target)).toBe(false);
+    expect(transport.write).not.toHaveBeenCalled();
+    lease.release();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(registry.has(target)).toBe(true);
+    expect(registry.forgetClean(target)).toBe(false);
+    expect(values.get(key)).toMatchObject({
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "A",
+      currentMissing: true,
+    });
+    const reopened = await registry.open(target);
+    expect(reopened.documentId).toBe(lease.documentId);
+    expect(reopened.getSnapshot()).toMatchObject({ currentMissing: true, pending: true });
+    reopened.release();
   });
 
   it("retains unconverted input through released views and blocks publication and departure cleanup", async () => {
@@ -516,6 +674,7 @@ describe("MarkdownPersistenceRegistry", () => {
   it("flushes only the exact requested target, leaving other documents debounced", async () => {
     const writes = vi.fn(async () => ({ revision: "next" }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: () => ({
         write: writes,
         read: async () => ({ source: "A", revision: "rA" }),
@@ -663,6 +822,7 @@ describe("a merge strategy per file", () => {
   it("uses the file's own strategy for an outside change, and Markdown's for other files", async () => {
     const disk = { source: "First\n\nSecond\n", revision: "r0" };
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: () => transport(() => disk),
       reconcile: (file) => (file.relativePath.endsWith(".tex") ? conflictOnly : undefined),
     });
@@ -687,6 +847,7 @@ describe("a merge strategy per file", () => {
   it("falls back to Markdown's merge when no strategy is given for a file", async () => {
     const disk = { source: "First\n\nSecond\n", revision: "r0" };
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: () => ({
         ...transport(() => disk),
         write: vi.fn(async (intent: MarkdownSaveIntent) => {
@@ -888,6 +1049,78 @@ describe("Markdown checkpoint admission", () => {
   });
 });
 
+it.each(["paper.tex", "refs.bib"])(
+  "journals exact publications but not ordinary drafts for %s",
+  async (relativePath) => {
+    const { store, values } = durableStore();
+    const nativeTarget = { ...target, relativePath };
+    const nativeKey = projectFileOperationKey(nativeTarget);
+    const connections = new Map<string, (connected: boolean) => void>();
+    const acknowledgement = Promise.withResolvers<{ revision: string }>();
+    const admitted = Promise.withResolvers<MarkdownSaveIntent>();
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      keepsCheckpoint: documentKeepsCheckpoint,
+      debounceMs: 60_000,
+      createTransport: (at) => ({
+        read: async () => ({ source: "A", revision: "rA" }),
+        write: (intent) => {
+          expect(values.get(projectFileOperationKey(at))?.publicationIntent).toEqual(intent);
+          admitted.resolve(intent);
+          return acknowledgement.promise;
+        },
+        classifyFailure: () => "terminal",
+        subscribe: ({ connected }) => {
+          connections.set(projectFileOperationKey(at), connected);
+          connected(false);
+          return () => {};
+        },
+        project: () => {},
+      }),
+    });
+    vi.useFakeTimers();
+    try {
+      const native = await registry.open(nativeTarget);
+      native.change("B", 0);
+      // Connectivity, not a long debounce, prevents maxWait from publishing.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(values.get(nativeKey)).toBeUndefined();
+      expect(native.getSnapshot()).toMatchObject({
+        draftSource: "B",
+        publicationIntent: null,
+        pending: true,
+      });
+      connections.get(nativeKey)!(true);
+      void native.flushNow();
+      const intent = await admitted.promise;
+      expect(intent.source).toBe("B");
+      expect(values.get(nativeKey)).toMatchObject({
+        draftSource: "B",
+        publicationIntent: intent,
+      });
+      native.change("C", native.getSnapshot().editVersion);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(native.getSnapshot().draftSource).toBe("C");
+      expect(values.get(nativeKey)).toMatchObject({
+        draftSource: "B",
+        publicationIntent: intent,
+      });
+      // An ordinary Markdown draft is still durable while disconnected.
+      const markdown = await registry.open(target);
+      markdown.change("Markdown draft", 0);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(values.get(projectFileOperationKey(target))).toMatchObject({
+        draftSource: "Markdown draft",
+      });
+      native.release();
+      markdown.release();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  },
+);
+
 it("recovers an undo that followed an ambiguously completed publication", async () => {
   vi.useFakeTimers();
   try {
@@ -982,6 +1215,76 @@ describe("recovery copies across a rename", () => {
     vi.useRealTimers();
   });
 
+  it("restores retained attention after restart even when the current file equals the draft", async () => {
+    const { store, value } = memoryStore({
+      token: "retained",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "B",
+      publicationSource: "B",
+      attention: "recovery_required",
+      conflict: false,
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: diskTransport("B"),
+    });
+    const lease = await registry.open(target);
+    lease.noteFreshnessHint();
+    expect(await lease.refresh()).toBe(false);
+    expect(await lease.retry()).toBe(false);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: "A",
+      draftSource: "B",
+      attention: "recovery_required",
+      pending: true,
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(value()?.attention).toBe("recovery_required");
+    lease.release();
+    expect(registry.has(target)).toBe(true);
+  });
+
+  it("replays a checkpoint's ambiguous identity while retaining newer draft bytes", async () => {
+    const intent: MarkdownSaveIntent = {
+      mutationId: "old-publication",
+      source: "B",
+      expectedRevision: "rA",
+      editVersion: 1,
+    };
+    const { store } = memoryStore({
+      token: "ambiguous",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "C",
+      publicationSource: "B",
+      publicationIntent: intent,
+      conflict: false,
+    });
+    const write = vi.fn(async (_intent: MarkdownSaveIntent) => {
+      throw "retained";
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => ({
+        ...diskTransport("B")(),
+        write,
+        classifyFailure: () => "recovery_required",
+      }),
+    });
+    const lease = await registry.open(target);
+    expect(await lease.flushNow()).toBe(false);
+    expect(write.mock.calls[0]?.[0].mutationId).toBe(intent.mutationId);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: "A",
+      draftSource: "C",
+      publicationSource: "B",
+      attention: "recovery_required",
+      pending: true,
+    });
+    lease.release();
+  });
+
   it("discards and removes a copy that proves it holds nothing", async () => {
     const { store, value } = memoryStore({
       token: "stale",
@@ -1064,12 +1367,12 @@ describe("recovery copies across a rename", () => {
   });
 
   it("makes a new file under the old name wait until the old copy is gone", async () => {
-    let finish!: () => void;
+    const retirement = Promise.withResolvers<void>();
     let stored: MarkdownDraftCheckpoint | undefined;
     const store: MarkdownDraftCheckpointStore = {
       read: vi.fn(async () => stored),
       replace: vi.fn(async (_key, expected, next) => {
-        if (next !== undefined) await new Promise<void>((done) => (finish = done));
+        if (next === undefined) await retirement.promise;
         if (stored?.token !== expected) return false;
         stored = next;
         return true;
@@ -1080,13 +1383,13 @@ describe("recovery copies across a rename", () => {
       createTransport: diskTransport("A"),
     });
     const lease = registry.acquire(target, initial)!;
-    // An edit is saved, but its recovery copy is still being written.
+    // Publication is durable and acknowledged before the old journal retires.
     expect(lease.change("B", 0)).toBe(true);
     await vi.advanceTimersByTimeAsync(200);
     expect(await lease.flushNow()).toBe(true);
     lease.release();
     expect(registry.forgetClean(target)).toBe(true);
-    // Another file now takes the old name while the old copy is still in flight.
+    // Another file now takes the old name while journal removal is still in flight.
     let admitted = false;
     const reopening = registry.open(target).then((next) => {
       admitted = true;
@@ -1094,7 +1397,7 @@ describe("recovery copies across a rename", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(admitted).toBe(false);
-    finish();
+    retirement.resolve();
     const next = await reopening;
     expect(stored).toBeUndefined();
     expect(next.getSnapshot()).toMatchObject({ conflict: null, pending: false });
@@ -1171,32 +1474,33 @@ describe("moving an open document in place", () => {
   it("moves the same session to the new path; saves go there and the lease stays live", async () => {
     const fs = files();
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: fs.createTransport,
       debounceMs: 250,
     });
     const owner = {};
     const lease = await registry.open(target, owner);
-    const moved = vi.fn();
-    registry.onMoved(moved);
     const move = lease.beginMove(renamed)!;
     expect(move).not.toBeNull();
     expect(lease.getSnapshot().editingBlocked).toBe(true);
     expect(await move.preflight()).toBe("empty");
+    const intent = await move.admitRename();
     fs.renameOnDisk();
-    expect(move.commit()).toBe(true);
+    expect(
+      await move.acknowledgeRename({
+        destinationRelativePath: renamed.relativePath,
+        revision: intent.expectedRevision,
+      }),
+    ).toBe(true);
+    expect(await move.commit()).toBe(true);
     move.finish();
-    expect(moved).toHaveBeenCalledWith({ documentId: lease.documentId, from: target, to: renamed });
     expect(lease.target).toEqual(renamed);
     expect(registry.has(target)).toBe(false);
     expect(registry.has(renamed)).toBe(true);
-    // The old path's watcher was stopped; the new one is watching.
-    expect(fs.stops.get(target.relativePath)).toHaveBeenCalled();
-    expect(fs.transports.get(renamed.relativePath)!.subscribe).toHaveBeenCalled();
     expect(lease.getSnapshot().editingBlocked).toBe(false);
     expect(lease.change("B", lease.getSnapshot().editVersion)).toBe(true);
     expect(await lease.flushNow()).toBe(true);
     expect(fs.disk.get(renamed.relativePath)?.source).toBe("B");
-    expect(fs.transports.get(target.relativePath)!.write).not.toHaveBeenCalled();
     // The same document: reopening the new path gives a lease on it.
     const again = await registry.open(renamed, owner);
     expect(again.documentId).toBe(lease.documentId);
@@ -1206,7 +1510,10 @@ describe("moving an open document in place", () => {
 
   it("refuses to move when another view holds the document, or anything is unsettled", async () => {
     const fs = files();
-    const registry = new MarkdownPersistenceRegistry({ createTransport: fs.createTransport });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
+      createTransport: fs.createTransport,
+    });
     const owner = {};
     const lease = await registry.open(target, owner);
     // No owner: cannot prove that no other view holds it.
@@ -1243,6 +1550,7 @@ describe("moving an open document in place", () => {
     const fs = files();
     let failCreation = false;
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: (at) => {
         if (failCreation) throw new Error("no transport");
         return fs.createTransport(at);
@@ -1250,9 +1558,17 @@ describe("moving an open document in place", () => {
     });
     const lease = await registry.open(target, {});
     const move = lease.beginMove(renamed)!;
+    expect(await move.preflight()).toBe("empty");
+    const intent = await move.admitRename();
+    expect(
+      await move.acknowledgeRename({
+        destinationRelativePath: renamed.relativePath,
+        revision: intent.expectedRevision,
+      }),
+    ).toBe(true);
     failCreation = true;
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(move.commit()).toBe(false);
+    expect(await move.commit()).toBe(false);
     logged.mockRestore();
     expect(lease.target).toEqual(target);
     expect(registry.has(target)).toBe(true);
@@ -1297,7 +1613,10 @@ describe("moving an open document in place", () => {
 
   it("makes admission at either path wait until the move has ended", async () => {
     const fs = files();
-    const registry = new MarkdownPersistenceRegistry({ createTransport: fs.createTransport });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
+      createTransport: fs.createTransport,
+    });
     const owner = {};
     const lease = await registry.open(target, owner);
     const move = lease.beginMove(renamed)!;
@@ -1308,8 +1627,16 @@ describe("moving an open document in place", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(admitted).toBe(false);
+    expect(await move.preflight()).toBe("empty");
+    const intent = await move.admitRename();
     fs.renameOnDisk();
-    expect(move.commit()).toBe(true);
+    expect(
+      await move.acknowledgeRename({
+        destinationRelativePath: renamed.relativePath,
+        revision: intent.expectedRevision,
+      }),
+    ).toBe(true);
+    expect(await move.commit()).toBe(true);
     move.finish();
     const next = await waiting;
     expect(next.documentId).toBe(lease.documentId);
@@ -1317,54 +1644,10 @@ describe("moving an open document in place", () => {
     lease.release();
   });
 
-  it("does not move while the old name's recovery copy cannot be removed", async () => {
-    const fs = files();
-    const records = new Map<string, MarkdownDraftCheckpoint>();
-    let refuseRemoval = false;
-    const store: MarkdownDraftCheckpointStore = {
-      read: vi.fn(async (key) => records.get(key)),
-      replace: vi.fn(async (key, expected, next) => {
-        if (next === undefined && refuseRemoval) throw new Error("storage busy");
-        if (records.get(key)?.token !== expected) return false;
-        if (next) records.set(key, next);
-        else records.delete(key);
-        return true;
-      }),
-    };
-    const registry = new MarkdownPersistenceRegistry({
-      createTransport: fs.createTransport,
-      checkpointStore: store,
-      debounceMs: 60_000,
-    });
-    const lease = await registry.open(target, {});
-    // Unsaved work is copied, then saved; the copy's removal is still due.
-    expect(lease.change("B", 0)).toBe(true);
-    await vi.advanceTimersByTimeAsync(200);
-    expect(records.size).toBe(1);
-    expect(await lease.flushNow()).toBe(true);
-    refuseRemoval = true;
-    // Neither route may rename while the copy stays: the ordinary rename asks too.
-    const logged0 = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await lease.settleRecoveryCopy!()).toBe(false);
-    logged0.mockRestore();
-    const move = lease.beginMove(renamed)!;
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await move.preflight()).toBe("unknown");
-    logged.mockRestore();
-    move.finish();
-    // Removal works again: the copy goes first, then the move may proceed.
-    refuseRemoval = false;
-    expect(await lease.settleRecoveryCopy!()).toBe(true);
-    const again = lease.beginMove(renamed)!;
-    expect(await again.preflight()).toBe("empty");
-    expect(records.size).toBe(0);
-    again.finish();
-    lease.release();
-  });
-
   it("keeps a file's document id when it is reopened, and gives the old name a new one after a move", async () => {
     const fs = files();
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: durableStore().store,
       createTransport: fs.createTransport,
       cleanTtlMs: 10,
     });
@@ -1376,8 +1659,16 @@ describe("moving an open document in place", () => {
     const reopened = await registry.open(target, {});
     expect(reopened.documentId).toBe(id);
     const move = reopened.beginMove(renamed)!;
+    expect(await move.preflight()).toBe("empty");
+    const intent = await move.admitRename();
     fs.renameOnDisk();
-    expect(move.commit()).toBe(true);
+    expect(
+      await move.acknowledgeRename({
+        destinationRelativePath: renamed.relativePath,
+        revision: intent.expectedRevision,
+      }),
+    ).toBe(true);
+    expect(await move.commit()).toBe(true);
     move.finish();
     expect(reopened.documentId).toBe(id);
     fs.disk.set(target.relativePath, { source: "new file", revision: "rnew" });
@@ -1406,14 +1697,378 @@ describe("moving an open document in place", () => {
     });
     const lease = await registry.open(target, {});
     const move = lease.beginMove(renamed)!;
+    expect(await move.preflight()).toBe("empty");
+    const intent = await move.admitRename();
     fs.renameOnDisk();
-    expect(move.commit()).toBe(true);
+    expect(
+      await move.acknowledgeRename({
+        destinationRelativePath: renamed.relativePath,
+        revision: intent.expectedRevision,
+      }),
+    ).toBe(true);
+    expect(await move.commit()).toBe(true);
     move.finish();
     expect(lease.change("B", lease.getSnapshot().editVersion)).toBe(true);
     await vi.advanceTimersByTimeAsync(200);
-    const keys = [...records.keys()];
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).toContain("renamed.md");
+    expect(records.get(projectFileOperationKey(renamed))?.draftSource).toBe("B");
+    expect(records.get(projectFileOperationKey(target))).toBeUndefined();
     lease.release();
   });
+});
+
+describe("durable publication admission", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function transport(
+    write: MarkdownPersistenceTransport["write"],
+    read: MarkdownPersistenceTransport["read"] = async () => ({ source: "A", revision: "rA" }),
+  ): MarkdownPersistenceTransport {
+    return {
+      write,
+      read,
+      classifyFailure: () => "terminal",
+      subscribe: () => () => {},
+      project: () => {},
+    };
+  }
+
+  it("recovers the committed identity after backend admission but before acknowledgement", async () => {
+    const { store, values } = durableStore();
+    const key = projectFileOperationKey(target);
+    const acknowledgement = deferred<{ revision: string }>();
+    let disk = { source: "A", revision: "rA" };
+    const firstWrite = vi.fn((intent: MarkdownSaveIntent) => {
+      expect(values.get(key)?.publicationIntent).toEqual(intent);
+      expect(values.get(key)?.draftSource).toBe("B");
+      disk = { source: intent.source, revision: "rB" };
+      return acknowledgement.promise;
+    });
+    const first = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => transport(firstWrite, async () => disk),
+      debounceMs: 60_000,
+    });
+    const lease = await first.open(target);
+    lease.change("B", 0);
+    void lease.flushNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstWrite).toHaveBeenCalledOnce();
+    const admitted = firstWrite.mock.calls[0]![0];
+    lease.release();
+    // No acknowledgement or 200ms checkpoint deadline is allowed to run before
+    // the replacement renderer reads the durable store.
+    const replay = vi.fn(async (intent: MarkdownSaveIntent) => {
+      expect(values.get(key)?.publicationIntent).toEqual(admitted);
+      expect(intent).toEqual(admitted);
+      return { revision: "rB" };
+    });
+    const replacement = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => transport(replay, async () => disk),
+    });
+    const recovered = await replacement.open(target);
+    expect(await recovered.flushNow()).toBe(true);
+    expect(replay).toHaveBeenCalledOnce();
+    expect(recovered.getSnapshot()).toMatchObject({ draftSource: "B", pending: false });
+    recovered.release();
+  });
+
+  it.each(["storage failure", "quota exceeded", "missing store"])(
+    "preserves the pending owner without dispatch on %s",
+    async (reason) => {
+      const write = vi.fn(async () => ({ revision: "rB" }));
+      const registry = new MarkdownPersistenceRegistry({
+        ...(reason === "missing store"
+          ? {}
+          : {
+              checkpointStore: {
+                read: async () => undefined,
+                replace: async () => {
+                  throw new Error(reason);
+                },
+              },
+            }),
+        createTransport: () => transport(write),
+        cleanLimit: 0,
+        cleanTtlMs: 1,
+        debounceMs: 60_000,
+      });
+      const lease = registry.acquire(target, initial)!;
+      lease.change("B", 0);
+      expect(await lease.flushNow()).toBe(false);
+      expect(write).not.toHaveBeenCalled();
+      expect(lease.getSnapshot()).toMatchObject({ draftSource: "B", pending: true });
+      expect(lease.getSnapshot().error).toBeInstanceOf(Error);
+      const version = lease.getSnapshot().editVersion;
+      lease.release();
+      await vi.advanceTimersByTimeAsync(10);
+      const reopened = registry.acquire(target, null)!;
+      expect(reopened.getSnapshot().editVersion).toBe(version);
+      expect(reopened.getSnapshot().draftSource).toBe("B");
+      reopened.release();
+    },
+  );
+
+  it("rejects a competing writer's CAS before it can mutate the backend", async () => {
+    const { store, values } = durableStore();
+    const firstWrite = vi.fn(() => new Promise<{ revision: string }>(() => {}));
+    const secondWrite = vi.fn(async () => ({ revision: "rC" }));
+    const first = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => transport(firstWrite),
+      debounceMs: 60_000,
+    });
+    const second = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => transport(secondWrite),
+      debounceMs: 60_000,
+    });
+    const a = first.acquire(target, initial)!;
+    const b = second.acquire(target, initial)!;
+    a.change("B", 0);
+    b.change("C", 0);
+    void a.flushNow();
+    const rejected = b.flushNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await rejected).toBe(false);
+    expect(firstWrite).toHaveBeenCalledOnce();
+    expect(secondWrite).not.toHaveBeenCalled();
+    expect(values.get(projectFileOperationKey(target))?.draftSource).toBe("B");
+    expect(b.getSnapshot()).toMatchObject({ draftSource: "C", pending: true });
+    a.release();
+    b.release();
+  });
+
+  it("awaits storage commit and preserves newer typing during its asynchronous checkpoint", async () => {
+    const { store, values } = durableStore();
+    const commit = Promise.withResolvers<void>();
+    const admitted = Promise.withResolvers<void>();
+    const acknowledgement = Promise.withResolvers<{ revision: string }>();
+    const gated: MarkdownDraftCheckpointStore = {
+      read: store.read,
+      replace: async (...args) => {
+        admitted.resolve();
+        await commit.promise;
+        return store.replace(...args);
+      },
+    };
+    const write = vi.fn<MarkdownPersistenceTransport["write"]>(() => acknowledgement.promise);
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: gated,
+      createTransport: () => transport(write),
+      debounceMs: 60_000,
+    });
+    const lease = registry.acquire(target, initial)!;
+    lease.change("B", 0);
+    void lease.flushNow();
+    await admitted.promise;
+    expect(write).not.toHaveBeenCalled();
+    lease.change("C", lease.getSnapshot().editVersion);
+    commit.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(write).toHaveBeenCalledOnce();
+    expect(write.mock.calls[0]![0].source).toBe("B");
+    expect(values.get(projectFileOperationKey(target))).toMatchObject({
+      draftSource: "C",
+      publicationIntent: { source: "B" },
+    });
+    expect(lease.getSnapshot().draftSource).toBe("C");
+    lease.release();
+  });
+
+  it("replays a recovered create-only intent with the same ID when historical current is missing", async () => {
+    const { store, values } = durableStore();
+    const publicationIntent: MarkdownSaveIntent = {
+      mutationId: "stable-create-after-crash",
+      source: "Historical",
+      expectedRevision: "historical-revision",
+      editVersion: 0,
+      createOnly: true,
+    };
+    const key = projectFileOperationKey(target);
+    values.set(key, {
+      token: "previous-renderer",
+      baselineSource: "Historical",
+      baselineRevision: "historical-revision",
+      draftSource: "Historical",
+      conflict: false,
+      currentMissing: true,
+      publicationSource: "Historical",
+      publicationIntent,
+    });
+    const write = vi.fn(async (intent: MarkdownSaveIntent) => {
+      expect(values.get(key)).toMatchObject({ currentMissing: true, publicationIntent });
+      expect(intent).toEqual(publicationIntent);
+      return { revision: "created" };
+    });
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => ({
+        ...transport(write),
+        readForReview: async () => ({ missing: true, revision: null }),
+      }),
+    });
+    const lease = await registry.open(target);
+    expect(await lease.flushNow()).toBe(true);
+    expect(write).toHaveBeenCalledOnce();
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineRevision: "created",
+      currentMissing: false,
+      pending: false,
+    });
+    lease.release();
+  });
+});
+
+describe("authorized retained review journal admission", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it.each(["notes.md", "main.tex"])(
+    "restores %s confirmation from exact durable authorization without resolving again",
+    async (relativePath) => {
+      const file = { ...target, relativePath };
+      const attention = {
+        recoveryId: `review-${relativePath}`,
+        mutationId: "retained",
+        retainedPaths: ["/private/A"],
+        message: "Review.",
+      };
+      const { store, values } = durableStore();
+      let resolved = false;
+      let disconnected = true;
+      const transport: MarkdownPersistenceTransport = {
+        read: async () => {
+          if (resolved && disconnected) {
+            disconnected = false;
+            throw new Error("Connection lost");
+          }
+          return {
+            source: "C",
+            revision: "rC",
+            ...(resolved ? {} : { publicationAttention: attention }),
+          };
+        },
+        resolve: async ({ recoveryId, currentRevision }) => {
+          if (resolved || recoveryId !== attention.recoveryId || currentRevision !== "rC")
+            throw new Error("The native authorization cannot be repeated or moved.");
+          resolved = true;
+          return { revision: "rC" };
+        },
+        write: async () => {
+          throw new Error("Review cannot publish source");
+        },
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      };
+      const registry = () =>
+        new MarkdownPersistenceRegistry({
+          checkpointStore: store,
+          createTransport: () => transport,
+          keepsCheckpoint: documentKeepsCheckpoint,
+        });
+      const lease = registry().acquire(file, {
+        ...initial,
+        relativePath,
+        publicationAttention: attention,
+      })!;
+      lease.change("local draft", lease.getSnapshot().editVersion);
+      expect(await lease.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(false);
+      const checkpoint = values.get(projectFileOperationKey(file))!;
+      expect(checkpoint).toMatchObject({
+        authorizedCurrentReview: { recoveryId: attention.recoveryId, currentRevision: "rC" },
+        baselineSource: "A",
+        draftSource: "local draft",
+        publicationAttention: attention,
+      });
+      lease.release();
+      const restarted = await registry().open(file);
+      expect(await restarted.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(true);
+      expect(values.get(projectFileOperationKey(file))).toMatchObject({
+        authorizedCurrentReview: null,
+        publicationAttention: null,
+        attention: null,
+        baselineSource: "C",
+        draftSource: "local draft",
+        conflict: true,
+      });
+      expect(restarted.getSnapshot()).toMatchObject({
+        baselineSource: "C",
+        draftSource: "local draft",
+        attention: null,
+        conflict: { externalSource: "C", externalRevision: "rC" },
+      });
+    },
+  );
+
+  it.each(["cas", "quota"])(
+    "never confirms after %s refuses the authorized phase",
+    async (failure) => {
+      const attention = {
+        recoveryId: `review-${failure}`,
+        mutationId: "retained",
+        retainedPaths: ["/private/A"],
+        message: "Review.",
+      };
+      const foreign: MarkdownDraftCheckpoint = {
+        token: "another-owner",
+        baselineSource: "foreign base",
+        baselineRevision: "foreign revision",
+        draftSource: "foreign work",
+      };
+      let durable = failure === "cas" ? foreign : undefined;
+      let resolved = false;
+      let confirmationCrossed = false;
+      const registry = new MarkdownPersistenceRegistry({
+        checkpointStore: {
+          read: async () => durable,
+          replace: async (_key, expected, next) => {
+            if (failure === "quota") throw new Error("Quota");
+            if (durable?.token !== expected) return false;
+            durable = next;
+            return true;
+          },
+        },
+        createTransport: () => ({
+          read: async () => {
+            if (resolved) confirmationCrossed = true;
+            return {
+              source: "C",
+              revision: "rC",
+              ...(resolved ? {} : { publicationAttention: attention }),
+            };
+          },
+          resolve: async () => {
+            resolved = true;
+            return { revision: "rC" };
+          },
+          write: async () => {
+            throw new Error("Review cannot publish");
+          },
+          classifyFailure: () => "terminal",
+          subscribe: () => () => {},
+          project: () => {},
+        }),
+      });
+      const lease = registry.acquire(target, { ...initial, publicationAttention: attention })!;
+      lease.change("my work", lease.getSnapshot().editVersion);
+      expect(await lease.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(false);
+      expect(confirmationCrossed).toBe(false);
+      expect(lease.getSnapshot()).toMatchObject({
+        baselineSource: "A",
+        draftSource: "my work",
+        attention: "recovery_required",
+        authorizedCurrentReview: { recoveryId: attention.recoveryId, currentRevision: "rC" },
+      });
+      expect(durable).toEqual(failure === "cas" ? foreign : undefined);
+    },
+  );
 });

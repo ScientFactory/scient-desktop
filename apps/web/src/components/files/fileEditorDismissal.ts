@@ -6,6 +6,7 @@ interface FileEditorDismissalOptions {
   };
   isBlocked: () => boolean;
   onDismiss: () => void;
+  retainSelectionOnBlur?: boolean;
 }
 
 function dismissFileEditorInteraction({
@@ -35,9 +36,10 @@ export function installFileEditorDismissal({
   editor,
   isBlocked,
   onDismiss,
+  retainSelectionOnBlur = false,
 }: FileEditorDismissalOptions): () => void {
   const handlePointerDown = (event: PointerEvent) => {
-    if (isBlocked() || event.composedPath().includes(root)) return;
+    if (isBlocked() || event.composedPath().includes(root) || retainSelectionOnBlur) return;
     dismissFileEditorInteraction({ root, editor, onDismiss });
   };
   const handleKeyDown = (event: KeyboardEvent) => {

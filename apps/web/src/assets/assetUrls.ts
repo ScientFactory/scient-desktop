@@ -30,6 +30,8 @@ export type AssetUrlState =
       readonly sourcePath?: string;
       readonly imageDimensions?: AssetImageDimensions;
       readonly refresh: () => void;
+      /** The retained URL is being reauthorized. */
+      readonly waiting?: boolean;
     };
 // SCIENT-FORK:END
 
@@ -69,6 +71,7 @@ export function useAssetUrlState(
         url,
         expiresAt: result.value.expiresAt,
         refresh,
+        waiting: result.waiting,
         ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
         ...(result.value.imageDimensions !== undefined
           ? { imageDimensions: result.value.imageDimensions }

@@ -8,6 +8,7 @@ import { Download, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 
 import { latexSetupCardModel } from "./latexToolchainSetupModel";
+import type { LatexDocumentCompiler } from "./latexCompiler";
 
 export function LatexToolchainSetupCard(props: {
   readonly canInstallManaged: boolean;
@@ -15,6 +16,9 @@ export function LatexToolchainSetupCard(props: {
   readonly installRequesting: boolean;
   /** The probe still finds no engine, which is why this card is on screen. */
   readonly toolchainMissing: boolean;
+  readonly requiredCompiler?: LatexDocumentCompiler | null;
+  readonly downloadBytes?: number | null;
+  readonly disabled?: boolean;
   readonly onInstall: () => void;
 }) {
   const { canInstallManaged, managedInstall, installRequesting, toolchainMissing } = props;
@@ -25,14 +29,23 @@ export function LatexToolchainSetupCard(props: {
         install: managedInstall,
         requesting: installRequesting,
         toolchainMissing,
+        requiredCompiler: props.requiredCompiler ?? null,
+        downloadBytes: props.downloadBytes ?? null,
       }),
-    [canInstallManaged, installRequesting, managedInstall, toolchainMissing],
+    [
+      canInstallManaged,
+      installRequesting,
+      managedInstall,
+      toolchainMissing,
+      props.requiredCompiler,
+      props.downloadBytes,
+    ],
   );
 
   return (
-    <div className="scient-latex-placeholder" aria-live="polite">
+    <div className="scient-latex-placeholder scient-latex-tools-notice" aria-live="polite">
       {model.busy ? (
-        <LoaderCircle className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
+        <LoaderCircle className="size-5 text-muted-foreground" aria-hidden="true" />
       ) : model.kind === "failed" ? (
         <TriangleAlert className="size-5 text-destructive" aria-hidden="true" />
       ) : model.kind === "offer" ? (
@@ -62,7 +75,7 @@ export function LatexToolchainSetupCard(props: {
         <button
           type="button"
           className="scient-latex-setup-action"
-          disabled={model.busy}
+          disabled={model.busy || props.disabled}
           onClick={props.onInstall}
         >
           {model.kind === "failed" ? <RotateCw className="size-3.5" aria-hidden="true" /> : null}

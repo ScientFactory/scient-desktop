@@ -16,6 +16,8 @@ export type ScientFilePanelProps = Pick<
   | "htmlPresentationRequest"
   | "latexPresentationRequest"
   | "latexRootRelativePath"
+  | "latexSourceReveal"
+  | "onFileRenamed"
   | "onFileMoved"
   | "onOpenFileSource"
   | "onHtmlPresentationRequestHandled"
@@ -33,6 +35,7 @@ export function scientFilePanelProps(
     readonly projectName: string | null;
     readonly workspaceRoot: string | undefined;
     readonly onCiteFile: NonNullable<FilePreviewPanelProps["onCiteFile"]>;
+    readonly onFileRenamed: FilePreviewPanelProps["onFileRenamed"];
     readonly onFileMoved: NonNullable<FilePreviewPanelProps["onFileMoved"]>;
     readonly onOpenFileSource: FilePreviewPanelProps["onOpenFileSource"];
     readonly onHtmlPresentationRequestHandled: FilePreviewPanelProps["onHtmlPresentationRequestHandled"];
@@ -53,6 +56,8 @@ export function scientFilePanelProps(
     htmlPresentationRequest: file?.htmlPresentationRequest ?? null,
     latexPresentationRequest: file?.latexPresentationRequest ?? null,
     latexRootRelativePath: file?.latexRootRelativePath ?? null,
+    latexSourceReveal: file?.latexSourceReveal,
+    onFileRenamed: input.onFileRenamed,
     onFileMoved: input.onFileMoved,
     onOpenFileSource: input.onOpenFileSource,
     onHtmlPresentationRequestHandled: input.onHtmlPresentationRequestHandled,

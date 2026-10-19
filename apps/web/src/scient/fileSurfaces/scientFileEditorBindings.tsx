@@ -17,6 +17,7 @@ import {
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
 import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
@@ -107,6 +108,11 @@ export function useScientFileEditorBindings<Annotation>({
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
+  useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
+    return installLatexFileCompletion(editor, host, () => mathEditable.current);
+  }, [editor, relativePath, surfaceRef]);
   reportEditorSelectionRef.current = reportEditorSelection;
 
   useEffect(() => {
@@ -179,9 +185,19 @@ const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
 
 /** The editor's styles; compute actions stay quiet until their source line is engaged. */
 export function scientFileEditorUnsafeCss(gutterUtilityVisibility: "always" | "hover"): string {
-  return gutterUtilityVisibility === "hover"
-    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
-    : SCIENT_FILE_UNSAFE_CSS;
+  const base =
+    gutterUtilityVisibility === "hover"
+      ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
+      : SCIENT_FILE_UNSAFE_CSS;
+  return `${base}
+    :host([data-scient-retained-selection]) [data-caret] {
+      visibility: visible !important;
+    }
+    :host([data-scient-retained-selection]:not(:focus-within)) [data-caret] {
+      animation: none;
+      opacity: 0.65;
+    }
+  `;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { durationBucket, modelKey, normalizeInheritedEvent } from "./contract.ts";
-import { eventContractViolation } from "./wireContract.ts";
+import { ANALYTICS_CONTRACT_REVISION, eventContractViolation } from "./wireContract.ts";
 
 const context = {
   appVersion: "0.0.32",
@@ -144,7 +144,7 @@ describe("Scient analytics contract", () => {
     expect(surface?.properties).toEqual({
       surface: "settings",
       ...context,
-      contractRevision: "4",
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
     });
   });
 
