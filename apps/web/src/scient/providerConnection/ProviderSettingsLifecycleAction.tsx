@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -9,26 +10,31 @@ import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import {
-  providerSettingsLifecyclePresentation,
   type ProviderSettingsLifecyclePresentation,
+  useProviderSettingsLifecyclePresentation,
 } from "./providerSettingsLifecyclePresentation";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
 } from "./providerConnectionPresentation";
+import { useEnvironmentIsOnThisDevice } from "./environmentLocality";
+import { oneClickSignInMethod } from "./oneClickSignIn";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 export type ProviderSettingsPrimaryAction =
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
   | { readonly kind: "managed-runtime"; readonly action: "install" | "update" }
-  | { readonly kind: "codex-browser-sign-in" }
+  | { readonly kind: "browser-sign-in"; readonly method: ProviderConnectionMethod }
   | { readonly kind: "external-update" }
   | { readonly kind: "none" };
 
-/** Keep provider-specific fast paths explicit and small. */
+/**
+ * A row starts sign-in itself only for a provider with exactly one method that
+ * signs in through a page Scient opens; any choice, code or pairing opens the
+ * provider's setup view instead.
+ */
 export function resolveProviderSettingsPrimaryAction(input: {
   readonly provider: ServerProvider;
   readonly presentation: ProviderSettingsLifecyclePresentation;
@@ -44,11 +50,10 @@ export function resolveProviderSettingsPrimaryAction(input: {
       return input.canRunExternalUpdate
         ? { kind: "external-update" }
         : { kind: "open", runtimeAction: null };
-    case "sign-in":
-      return input.provider.driver === "codex" &&
-        input.provider.connection?.methods.includes("codex_browser")
-        ? { kind: "codex-browser-sign-in" }
-        : { kind: "open", runtimeAction: null };
+    case "sign-in": {
+      const method = oneClickSignInMethod(input.provider);
+      return method ? { kind: "browser-sign-in", method } : { kind: "open", runtimeAction: null };
+    }
     case "continue":
     case "manage":
       return { kind: "open", runtimeAction: null };
@@ -96,7 +101,12 @@ function resolveProviderSettingsHeaderAction(
 
 export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycleActionProps) {
   const action = resolveProviderSettingsHeaderAction(props.provider);
-  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  const signInMethod = action === "sign-in" ? oneClickSignInMethod(props.provider) : null;
+  const presentation = useProviderSettingsLifecyclePresentation(
+    props.environmentId,
+    props.provider,
+    props.displayName,
+  );
   const operationActive = presentation.kind === "installing" || presentation.kind === "signing-in";
   const externalUpdateActive =
     props.externalUpdateRunning === true ||
@@ -114,26 +124,28 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
       labeled={progressLabel === null && action === "manage"}
     >
       {progressLabel !== null ? (
-        <Button
-          aria-label={`${progressLabel} ${props.displayName}`}
-          onClick={() => props.onManage()}
-          size="compact"
-          type="button"
-          variant="ghost-primary"
-        >
-          <LoaderIcon aria-hidden className="animate-spin" />
-          <span role="status" className="inline-flex items-baseline gap-1.5">
-            {progressLabel}
-            {operationActive && presentation.downloadPercent !== undefined ? (
-              <span
-                aria-label={`Download progress ${presentation.downloadPercent}%`}
-                className="text-[11px] font-normal tabular-nums text-muted-foreground"
-              >
-                {presentation.downloadPercent}%
-              </span>
-            ) : null}
-          </span>
-        </Button>
+        <ActionDetail detail={operationActive ? presentation.detail : null}>
+          <Button
+            aria-label={`${progressLabel} ${props.displayName}`}
+            onClick={() => props.onManage()}
+            size="compact"
+            type="button"
+            variant="ghost-primary"
+          >
+            <LoaderIcon aria-hidden className="animate-spin" />
+            <span role="status" className="inline-flex items-baseline gap-1.5">
+              {progressLabel}
+              {operationActive && presentation.downloadPercent !== undefined ? (
+                <span
+                  aria-label={`Download progress ${presentation.downloadPercent}%`}
+                  className="text-[11px] font-normal tabular-nums text-muted-foreground"
+                >
+                  {presentation.downloadPercent}%
+                </span>
+              ) : null}
+            </span>
+          </Button>
+        </ActionDetail>
       ) : action === "install" ? (
         <ManagedRuntimeActionButton
           action="install"
@@ -143,23 +155,29 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
           provider={props.provider}
         />
       ) : action === "sign-in" ? (
-        props.provider.driver === "codex" &&
-        props.provider.connection?.methods.includes("codex_browser") ? (
-          <CodexBrowserSignInButton
-            displayName={props.displayName}
-            environmentId={props.environmentId}
-            provider={props.provider}
-          />
-        ) : (
-          <Button
-            onClick={() => props.onManage()}
-            size="compact"
-            type="button"
-            variant="ghost-primary"
-          >
-            <LogInIcon /> Sign in
-          </Button>
-        )
+        // After a failed attempt the row retries, with the reason on hover.
+        <ActionDetail detail={presentation.kind === "failed" ? presentation.detail : null}>
+          {signInMethod ? (
+            <BrowserSignInButton
+              displayName={props.displayName}
+              environmentId={props.environmentId}
+              method={signInMethod}
+              onManage={props.onManage}
+              provider={props.provider}
+              retry={presentation.kind === "failed"}
+            />
+          ) : (
+            <Button
+              onClick={() => props.onManage()}
+              size="compact"
+              type="button"
+              variant="ghost-primary"
+            >
+              {presentation.kind === "failed" ? <RefreshCwIcon /> : <LogInIcon />}
+              {presentation.kind === "failed" ? "Retry" : "Sign in"}
+            </Button>
+          )}
+        </ActionDetail>
       ) : null}
     </ProviderSettingsActions>
   );
@@ -196,21 +214,53 @@ function ProviderSettingsActions(props: {
   );
 }
 
-function CodexBrowserSignInButton(props: {
+/** The text behind a row's short label, such as a slow start or why sign-in failed. */
+function ActionDetail(props: { readonly detail: string | null; readonly children: ReactNode }) {
+  if (!props.detail) return props.children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex">{props.children}</span>} />
+      <TooltipPopup side="top">{props.detail}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function BrowserSignInButton(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly method: ProviderConnectionMethod;
+  readonly onManage: () => void;
+  readonly retry: boolean;
 }) {
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
   });
-  const [pending, setPending] = useState(false);
+  const onThisDevice = useEnvironmentIsOnThisDevice(props.environmentId);
 
+  // From the click the row shows the starting state, like the server's, so this
+  // button is replaced at once; the start continues without it.
   const signIn = async () => {
-    setPending(true);
+    // On another device the browser cannot reach the provider's 127.0.0.1 return
+    // address, so the setup card is shown for pasting the return URL.
+    if (!onThisDevice) props.onManage();
     try {
-      await startCodexBrowserSignIn(controller);
+      // The controller opens the sign-in page for this client once it is ready.
+      const provider = await controller.startConnection(props.method);
+      const operation = provider.connection?.operation;
+      // A flow that waits on something other than the page Scient opened, such
+      // as a code to paste, continues in the setup view.
+      if (
+        onThisDevice &&
+        isActiveProviderConnectionOperation(operation) &&
+        !(
+          operation?.status === "waiting_for_browser" &&
+          operation.authorizationUrlKind === "primary"
+        )
+      ) {
+        props.onManage();
+      }
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -219,21 +269,13 @@ function CodexBrowserSignInButton(props: {
           description: actionErrorMessage(error),
         }),
       );
-    } finally {
-      setPending(false);
     }
   };
 
   return (
-    <Button
-      disabled={pending}
-      onClick={() => void signIn()}
-      size="compact"
-      type="button"
-      variant="ghost-primary"
-    >
-      {pending ? <LoaderIcon className="animate-spin" /> : <LogInIcon />}
-      {pending ? "Signing in" : "Sign in"}
+    <Button onClick={() => void signIn()} size="compact" type="button" variant="ghost-primary">
+      {props.retry ? <RefreshCwIcon /> : <LogInIcon />}
+      {props.retry ? "Retry" : "Sign in"}
     </Button>
   );
 }

@@ -11,10 +11,8 @@ export const startReviewedCursorRuntimeAction = startReviewedProviderRuntimeActi
 export async function startCursorBrowserSignIn(
   controller: ProviderLifecycleController,
 ): Promise<ServerProvider> {
-  const provider = await controller.startConnection("cursor_browser");
-  const authorizationUrl = provider.connection?.operation?.authorizationUrl;
-  if (authorizationUrl) await controller.openAuthorizationPage(authorizationUrl);
-  return provider;
+  // The controller opens the sign-in page for the client that started it.
+  return controller.startConnection("cursor_browser");
 }
 
 export function updateCursorRuntime(

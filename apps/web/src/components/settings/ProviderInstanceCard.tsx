@@ -59,7 +59,9 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
 import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
-import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:START — the presentation reads this client's in-flight sign-in starts.
+import { useProviderSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — managed-copy guidance retains its lifecycle owner.
 import { managedVersionAdvisory } from "~/scient/providerConnection/providerSettingsLifecyclePresentation";
 // SCIENT-FORK:END
@@ -690,7 +692,13 @@ export function ProviderInstanceCard({
   const authLabel = isAuthenticated
     ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
     : null;
-  const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
+  // SCIENT-FORK:START — a sign-in this client starts reads as starting from the click.
+  const connectionPresentation = useProviderSettingsLifecyclePresentation(
+    environmentId,
+    liveProvider,
+    displayName,
+  );
+  // SCIENT-FORK:END
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   // Custom instances of a driver still come from the same company.
   const vendorLabel = driverOption?.vendorLabel;
@@ -871,10 +879,14 @@ export function ProviderInstanceCard({
       ? summary.headline
       : (connectionPresentation.statusLabel ?? summary.headline);
 
+  // SCIENT-FORK:START — a failed sign-in or setup reads as an error, whatever the probe says.
+  const statusDotStyle =
+    connectionPresentation.kind === "failed" ? PROVIDER_STATUS_STYLES.error : statusStyle;
   const statusDotNode =
-    statusKey === "warning" || statusKey === "error" ? (
-      <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
+    statusKey === "warning" || statusKey === "error" || connectionPresentation.kind === "failed" ? (
+      <span className={cn("size-1.5 shrink-0 rounded-full", statusDotStyle.dot)} aria-hidden />
     ) : null;
+  // SCIENT-FORK:END
   // Pi's model inventory lives in the Models tab. Keep routine setup copy out
   // of its header, but preserve failed probes and runtime recovery details.
   const quietPiStatus =

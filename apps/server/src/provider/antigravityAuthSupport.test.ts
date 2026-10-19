@@ -717,6 +717,9 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
         const sourcePlugin = path.join(userHome, ".gemini", "config", "plugins", "science");
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        // SCIENT-FORK:START — only an existing skill directory is linked.
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
+        // SCIENT-FORK:END
         yield* fs.makeDirectory(path.join(sourcePlugin, "skills", "literature"), {
           recursive: true,
         });

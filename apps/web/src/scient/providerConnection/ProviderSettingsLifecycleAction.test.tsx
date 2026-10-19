@@ -37,6 +37,12 @@ vi.mock("./useProviderLifecycleController", () => ({
   }),
 }));
 
+vi.mock("./environmentLocality", () => ({ useEnvironmentIsOnThisDevice: () => true }));
+vi.mock("./providerSignInStarting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./providerSignInStarting")>()),
+  useProviderSignInStartingHere: () => false,
+}));
+
 vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: commands.toast },
   stackedThreadToast: (value: unknown) => value,
@@ -369,28 +375,63 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain("Download progress");
   });
 
-  it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {
-    const codex = provider({ source: "system", authenticated: false });
-    const claude = provider({
-      driver: "claudeAgent",
-      source: "system",
-      authenticated: false,
-    });
+  it("starts sign-in from the row only for one method that needs nothing else", () => {
+    const withMethods = (
+      driver: "codex" | "claudeAgent" | "antigravity" | "cursor" | "droid" | "grok",
+      methods: NonNullable<ServerProvider["connection"]>["methods"],
+    ) => {
+      const value = provider({ driver, source: "system", authenticated: false });
+      return { ...value, connection: { ...value.connection!, methods } };
+    };
+    const primaryAction = (value: ServerProvider) =>
+      resolveProviderSettingsPrimaryAction({
+        provider: value,
+        presentation: providerSettingsLifecyclePresentation(value, "Provider"),
+        canRunExternalUpdate: false,
+      });
 
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: codex,
-        presentation: providerSettingsLifecyclePresentation(codex, "Codex"),
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "codex-browser-sign-in" });
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: claude,
-        presentation: providerSettingsLifecyclePresentation(claude, "Claude"),
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "open", runtimeAction: null });
+    for (const [driver, method] of [
+      ["codex", "codex_browser"],
+      ["antigravity", "antigravity_google"],
+      ["cursor", "cursor_browser"],
+    ] as const) {
+      expect(primaryAction(withMethods(driver, [method]))).toEqual({
+        kind: "browser-sign-in",
+        method,
+      });
+    }
+    // The device code is shown in the setup view; the browser flow stays one click.
+    expect(primaryAction(withMethods("codex", ["codex_browser", "codex_device_code"]))).toEqual({
+      kind: "browser-sign-in",
+      method: "codex_browser",
+    });
+    for (const value of [
+      withMethods("claudeAgent", ["claude_subscription", "claude_console"]),
+      withMethods("antigravity", ["antigravity_credentials"]),
+      withMethods("grok", ["grok_account", "grok_device_code"]),
+      withMethods("droid", ["droid_device_pairing"]),
+    ]) {
+      expect(primaryAction(value)).toEqual({ kind: "open", runtimeAction: null });
+    }
+  });
+
+  it("names a slow start on the row while it runs", () => {
+    const ready = provider({ source: "system", authenticated: false });
+    const markup = render({
+      ...ready,
+      connection: {
+        ...ready.connection!,
+        operation: {
+          operationId: "connection-1",
+          method: "codex_browser",
+          status: "starting",
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: null,
+          message: "Antigravity can take up to a minute to start.",
+        },
+      },
+    });
+    expect(markup).toContain('aria-label="Starting Codex"');
   });
 
   it("starts managed install/update directly and only runs qualified external updates", () => {

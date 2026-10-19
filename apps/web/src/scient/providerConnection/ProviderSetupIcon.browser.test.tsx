@@ -41,6 +41,7 @@ vi.mock("./useProviderLifecycleController", () => {
     cancelConnection: never,
     submitAuthorizationCode: never,
     disconnect: never,
+    signInKey: { environmentId: "environment-test", instanceId: "sign-in-test" },
     openAuthorizationPage: never,
     planRuntime: runtime.plan,
     startRuntime: runtime.start,

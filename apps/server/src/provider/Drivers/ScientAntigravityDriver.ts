@@ -18,6 +18,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import {
+  ANTIGRAVITY_STARTING_MESSAGE,
   antigravityConnectionMethod,
   makeAntigravityConnectionActionsFromController,
   makeAntigravityManagedRuntimeActions,
@@ -111,6 +112,7 @@ export function makeAntigravityRuntimeIdentity<E>(input: {
             methods: [antigravityConnectionMethod(input.authMethod)],
             canDisconnect: provider.auth.status === "authenticated",
             operation: null,
+            startingMessage: ANTIGRAVITY_STARTING_MESSAGE,
             runtime,
           },
         };

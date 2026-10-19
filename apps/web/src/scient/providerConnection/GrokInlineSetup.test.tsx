@@ -33,6 +33,10 @@ function controller(): ProviderLifecycleController {
     cancelConnection: vi.fn(async () => provider()),
     submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => {
       throw new Error("unsupported");

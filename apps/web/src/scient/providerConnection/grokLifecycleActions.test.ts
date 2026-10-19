@@ -51,6 +51,10 @@ describe("Grok lifecycle actions", () => {
     const startConnection = vi.fn(async () => provider);
     const controller = {
       startConnection,
+      signInKey: {
+        environmentId: "environment-test",
+        instanceId: "sign-in-test",
+      } as ProviderLifecycleController["signInKey"],
       openAuthorizationPage: vi.fn(async () => undefined),
     } as unknown as ProviderLifecycleController;
 
