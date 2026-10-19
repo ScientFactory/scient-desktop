@@ -2490,7 +2490,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has nine core files, plus the 39 approved component files.
+        // Fixture has nine core files, plus the 37 approved component files.
         for (let index = 0; index < 71; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
@@ -2503,13 +2503,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64" as const,
         };
         const valid = yield* validateWindowsPackagedPayload(options);
-        assert.equal(valid.fileCount, 119);
+        assert.equal(valid.fileCount, 117);
         yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
         const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
-        assert.equal(error.fileCount, 120);
-        assert.equal(error.fileLimit, 119);
+        assert.equal(error.fileCount, 118);
+        assert.equal(error.fileLimit, 117);
         assert.include(error.message, "core=81");
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
