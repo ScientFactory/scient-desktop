@@ -1,7 +1,6 @@
 import type { AssetCopyResult, PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { assetEnvironment } from "~/state/assets";
@@ -17,31 +16,28 @@ export function usePdfSaveCopy(environmentId: EnvironmentId) {
     reportFailure: false,
   });
 
-  return useCallback(
-    (source: PdfSourceDescriptor): Promise<AssetCopyResult> =>
-      observePdfCopy(environmentId, async () => {
-        if (String(source.authority) !== String(environmentId)) {
-          throw new Error("The PDF belongs to a different environment.");
-        }
-        if (httpBaseUrl === null) {
-          throw new Error("The environment connection is unavailable.");
-        }
+  return (source: PdfSourceDescriptor): Promise<AssetCopyResult> =>
+    observePdfCopy(environmentId, async () => {
+      if (String(source.authority) !== String(environmentId)) {
+        throw new Error("The PDF belongs to a different environment.");
+      }
+      if (httpBaseUrl === null) {
+        throw new Error("The environment connection is unavailable.");
+      }
 
-        const issued = await createAssetUrl({
-          environmentId,
-          input: { resource: pdfSourceAssetResource(source) },
-        });
-        if (issued._tag === "Failure") throw squashAtomCommandFailure(issued);
+      const issued = await createAssetUrl({
+        environmentId,
+        input: { resource: pdfSourceAssetResource(source) },
+      });
+      if (issued._tag === "Failure") throw squashAtomCommandFailure(issued);
 
-        const url = resolveAssetUrl(httpBaseUrl, issued.value.relativeUrl);
-        if (url === null) throw new Error("The environment returned an invalid PDF URL.");
+      const url = resolveAssetUrl(httpBaseUrl, issued.value.relativeUrl);
+      if (url === null) throw new Error("The environment returned an invalid PDF URL.");
 
-        return saveResolvedPdfCopy(source, {
-          url,
-          expiresAt: issued.value.expiresAt,
-          refresh: () => undefined,
-        });
-      }),
-    [createAssetUrl, environmentId, httpBaseUrl],
-  );
+      return saveResolvedPdfCopy(source, {
+        url,
+        expiresAt: issued.value.expiresAt,
+        refresh: () => undefined,
+      });
+    });
 }

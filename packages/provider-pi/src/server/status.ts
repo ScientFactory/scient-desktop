@@ -67,8 +67,6 @@ const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
-  // The adapter reports context usage from Pi's streaming usage while a
-  // turn runs, so clients can reserve the meter before the first settle.
   reportsContextWindow: true,
   requiresNewThreadForModelChange: false,
 } as const;
@@ -77,12 +75,10 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
- * Version 0.80.5 was the first published package containing both hooks. T3
- * needs them for rollback boundaries and reliable turn terminalization.
+ * Version 0.80.5 was the first published package containing both hooks.
  */
 export const MINIMUM_PI_VERSION = "0.80.5";
 
-/** Deferring to the user's own settings.json default model. */
 const PI_DEFAULT_MODEL: ServerProviderModel = {
   slug: "default",
   name: "Pi default",
@@ -119,9 +115,13 @@ function parseDiscoveredModels(
   data: unknown,
   state: unknown,
   providerLabel?: (provider: string) => string | undefined,
-): ReadonlyArray<ServerProviderModel> {
+): Result.Result<ReadonlyArray<ServerProviderModel>, PiRpcError> {
   const models = recordField(data, "models");
-  if (!Array.isArray(models)) return [];
+  if (!Array.isArray(models)) {
+    return Result.fail(
+      new PiRpcError({ operation: "get_available_models", detail: "Invalid model inventory" }),
+    );
+  }
   const activeModel = recordField(state, "model");
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
@@ -130,9 +130,19 @@ function parseDiscoveredModels(
   for (const model of models) {
     const provider = recordString(model, "provider");
     const id = recordString(model, "id");
-    if (provider === undefined || id === undefined) continue;
+    if (provider === undefined || id === undefined || provider.trim() === "" || id.trim() === "") {
+      return Result.fail(
+        new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
+      );
+    }
+    // SCIENT-FORK:START encoded identity also supports Oh My Pi model ids.
     const slug = encodePiModelSlug(provider, id);
-    if (slug === undefined) continue;
+    if (slug === undefined) {
+      return Result.fail(
+        new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
+      );
+    }
+    // SCIENT-FORK:END
     if (seen.has(slug)) continue;
     seen.add(slug);
     parsed.push({
@@ -149,7 +159,7 @@ function parseDiscoveredModels(
       ),
     });
   }
-  return parsed;
+  return Result.succeed(parsed);
 }
 
 const makePiDiscoveryConnection = Effect.fnUntraced(function* (
@@ -210,7 +220,9 @@ const discoverPiViaRpc = (
       const state = yield* client.getState();
       const inventory = yield* client.getAvailableModels();
       const commands = yield* client.getCommands();
-      const models = parseDiscoveredModels(inventory, state, client.modelProviderLabel);
+      const models = yield* Effect.fromResult(
+        parseDiscoveredModels(inventory, state, client.modelProviderLabel),
+      );
       const discovered = parsePiDiscoveredCommands(commands);
       return {
         models,
@@ -240,7 +252,7 @@ const discoverPiViaRpc = (
     const commandsData = yield* connection
       .request({ type: "get_commands" })
       .pipe(Effect.orElseSucceed(() => undefined));
-    const discoveredModels = parseDiscoveredModels(modelsData, stateData);
+    const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
     const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
     return {
       models: discoveredModels,
@@ -250,7 +262,6 @@ const discoverPiViaRpc = (
     } satisfies PiDiscovery;
   }).pipe(Effect.scoped);
 
-/** Probe the full command catalog Pi exposes in a workspace without changing machine health. */
 export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   function* (
     piSettings: PiSettings,

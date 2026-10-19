@@ -165,7 +165,6 @@ describe("Antigravity process environment", () => {
       auth: { type: "oauth-business" },
       gcp: { project: "proj", location: "us-central1" },
     });
-    // The agent's logout reads auth.type to clear only that method's token.
     expect(decodeJson(antigravityProfileSettings(ANTIGRAVITY_PERSONAL_AUTH))).toEqual({
       auth: { type: "oauth-personal" },
     });
@@ -256,7 +255,6 @@ describe("Antigravity process environment", () => {
         "/userdata",
         ProviderInstanceId.make("Antigravity"),
       );
-      // Existing sign-ins live at this path; it must not move.
       expect(first.profile).toBe(
         "/userdata/providers/antigravity/ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
       );
@@ -719,6 +717,9 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
         const sourcePlugin = path.join(userHome, ".gemini", "config", "plugins", "science");
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        // SCIENT-FORK:START — only an existing skill directory is linked.
+        yield* fs.makeDirectory(cliSkills, { recursive: true });
+        // SCIENT-FORK:END
         yield* fs.makeDirectory(path.join(sourcePlugin, "skills", "literature"), {
           recursive: true,
         });
@@ -751,7 +752,6 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.exists(projectedPlugin)).toBe(false);
 
-        // A stale link is repointed; a real directory the user placed there is kept.
         yield* fs.remove(cliLink);
         yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
         yield* fs.remove(configLink);

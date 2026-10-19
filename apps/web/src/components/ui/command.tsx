@@ -141,14 +141,13 @@ function CommandList({
   );
 }
 
-// Pair with a LegendList child; the list owns scrolling and spacing.
 function CommandListVirtualized({
   className,
   ...props
 }: React.ComponentProps<typeof AutocompleteListVirtualized>) {
   return (
     <AutocompleteListVirtualized
-      className={cn("flex max-h-[inherit] flex-col", className)}
+      className={cn("flex max-h-[inherit] min-h-0 flex-col", className)}
       data-slot="command-list"
       {...props}
     />

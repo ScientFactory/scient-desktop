@@ -84,6 +84,9 @@ instead of the short name. Paste them as shown: they select the installation
 and profile that reported the problem, including Linux browser setup under
 `sudo`. Windows operational snippets use PowerShell.
 
+When **Settings → Storage** suggests reclaiming database space, run the command
+it shows; see [Reclaim database space](./background-service.md#reclaim-database-space).
+
 ## Start using Scient
 
 If the app shows **Scient could not load**, check your connection and select
@@ -154,5 +157,5 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
-- [Running in the background](./background-service.md): keep a Linux or macOS host available.
+- [Running a server without the desktop app](./background-service.md): host an environment on another machine.
 - [Updating Scient](./updating.md): update the app and connected servers.

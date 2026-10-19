@@ -193,7 +193,7 @@ export function useStreamingBlockEntrance(
         frame = requestAnimationFrame(tick);
         return;
       }
-      geometry ??= measureGeometry(root);
+      if (geometry === null) geometry = measureGeometry(root);
       // The full tone trails the appearing text by a line; both finish together.
       const end = geometry.height + lineHeight;
       if (front < end) {

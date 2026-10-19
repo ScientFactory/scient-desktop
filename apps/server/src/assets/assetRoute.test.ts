@@ -17,7 +17,7 @@ import * as ServerConfig from "../config.ts";
 import { assetRouteHandler } from "../http.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerSourceControlHost from "../sourceControl/ServerSourceControlHost.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -40,7 +40,7 @@ const testLayer = Layer.mergeAll(
     getTurnItem: () =>
       Effect.die("This fixture serves files and never reads provider tool output."),
   }),
-  GitHubApi.layerWithDependencies.pipe(
+  GitHubRest.layerWithDependencies.pipe(
     Layer.provide(ServerSourceControlHost.layer),
     Layer.provide(VcsDriverRegistry.layer),
     Layer.provideMerge(VcsProcess.layer),

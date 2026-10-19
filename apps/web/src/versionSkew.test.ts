@@ -2,8 +2,6 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-// Pinned so the direction cases below read as fixed versions instead of
-// arithmetic on whatever version this checkout happens to be at.
 const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
 vi.mock("./branding", () => branding);
 
@@ -29,7 +27,7 @@ const MISMATCH_HINT =
 describe("versionSkew", () => {
   it("keeps global-install recovery on the immutable Scient release without using its npm prefix", () => {
     const command =
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
       command,
     );
@@ -41,7 +39,7 @@ describe("versionSkew", () => {
 
   it("keeps runner and unknown recovery on the immutable Scient release", () => {
     const command =
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45")).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
@@ -258,7 +256,7 @@ describe("versionSkew", () => {
 
   it("matches version-drift guidance to the advertised update path", () => {
     expect(manualServerUpdateCommand("0.6.0")).toBe(
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz scient",
     );
     expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
     expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");

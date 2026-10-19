@@ -24,10 +24,8 @@ async function startCodexSignIn(
   controller: ProviderLifecycleController,
   method: "codex_browser" | "codex_device_code",
 ): Promise<ServerProvider> {
-  const provider = await controller.startConnection(method);
-  const authorizationUrl = provider.connection?.operation?.authorizationUrl;
-  if (authorizationUrl) await controller.openAuthorizationPage(authorizationUrl);
-  return provider;
+  // The controller opens the sign-in page for the client that started it.
+  return controller.startConnection(method);
 }
 
 export function updateCodexRuntime(

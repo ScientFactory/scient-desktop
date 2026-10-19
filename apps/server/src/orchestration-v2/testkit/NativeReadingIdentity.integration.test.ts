@@ -187,6 +187,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
           opened.push(input);
           return {
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+            backgroundTasks: () => Effect.succeed(false),
             setPermissionMode: () =>
               Effect.die("Permission-mode mutation is outside this fixture."),
             messages: Stream.fromQueue(sdkMessages).pipe(
@@ -212,6 +213,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
                 yield* Queue.offer(offers, message);
               }),
             setModel: () => Effect.die("No model change in reading preservation"),
+            applyFlagSettings: () => Effect.die("No flag settings change in reading preservation"),
             interrupt: Effect.gen(function* () {
               interruptions++;
               assert.equal(closes, 0);

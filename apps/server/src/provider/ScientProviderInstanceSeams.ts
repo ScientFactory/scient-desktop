@@ -50,6 +50,8 @@ export interface ProviderConnectionActionFailure {
    * the sign-in as possibly removed.
    */
   readonly signInMayBeRemoved?: boolean | undefined;
+  /** The provider accepted the sign-in; the failure came while finishing its setup. */
+  readonly afterSignIn?: boolean | undefined;
 }
 
 export interface ProviderConnectionAttempt {
@@ -72,12 +74,13 @@ export interface ProviderConnectionAttempt {
     | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
     | undefined;
   /**
-   * For a flow whose first question can come after the attempt is described:
-   * resolves when the provider asks it. The manager then republishes the
-   * operation as accepting an answer. Absent when a question already arrived
-   * or the flow never asks one.
+   * For a flow that can ask after the attempt is described: resolves when the
+   * provider asks its next question, the first one after the link or another
+   * after an answer. The manager runs it again after each question and
+   * republishes the operation as accepting an answer. Absent when the flow
+   * asks nothing after it starts.
    */
-  readonly laterQuestion?:
+  readonly nextQuestion?:
     | Effect.Effect<{
         readonly instructions?: string | undefined;
         readonly submitAuthorizationCode: (
@@ -95,6 +98,8 @@ export interface ProviderConnectionAttempt {
  */
 export interface ProviderConnectionActions {
   readonly methods: ReadonlyArray<ProviderConnectionMethod>;
+  /** Shown while `start` runs, for a provider whose start can take noticeably long. */
+  readonly startingMessage?: string | undefined;
   /**
    * `account` names an entry of the provider's own sign-in list. The manager
    * passes it only for a provider whose snapshot lists accounts, and only an

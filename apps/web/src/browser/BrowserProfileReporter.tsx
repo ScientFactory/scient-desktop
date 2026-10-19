@@ -9,12 +9,6 @@ import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { browserProfileReportInput, useBrowserDefaults } from "./browserDefaults";
 
-/**
- * Tells each environment that hosts browser tabs which profiles this client
- * has, so agents can open tabs under them. Profiles live in client settings;
- * the server keeps only the latest report in memory. A reconnect brings a new
- * server config, which sends the report again.
- */
 export function BrowserProfileReporter() {
   const hydrated = useClientSettingsHydrated();
   const defaults = useBrowserDefaults();

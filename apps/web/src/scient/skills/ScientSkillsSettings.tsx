@@ -2,7 +2,7 @@ import type { ScientSkillCatalogItem, ScientSkillInvocationPolicy } from "@t3too
 import { useAtomValue } from "@effect/atom-react";
 import { ArrowRightIcon, ChevronDownIcon, Layers3Icon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { ScientSymbol } from "../../components/ScientSymbol";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -73,7 +73,7 @@ function SkillCategoryDisclosure(props: {
 export function ScientSkillsSettings() {
   const environmentId = usePrimaryEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const externalSkillGroups = useMemo(() => collectExternalSkillProviders(providers), [providers]);
+  const externalSkillGroups = collectExternalSkillProviders(providers);
   const inventory = useEnvironmentQuery(
     environmentId === null ? null : scientSkillsInventory({ environmentId, input: {} }),
   );
@@ -88,6 +88,7 @@ export function ScientSkillsSettings() {
   ) => {
     if (environmentId === null || pendingReleaseKey !== null) return;
     setPendingReleaseKey(skill.releaseKey);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
       await setActivation({
         environmentId,
@@ -97,9 +98,11 @@ export function ScientSkillsSettings() {
           invocationPolicy: patch.invocationPolicy ?? skill.invocationPolicy,
         },
       });
-    } finally {
-      setPendingReleaseKey(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingReleaseKey(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   return (

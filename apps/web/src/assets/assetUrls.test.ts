@@ -88,6 +88,7 @@ it("hides host assets with a denied grant while preserving attachments", () => {
   expect(useAssetUrlState(environmentId, resource)).toEqual({
     _tag: "Failure",
     refresh: state.refresh,
+    reason: "missing-file-access",
   });
   expect(state.assetQuery).not.toHaveBeenCalled();
   expect(useAssetUrlState(environmentId, { _tag: "attachment", attachmentId: "upload" })).toEqual({

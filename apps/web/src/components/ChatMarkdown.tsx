@@ -5,7 +5,7 @@ import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
 import { resolveInlineCssColor } from "~/scient/markdown/inlineCssColor";
 import { ScientInlineColorCode } from "~/scient/markdown/ScientInlineColorCode";
 // SCIENT-FORK:END
-import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
+import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
@@ -58,16 +58,16 @@ import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
   AuthPreviewOperateScope,
   type AssetResource,
+  type EditorId,
   type EnvironmentId,
   // SCIENT-FORK:START — streaming reveal and direction are scoped to one message.
   type MessageId,
   // SCIENT-FORK:END
+  type ServerConfig,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
-// SCIENT-FORK:START — link icons are drawn locally; no favicon service (faviconUrlForOrigin).
-// SCIENT-FORK:END
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
@@ -84,10 +84,12 @@ import {
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
-// SCIENT-FORK:START — the Shiki code block (Suspense) moved to scient/presentation.
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
+// SCIENT-FORK:START ? the Shiki code block (Suspense) moved to scient/presentation.
 import React, {
   Children,
   type CSSProperties,
@@ -97,10 +99,9 @@ import React, {
   type MouseEvent as ReactMouseEvent,
   isValidElement,
   use,
-  useCallback,
   memo,
   useEffect,
-  useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -112,8 +113,6 @@ import type {
   Options as ReactMarkdownOptions,
 } from "react-markdown";
 import ReactMarkdown from "react-markdown";
-// SCIENT-FORK:START — the Shiki code block's cache (toHtml) moved to scient/presentation.
-// SCIENT-FORK:END
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 // SCIENT-FORK:START — quotes from Markdown files render as citation chips too.
@@ -128,13 +127,13 @@ import {
 // SCIENT-FORK:END
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
-// SCIENT-FORK:START — a streaming answer is revealed line by line. (Upstream's unused
-// isWindowsAbsolutePath import is dropped.)
+// SCIENT-FORK:START — a streaming answer is revealed line by line (
+// chat/useStreamingBlockEntrance.ts).
 import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
 // SCIENT-FORK:END
 import {
   artifactTemplateFromHastProperties,
-  renderCodexFileCitationsAsMarkdown,
+  renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
@@ -148,8 +147,6 @@ import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
-// SCIENT-FORK:START — the code block's title icon (PierreEntryIcon) moved to scient/presentation.
-// SCIENT-FORK:END
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -158,8 +155,6 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-// SCIENT-FORK:START — the code block's language icons (pierre-icons) moved to scient/presentation.
-// SCIENT-FORK:END
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -180,11 +175,7 @@ import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 // SCIENT-FORK:END
 import { GitHubIcon } from "./Icons";
-// SCIENT-FORK:START — incremental highlighting moved with the code block to scient/presentation.
-// SCIENT-FORK:END
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-// SCIENT-FORK:START — Scient's rich-fence cards replace upstream's MermaidDiagram.
-// SCIENT-FORK:END
 import { useTheme } from "../hooks/useTheme";
 // SCIENT-FORK:START — tables and code blocks here no longer read the word-wrap setting.
 import { useClientSettings } from "../hooks/useSettings";
@@ -217,14 +208,18 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
-import { readEnvironmentScope, usePreparedConnection, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  // SCIENT-FORK: environment HTML preview consumes the reactive connection.
+  usePreparedConnection,
+  useEnvironmentScope,
+} from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import {
-  // SCIENT-FORK:START — opening a file link moved to scient/fileOpening (claimWorkspaceBasenameLookup).
-  // SCIENT-FORK:END
   needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
@@ -235,6 +230,7 @@ import {
   resolvePullRequestPreviewTarget,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
+import { observeResize } from "~/lib/observeResize";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -275,8 +271,9 @@ import {
 import { isScientMathCodeClassName } from "../scient/math/remarkScientMath";
 import {
   authoredMathNodeSource,
-  useScientMathMarkdownText,
-  useScientMathRemarkPlugins,
+  ScientAuthoredMathTextContext,
+  scientMathMarkdownText,
+  scientMathRemarkPluginsForMessage,
 } from "../scient/math/scientMathText";
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { ScientMathFindSurface } from "../scient/math/ScientMathFindSurface";
@@ -297,15 +294,12 @@ interface ChatMarkdownProps {
   fileLinkWorkspaceRoot?: string | null;
   // SCIENT-FORK:END
   threadRef?: ScopedThreadRef | undefined;
-  /** Panel that receives pull request links, including the standalone PR view. */
   pullRequestPanelRef?: ScopedThreadRef | undefined;
-  /** Environment that owns non-thread markdown, such as a pull request panel. */
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
-  /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
   // SCIENT-FORK:START — content direction; `messageId` also scopes the streaming reveal.
   /** Overrides the conversation scope for document/file previews. */
@@ -315,13 +309,9 @@ interface ChatMarkdownProps {
   /** Direction hint from the preceding user message during streaming. */
   directionHint?: FixedContentDirection | null | undefined;
   // SCIENT-FORK:END
-  /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
-  /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
-  /** Directory that anchors relative links and images; defaults to `cwd`. Set
-      to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
   // SCIENT-FORK:START — file previews caption standalone images (scient/images).
   /** File previews share the rich editor's standalone title-as-caption presentation. */
@@ -329,7 +319,6 @@ interface ChatMarkdownProps {
   // SCIENT-FORK:END
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-  /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
@@ -340,9 +329,6 @@ interface ChatMarkdownProps {
       names exactly one; see `pickChangedFileForLink`. */
   changedFiles?: ReadonlyArray<{ readonly path: string }> | undefined;
   // SCIENT-FORK:END
-  /** Levels added to each markdown heading in the accessibility tree so the
-      text nests under the heading that introduces it, such as a chat message's
-      author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
 }
 
@@ -360,7 +346,7 @@ export function canUseMarkdownFileShellActions(
   return environmentId !== null && isRemoteOpenResolved && remoteOpenMode === "local-exec";
 }
 
-export function hasMarkdownFilePrimaryAction(input: {
+function hasMarkdownFilePrimaryAction(input: {
   canOpenInEditor: boolean;
   canOpenInBrowser: boolean;
   canOpenInPanel: boolean;
@@ -424,7 +410,6 @@ function CodexArtifactTemplateCard(props: {
             <SparklesIcon aria-hidden className="size-2.5" />
           </span>
         </span>
-        {/* Block elements keep the name and label separate thread-find segments. */}
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-foreground">
             {props.template.displayName}
@@ -450,8 +435,6 @@ function CodexArtifactTemplateCard(props: {
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-// SCIENT-FORK:START — the Shiki highlight cache moved with the code block to scient/presentation.
-// SCIENT-FORK:END
 
 interface MarkdownActionFailureContext {
   readonly operation: string;
@@ -466,9 +449,6 @@ function reportMarkdownActionFailure(context: MarkdownActionFailureContext, caus
   console.error("[chat-markdown] action failed", context, cause);
 }
 
-// SCIENT-FORK:START — the Shiki highlight cache moved with the code block to scient/presentation.
-// SCIENT-FORK:END
-
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
   const firstLine = markdown.slice(
@@ -480,12 +460,6 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   return listItemStart + firstLine.indexOf(match[1]);
 }
 
-/**
- * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits one-character
- * markers. Wider markers can extend past it and get clipped by a collapsed
- * message's overflow. Widen the gutter to fit the widest marker, including a
- * negative marker's minus sign, the period, and the trailing space.
- */
 function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
@@ -551,9 +525,6 @@ function extractFenceLanguage(className: string | undefined): string {
   return raw === "gitignore" ? "ini" : raw;
 }
 
-// SCIENT-FORK:START — fence titles are read by the Scient code block (scient/presentation/CodeBlockTitle).
-// SCIENT-FORK:END
-
 function extractPreCodeMeta(node: unknown): string | undefined {
   const children = (
     node as
@@ -588,9 +559,6 @@ function isClosedCodeFence(node: ReactMarkdownExtraProps["node"], text: string):
     closing.length >= opening.length
   );
 }
-
-// SCIENT-FORK:START — upstream's unused MarkdownAstNode type is dropped.
-// SCIENT-FORK:END
 
 function nodeToPlainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
@@ -633,6 +601,33 @@ function extractCodeBlock(
   };
 }
 
+/**
+ * Whether any cell is clipped in the unwrapped layout. Only then does the wrap
+ * toggle change anything, so short tables hide it. Measures with the container
+ * briefly unwrapped and restores it before the browser paints.
+ */
+function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): boolean {
+  const viewport = table.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  const scrollLeft = viewport?.scrollLeft ?? 0;
+  const previous = container.dataset.expanded;
+  container.dataset.expanded = "false";
+  try {
+    for (const row of table.rows) {
+      for (const cell of row.cells) {
+        if (cell.scrollWidth > cell.clientWidth) return true;
+      }
+    }
+    // SCIENT-FORK:START - unwrapped cells scroll intact; overflow still makes wrapping useful.
+    return viewport !== null && table.scrollWidth > viewport.clientWidth;
+    // SCIENT-FORK:END
+  } finally {
+    if (previous === undefined) delete container.dataset.expanded;
+    else container.dataset.expanded = previous;
+    // The unwrapped layout can be narrower and clamp a sideways scroll.
+    if (viewport && scrollLeft > 0) viewport.scrollLeft = scrollLeft;
+  }
+}
+
 // SCIENT-FORK:START — the Shiki code block's helpers moved to scient/presentation. Tables open
 // wrapped, never pin column widths and follow the message direction (PR #393, scient/bidi).
 function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table">) {
@@ -641,6 +636,8 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
   // global word-wrap preference is a code/diff setting and does not apply here;
   // the footer toggle switches this table to single-line cells that scroll.
   const [expanded, setExpanded] = useState(true);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const [hasClippedCells, setHasClippedCells] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tableDirection = dir === "rtl" ? "rtl" : "ltr";
@@ -648,13 +645,29 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
   const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
+  const measureClippedCells = () => {
+    const container = containerRef.current;
+    const table = tableRef.current;
+    if (!container || !table) return;
+    setHasClippedCells(tableHasClippedCells(container, table));
+  };
+
+  // A streamed cell can grow until it clips while the table keeps its size,
+  // so remeasure after every render, not only on resize.
+  useLayoutEffect(measureClippedCells);
+
+  // Column width changes can clip a cell without rendering this table.
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    return observeResize(table, measureClippedCells);
+  }, [measureClippedCells]);
+
   function toggleExpanded() {
-    // SCIENT-FORK:START — column widths are not pinned before switching to single-line cells.
-    // SCIENT-FORK:END
     setExpanded((value) => !value);
   }
 
-  const handleCopy = useCallback((format: "markdown" | "csv") => {
+  const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
@@ -678,7 +691,7 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
       .catch((cause) => {
         reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
       });
-  }, []);
+  };
 
   useEffect(
     () => () => {
@@ -707,29 +720,33 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
         className="w-full max-w-full"
         dir={tableDirection}
       >
-        <table {...props} dir={tableDirection}>
+        <table ref={tableRef} {...props} dir={tableDirection}>
           {/* SCIENT-FORK:END */}
           {children}
         </table>
       </ScrollArea>
       <div className="mt-0.5 flex items-center justify-between select-none">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant={expanded ? "secondary" : "ghost-muted"}
-                size="icon-xs"
-                aria-pressed={expanded}
-                onClick={toggleExpanded}
-                aria-label={expandLabel}
-              />
-            }
-          >
-            <MorphIcon className="size-3" icon={expanded ? Minimize2 : Maximize2} />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{expandLabel}</TooltipPopup>
-        </Tooltip>
+        {hasClippedCells ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant={expanded ? "secondary" : "ghost-muted"}
+                  size="icon-xs"
+                  aria-pressed={expanded}
+                  onClick={toggleExpanded}
+                  aria-label={expandLabel}
+                />
+              }
+            >
+              <MorphIcon className="size-3" icon={expanded ? Minimize2 : Maximize2} />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{expandLabel}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          <span />
+        )}
         <Menu>
           <Tooltip>
             <TooltipTrigger
@@ -767,10 +784,10 @@ function MarkdownDetails({
   const [isOpen, setIsOpen] = useState(open);
   const searching = use(MarkdownFindContext);
   const expanded = isOpen;
-  const revealForFind = useCallback(() => setIsOpen(true), []);
+  const revealForFind = () => setIsOpen(true);
   // Base UI only listens for `beforematch` on a panel mounted at its first
   // render; a closed panel mounts later, when find starts, so listen here.
-  const findRevealRef = useFindRevealRef(revealForFind);
+  const revealRef = findRevealRef(revealForFind);
   const childNodes = Children.toArray(children);
   const summaryIndex = childNodes.findIndex(
     (child) => isValidElement(child) && child.type === "summary",
@@ -800,7 +817,7 @@ function MarkdownDetails({
           />
           <span>{summary}</span>
         </CollapsibleTrigger>
-        <CollapsiblePanel ref={findRevealRef} hiddenUntilFound={searching}>
+        <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
           <div
             className="pb-3 ps-6 text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]"
             data-markdown-details-content=""
@@ -813,11 +830,6 @@ function MarkdownDetails({
   );
 }
 
-// SCIENT-FORK:START — the code block (frame, title, actions, Mermaid toggle and Shiki renderer)
-// lives in scient/presentation/MarkdownCodeBlock.tsx, CodeBlockActions.tsx and CodeBlockTitle.tsx;
-// rich fences render through scient/presentation/ScientRichFence.tsx.
-// SCIENT-FORK:END
-
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
   href: string;
@@ -827,8 +839,6 @@ interface MarkdownFileLinkProps {
   /** Workspace-relative path with line position; null outside the workspace. */
   relativeCopyPath: string | null;
   // SCIENT-FORK:END
-  /** What the files panel opens: workspace-relative inside the workspace, the
-      absolute host path outside it, null when the panel cannot show the file. */
   panelPath: string | null;
   line?: number | undefined;
   label: string;
@@ -841,8 +851,6 @@ interface MarkdownFileLinkProps {
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
-  /** Platform-specific menu label ("Reveal in Finder", ...); required for the
-      reveal item to show. */
   revealLabel?: string | undefined;
 }
 
@@ -858,14 +866,9 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
-// SCIENT-FORK:START — no favicon is fetched, so no failed hosts are remembered.
-// SCIENT-FORK:END
-
-/** Sites whose brand mark (drawn in `currentColor`) replaces the fetched favicon so it follows the theme. */
-function brandLinkIcon(host: string): typeof GitHubIcon | null {
+function isGitHubHost(host: string): boolean {
   const hostname = host.toLowerCase();
-  if (hostname === "github.com" || hostname.endsWith(".github.com")) return GitHubIcon;
-  return null;
+  return hostname === "github.com" || hostname.endsWith(".github.com");
 }
 
 // SCIENT-FORK:START — link icons are drawn locally; a fetched favicon would tell a third
@@ -877,7 +880,7 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
       aria-hidden
     >
       {/* Only the brand marks drawn here; any other brand falls back to the globe. */}
-      {brandLinkIcon(host) === GitHubIcon ? (
+      {isGitHubHost(host) ? (
         <GitHubIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
       ) : (
         <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
@@ -898,10 +901,6 @@ const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   "h-auto w-auto object-contain",
   CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME,
 );
-
-// SCIENT-FORK:START — image copy Markdown comes from scient/images/inlineWorkspaceImage.ts
-// (inlineWorkspaceImageMarkdownSource), which also wraps spaced destinations in <…>.
-// SCIENT-FORK:END
 
 /**
  * `maxHeightRem` folds a height cap into the width bound: `max-height` alone
@@ -963,23 +962,23 @@ function expandableMarkdownImageProps(
 function ChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
   readonly kind?: "image" | "video" | undefined;
+  readonly detail?: string | undefined;
 }) {
   const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
   return (
-    // Find indexes no image text, so this fallback must not highlight either.
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+      {[label, props.alt, props.detail].filter(Boolean).join(" · ")}
     </span>
   );
 }
 
-/** Inline chip for an image that sits in a line of text or can never load. */
 function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
   readonly kind?: "image" | "video";
   readonly actionsSource?: MediaActionSource | undefined;
+  readonly detail?: string | undefined;
 }) {
   const content = (
     <span
@@ -989,7 +988,7 @@ function ChatMarkdownImageFallback(props: {
         "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
       )}
     >
-      <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
+      <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} detail={props.detail} />
     </span>
   );
   return props.actionsSource ? (
@@ -1006,28 +1005,19 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 );
 
 /**
- * A standalone image holds a 16:9 slot (or its authored size) until it has
- * decoded, and keeps that slot if it fails, so a timeline row moves at most
- * once: when the natural size arrives. A bare `<img>` is zero height until
- * then. Once decoded the image renders bare again so its box, hit area, and
- * alignment are exactly the image's own. Inline images (badges, icons in a
- * sentence) skip the slot: a placeholder taller than the image would move the
- * page more than the image does.
- *
  * Callers key this on the file's identity, not its URL: a re-signed URL for
  * the same file keeps the decoded image on screen while the new bytes arrive,
  * and a different file starts from the slot again.
  */
 function ChatMarkdownImage(props: {
-  /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
+  readonly unavailableDetail?: string | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
-  /** Sanitized authored attributes (`id`, `align`, …) that fragment links and layout rely on. */
   readonly imageProps?:
     | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
     | undefined;
@@ -1039,22 +1029,18 @@ function ChatMarkdownImage(props: {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = props.src ?? loadedSrc;
   const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
-  // A failure forgets the decoded image so the next URL loads behind the slot.
   const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
   // Cached images are complete before `onLoad` can fire.
-  const markLoadedIfComplete = useCallback(
-    (image: HTMLImageElement | null) => {
-      if (!image) return;
-      if (image.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
-      markdownImageItems.set(image, {
-        src,
-        name: props.alt.trim() || "image",
-        actionsSource: props.actionsSource,
-        ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
-      });
-    },
-    [props.actionsSource, props.alt, props.originalUrl, src],
-  );
+  const markLoadedIfComplete = (image: HTMLImageElement | null) => {
+    if (!image) return;
+    if (image.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
+    markdownImageItems.set(image, {
+      src,
+      name: props.alt.trim() || "image",
+      actionsSource: props.actionsSource,
+      ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
+    });
+  };
   const imageEvents = (loadingSrc: string) => ({
     onLoad: () => {
       setLoadedSrc(loadingSrc);
@@ -1095,6 +1081,7 @@ function ChatMarkdownImage(props: {
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         actionsSource={props.actionsSource}
+        detail={props.unavailableDetail}
       />
     ) : (
       <span
@@ -1123,7 +1110,7 @@ function ChatMarkdownImage(props: {
       >
         {failed ? (
           <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
-            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
+            <ChatMarkdownMediaUnavailableLabel alt={props.alt} detail={props.unavailableDetail} />
           </span>
         ) : src !== null ? (
           <img
@@ -1176,7 +1163,6 @@ function ChatMarkdownVideo(props: {
   );
 }
 
-/** Environment-hosted media loads through an exact-file signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
@@ -1194,22 +1180,15 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly alt: string;
   readonly copyMarkdown?: string;
   readonly srcFragment?: string;
-  /** Reserve a slot while loading; off for images that share a line with text. */
   readonly standalone?: boolean | undefined;
-  /** Caps the box height in rem while keeping the image's ratio; 30 by default. */
   readonly maxHeightRem?: number | undefined;
   readonly style?: CSSProperties | undefined;
   readonly className?: string | undefined;
-  /** Sanitized authored attributes (`id`, `align`, …) that fragment links and layout rely on. */
   readonly imageProps?:
     | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
     | undefined;
-  /** Where the media also lives on the web, for the failure state's escape hatch. */
   readonly originalUrl?: string | undefined;
-  /** The workspace media frame, on by default; off for media that keeps the author's own box. */
   readonly framed?: boolean | undefined;
-  /** Loaded instead of the failure state when no URL can be signed, such as against a server
-      too old to know this resource. Only safe when the client can reach it directly. */
   readonly fallbackSrc?: string | undefined;
   // SCIENT-FORK:START — shown instead of the failure state, before any `fallbackSrc`
   readonly failureFallback?: ReactNode | undefined;
@@ -1259,9 +1238,6 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : fallbackSrc === undefined
         ? null
         : fallbackSrc + (props.srcFragment ?? "");
-  // The server reads the pixel size from the file header, so the slot can be
-  // the image's final box instead of a 16:9 guess. An authored size wins; a
-  // caller's height cap shrinks the box while keeping the ratio.
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
   const maxHeightRem = props.maxHeightRem ?? 30;
   const style =
@@ -1312,6 +1288,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      unavailableDetail={
+        assetUrl._tag === "Failure" &&
+        assetUrl.reason === "missing-file-access" &&
+        fallbackSrc === undefined
+          ? MISSING_FILE_ACCESS_MESSAGE
+          : undefined
+      }
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
@@ -1363,11 +1346,6 @@ function plainHastText(node: unknown): string | null {
   return parts.every((part) => part !== null) ? parts.join("") : null;
 }
 
-/**
- * The anchor's words, gathered through any nesting. A context label that picked up emphasis or a
- * code span still has to read as its label; `plainHastText` gives up on the first non-text child,
- * which would leave the raw context id showing in its place.
- */
 function hastPlainTextDeep(node: unknown): string {
   if (!node || typeof node !== "object") return "";
   if ("type" in node && node.type === "text" && "value" in node && typeof node.value === "string") {
@@ -1377,11 +1355,6 @@ function hastPlainTextDeep(node: unknown): string {
   return node.children.map(hastPlainTextDeep).join("");
 }
 
-/**
- * Whether the link carries any words of its own. An anchor that is only an image — a badge, a
- * "Fix in Cursor" button — already shows its identity, and a favicon bolted on in front of it
- * is a stray logo rather than a hint.
- */
 function hastHasText(node: unknown): boolean {
   if (!node || typeof node !== "object") return false;
   if (
@@ -1459,7 +1432,6 @@ type HeadingHastNode = {
   children?: HeadingHastNode[];
 };
 
-/** GitHub's heading anchor slug, so `[Setup](#setup)` table-of-contents links find their heading. */
 function githubHeadingSlug(text: string): string {
   return text
     .trim()
@@ -1469,14 +1441,11 @@ function githubHeadingSlug(text: string): string {
 }
 
 /**
- * Gives headings without an authored id GitHub's slug id, deduplicated per document. Like the
- * sanitizer's ids, they carry the `user-content-` prefix so they cannot clobber app element ids;
- * fragment lookup strips it.
+ * Like the sanitizer's ids, they carry the `user-content-` prefix so they cannot clobber app
+ * element ids; fragment lookup strips it.
  */
 function rehypeHeadingIds() {
   return (tree: HeadingHastNode) => {
-    // Every id already in the document, authored or assigned, so a suffix never
-    // lands on one that exists: `Setup`, `Setup`, `Setup-1` get three distinct ids.
     const taken = new Set<string>();
     const collect = (node: HeadingHastNode) => {
       const id = node.properties?.id;
@@ -1592,7 +1561,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onReveal,
   revealLabel,
 }: MarkdownFileLinkProps) {
-  const handleOpenInEditor = useCallback(() => {
+  const handleOpenInEditor = () => {
     if (!onOpen) {
       return;
     }
@@ -1628,9 +1597,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     })();
-  }, [onOpen, targetPath]);
+  };
 
-  const handleOpenInFilePreview = useCallback(() => {
+  const handleOpenInFilePreview = () => {
     if (threadRef && panelPath) {
       onOpenInPanel(panelPath, line);
       return;
@@ -1640,9 +1609,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
     handleOpenInEditor();
-  }, [handleOpenInEditor, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+  };
 
-  const handleOpenInBrowser = useCallback(() => {
+  const handleOpenInBrowser = () => {
     if (!onOpenInBrowser) {
       return;
     }
@@ -1684,11 +1653,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         // SCIENT-FORK:END
       }
     })();
-    // SCIENT-FORK:START — a file the browser cannot open falls back to its preview.
-  }, [handleOpenInFilePreview, onOpenInBrowser, targetPath]);
-  // SCIENT-FORK:END
+  };
 
-  const handleRevealInFileManager = useCallback(() => {
+  const handleRevealInFileManager = () => {
     if (!onReveal) {
       return;
     }
@@ -1724,121 +1691,95 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     })();
-  }, [onReveal, targetPath]);
+  };
 
   // SCIENT-FORK:START — path copies share Scient's file-path clipboard helper.
-  const handleCopy = useCallback(
-    (value: string, format: FilePathCopyFormat) => {
-      void copyFilePathToClipboard({
-        value,
-        format,
-        onError: (error) => {
-          reportMarkdownActionFailure(
-            {
-              operation: "copy-file-path",
-              target: targetPath,
-              copyTarget: filePathCopyTitle(format),
-            },
-            error,
-          );
-        },
-      });
-    },
-    [targetPath],
-  );
+  const handleCopy = (value: string, format: FilePathCopyFormat) => {
+    void copyFilePathToClipboard({
+      value,
+      format,
+      onError: (error) => {
+        reportMarkdownActionFailure(
+          {
+            operation: "copy-file-path",
+            target: targetPath,
+            copyTarget: filePathCopyTitle(format),
+          },
+          error,
+        );
+      },
+    });
+  };
   // SCIENT-FORK:END
 
-  const showFileContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
+  const showFileContextMenu = async (position: { x: number; y: number }) => {
+    const api = readLocalApi();
+    if (!api) return;
 
-      try {
-        const clicked = await api.contextMenu.show(
-          [
-            ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
-            ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
-            ...(onOpenInBrowser
-              ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
-              : []),
-            ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-            // SCIENT-FORK:START — no relative path outside the workspace.
-            ...(relativeCopyPath !== null
-              ? ([{ id: "copy-relative", label: "Copy relative path" }] as const)
-              : []),
-            // SCIENT-FORK:END
-            { id: "copy-full", label: "Copy full path" },
-          ] as const,
-          position,
-        );
+    try {
+      const clicked = await api.contextMenu.show(
+        [
+          ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
+          ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
+          ...(onOpenInBrowser
+            ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+            : []),
+          ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
+          // SCIENT-FORK:START — no relative path outside the workspace.
+          ...(relativeCopyPath !== null
+            ? ([{ id: "copy-relative", label: "Copy relative path" }] as const)
+            : []),
+          // SCIENT-FORK:END
+          { id: "copy-full", label: "Copy full path" },
+        ] as const,
+        position,
+      );
 
-        if (clicked === "preview-media") {
-          onOpenMedia?.();
-          return;
-        }
-        if (clicked === "open") {
-          handleOpenInEditor();
-          return;
-        }
-        if (clicked === "open-in-browser") {
-          handleOpenInBrowser();
-          return;
-        }
-        if (clicked === "reveal") {
-          handleRevealInFileManager();
-          return;
-        }
-        // SCIENT-FORK:START — the relative copy uses the workspace-relative path.
-        if (clicked === "copy-relative" && relativeCopyPath !== null) {
-          handleCopy(relativeCopyPath, "relative");
-          return;
-        }
-        if (clicked === "copy-full") {
-          handleCopy(targetPath, "full");
-        }
-        // SCIENT-FORK:END
-      } catch (cause) {
-        reportMarkdownActionFailure(
-          { operation: "show-file-context-menu", target: targetPath },
-          cause,
-        );
+      if (clicked === "preview-media") {
+        onOpenMedia?.();
+        return;
       }
-    },
-    [
+      if (clicked === "open") {
+        handleOpenInEditor();
+        return;
+      }
+      if (clicked === "open-in-browser") {
+        handleOpenInBrowser();
+        return;
+      }
+      if (clicked === "reveal") {
+        handleRevealInFileManager();
+        return;
+      }
       // SCIENT-FORK:START — the relative copy uses the workspace-relative path.
+      if (clicked === "copy-relative" && relativeCopyPath !== null) {
+        handleCopy(relativeCopyPath, "relative");
+        return;
+      }
+      if (clicked === "copy-full") {
+        handleCopy(targetPath, "full");
+      }
       // SCIENT-FORK:END
-      handleCopy,
-      handleOpenInBrowser,
-      handleOpenInEditor,
-      handleRevealInFileManager,
-      onOpenInBrowser,
-      onOpenMedia,
-      onOpen,
-      onReveal,
-      openInEditorMenuLabel,
-      // SCIENT-FORK:START — the relative copy uses the workspace-relative path.
-      relativeCopyPath,
-      // SCIENT-FORK:END
-      revealLabel,
-      targetPath,
-    ],
-  );
+    } catch (cause) {
+      reportMarkdownActionFailure(
+        { operation: "show-file-context-menu", target: targetPath },
+        cause,
+      );
+    }
+  };
 
-  const handleContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const position =
-        event.clientX === 0 && event.clientY === 0
-          ? (() => {
-              const bounds = event.currentTarget.getBoundingClientRect();
-              return { x: bounds.left, y: bounds.bottom };
-            })()
-          : { x: event.clientX, y: event.clientY };
-      void showFileContextMenu(position);
-    },
-    [showFileContextMenu],
-  );
+  const handleContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const position =
+      event.clientX === 0 && event.clientY === 0
+        ? (() => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            return { x: bounds.left, y: bounds.bottom };
+          })()
+        : { x: event.clientX, y: event.clientY };
+    void showFileContextMenu(position);
+  };
 
   const canOpenInEditor = onOpen !== undefined;
   const canOpenInBrowser = onOpenInBrowser !== undefined;
@@ -1910,8 +1851,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       />
       {/* SCIENT-FORK:START — a long path wraps within a bounded tooltip. */}
       <TooltipPopup side="top" variant="code" className="max-w-[min(40rem,calc(100vw-2rem))]">
-        {/* The full path: the chip already shows the shortened form, and a link
-            to the workspace root collapses to a bare label that repeats it. */}
         <div className="scient-file-link-tooltip overflow-x-auto leading-tight whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
           {/* SCIENT-FORK:END */}
           <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
@@ -1948,6 +1887,47 @@ function areMarkdownFileLinkPropsEqual(
     previous.revealLabel === next.revealLabel
   );
 }
+
+const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
+
+type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
+
+/** The server config fields markdown reads. */
+function markdownServerConfigFields(config: ServerConfig | null) {
+  return {
+    pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
+    availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
+    revealInFileManagerLabel:
+      config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
+        ? config.shellRevealInFileManagerKind === undefined
+          ? revealInFileExplorerLabelForOs(config.environment.platform.os)
+          : revealInFileExplorerLabelForKind(config.shellRevealInFileManagerKind)
+        : undefined,
+  };
+}
+
+function markdownServerConfigFieldsEqual(
+  previous: MarkdownServerConfigFields,
+  next: MarkdownServerConfigFields,
+): boolean {
+  return (
+    previous.pullRequestsEnabled === next.pullRequestsEnabled &&
+    previous.revealInFileManagerLabel === next.revealInFileManagerLabel &&
+    previous.availableEditors.length === next.availableEditors.length &&
+    previous.availableEditors.every((editor, index) => editor === next.availableEditors[index])
+  );
+}
+
+// The config object changes with every provider status push and snapshot. The
+// atom keeps its previous value while the fields markdown reads are equal, so
+// those pushes don't re-render every visible reply.
+const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) => {
+    const next = markdownServerConfigFields(get(serverEnvironment.configValueAtom(environmentId)));
+    const previous = Option.getOrNull(get.self<MarkdownServerConfigFields>());
+    return previous !== null && markdownServerConfigFieldsEqual(previous, next) ? previous : next;
+  }).pipe(Atom.withLabel("markdown-server-config-fields")),
+);
 
 function useChatMarkdownState({
   // SCIENT-FORK:START — math normalization keeps the authored text for Find.
@@ -1987,7 +1967,7 @@ function useChatMarkdownState({
   // (task-list toggling, list positions) stays correct on every surface. The
   // original text rides along so the refinement plugin can recover each
   // backslash pair's inline-versus-display intent after normalization.
-  const text = useScientMathMarkdownText(textProp);
+  const text = scientMathMarkdownText(textProp);
   // The message direction is held while an auto message streams.
   const { effectiveContentDirection, resolvedContentDirection } = useChatContentDirection({
     text,
@@ -1998,19 +1978,44 @@ function useChatMarkdownState({
   });
   // SCIENT-FORK:END
   const { resolvedTheme } = useTheme();
-  const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
   // SCIENT-FORK:START — a streaming answer is revealed line by line (chat/useStreamingBlockEntrance.ts).
   useStreamingBlockEntrance(markdownRef, isStreaming, messageId);
   // SCIENT-FORK:END
-  const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
-  useEffect(() => {
-    setLocalMediaPreview(null);
-    return () => {
+  // A preview opened from another thread or workspace never carries over.
+  const mediaScopeKey = [
+    threadRef?.environmentId,
+    threadRef?.threadId,
+    explicitEnvironmentId,
+    cwd,
+    imageBaseDir,
+  ].join("\u0000");
+  // Tagged with the scope it was opened in: a request from the previous scope can
+  // resolve before the effect cleanup below invalidates it, and must stay hidden.
+  const [localMedia, setLocalMedia] = useState<{
+    scope: string;
+    preview: ExpandedImagePreview;
+  } | null>(null);
+  const localMediaPreview = localMedia?.scope === mediaScopeKey ? localMedia.preview : null;
+  const closeLocalMediaPreview = () => setLocalMedia(null);
+  const expandMedia =
+    onImageExpand ??
+    ((preview: ExpandedImagePreview) => setLocalMedia({ scope: mediaScopeKey, preview }));
+  const [mediaScope, setMediaScope] = useState(mediaScopeKey);
+  if (mediaScope !== mediaScopeKey) {
+    setMediaScope(mediaScopeKey);
+    setLocalMedia(null);
+  }
+  // A layout cleanup runs in the commit that changes scope, so a request resolving
+  // before paint cannot reach a parent onImageExpand either.
+  useLayoutEffect(
+    () => () => {
       mediaRequestId.current += 1;
-    };
-  }, [threadRef?.environmentId, threadRef?.threadId, explicitEnvironmentId, cwd, imageBaseDir]);
+    },
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Leaving the scope invalidates media requests still loading for it.
+    [mediaScopeKey],
+  );
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -2035,98 +2040,92 @@ function useChatMarkdownState({
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
+  // SCIENT-FORK: the environment HTML preview uses the reactive connection.
   const preparedConnection = usePreparedConnection(environmentId);
-  const openMarkdownMedia = useCallback(
-    (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
-      const requestId = ++mediaRequestId.current;
-      void resolveMarkdownMediaPreview({
-        source,
-        resolvedFilePath,
-        cwd,
-        threadRef,
-        httpBaseUrl:
-          preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
-        createAssetUrl,
-        onOpenFile: threadRef
-          ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
-          : undefined,
-      }).then(
-        (preview) => {
-          if (preview && mediaRequestId.current === requestId) {
-            const selected = preview.images[preview.index];
-            expandMedia(
-              selected && selected.type !== "video" && markdownRef.current
-                ? markdownImageGallery(clickedImage ?? markdownRef.current, selected)
-                : preview,
-            );
-          }
-        },
-        (error: unknown) => {
-          if (mediaRequestId.current !== requestId) return;
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Media unavailable",
-              description:
-                error instanceof Error
-                  ? error.message
-                  : "The file could not be loaded. It may have been moved or deleted.",
-            }),
+  const openMarkdownMedia = (
+    source: string,
+    resolvedFilePath?: string,
+    clickedImage?: HTMLImageElement | null,
+  ) => {
+    const requestId = ++mediaRequestId.current;
+    void resolveMarkdownMediaPreview({
+      source,
+      resolvedFilePath,
+      cwd,
+      threadRef,
+      // Read at click time: a reconnect replaces the prepared connection, and
+      // subscribing would hand every rendered markdown element a new context.
+      httpBaseUrl:
+        environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
+      createAssetUrl,
+      onOpenFile: threadRef
+        ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
+        : undefined,
+    }).then(
+      (preview) => {
+        if (preview && mediaRequestId.current === requestId) {
+          const selected = preview.images[preview.index];
+          expandMedia(
+            selected && selected.type !== "video" && markdownRef.current
+              ? markdownImageGallery(clickedImage ?? markdownRef.current, selected)
+              : preview,
           );
-        },
-      );
-    },
-    [createAssetUrl, cwd, expandMedia, preparedConnection, threadRef],
+        }
+      },
+      (error: unknown) => {
+        if (mediaRequestId.current !== requestId) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Media unavailable",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The file could not be loaded. It may have been moved or deleted.",
+          }),
+        );
+      },
+    );
+  };
+  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel } = useAtomValue(
+    markdownServerConfigFieldsAtom(environmentId),
   );
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
-  const availableEditors = serverConfig?.availableEditors ?? [];
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
-  const revealInFileManagerLabel =
-    environmentId !== null &&
-    serverConfig?.shellRevealInFileManager === true &&
-    serverConfig.availableEditors.includes("file-manager")
-      ? serverConfig.shellRevealInFileManagerKind === undefined
-        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
-      : undefined;
-  const revealFileInFileManager = useCallback(
-    (filePath: string) => {
-      if (environmentId === null) {
-        return Promise.resolve(
-          AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
-            Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: filePath })),
-          ),
-        );
-      }
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-        return Promise.resolve(
-          AsyncResult.failure<void, Error>(
-            Cause.fail(new Error("This connection cannot reveal files on this environment.")),
-          ),
-        );
-      }
-      return openInEditor({
-        environmentId,
-        input: { cwd: filePath, editor: "file-manager", reveal: true },
-      });
-    },
-    [environmentId, openInEditor],
-  );
+  const revealFileInFileManager = (filePath: string) => {
+    if (environmentId === null) {
+      return Promise.resolve(
+        AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
+          Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: filePath })),
+        ),
+      );
+    }
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      return Promise.resolve(
+        AsyncResult.failure<void, Error>(
+          Cause.fail(new Error("This connection cannot reveal files on this environment.")),
+        ),
+      );
+    }
+    return openInEditor({
+      environmentId,
+      input: { cwd: filePath, editor: "file-manager", reveal: true },
+    });
+  };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   // SCIENT-FORK:START — links resolve against the editable workspace root and are looked up by
   // their lookup key (markdown-links.ts).
-  const markdownFileLinkMetaByHref = useMemo(() => {
+  const markdownFileLinkMetaByHref = (() => {
     const metaByHref = new Map<
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(text))) {
+    for (const href of extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))) {
       if (parseComposerContextHref(href)) continue;
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       const lookupKey = markdownLinkLookupKey(normalizedHref);
@@ -2142,8 +2141,8 @@ function useChatMarkdownState({
       }
     }
     return metaByHref;
-  }, [cwd, fileLinkWorkspaceRoot, imageBaseDir, text]);
-  const inlineCodeFileLinkMetaByText = useMemo(() => {
+  })();
+  const inlineCodeFileLinkMetaByText = (() => {
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
     for (const span of extractInlineCodeSpans(text)) {
       if (metaByText.has(span)) continue;
@@ -2158,16 +2157,16 @@ function useChatMarkdownState({
       }
     }
     return metaByText;
-  }, [cwd, fileLinkWorkspaceRoot, imageBaseDir, text]);
+  })();
   // SCIENT-FORK:END
-  const fileLinkParentSuffixByPath = useMemo(() => {
+  const fileLinkParentSuffixByPath = (() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
       ...[...inlineCodeFileLinkMetaByText.values()].map((meta) => meta.filePath),
     ];
     return buildFileLinkParentSuffixByPath(filePaths);
-  }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
-  const markdownUrlTransform = useCallback((href: string) => {
+  })();
+  const markdownUrlTransform = (href: string) => {
     // SCIENT-FORK:START — quotes from Markdown files are citations too.
     if (parseComposerCitationHref(href)) return href;
     // SCIENT-FORK:END
@@ -2177,10 +2176,8 @@ function useChatMarkdownState({
     // SCIENT-FORK:END
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  }, []);
-  // Re-emit highlighted content as markdown so copying out of the rendered
-  // view keeps links, emphasis, lists, and code fences intact.
-  const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+  };
+  const handleCopy = (event: ReactClipboardEvent<HTMLDivElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
     const payload = chatMarkdownClipboardPayload(selection);
@@ -2194,101 +2191,87 @@ function useChatMarkdownState({
         ? encodeComposerContextClipboardHtml(payload.text, fragment, payload.html)
         : payload.html,
     );
-  }, []);
+  };
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
-  const resolveThreadPullRequest = useCallback(
-    (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
-      if (
-        threadRef === undefined ||
-        readThreadShell(threadRef) === null ||
-        !pullRequestLinking.canLink(href)
-      )
-        return null;
-      const parsed = parseChangeRequestUrl(href);
-      return parsed === null ? null : { ...parsed, url: href };
-    },
-    [pullRequestLinking, threadRef],
-  );
-  const linkedThreadPullRequestFor = useCallback(
-    (href: string) => {
-      if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
-        return null;
-      const parsed = parseChangeRequestUrl(href);
-      return parsed === null ? null : { ...parsed, url: href };
-    },
-    [pullRequestLinking, threadRef],
-  );
-  const updateThreadPullRequestLink = useCallback(
-    async (href: string, linked: boolean) => {
-      if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
-      if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
-      await pullRequestLinking.changeLink(threadRef, href, linked);
-    },
-    [linkedThreadPullRequestFor, pullRequestLinking, threadRef],
-  );
-  const openExternalLinkInPreview = useCallback(
-    (url: string) => {
-      if (!threadRef || !canOperatePreview) {
-        return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-            Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Preview access is unavailable for this client.",
-              }),
-            ),
+  const resolveThreadPullRequest = (
+    href: string,
+  ): (ThreadPullRequestKey & { readonly url: string }) | null => {
+    if (
+      threadRef === undefined ||
+      readThreadShell(threadRef) === null ||
+      !pullRequestLinking.canLink(href)
+    )
+      return null;
+    const parsed = parseChangeRequestUrl(href);
+    return parsed === null ? null : { ...parsed, url: href };
+  };
+  const linkedThreadPullRequestFor = (href: string) => {
+    if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
+      return null;
+    const parsed = parseChangeRequestUrl(href);
+    return parsed === null ? null : { ...parsed, url: href };
+  };
+  const updateThreadPullRequestLink = async (href: string, linked: boolean) => {
+    if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
+    if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
+    await pullRequestLinking.changeLink(threadRef, href, linked);
+  };
+  const openExternalLinkInPreview = (url: string) => {
+    if (!threadRef || !canOperatePreview) {
+      return Promise.resolve(
+        AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+          Cause.fail(
+            new BrowserPreviewUnavailableError({
+              message: "Preview access is unavailable for this client.",
+            }),
           ),
-        );
-      }
-      return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
-        if (result._tag === "Success") recordVisitForThread(threadRef, url);
-        else if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          if (error instanceof BrowserSettingsReadError) {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Unable to open link in browser",
-                description: error.message,
-              }),
-            );
-          }
+        ),
+      );
+    }
+    return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
+      if (result._tag === "Success") recordVisitForThread(threadRef, url);
+      else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        if (error instanceof BrowserSettingsReadError) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open link in browser",
+              description: error.message,
+            }),
+          );
         }
-        return result;
-      });
-    },
-    [canOperatePreview, openPreview, threadRef],
-  );
-  const openMarkdownFileInPreview = useCallback(
-    (path: string) => {
-      // SCIENT-FORK:START — the file preview needs the workspace root.
-      if (!threadRef || !cwd || !canOperatePreview || preparedConnection._tag === "None") {
-        // SCIENT-FORK:END
-        return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-            Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Environment is not connected.",
-              }),
-            ),
-          ),
-        );
       }
-      return openFileInPreview({
-        threadRef,
-        filePath: path,
-        workspaceRoot: cwd,
-        httpBaseUrl: preparedConnection.value.httpBaseUrl,
-        createAssetUrl,
-        openPreview,
-      });
-    },
-    [canOperatePreview, createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
-  );
+      return result;
+    });
+  };
+  const openMarkdownFileInPreview = (path: string) => {
+    const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
+    if (!threadRef || !cwd || !canOperatePreview || preparedConnection === null) {
+      return Promise.resolve(
+        AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+          Cause.fail(
+            new BrowserPreviewUnavailableError({
+              message: "Environment is not connected.",
+            }),
+          ),
+        ),
+      );
+    }
+    return openFileInPreview({
+      threadRef,
+      filePath: path,
+      workspaceRoot: cwd,
+      httpBaseUrl: preparedConnection.httpBaseUrl,
+      createAssetUrl,
+      openPreview,
+    });
+  };
   // SCIENT-FORK:START — pages outside the workspace open in the integrated browser
   const openEnvironmentHtmlInPreview = useChatEnvironmentHtmlPreview({
     threadRef,
@@ -2297,31 +2280,28 @@ function useChatMarkdownState({
     openPreview,
   });
   // SCIENT-FORK:END
-  const findWorkspaceBasenameMatch = useCallback(
-    async (workspaceRelativePath: string) => {
-      if (
-        !cwd ||
-        environmentId === null ||
-        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-        !needsWorkspaceBasenameLookup(workspaceRelativePath)
-      ) {
-        return null;
-      }
-      const result = await searchProjectEntries({
-        environmentId,
-        input: {
-          cwd,
-          query: workspaceRelativePath,
-          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-          kind: "file",
-        },
-      });
-      return result._tag === "Success"
-        ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-        : null;
-    },
-    [cwd, environmentId, searchProjectEntries],
-  );
+  const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
+    if (
+      !cwd ||
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
+      !needsWorkspaceBasenameLookup(workspaceRelativePath)
+    ) {
+      return null;
+    }
+    const result = await searchProjectEntries({
+      environmentId,
+      input: {
+        cwd,
+        query: workspaceRelativePath,
+        limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+        kind: "file",
+      },
+    });
+    return result._tag === "Success"
+      ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
+      : null;
+  };
   // SCIENT-FORK:START — every file link asks the environment what it means
   const {
     openFileInPanel,
@@ -2339,205 +2319,137 @@ function useChatMarkdownState({
     openEnvironmentHtmlInPreview,
   });
   // SCIENT-FORK:END
-  const revealMarkdownFileInFileManager = useCallback(
-    async (fileLinkMeta: MarkdownFileLinkMeta) => {
-      const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-      const match = workspaceRelativePath
-        ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-        : null;
-      const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-      return revealFileInFileManager(filePath);
-    },
-    [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
-  );
-  const fileLinkChip = useCallback(
-    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
-      // SCIENT-FORK:START — HTML opens in the browser by its workspace-relative path.
-      const browserRelativePath = fileLinkMeta.workspaceRelativePath;
-      // SCIENT-FORK:END
-      const mediaPath = mediaSource ?? fileLinkMeta.filePath;
-      const canPreviewMedia =
-        mediaMimeTypeFromExtension(
-          fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
-        ) !== null;
-      // Media outside the workspace keeps the expanded preview; other host
-      // files (a report in a temp dir) open read-only in the files panel.
-      // SCIENT-FORK:START — home-relative links (`~/…`) are resolved by the environment.
-      // A home-relative link is handed over as authored: only the machine
-      // that owns the files knows where its home folder is.
-      // Home-relative media has no panel path of its own: it goes through
-      // the media action, which asks the same way.
-      const homeRelativePath = fileLinkMeta.homeRelativePath;
-      const panelPath =
-        homeRelativePath !== undefined
-          ? canPreviewMedia
-            ? null
-            : homeRelativePath
-          : (fileLinkMeta.workspaceRelativePath ??
-            (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)
-              ? fileLinkMeta.filePath
-              : null));
-      // SCIENT-FORK:END
+  const revealMarkdownFileInFileManager = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
+    const match = workspaceRelativePath
+      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
+      : null;
+    const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
+    return revealFileInFileManager(filePath);
+  };
+  const fileLinkChip = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    copyMarkdown: string,
+    mediaSource?: string,
+  ) => {
+    // SCIENT-FORK:START — HTML opens in the browser by its workspace-relative path.
+    const browserRelativePath = fileLinkMeta.workspaceRelativePath;
+    // SCIENT-FORK:END
+    const mediaPath = mediaSource ?? fileLinkMeta.filePath;
+    const canPreviewMedia =
+      mediaMimeTypeFromExtension(
+        fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
+      ) !== null;
+    // SCIENT-FORK:START — home-relative links (`~/…`) are resolved by the environment.
+    // A home-relative link is handed over as authored: only the machine
+    // that owns the files knows where its home folder is.
+    // Home-relative media has no panel path of its own: it goes through
+    // the media action, which asks the same way.
+    const homeRelativePath = fileLinkMeta.homeRelativePath;
+    const panelPath =
+      homeRelativePath !== undefined
+        ? canPreviewMedia
+          ? null
+          : homeRelativePath
+        : (fileLinkMeta.workspaceRelativePath ??
+          (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)
+            ? fileLinkMeta.filePath
+            : null));
+    // SCIENT-FORK:END
 
-      return (
-        <MarkdownFileLink
-          environmentId={environmentId}
-          href={fileLinkMeta.targetPath}
-          targetPath={fileLinkMeta.targetPath}
-          iconPath={fileLinkMeta.filePath}
-          // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path.
-          relativeCopyPath={markdownFileLinkRelativeCopyPath(fileLinkMeta)}
-          // SCIENT-FORK:END
-          panelPath={panelPath}
-          line={fileLinkMeta.line}
-          label={fileLinkLabel(
-            {
-              path: fileLinkMeta.filePath,
-              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            },
-            fileLinkParentSuffixByPath,
-          )}
-          copyMarkdown={copyMarkdown}
-          theme={resolvedTheme}
-          threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
-          // SCIENT-FORK:START — every file link asks the environment what it means.
-          onOpenInPanel={
-            homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel
-          }
-          onOpenMedia={
-            threadRef && canPreviewMedia
-              ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)
-              : undefined
-          }
-          // SCIENT-FORK:END
-          openInEditorMenuLabel={preferredEditorMenuLabel}
-          onReveal={
-            canUseShellActions && revealInFileManagerLabel !== undefined
-              ? () => revealMarkdownFileInFileManager(fileLinkMeta)
-              : undefined
-          }
-          revealLabel={revealInFileManagerLabel}
-          // SCIENT-FORK:START — the browser target follows the canonical workspace-file policy;
-          // pages outside the workspace open through the environment.
-          onOpenInBrowser={
-            threadRef &&
-            canOperatePreview &&
-            isPreviewAvailableFor(threadRef.environmentId) &&
-            resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
-              ? () =>
-                  openHtmlLinkInBrowser(
-                    fileLinkMeta.filePath,
-                    browserRelativePath,
-                    homeRelativePath,
-                  )
-              : undefined
-          }
-          // SCIENT-FORK:END
-        />
-      );
-    },
-    [
-      canUseShellActions,
-      canOperatePreview,
-      environmentId,
-      fileLinkParentSuffixByPath,
-      openFileInPanel,
-      // SCIENT-FORK:START — every file link asks the environment what it means.
-      openHomeRelativeLinkInPanel,
-      openHtmlLinkInBrowser,
-      openInPreferredEditor,
-      openMarkdownMediaLink,
-      // SCIENT-FORK:END
-      preferredEditorMenuLabel,
-      resolvedTheme,
-      revealInFileManagerLabel,
-      revealMarkdownFileInFileManager,
-      threadRef,
-    ],
-  );
+    return (
+      <MarkdownFileLink
+        environmentId={environmentId}
+        href={fileLinkMeta.targetPath}
+        targetPath={fileLinkMeta.targetPath}
+        iconPath={fileLinkMeta.filePath}
+        // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path.
+        relativeCopyPath={markdownFileLinkRelativeCopyPath(fileLinkMeta)}
+        // SCIENT-FORK:END
+        panelPath={panelPath}
+        line={fileLinkMeta.line}
+        label={fileLinkLabel(
+          {
+            path: fileLinkMeta.filePath,
+            ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+            ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+          },
+          fileLinkParentSuffixByPath,
+        )}
+        copyMarkdown={copyMarkdown}
+        theme={resolvedTheme}
+        threadRef={threadRef}
+        {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+        // SCIENT-FORK:START — every file link asks the environment what it means.
+        onOpenInPanel={
+          homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel
+        }
+        onOpenMedia={
+          threadRef && canPreviewMedia
+            ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)
+            : undefined
+        }
+        // SCIENT-FORK:END
+        openInEditorMenuLabel={preferredEditorMenuLabel}
+        onReveal={
+          canUseShellActions && revealInFileManagerLabel !== undefined
+            ? () => revealMarkdownFileInFileManager(fileLinkMeta)
+            : undefined
+        }
+        revealLabel={revealInFileManagerLabel}
+        // SCIENT-FORK:START — the browser target follows the canonical workspace-file policy;
+        // pages outside the workspace open through the environment.
+        onOpenInBrowser={
+          threadRef &&
+          canOperatePreview &&
+          isPreviewAvailableFor(threadRef.environmentId) &&
+          resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
+            ? () =>
+                openHtmlLinkInBrowser(fileLinkMeta.filePath, browserRelativePath, homeRelativePath)
+            : undefined
+        }
+        // SCIENT-FORK:END
+      />
+    );
+  };
 
-  const componentState = useMemo(
-    () => ({
-      canOperateHost,
-      canOperatePreview,
-      cwd,
-      diffThemeName,
-      environmentId,
-      expandMedia,
-      fileLinkChip,
-      githubMedia,
-      renderContextReference,
-      headingLevelOffset,
-      imageBaseDir,
-      inlineCodeFileLinkMetaByText,
-      isStreaming,
-      linkTargetPreference,
-      markdownFileLinkMetaByHref,
-      onTaskListChange,
-      onUseArtifactTemplate,
-      onRunShellCommand,
-      openChangeRequestLink,
-      openDeferredMarkdownLink,
-      openExternalLinkInPreview,
-      openMarkdownMedia,
-      projects,
-      linkedThreadPullRequestFor,
-      resolveThreadPullRequest,
-      resolvedTheme,
-      serverConfig,
-      skills,
-      text,
-      threadRef,
-      updateThreadPullRequestLink,
-      // SCIENT-FORK:START — file-link root, image captions, direction and authored math text.
-      fileLinkWorkspaceRoot,
-      imageCaptions,
-      resolvedContentDirection,
-      authoredMathText: textProp,
-      // SCIENT-FORK:END
-    }),
-    [
-      canOperateHost,
-      canOperatePreview,
-      cwd,
-      diffThemeName,
-      environmentId,
-      expandMedia,
-      fileLinkChip,
-      githubMedia,
-      renderContextReference,
-      headingLevelOffset,
-      imageBaseDir,
-      inlineCodeFileLinkMetaByText,
-      isStreaming,
-      linkTargetPreference,
-      markdownFileLinkMetaByHref,
-      onTaskListChange,
-      onUseArtifactTemplate,
-      onRunShellCommand,
-      openChangeRequestLink,
-      openDeferredMarkdownLink,
-      openExternalLinkInPreview,
-      openMarkdownMedia,
-      projects,
-      linkedThreadPullRequestFor,
-      resolveThreadPullRequest,
-      resolvedTheme,
-      serverConfig,
-      skills,
-      text,
-      threadRef,
-      updateThreadPullRequestLink,
-      // SCIENT-FORK:START — file-link root, image captions, direction and authored math text.
-      fileLinkWorkspaceRoot,
-      imageCaptions,
-      resolvedContentDirection,
-      textProp,
-      // SCIENT-FORK:END
-    ],
-  );
+  const componentState = (() => ({
+    canOperateHost,
+    canOperatePreview,
+    cwd,
+    diffThemeName,
+    environmentId,
+    expandMedia,
+    fileLinkChip,
+    githubMedia,
+    renderContextReference,
+    headingLevelOffset,
+    imageBaseDir,
+    inlineCodeFileLinkMetaByText,
+    isStreaming,
+    linkTargetPreference,
+    markdownFileLinkMetaByHref,
+    onTaskListChange,
+    onUseArtifactTemplate,
+    onRunShellCommand,
+    openChangeRequestLink,
+    openDeferredMarkdownLink,
+    openExternalLinkInPreview,
+    openMarkdownMedia,
+    projects,
+    linkedThreadPullRequestFor,
+    resolveThreadPullRequest,
+    resolvedTheme,
+    pullRequestsEnabled,
+    skills,
+    threadRef,
+    updateThreadPullRequestLink,
+    // SCIENT-FORK:START — file-link root, image captions and direction.
+    fileLinkWorkspaceRoot,
+    imageCaptions,
+    resolvedContentDirection,
+    // SCIENT-FORK:END
+  }))();
   return {
     componentState,
     // SCIENT-FORK:START — math-normalized text and the message direction.
@@ -2549,7 +2461,7 @@ function useChatMarkdownState({
     markdownRef,
     markdownUrlTransform,
     localMediaPreview,
-    setLocalMediaPreview,
+    closeLocalMediaPreview,
   };
 }
 
@@ -2557,9 +2469,10 @@ const ChatMarkdownRendererContext = React.createContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
 >(null!);
 
-// Screen readers take a heading's level from its tag, which would let a `#` in a
-// message outrank the heading placed above it. Override only the exposed level:
-// the tag keeps driving the stylesheet and copy-as-markdown.
+// The markdown source changes on every streamed delta. Only the renderers that
+// slice it by node offset read it, so it sits apart from the renderer context.
+const ChatMarkdownTextContext = React.createContext("");
+
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
@@ -2604,8 +2517,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
-    // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
-    // text under a colored title — which is how the host renders it.
     return (
       <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
         <p
@@ -2629,18 +2540,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { text, skills } = use(ChatMarkdownRendererContext);
-    const listItemStart = node?.position?.start.offset;
-    const markerOffset =
-      typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+    const { skills } = use(ChatMarkdownRendererContext);
+    // The checkbox finds its marker from this offset when toggled, so list items
+    // don't read the source text and re-render on every streamed token.
+    // remark-gfm marks task items with this class; plain items carry no offset.
+    const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
   },
   input: function MarkdownInput({ node: _node, type, checked, disabled: _disabled, ...props }) {
     const { onTaskListChange } = use(ChatMarkdownRendererContext);
+    const text = use(ChatMarkdownTextContext);
     if (type !== "checkbox" || !onTaskListChange) {
       return (
         <input
@@ -2660,8 +2573,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
         aria-label="Toggle task"
         checked={checked}
         onChange={(event) => {
-          const markerOffset = Number(event.currentTarget.closest("li")?.dataset.taskMarkerOffset);
-          if (!Number.isSafeInteger(markerOffset)) return;
+          const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
+          if (!Number.isSafeInteger(listItemStart)) return;
+          const markerOffset = findTaskListMarkerOffset(text, listItemStart);
+          if (markerOffset === null) return;
           onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
         }}
       />
@@ -2684,15 +2599,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
       projects,
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
-      serverConfig,
+      pullRequestsEnabled,
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
-      text,
       // SCIENT-FORK:START — file links resolve against the editable workspace root.
       fileLinkWorkspaceRoot,
       // SCIENT-FORK:END
     } = use(ChatMarkdownRendererContext);
+    const text = use(ChatMarkdownTextContext);
     // SCIENT-FORK:START — quotes from Markdown files are citations too.
     const citation = href ? parseComposerCitationHref(href) : null;
     // SCIENT-FORK:END
@@ -2757,7 +2672,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         ? resolvePullRequestPreviewTarget({
             environmentId,
             projects,
-            pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
+            pullRequestsEnabled,
             url: pullRequestCandidateUrl,
           })
         : null;
@@ -2802,19 +2717,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
               );
               return;
             }
-            // A link to a change request in a workspace project opens beside the
-            // conversation instead of in a browser: it is the thing being talked about, and
-            // the panel it opens offers the browser as one of its actions.
             if (
               !href ||
               openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
             ) {
               return;
             }
-            // Anything else follows the "Open links in" setting. The system browser
-            // keeps the `_blank` the shell already handles; the in-app browser needs
-            // the click intercepted here. A modifier click is the way out of the
-            // in-app default, so it is left to the shell too.
             if (event.defaultPrevented) return;
             if (
               resolveLinkTarget({
@@ -2843,7 +2751,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
             }
             event.preventDefault();
             event.stopPropagation();
-            // Keep the link here if saved settings could not be read.
             void openExternalLinkInPreview(href).then((result) => {
               if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
               reportMarkdownActionFailure(
@@ -2968,7 +2875,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    // SCIENT-FORK:START — file-link root, and math streaming state and authored source.
+    // SCIENT-FORK:START — file-link root, and math streaming state.
     const {
       cwd,
       imageBaseDir,
@@ -2976,11 +2883,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       fileLinkWorkspaceRoot,
       isStreaming,
-      authoredMathText,
     } = use(ChatMarkdownRendererContext);
     // SCIENT-FORK:END
     // SCIENT-FORK:START — retain scientific inline math while Find reveals authored source.
     if (isScientMathCodeClassName(className)) {
+      // Read only by math, so other inline code does not re-render on streamed tokens.
+      const authoredMathText = use(ScientAuthoredMathTextContext);
       const tex = nodeToPlainText(children);
       return (
         <ScientMathFindSurface sourceText={authoredMathNodeSource(node, authoredMathText, tex)}>
@@ -3119,11 +3027,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           imageProps={imageProps}
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
-          // A pull request body draws its own boxes; keep the author's, not the workspace frame.
           framed={false}
-          // A server too old to sign this resource, or one with no route to GitHub, still leaves
-          // the public half of these working exactly as it did before. The canonical URL, not the
-          // authored one: a `blob` link addresses the page, and only the raw host has the bytes.
           // SCIENT-FORK:START — the direct fallback is gated: an unsignable web asset becomes the
           // link card instead of a direct fetch.
           fallbackSrc={remoteImageReference === null ? githubMediaUrl : undefined}
@@ -3234,23 +3138,23 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    // SCIENT-FORK:START — direction and authored math source; Mermaid's expandMedia is unused.
+    // SCIENT-FORK:START — direction; Mermaid's expandMedia is unused.
     const {
       resolvedTheme,
       diffThemeName,
       isStreaming,
       onRunShellCommand,
-      text,
       resolvedContentDirection,
-      authoredMathText,
     } = use(ChatMarkdownRendererContext);
     // SCIENT-FORK:END
+    const text = use(ChatMarkdownTextContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
     // SCIENT-FORK:START — retain scientific display math while Find reveals authored source.
     if (isScientMathCodeClassName(codeBlock.className)) {
+      const authoredMathText = use(ScientAuthoredMathTextContext);
       return (
         <ScientMathFindSurface
           sourceText={authoredMathNodeSource(node, authoredMathText, codeBlock.code)}
@@ -3345,27 +3249,21 @@ function ChatMarkdown({
     markdownRef,
     markdownUrlTransform,
     localMediaPreview,
-    setLocalMediaPreview,
+    closeLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
-  const remarkPlugins = useMemo(
-    () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
-      ...extraRemarkPlugins,
-      ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
-    ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
-  );
+  const remarkPlugins = (() => [
+    ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+    ...extraRemarkPlugins,
+    ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
+  ])();
   // SCIENT-FORK:START — the math refinements recover authored intent from the original text.
-  const scientRemarkPlugins = useScientMathRemarkPlugins(remarkPlugins, text);
+  const scientRemarkPlugins = scientMathRemarkPluginsForMessage(remarkPlugins, text);
   // SCIENT-FORK:END
 
-  // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
-  // Keep that behavior explicit because literal mode depends on escaping the
-  // complete source token instead of dropping it from the rendered message.
   return (
     <div
       ref={markdownRef}
@@ -3377,41 +3275,45 @@ function ChatMarkdown({
       dir={resolvedContentDirection}
       data-scient-content-direction={resolvedContentDirection}
       // SCIENT-FORK:END
-      // Gates the fade-in for blocks that arrive while the response streams.
       data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <ReactMarkdown
-          // SCIENT-FORK:START — math refinements, and the message direction after the pipeline.
-          remarkPlugins={scientRemarkPlugins}
-          rehypePlugins={[
-            ...(parseRawHtml
-              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
-            [
-              rehypeScientBidi,
-              {
-                direction: resolvedContentDirection,
-                requestedDirection: effectiveContentDirection,
-              },
-            ],
-          ]}
-          // SCIENT-FORK:END
-          skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
-          urlTransform={markdownUrlTransform}
-        >
-          {/* SCIENT-FORK:START — math delimiters are normalized length-preservingly. */}
-          {markdownText}
+        <ChatMarkdownTextContext value={markdownText}>
+          {/* SCIENT-FORK:START — math nodes read the authored source; it changes per streamed token. */}
+          <ScientAuthoredMathTextContext value={text}>
+            {/* SCIENT-FORK:END */}
+            <ReactMarkdown
+              // SCIENT-FORK:START — math refinements, and the message direction after the pipeline.
+              remarkPlugins={scientRemarkPlugins}
+              rehypePlugins={[
+                ...(parseRawHtml
+                  ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
+                [
+                  rehypeScientBidi,
+                  {
+                    direction: resolvedContentDirection,
+                    requestedDirection: effectiveContentDirection,
+                  },
+                ],
+              ]}
+              // SCIENT-FORK:END
+              skipHtml={false}
+              components={CHAT_MARKDOWN_COMPONENTS}
+              urlTransform={markdownUrlTransform}
+            >
+              {/* SCIENT-FORK:START — math delimiters are normalized length-preservingly. */}
+              {markdownText}
+              {/* SCIENT-FORK:END */}
+            </ReactMarkdown>
+            {/* SCIENT-FORK:START */}
+          </ScientAuthoredMathTextContext>
           {/* SCIENT-FORK:END */}
-        </ReactMarkdown>
+        </ChatMarkdownTextContext>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
-        <ExpandedImageDialog
-          preview={localMediaPreview}
-          onClose={() => setLocalMediaPreview(null)}
-        />
+        <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />
       ) : null}
     </div>
   );

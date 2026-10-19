@@ -87,28 +87,30 @@ vi.mock("@legendapp/list/reanimated", () => ({
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("expo-haptics", () => ({ selectionAsync: vi.fn() }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: () => null }));
-vi.mock("../../components/AppText", () => ({
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
-vi.mock("../../components/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
-vi.mock("../../components/AndroidAnchoredMenu", () => ({ AndroidAnchoredMenu: () => null }));
-vi.mock("../../components/MaterialButton", () => ({ MaterialButton: () => null }));
-vi.mock("../../components/MaterialIconButton", () => ({ MaterialIconButton: () => null }));
-vi.mock("../../components/MaterialScreenContent", () => ({
-  MaterialScreenContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
+vi.mock("../../components/ui/AndroidAnchoredMenu", () => ({ AndroidAnchoredMenu: () => null }));
+vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
+vi.mock("../../components/ui/IconButton", () => ({ IconButton: () => null }));
+vi.mock("../../components/ui/ScreenContent", () => ({
+  ScreenContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
-vi.mock("../../components/ThemedSwitch", () => ({ ThemedSwitch: () => null }));
-vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
-vi.mock("../../native/native-glass", () => ({ NATIVE_LIQUID_GLASS_SUPPORTED: false }));
-vi.mock("../../native/StackHeader", () => ({
-  NativeHeaderToolbar: Object.assign(() => null, {
+vi.mock("../../components/ui/Toolbar", () => ({
+  Toolbar: Object.assign(() => null, {
     Button: () => null,
     Menu: () => null,
     Label: () => null,
     MenuAction: () => null,
   }),
+}));
+vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
+vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: () => null }));
+vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
+vi.mock("../../native/native-glass", () => ({ NATIVE_LIQUID_GLASS_SUPPORTED: false }));
+vi.mock("../../native/StackHeader", () => ({
   NativeStackScreenOptions: () => null,
   nativeHeaderScrollEdgeEffects: () => undefined,
 }));

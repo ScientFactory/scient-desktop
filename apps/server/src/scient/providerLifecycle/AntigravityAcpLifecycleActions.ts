@@ -23,8 +23,10 @@ import type { AntigravityInstallation } from "../../provider/AntigravityInstalla
 import { resolveAntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import type { AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "./antigravityAcpCatalog.ts";
+import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
+import { ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE } from "./antigravityAuthDiagnostics.ts";
 
 function isTerminalAuthPhase(
   phase: ProviderAuthState["phase"],
@@ -44,22 +46,24 @@ const failure = (message: string, cause?: unknown) =>
     ...(cause === undefined ? {} : { cause }),
   });
 
+export const ANTIGRAVITY_STARTING_MESSAGE = "Antigravity can take up to a minute to start.";
+
 export function antigravityConnectionMethod(method: AntigravityAuthMethod) {
   return antigravityAuthUsesBrowser(method)
     ? ("antigravity_google" as const)
     : ("antigravity_credentials" as const);
 }
 
-function authFailureMessage(state: {
-  readonly phase: string;
-  readonly message: string | null;
-}): string {
-  return (
+function authFailure(state: { readonly phase: string; readonly message: string | null }) {
+  const message =
     state.message?.trim() ||
     (state.phase === "cancelled"
       ? "Antigravity sign-in was cancelled."
-      : "Antigravity sign-in did not finish.")
-  );
+      : "Antigravity sign-in did not finish.");
+  return new ProviderConnectionActionError({
+    message,
+    ...(message === ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE ? { afterSignIn: true } : {}),
+  });
 }
 
 /** Expose the official ACP auth controller through Scient's compact lifecycle UI. */
@@ -79,6 +83,7 @@ export function makeAntigravityConnectionActionsFromController(input: {
     );
   return {
     methods: [antigravityConnectionMethod(input.authMethod)],
+    startingMessage: ANTIGRAVITY_STARTING_MESSAGE,
     start: (method) =>
       Effect.gen(function* () {
         if (method !== antigravityConnectionMethod(input.authMethod)) {
@@ -110,7 +115,7 @@ export function makeAntigravityConnectionActionsFromController(input: {
               )
             : started;
         if (isTerminalAuthPhase(initial.phase) && initial.phase !== "succeeded") {
-          return yield* failure(authFailureMessage(initial));
+          return yield* authFailure(initial);
         }
         const flowId = initial.flowId ?? started.flowId;
         if (!flowId) {
@@ -123,9 +128,7 @@ export function makeAntigravityConnectionActionsFromController(input: {
             Option.match({
               onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
               onSome: (state) =>
-                state.phase === "succeeded"
-                  ? Effect.void
-                  : Effect.fail(failure(authFailureMessage(state))),
+                state.phase === "succeeded" ? Effect.void : Effect.fail(authFailure(state)),
             }),
           ),
         );
@@ -204,6 +207,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
     .pipe(Effect.option);
 
   const getSummary: ProviderManagedRuntimeActions["getSummary"] = Effect.gen(function* () {
+    const catalog = yield* (yield* ManagedRuntimeCatalog).freshness;
     const asset = yield* input.installation.latestRelease;
     const state = yield* input.installation.state;
     const resolution = yield* readResolution;
@@ -270,6 +274,9 @@ export function makeAntigravityManagedRuntimeActions(input: {
       managedVersion: state.installedVersion,
       availableManagedVersion: updateAvailable ? (asset?.registryVersion ?? null) : null,
       previousManagedVersion: null,
+      // No `qualifiedVersion`: the installed executable and its registry
+      // release are numbered differently, so "Up to date" is never claimed.
+      catalog,
       operation: null,
       message,
       diagnostics: {

@@ -234,6 +234,11 @@ function makeCodexReplayTranscript(input: {
   };
 }
 
+// A provider turn's terminal event lands before the run's final write, which
+// enqueues its checkpoint effect; drain only once the run has left `running`.
+const providerTurnSettled =
+  (status: "completed" | "interrupted") => (p: OrchestrationV2ThreadProjection) =>
+    p.providerTurns.some((turn) => turn.status === status) && p.runs[0]?.status !== "running";
 const waitFor = Effect.fnUntraced(function* (
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -642,9 +647,7 @@ it.live(
             yield* fs.remove(sourcePath);
 
             gate.release("after-running-fork");
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "completed"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("completed"));
             yield* Fiber.join(starting);
             yield* worker.drain(12);
             const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");

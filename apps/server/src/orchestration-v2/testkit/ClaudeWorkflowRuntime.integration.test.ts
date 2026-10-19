@@ -60,6 +60,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           open: () =>
             Effect.succeed({
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+              backgroundTasks: () => Effect.succeed(false),
               setPermissionMode: () =>
                 Effect.die("Permission-mode mutation is outside this fixture."),
               messages: Stream.fromQueue(messages),
@@ -73,6 +74,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
                   }),
                 ).pipe(Effect.andThen(Deferred.succeed(offered, undefined)), Effect.asVoid),
               setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
               interrupt: Effect.void,
               close: Queue.shutdown(messages),
             }),
@@ -109,6 +111,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           },
         });
         const waitForProjection = Effect.fnUntraced(function* (
+          threadId: ThreadId,
           predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
         ) {
           // Capture a durable cursor before reading SQL. Replay plus the subscribed
@@ -243,25 +246,38 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           }),
         ]);
         const settled = yield* waitForProjection(
+          threadId,
           (projection) =>
             projection.runs.at(-1)?.status === "completed" &&
-            projection.subagents.some((member) => member.presentation?.kind === "workflow_agent"),
+            projection.subagents.some((coordinator) => coordinator.workflow?.agents.length === 1),
         );
-        const member = settled.subagents.find(
+        const coordinator = settled.subagents.find(
+          (candidate) => candidate.presentation?.kind === "workflow",
+        );
+        assert.isDefined(coordinator);
+        const coordinatorThreadId = coordinator?.childThreadId;
+        if (coordinatorThreadId == null) return yield* Effect.die("Missing coordinator thread.");
+        const members = yield* waitForProjection(coordinatorThreadId, (projection) =>
+          projection.subagents.some(
+            (candidate) => candidate.presentation?.kind === "workflow_agent",
+          ),
+        );
+        const member = members.subagents.find(
           (candidate) => candidate.presentation?.kind === "workflow_agent",
         );
         assert.isDefined(member);
         assert.equal(member?.title, "Agent 1");
-        assert.isEmpty(
-          settled.subagents.find((candidate) => candidate.presentation?.kind === "workflow")
-            ?.workflow?.agents ?? [],
+        // The member streams into its own thread, which the coordinator lists.
+        assert.isNotNull(member?.childThreadId);
+        assert.deepEqual(
+          coordinator?.workflow?.agents.map((agent) => agent.childThreadId),
+          [member?.childThreadId],
         );
         assert.equal(member?.status, "running");
         assert.isNull(member?.runId);
         assert.isNull(member?.nativeTaskRef);
-        assert.isNull(member?.childThreadId);
         yield* Queue.offer(messages, progress(65));
-        const live = yield* waitForProjection((projection) =>
+        const live = yield* waitForProjection(coordinatorThreadId, (projection) =>
           projection.subagents.some(
             (candidate) =>
               candidate.id === member?.id && candidate.presentation?.usage?.totalTokens === 65,
@@ -282,13 +298,17 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           }),
         );
         const final = yield* waitForProjection(
+          coordinatorThreadId,
           (projection) =>
             projection.subagents.some(
               (candidate) => candidate.id === member?.id && candidate.status === "completed",
             ) &&
             projection.nodes.some((node) => node.id === member?.id && node.status === "completed"),
         );
-        assert.equal(final.runs.at(-1)?.status, "completed");
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+          "completed",
+        );
         assert.equal(
           final.subagents.find((candidate) => candidate.id === member?.id)?.presentation?.usage
             ?.totalTokens,
@@ -301,7 +321,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
-            { name: "claude-workflow-runtime" },
+            { name: "claude-workflow-runtime", runtimePolicyOverride: { cwd } },
             Registry.layerSingle(adapter),
             {
               configureMcp: false,

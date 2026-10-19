@@ -1,3 +1,4 @@
+import type { Dispatch, SetStateAction } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { FilePenLine } from "lucide-react";
@@ -55,17 +56,23 @@ interface ScientMarkdownRenameButtonProps {
 }
 
 export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProps) {
-  const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
+  const renameFile = useRenameMarkdownFile();
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState(props.relativePath);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [resetInputs, setResetInputs] = useState(() => ({ open, value: props.relativePath }));
+  if (resetInputs.open !== open || resetInputs.value !== props.relativePath) {
+    setResetInputs({ open, value: props.relativePath });
+    if (open) {
+      setPath(props.relativePath);
+      setError(null);
+    }
+  }
   useEffect(() => {
     if (!open) return;
-    setPath(props.relativePath);
-    setError(null);
     queueMicrotask(() => {
       const input = inputRef.current;
       if (!input) return;
@@ -75,7 +82,92 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
     });
   }, [open, props.relativePath]);
 
-  const submit = async () => {
+  const submit = () =>
+    createMarkdownRename({
+      props,
+      path,
+      submitting,
+      renameFile,
+      setError,
+      setSubmitting,
+      setOpen,
+    })();
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={props.disabled}
+        render={
+          <button
+            type="button"
+            aria-label={`Rename ${props.label}`}
+            className="group/markdown-filename -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
+            disabled={props.disabled}
+          >
+            <span className="truncate">{props.label}</span>
+            <FilePenLine
+              aria-hidden
+              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/markdown-filename:opacity-70 group-focus-visible/markdown-filename:opacity-70"
+            />
+          </button>
+        }
+      />
+      <PopoverPopup align="end" className="w-80" side="bottom">
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <PopoverTitle>Rename Markdown document</PopoverTitle>
+          <Input
+            ref={inputRef}
+            aria-invalid={error !== null || undefined}
+            aria-label="Markdown file path"
+            disabled={submitting}
+            onChange={(event) => setPath(event.target.value)}
+            size="compact"
+            spellCheck={false}
+            value={path}
+          />
+          {error ? (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <Button
+            className="self-end"
+            disabled={submitting || props.disabled}
+            size="sm"
+            type="submit"
+          >
+            {submitting ? "Renaming…" : "Rename"}
+          </Button>
+        </form>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function createMarkdownRename({
+  props,
+  path,
+  submitting,
+  renameFile,
+  setError,
+  setSubmitting,
+  setOpen,
+}: {
+  props: ScientMarkdownRenameButtonProps;
+  path: string;
+  submitting: boolean;
+  renameFile: ReturnType<typeof useRenameMarkdownFile>;
+  setError: Dispatch<SetStateAction<string | null>>;
+  setSubmitting: Dispatch<SetStateAction<boolean>>;
+  setOpen: Dispatch<SetStateAction<boolean>>;
+}) {
+  return async () => {
     if (props.disabled || submitting) return;
     // The field starts as the file's exact path. Submitting it untouched is not
     // a rename, even when normalizing it as typed text would alter it.
@@ -145,60 +237,8 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
       setSubmitting(false);
     }
   };
+}
 
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        disabled={props.disabled}
-        render={
-          <button
-            type="button"
-            aria-label={`Rename ${props.label}`}
-            className="group/markdown-filename -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
-            disabled={props.disabled}
-          >
-            <span className="truncate">{props.label}</span>
-            <FilePenLine
-              aria-hidden
-              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/markdown-filename:opacity-70 group-focus-visible/markdown-filename:opacity-70"
-            />
-          </button>
-        }
-      />
-      <PopoverPopup align="end" className="w-80" side="bottom">
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-        >
-          <PopoverTitle>Rename Markdown document</PopoverTitle>
-          <Input
-            ref={inputRef}
-            aria-invalid={error !== null || undefined}
-            aria-label="Markdown file path"
-            disabled={submitting}
-            onChange={(event) => setPath(event.target.value)}
-            size="compact"
-            spellCheck={false}
-            value={path}
-          />
-          {error ? (
-            <p className="text-xs text-destructive" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <Button
-            className="self-end"
-            disabled={submitting || props.disabled}
-            size="sm"
-            type="submit"
-          >
-            {submitting ? "Renaming…" : "Rename"}
-          </Button>
-        </form>
-      </PopoverPopup>
-    </Popover>
-  );
+function useRenameMarkdownFile() {
+  return useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
 }

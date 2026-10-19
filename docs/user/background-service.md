@@ -1,11 +1,16 @@
-# Run a Scient server in the background
+# Run a Scient server without the desktop app
 
 This is an advanced deployment for a machine that should host a Scient
-environment without keeping a terminal open. The ordinary local workflow uses
-the server bundled with Scient desktop and does not need this setup.
+environment without the desktop app. The ordinary local workflow uses the
+server bundled with Scient desktop and does not need this setup.
 
-Background services are supported for a user account on Linux and macOS.
-Windows background-service installation is not currently supported.
+## No background service command
+
+Current Scient builds do not include a `service` command, so they cannot
+install, update, or remove a systemd unit or launch agent for you. Run the
+server in a terminal session you keep open, such as one inside `tmux`, or under
+a process manager you configure and maintain yourself. Servers started this way
+cannot update themselves; see [Update Scient](./updating.md).
 
 ## Requirements and package authority
 
@@ -15,12 +20,11 @@ you want to run. Each release publishes
 `scient-server-<version>.tgz` from the same source as its desktop artifacts.
 The target machine also needs a Node.js version accepted by that archive.
 
-Scient does not publish T3's npm package. Never substitute `t3@latest` for the
-release URL below. In these commands, the final `t3` is the server archive's
-retained compatibility executable name, not a request for a T3 package.
+Scient publishes its server only as this release archive, not as an npm
+package. Never substitute a package name for the release URL below.
 
 Set the exact Scient release once in the current shell, replacing the quoted
-placeholder, then install:
+placeholder, then start the server:
 
 ```sh
 SCIENT_SERVER_VERSION="<version>"
@@ -29,107 +33,55 @@ SCIENT_SERVER_PACKAGE="https://github.com/ScientFactory/scient-desktop/releases/
 npx --yes \
   --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 \
   --package="$SCIENT_SERVER_PACKAGE" \
-  t3 service install
+  scient serve
 ```
 
-With those variables still set in the shell, use the same package and replace
-only the final service action to inspect, repair, or remove the service:
+Use the same package command with `scient serve --help` for the complete
+options. Archives from releases published before the `scient` command was added
+provide the same server under its earlier executable name, `t3`, which current
+archives keep so existing scripts continue to work.
 
-On Linux, status also checks whether the service is running, enabled at startup,
-and allowed to keep running after logout.
-
-```sh
-# Show the installed service, selected runtime, and log path.
-npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service status
-
-# Install the exact runtime and current launcher, then restart the service.
-npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service update
-
-# Stop the service and remove it from automatic startup.
-npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service uninstall
-```
-
-Let active agent work and terminal commands finish before an install, update,
-or uninstall. If a remote update is already running, wait for its terminal
-outcome before starting a local service operation.
-
-## Safe updates
-
-During an update, the service prepares and checks the exact target version
-before it replaces the active server. It then:
-
-1. installs and preflights the exact target archive;
-2. stops the old child only after accepting the trial;
-3. saves a recovery snapshot of the server state;
-4. starts the target and waits until it is ready; and
-5. keeps the target or restores the previous working version and state.
-
-Install and update refuse to replace a newer service with an older one. If you
-deliberately need to downgrade, use the exact older Scient release archive and
-add `--allow-downgrade` to its `service update` command. Do not use this flag for
-an ordinary repair or version-skew warning.
-
-If the installed service is too old to perform this safely, the update is
-blocked before it changes project state. Run the exact local `service update`
-command once to repair the service, then retry from Scient.
-
-## Platform behavior
-
-### Linux
-
-Scient uses a systemd user unit at
-`~/.config/systemd/user/scient.service`. Installation enables user lingering
-so the service can remain active without an interactive login.
-
-Setup checks the systemd user manager and enables lingering before installing a
-runtime or stopping an existing service. If administrator permission is needed,
-it stops with a recovery command and leaves the existing service running.
-
-### macOS
-
-Scient uses the launch agent
-`~/Library/LaunchAgents/com.scientfactory.scient.service.plist`. It starts when
-the user logs in and stops when that login session ends. Installing over SSH
-cannot immediately start the agent when no graphical user is logged in; the
-command may report that final start failure even though the agent will start at
-the next login.
-
-macOS can attribute protected-folder permission prompts to the Node executable
-recorded in the launch agent. If the server cannot access Desktop, Documents,
-or Downloads, review that executable in **System Settings → Privacy &
-Security**. Do not grant broader filesystem access unless the hosted projects
-require it.
-
-If the agent was disabled in **System Settings > General > Login Items** or with
-`launchctl disable`, enable it again before expecting it to start at login.
+To move to another release, stop the server, set `SCIENT_SERVER_VERSION` to the
+new exact version, and start it again. Let active agent work and terminal
+commands finish first.
 
 ## Connection and removal boundaries
 
-Installing a service does not publish it to the internet, create a Scient cloud
+Starting a server does not publish it to the internet, create a Scient cloud
 account, or authorize another client. Configure the intended SSH, direct, or
 private-network access separately; see [Remote environments](./remote-access.md).
 
 Revoking a client credential or disconnecting a remote environment does not
-uninstall the service. Conversely, uninstalling the service does not delete its
-project files or silently erase the server state directory.
+stop the server. Stopping the server does not delete its project files or
+silently erase the server state directory.
 
-## Troubleshooting
+Keep diagnostic messages when reporting failures, but never share pairing
+credentials or the secrets directory.
 
-Run the exact Scient `service status` command above on the server machine. An
-installed version alone does not mean the service is running or will survive logout.
+## Reclaim database space
 
-| Status                     | Meaning and recovery                                                                                      |
-| -------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `linger-disabled`          | Run `sudo loginctl enable-linger "$(id -un)"`, then retry setup as your normal user.                      |
-| `linger-unavailable`       | Check `loginctl show-user "$(id -un)" --property=Linger` and whether systemd-logind is available.         |
-| `user-manager-unavailable` | Check `systemctl --user status` in a login session for the service user.                                  |
-| `service-disabled`         | Re-enable the service using the repair command shown by status.                                           |
-| `service-stopped`          | Read the service log and `systemctl --user status scient.service`, then use the displayed repair command. |
+Scient removes superseded internal history on its own while it runs; your
+conversations are kept. A database created before this shrank automatically
+still holds the freed space on disk until a one-time offline repair returns it
+and turns on automatic shrinking. **Settings → Storage** suggests the repair
+when at least 1 GiB can be reclaimed and shows the exact command for that
+environment. Copy and run that command on the machine that hosts the
+environment; it names the installation and data directory that reported the
+space.
 
-Only the `loginctl` administrator action should run with sudo, not the Scient
-server command. Over SSH, use an interactive terminal for its password prompt.
-If administrator access is unavailable, run the Scient server in a foreground
-terminal and keep that session open.
+The command runs `doctor`. It reports the database size and the space it can
+reclaim, then asks which repairs to run; `--fix` runs the recommended ones
+without a prompt, and `--dry-run` only reports. An installed background service
+for the same data directory is stopped for the repair and started again
+afterwards, also when the repair fails. Quit the desktop app or a server you
+started by hand first: the repair refuses to touch a database that is in use.
 
-The status command prints the log path. Keep diagnostic messages when reporting
-failures, but never share pairing credentials or the secrets directory.
+The repair can take several minutes on a large database. It rebuilds the
+database through a temporary copy, so it needs free space of about the
+database's size twice over: once in the system temporary directory (`TMPDIR`
+or `/tmp` on Linux and macOS) and once next to the database for its
+write-ahead log.
+
+If you upgraded from an older version, its original database (`state.sqlite`)
+is kept next to the current one. Scient still reads it to bring in older
+conversations, so `scient doctor` does not delete it.

@@ -191,7 +191,7 @@ export const makeMuseAuth = Effect.fn("MuseAuth.make")(function* (options: {
         operation,
         "Enable an installed, supported Muse runtime before changing its native account.",
       );
-    yield* reserve(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+    yield* reserve(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
     yield* (options.beforeChange ?? Effect.void).pipe(
       Effect.catchCause(() =>
         Ref.set(blocked, true).pipe(

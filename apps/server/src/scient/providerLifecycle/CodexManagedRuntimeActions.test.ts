@@ -37,6 +37,7 @@ import {
   BUNDLED_MANAGED_RUNTIME_CATALOG,
   ManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
+  UNCHECKED_CATALOG_FRESHNESS,
 } from "./ManagedRuntimeCatalog.ts";
 
 const artifact = {
@@ -620,6 +621,7 @@ describe("Codex managed runtime and a newer PATH Codex", () => {
             current: Effect.succeed(published),
             refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
             refreshNow: Effect.succeed(published),
+            freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
             subscribeChanges: Effect.succeed(Stream.empty),
           }),
         );

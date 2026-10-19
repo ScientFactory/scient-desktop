@@ -1,6 +1,6 @@
 import "../../index.css";
 import { createRoot, type Root } from "react-dom/client";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { afterEach, expect, it } from "vite-plus/test";
 import { DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable } from "@dnd-kit/sortable";
@@ -23,15 +23,15 @@ afterEach(() => {
 
 function Slot({ item }: { item: SidebarListItem }) {
   const id = sidebarListItemId(item);
-  const sortable = useSortable({ id });
+  const { transform, transition, setNodeRef, listeners, isDragging } = useSortable({ id });
   const style = {
-    transform: CSS.Translate.toString(sortable.transform),
-    transition: sortable.transition,
+    transform: CSS.Translate.toString(transform),
+    transition: transition,
   };
   if (item.kind === "marker")
     return (
       <li
-        ref={sortable.setNodeRef}
+        ref={setNodeRef}
         data-marker={item.marker}
         style={style}
         className={item.marker === "settled-header" ? "h-8" : "h-0"}
@@ -43,11 +43,11 @@ function Slot({ item }: { item: SidebarListItem }) {
   return (
     <SidebarRowWindow
       data-thread-item={item.key}
-      sortableRef={sortable.setNodeRef}
-      {...sortable.listeners}
+      sortableRef={setNodeRef}
+      {...listeners}
       style={style}
       className="list-none"
-      alwaysRender={sortable.isDragging}
+      alwaysRender={isDragging}
       placeholder={<div className={height}>{item.key}</div>}
     >
       {() => (
@@ -63,33 +63,26 @@ function Fixture() {
   const [receipt, setReceipt] = useState("");
   const [overSection, setOverSection] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  const items = useMemo(
-    (): SidebarListItem[] => [
-      { kind: "marker", marker: "pinned-header" },
-      { kind: "marker", marker: "pinned-divider" },
-      ...Array.from({ length: 100 }, (_, index): SidebarListItem => ({
-        kind: "thread",
-        key: `thread-${index}`,
-        section: "active",
-      })),
-      { kind: "marker", marker: "settled-header" },
-      { kind: "thread", key: "settled-thread", section: "settled" },
-    ],
-    [],
-  );
+  const items: SidebarListItem[] = [
+    { kind: "marker", marker: "pinned-header" },
+    { kind: "marker", marker: "pinned-divider" },
+    ...Array.from({ length: 100 }, (_, index): SidebarListItem => ({
+      kind: "thread",
+      key: `thread-${index}`,
+      section: "active",
+    })),
+    { kind: "marker", marker: "settled-header" },
+    { kind: "thread", key: "settled-thread", section: "settled" },
+  ];
   const sensors = useSensors(
     useSensor(SidebarPointerSensor, { distance: 3, onAttach: () => {}, onFinish: () => {} }),
   );
-  const strategy = useMemo(
-    () =>
-      createSidebarSortingStrategy({
-        items,
-        settledOrder: ["settled-thread"],
-        settledExpanded: true,
-      }),
-    [items],
-  );
-  const collision = useMemo(() => createSidebarCollisionDetection(() => true, { items }), [items]);
+  const strategy = createSidebarSortingStrategy({
+    items,
+    settledOrder: ["settled-thread"],
+    settledExpanded: true,
+  });
+  const collision = createSidebarCollisionDetection(() => true, { items });
   return (
     <>
       <output data-over-section={overSection} data-over-id={overId}>

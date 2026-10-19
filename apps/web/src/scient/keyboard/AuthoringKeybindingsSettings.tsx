@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
@@ -55,7 +55,7 @@ export function AuthoringKeybindingsSettings({
     getKeyboardPreferences,
   );
   const mac = isMacKeyboard();
-  const commands = useMemo(() => surfaceCommands(mac), [mac]);
+  const commands = surfaceCommands(mac);
   const [editing, setEditing] = useState<{
     id: string;
     index: number;
@@ -82,11 +82,8 @@ export function AuthoringKeybindingsSettings({
     document.addEventListener("pointerdown", cancelOutside, true);
     return () => document.removeEventListener("pointerdown", cancelOutside, true);
   }, [isEditing]);
-  const effective = useMemo(
-    () => effectiveSurfaceBindings(snapshot.preferences, mac),
-    [snapshot.preferences, mac],
-  );
-  const keysByCommand = useMemo(() => {
+  const effective = effectiveSurfaceBindings(snapshot.preferences, mac);
+  const keysByCommand = (() => {
     const grouped = new Map<string, string[]>();
     for (const binding of effective) {
       const keys = grouped.get(binding.command) ?? [];
@@ -94,7 +91,7 @@ export function AuthoringKeybindingsSettings({
       grouped.set(binding.command, keys);
     }
     return grouped;
-  }, [effective]);
+  })();
   const visible = commands.filter(
     (command) =>
       command.scope === scope &&

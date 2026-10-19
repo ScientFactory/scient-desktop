@@ -36,7 +36,6 @@ export class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepEr
   }
 }
 
-/** Runs one setup command, streaming its output, and fails with its exit code. */
 const runStep = Effect.fn("browserSetup.runStep")(function* (
   step: string,
   command: string,
@@ -96,7 +95,6 @@ export const resolveBrowserSetupBaseDir = Effect.fn("browserSetup.baseDir")(func
   );
 });
 
-/** Whether apt has an installable candidate for `name`. */
 const aptOffers = Effect.fn("browserSetup.aptOffers")(function* (name: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const policy = yield* spawner
@@ -141,6 +139,12 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         "--base-dir",
         profile,
       ]);
+      // Root, unless sudo came from another user, is likely the server's own account.
+      const env = yield* HostProcess.Environment;
+      const rootWarning =
+        isRoot && (env.SUDO_USER ?? "root") === "root" && !PreviewBrowserHost.sandboxDisabled(env)
+          ? new PreviewBrowserHost.PreviewBrowserRootError().message
+          : undefined;
 
       const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
       const browser = yield* installedBrowser(profile);
@@ -151,9 +155,10 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
 
       if (!needsProfile && missing.length === 0) {
         return yield* Console.log(
-          Option.isSome(browser)
-            ? "This host is ready for Scient's browser."
-            : "Chrome's sandbox is allowed here. Scient's browser installs on first use; if it then reports missing libraries, run this again.",
+          rootWarning ??
+            (Option.isSome(browser)
+              ? "This host is ready for Scient's browser."
+              : "Chrome's sandbox is allowed here. Scient's browser installs on first use; if it then reports missing libraries, run this again."),
         );
       }
 
@@ -212,7 +217,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Installed the browser's libraries.");
       }
 
-      yield* Console.log("This host is ready for Scient's browser.");
+      yield* Console.log(rootWarning ?? "This host is ready for Scient's browser.");
     }),
   ),
 );

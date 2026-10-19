@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
@@ -27,7 +27,6 @@ import {
   GettingStartedPreferencesStep,
   GettingStartedStartStep,
   ScientGettingStartedShell,
-  type GettingStartedProviderChoice,
 } from "./ScientGettingStartedView";
 import { useScientOnboardingStorage } from "./storage";
 import { ScientProjectImportAction } from "./ScientProjectImportAction";
@@ -52,9 +51,8 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   const [otherSelected, setOtherSelected] = useState(profile.fieldOrTopic.trim().length > 0);
   const [otherWork, setOtherWork] = useState(profile.fieldOrTopic);
 
-  const instanceEntries = useMemo(
-    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(serverProviders)),
-    [serverProviders],
+  const instanceEntries = sortProviderInstanceEntries(
+    deriveProviderInstanceEntries(serverProviders),
   );
   const providerReady = instanceEntries.some(isProviderInstancePickerReady);
   const preferencesSaved = hasSavedScientPreferences(profile);
@@ -85,49 +83,42 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     hasError: sessionState.error !== null,
   });
 
-  const entryByDriver = useMemo(() => {
+  const entryByDriver = (() => {
     const entries = new Map<string, ProviderInstanceEntry>();
     for (const entry of instanceEntries) {
       const existing = entries.get(entry.driverKind);
       if (!existing || entry.isDefault) entries.set(entry.driverKind, entry);
     }
     return entries;
-  }, [instanceEntries]);
-  const choices = useMemo<ReadonlyArray<GettingStartedProviderChoice>>(
-    () =>
-      DRIVER_OPTIONS.map((definition) => {
-        const entry = entryByDriver.get(definition.value) ?? null;
-        return {
-          driverKind: definition.value,
-          icon: definition.icon,
-          label: definition.label,
-          detail:
-            [definition.vendorLabel, definition.accountLabel]
-              .filter((part) => part !== undefined)
-              .join(" · ") || null,
-          status: providerOnboardingStatusLabel(entry ?? undefined),
-          ready: entry ? isProviderInstancePickerReady(entry) : false,
-          actionable: operateAccess === "granted",
-          entry,
-        };
-      }),
-    [entryByDriver, operateAccess],
-  );
+  })();
+  const choices = DRIVER_OPTIONS.map((definition) => {
+    const entry = entryByDriver.get(definition.value) ?? null;
+    return {
+      driverKind: definition.value,
+      icon: definition.icon,
+      label: definition.label,
+      detail:
+        [definition.vendorLabel, definition.accountLabel]
+          .filter((part) => part !== undefined)
+          .join(" · ") || null,
+      status: providerOnboardingStatusLabel(entry ?? undefined),
+      ready: entry ? isProviderInstancePickerReady(entry) : false,
+      actionable: operateAccess === "granted",
+      entry,
+    };
+  });
   const selectedEntry = selectedEntryId
     ? (instanceEntries.find((entry) => entry.instanceId === selectedEntryId) ?? null)
     : null;
 
-  const moveToStep = useCallback(
-    (step: ScientOnboardingStep) => {
-      setSelectedEntryId(null);
-      if (props.mode === "manual") {
-        setManualStep(step);
-      } else {
-        moveOnboarding(step);
-      }
-    },
-    [moveOnboarding, props.mode],
-  );
+  const moveToStep = (step: ScientOnboardingStep) => {
+    setSelectedEntryId(null);
+    if (props.mode === "manual") {
+      setManualStep(step);
+    } else {
+      moveOnboarding(step);
+    }
+  };
 
   useEffect(() => {
     if (props.mode !== "automatic") return;
@@ -145,7 +136,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     startOnboarding,
   ]);
 
-  const skip = useCallback(() => {
+  const skip = () => {
     if (props.mode === "automatic") {
       dismissOnboarding();
       return;
@@ -154,32 +145,29 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
       dismissOnboarding();
     }
     void navigate({ to: "/" });
-  }, [dismissOnboarding, navigate, onboardingState.status, props.mode]);
+  };
 
-  const goBack = useCallback(() => {
+  const goBack = () => {
     if (selectedEntryId !== null) {
       setSelectedEntryId(null);
       return;
     }
     if (previousStep) moveToStep(previousStep);
-  }, [moveToStep, previousStep, selectedEntryId]);
+  };
 
-  const goNext = useCallback(() => {
+  const goNext = () => {
     if (nextStep) moveToStep(nextStep);
-  }, [moveToStep, nextStep]);
+  };
 
-  const finishBefore = useCallback(
-    async (operation: () => void | Promise<void>) => {
-      completeOnboarding();
-      if (props.mode === "manual") await navigate({ to: "/" });
-      await operation();
-    },
-    [completeOnboarding, navigate, props.mode],
-  );
+  const finishBefore = async (operation: () => void | Promise<void>) => {
+    completeOnboarding();
+    if (props.mode === "manual") await navigate({ to: "/" });
+    await operation();
+  };
 
-  const addProject = useCallback(() => {
+  const addProject = () => {
     void finishBefore(() => openCommandPalette({ open: "add-project" }));
-  }, [finishBefore]);
+  };
 
   if (!primaryEnvironmentId) return null;
 

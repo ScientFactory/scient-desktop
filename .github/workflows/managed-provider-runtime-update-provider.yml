@@ -281,6 +281,8 @@ jobs:
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \
             apps/server/src/scient/skills/antigravityPluginSkillProjection.ts \
+            apps/server/src/scient/skills/antigravityUserSkillLinks.ts \
+            apps/server/src/scient/providerLifecycle/antigravityBrowserHelperPreflight.ts \
             apps/server/scripts/qualify-antigravity-acp-catalog.ts \
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
             apps/server/package.json \
@@ -380,6 +382,7 @@ jobs:
           # Scient qualification runs the same isolated activation check used by Desktop.
           if [[ "$PROVIDER" == scient ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             apps/server/scripts/qualifyScientAgentManagedRuntime.ts \
+            apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/auth \
             apps/server/src/provider \
@@ -442,6 +445,7 @@ jobs:
           # Oh My Pi qualification runs the app's own managed activation and RPC check.
           if [[ "$PROVIDER" == omp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             apps/server/scripts/qualify-omp-rpc.ts \
+            apps/server/package.json \
             apps/server/src/attachmentPaths.ts \
             apps/server/src/attachmentStore.ts \
             apps/server/src/config.ts \

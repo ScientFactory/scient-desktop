@@ -362,6 +362,11 @@ SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.
 
+The bundled analytics worker is a sibling of every emitted server module,
+including lazy CLI chunks. Its location must not depend on an entry or chunk
+filename. `scripts/lib/analytics-worker-packaging.test.ts` builds and relocates
+that boundary, then exercises delivery, restart identity, and saved Off consent.
+
 The website candidate also contains an opt-in cross-repository test. After
 building the exact desktop candidate, run it from the website root:
 

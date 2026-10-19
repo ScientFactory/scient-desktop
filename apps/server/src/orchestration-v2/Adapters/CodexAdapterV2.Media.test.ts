@@ -23,6 +23,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as Logger from "effect/Logger";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventSink from "../EventSink.ts";
@@ -43,6 +44,7 @@ import {
   CODEX_TEST_RUNTIME_POLICY,
 } from "./CodexAdapterV2.replay.testkit.ts";
 import { describe } from "@effect/vitest";
+import { layerGitVcsDriverWithoutBranches } from "../testkit/ProviderRuntimeTestServices.ts";
 
 describe("CodexAdapterV2 post-settle continuation", () => {
   const decodeCitationPresentation = Schema.decodeUnknownEffect(ProviderCitationPresentation);
@@ -59,7 +61,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     imageStoresLayer,
     imageSinkLayer,
     ProviderEventIngestor.layer.pipe(
-      Layer.provide(Layer.mergeAll(imageStoresLayer, imageSinkLayer, IdAllocator.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          imageStoresLayer,
+          imageSinkLayer,
+          IdAllocator.layer,
+          layerGitVcsDriverWithoutBranches,
+        ),
+      ),
     ),
     IdAllocator.layer,
     McpProviderSessions.layer,
@@ -948,11 +957,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           else assert.notInclude(awareness, tool);
         }
         assert.notInclude(awareness, "device_open");
+        const orchestrationEntries = Object.entries(context)
+          .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+          .sort(([left], [right]) => left.localeCompare(right));
         if (hasMcp) {
-          assert.include(context.t3_code_orchestration?.value ?? "", "delegate_task");
+          const orchestration = orchestrationEntries.map(([, entry]) => entry.value).join("\n\n");
+          assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
+          assert.include(orchestration, "delegate_task");
+          assert.include(orchestration, "structured object, never as JSON text");
         } else {
-          assert.notProperty(context, "t3_code_orchestration");
-          assert.notProperty(context, "t3_code_workspace");
+          assert.isEmpty(orchestrationEntries);
         }
         for (const entry of Object.values(context)) {
           assert.isAtMost(Buffer.byteLength(entry.value, "utf8"), 4_000);

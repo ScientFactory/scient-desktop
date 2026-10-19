@@ -78,6 +78,7 @@ if (process.argv.includes("--launch-smoke")) {
     result.passed,
     "Installed desktop must survive the smoke interval and drain on shutdown",
   );
-  NodeFS.rmSync(profileRoot, { recursive: true, force: true });
+  // Windows can hold the profile's database files briefly after the app exits.
+  NodeFS.rmSync(profileRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
   console.log("Installed Windows desktop launch smoke passed.");
 }

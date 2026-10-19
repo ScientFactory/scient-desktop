@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { isElectron } from "../env";
@@ -14,6 +14,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
+  readProject,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
@@ -36,11 +37,6 @@ function ChatIndexRouteView() {
   return <ScientGettingStartedGate fallback={<IndexDraftLanding />} />;
 }
 
-/**
- * Landing on the index route drops straight into a draft thread for the most
- * recently active project, so the first screen is a prompt instead of a dead
- * end. Falls back to an add-project hero when no project exists yet.
- */
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -50,31 +46,41 @@ function IndexDraftLanding() {
   // Read at effect time: this page stays mounted while a navigation away from
   // "/" is still loading, but the router already points at the new location.
   const isStillOnIndex = useEffectEvent(() => router.state.location.pathname === "/");
-  const startingRef = useRef(false);
+  // One start per attempt; a retry request opens the next attempt.
+  const startedAttemptRef = useRef<number | null>(null);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject = useMemo(
-    () =>
-      bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
-        : null,
-    [bootstrapped, projects, threads],
-  );
+  const mostRecentProject = bootstrapped
+    ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
+    : null;
+  const attempt = startState.retryRequest;
 
   useEffect(() => {
     // Starting a draft after the user has left would replace the page they picked.
-    if (mostRecentProject === null || startingRef.current || !isStillOnIndex()) {
+    if (mostRecentProject === null || startedAttemptRef.current === attempt || !isStillOnIndex()) {
       return;
     }
-    startingRef.current = true;
-    void handleNewThread(scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id), {
-      replace: true,
-      navigationKind: "automatic",
-    }).catch(() => {
-      startingRef.current = false;
-      setStartState((state) => ({ ...state, failed: true }));
-    });
-  }, [handleNewThread, mostRecentProject, startState.retryRequest]);
+    const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
+    if (readProject(projectRef) === null) {
+      return;
+    }
+    startedAttemptRef.current = attempt;
+    // SCIENT-FORK:START — an automatic claim yields to any explicit navigation.
+    void handleNewThread(projectRef, { replace: true, navigationKind: "automatic" })
+      // SCIENT-FORK:END
+      .then((opened) => {
+        // SCIENT-FORK:START — a superseded automatic claim also resolves null; retrying it
+        // would fight the user's own navigation, so only a removed project retries.
+        const projectRemoved = opened === null && readProject(projectRef) === null;
+        // SCIENT-FORK:END
+        if (projectRemoved) {
+          setStartState((state) => ({ ...state, retryRequest: state.retryRequest + 1 }));
+        }
+      })
+      .catch(() => {
+        setStartState((state) => ({ ...state, failed: true }));
+      });
+  }, [attempt, handleNewThread, mostRecentProject]);
 
   if (!bootstrapped) {
     return <ChatLoadingState />;

@@ -1,9 +1,10 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   AuthFilesystemWriteScope,
   type EnvironmentId,
   type ProjectWriteFileResult,
 } from "@t3tools/contracts";
-import { createRef, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { createRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 
@@ -63,7 +64,7 @@ export function useFileSaveCoordinator({
   saveResolution,
 }: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
+  const writeFile = useProjectFileWriter();
   const latestRevision = useRef(revision);
   const latestCallbacks = useRef({
     onPendingChange,
@@ -82,64 +83,33 @@ export function useFileSaveCoordinator({
   useEffect(() => {
     latestRevision.current = revision;
   }, [revision]);
-  const session = useMemo(() => {
-    const leaseRef = createRef<WorkspaceFileSessionLease>();
-    return {
-      change: (contents: string) => leaseRef.current?.change(contents),
-      setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
-      syncRevision: (value: string) => leaseRef.current?.syncConfirmedFileRevision(value),
-      resolve: (resolution: FileSaveResolution) => {
-        if (resolution.action === "discard") leaseRef.current?.discardPending(resolution.revision);
-        else leaseRef.current?.retryPending(resolution.revision);
-      },
-      setup: () => {
-        const lease = workspaceFileSessions.acquire({
-          key: workspaceFileSessionKey({ environmentId, cwd, relativePath }),
-          debounceMs,
-          canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
-          initialRevision: latestRevision.current,
-          persist: (nextContents, expectedRevision) =>
-            writeFile({
-              environmentId,
-              input: { cwd, relativePath, contents: nextContents, expectedRevision },
-            }),
-          revisionFromResult: (result) => result.revision,
-          onPersisted: (confirmedContents, result) => {
-            return confirmProjectFileQueryData(
-              environmentId,
-              cwd,
-              relativePath,
-              confirmedContents,
-              result.revision,
-            );
-          },
-          callbacks: {
-            onPendingChange: (pending) =>
-              latestCallbacks.current.onPendingChange(relativePath, pending),
-            onConfirmed: (confirmedContents, result) =>
-              latestCallbacks.current.onSaveConfirmed(
-                relativePath,
-                confirmedContents,
-                result.revision,
-              ),
-            onFailure: (contents, result) =>
-              latestCallbacks.current.onSaveFailure(
-                relativePath,
-                squashAtomCommandFailure(result),
-                contents,
-              ),
-            onResolutionApplied: (action) =>
-              latestCallbacks.current.onSaveResolutionApplied(action),
-          },
-        });
-        leaseRef.current = lease;
-        return () => {
-          leaseRef.current = null;
-          lease.release();
-        };
-      },
-    };
-  }, [cwd, debounceMs, environmentId, relativePath, writeFile]);
+  // SCIENT-FORK:START — the shared revisioned lease outlives compiler cache eviction.
+  const readRevision = useStableCallback(() => latestRevision.current);
+  const readCallbacks = useStableCallback(() => latestCallbacks.current);
+  const inputs = {
+    environmentId,
+    cwd,
+    relativePath,
+    debounceMs,
+    writeFile,
+    readRevision,
+    readCallbacks,
+  };
+  const [current, setCurrent] = useState(() => ({
+    inputs,
+    session: createFileSaveSession(inputs),
+  }));
+  if (
+    current.inputs.environmentId !== environmentId ||
+    current.inputs.cwd !== cwd ||
+    current.inputs.relativePath !== relativePath ||
+    current.inputs.debounceMs !== debounceMs ||
+    current.inputs.writeFile !== writeFile
+  ) {
+    setCurrent({ inputs, session: createFileSaveSession(inputs) });
+  }
+  const session = current.session;
+  // SCIENT-FORK:END
 
   // StrictMode replays effect setup. Retired leases stay inert, while deferred
   // final cleanup lets the replay rejoin the same live persistence session.
@@ -163,3 +133,74 @@ export function useFileSaveCoordinator({
   }, [canWriteFiles, cwd, environmentId, relativePath, session]);
   return { change: session.change, setSuspended: session.setSuspended };
 }
+
+function useProjectFileWriter() {
+  return useAtomCommand(projectEnvironment.writeFile);
+}
+
+// SCIENT-FORK:START — share writes and revisions between mounted file surfaces.
+function createFileSaveSession({
+  environmentId,
+  cwd,
+  relativePath,
+  debounceMs,
+  writeFile,
+  readRevision,
+  readCallbacks,
+}: Pick<FileSaveOptions, "environmentId" | "cwd" | "relativePath"> & {
+  debounceMs: number;
+  writeFile: ReturnType<typeof useProjectFileWriter>;
+  readRevision: () => string;
+  readCallbacks: () => Pick<
+    FileSaveOptions,
+    "onPendingChange" | "onSaveConfirmed" | "onSaveFailure" | "onSaveResolutionApplied"
+  >;
+}) {
+  const leaseRef = createRef<WorkspaceFileSessionLease>();
+  return {
+    change: (contents: string) => leaseRef.current?.change(contents),
+    setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
+    syncRevision: (value: string) => leaseRef.current?.syncConfirmedFileRevision(value),
+    resolve: (resolution: FileSaveResolution) => {
+      if (resolution.action === "discard") leaseRef.current?.discardPending(resolution.revision);
+      else leaseRef.current?.retryPending(resolution.revision);
+    },
+    setup: () => {
+      const lease = workspaceFileSessions.acquire({
+        key: workspaceFileSessionKey({ environmentId, cwd, relativePath }),
+        debounceMs,
+        canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
+        initialRevision: readRevision(),
+        persist: (nextContents, expectedRevision) =>
+          writeFile({
+            environmentId,
+            input: { cwd, relativePath, contents: nextContents, expectedRevision },
+          }),
+        revisionFromResult: (result) => result.revision,
+        onPersisted: (confirmedContents, result) => {
+          return confirmProjectFileQueryData(
+            environmentId,
+            cwd,
+            relativePath,
+            confirmedContents,
+            result.revision,
+          );
+        },
+        callbacks: {
+          onPendingChange: (pending) => readCallbacks().onPendingChange(relativePath, pending),
+          onConfirmed: (confirmedContents, result) =>
+            readCallbacks().onSaveConfirmed(relativePath, confirmedContents, result.revision),
+          onFailure: (contents, result) =>
+            readCallbacks().onSaveFailure(relativePath, squashAtomCommandFailure(result), contents),
+          onResolutionApplied: (action) => readCallbacks().onSaveResolutionApplied(action),
+        },
+      });
+      leaseRef.current = lease;
+      return () => {
+        leaseRef.current = null;
+        lease.release();
+      };
+    },
+  };
+}
+// SCIENT-FORK:END

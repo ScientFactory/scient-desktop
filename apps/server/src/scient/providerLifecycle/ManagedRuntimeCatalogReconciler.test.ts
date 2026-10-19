@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 import { CodexDriver } from "../../provider/Drivers/CodexDriver.ts";
 import { ClaudeDriver } from "../../provider/Drivers/ClaudeDriver.ts";
@@ -24,6 +25,11 @@ import { MuseDriver } from "../../provider/MuseDriverComposition.ts";
 import type { ProviderManagedRuntimeActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
+import {
+  BUNDLED_MANAGED_RUNTIME_CATALOG,
+  ManagedRuntimeCatalog,
+  UNCHECKED_CATALOG_FRESHNESS,
+} from "./ManagedRuntimeCatalog.ts";
 import {
   catalogProviderForDriver,
   layer,
@@ -110,6 +116,55 @@ describe("ManagedRuntimeCatalogReconciler", () => {
         calls,
         instances.map((instance) => instance.instanceId),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("publishes each check's freshness even when no release changed", () =>
+    Effect.gen(function* () {
+      const checked = {
+        checkedAt: "2026-10-14T12:00:00.000Z",
+        failure: null,
+        checksDisabled: false,
+      };
+      const freshness = yield* Ref.make(UNCHECKED_CATALOG_FRESHNESS);
+      const published = yield* Deferred.make<ProviderRuntimeSummary | null>();
+      const catalog = ManagedRuntimeCatalog.of({
+        current: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        refreshNow: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        freshness: Ref.get(freshness),
+        // The check lands after startup: it changed no release, only freshness.
+        subscribeChanges: Effect.succeed(
+          Stream.fromEffect(
+            Ref.set(freshness, checked).pipe(
+              Effect.as({ catalog: BUNDLED_MANAGED_RUNTIME_CATALOG, changedProviders: [] }),
+            ),
+          ),
+        ),
+      });
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Ref.get(freshness).pipe(
+          Effect.map((catalogFreshness) => ({ ...currentRuntime, catalog: catalogFreshness })),
+        ),
+        plan: () => Effect.die("plan must not run during catalog reconciliation"),
+        run: () => Effect.die("runtime mutation must not run during catalog reconciliation"),
+      };
+      const registry = ProviderRegistry.of({
+        ...makeProviderRegistryMock([provider]),
+        getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+        setProviderManagedRuntimeSummary: (input) =>
+          (input.runtime?.catalog?.checkedAt === checked.checkedAt
+            ? Deferred.succeed(published, input.runtime)
+            : Effect.void
+          ).pipe(Effect.as([provider])),
+      });
+      yield* Layer.build(
+        layer.pipe(
+          Layer.provide(Layer.succeed(ProviderRegistry, registry)),
+          Layer.provide(Layer.succeed(ManagedRuntimeCatalog, catalog)),
+        ),
+      );
+      assert.deepStrictEqual((yield* Deferred.await(published))?.catalog, checked);
     }).pipe(Effect.scoped),
   );
 

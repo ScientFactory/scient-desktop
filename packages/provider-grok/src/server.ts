@@ -1,8 +1,3 @@
-/**
- * Grok's server entry: the driver and adapter driver the server registers.
- *
- * @module provider-grok/server
- */
 /** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
 export { GrokDriver } from "./server/driver.ts";
 export {

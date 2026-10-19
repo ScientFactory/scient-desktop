@@ -14,7 +14,11 @@ import { readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 export { isKdeCaptureSession } from "./linuxCaptureSession.ts";
 
-export const KDE_CAPTURE_EXECUTABLE = "t3-kde-snap-shot";
+export const KDE_CAPTURE_EXECUTABLE = "scient-kde-snap-shot";
+// SCIENT-FORK:START — earlier releases installed the helper under T3's name.
+const legacyExecutable = (executable: string) =>
+  NodePath.join(NodePath.dirname(executable), "t3-kde-snap-shot");
+// SCIENT-FORK:END
 const DESKTOP_FILE = "com.scientfactory.scient.KdeCapture.desktop";
 const MARKER = "X-Scient-Capture-Helper=true";
 const decodeCapabilities = Schema.decodeUnknownSync(
@@ -95,7 +99,6 @@ async function regularFile(path: string): Promise<Buffer | undefined> {
   return NodeFSP.readFile(path);
 }
 
-/** No install on launch: writes happen only after the user chooses Install helper. */
 export class KdeCaptureSetup {
   private readonly paths: KdeCapturePaths;
   constructor(paths: KdeCapturePaths) {
@@ -106,6 +109,13 @@ export class KdeCaptureSetup {
     try {
       const { executable, desktop } = kdeCapturePaths(this.paths);
       const [installed, entry] = await Promise.all([regularFile(executable), regularFile(desktop)]);
+      // SCIENT-FORK:START — reinstall a helper installed under T3's name.
+      if (!installed && entry && (await regularFile(legacyExecutable(executable))))
+        return {
+          status: "update-required",
+          message: "Update the bundled capture helper to continue.",
+        };
+      // SCIENT-FORK:END
       if (!installed || !entry)
         return {
           status: "not-installed",
@@ -144,7 +154,6 @@ export class KdeCaptureSetup {
       throw new Error(
         "Another desktop entry uses the capture helper's name. Rename it before continuing.",
       );
-    // Never overwrite/follow a symlink, including the installation directory itself.
     const directory = NodePath.dirname(executable);
     const existing = await NodeFSP.lstat(directory).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
@@ -153,6 +162,9 @@ export class KdeCaptureSetup {
     if (existing && (!existing.isDirectory() || existing.isSymbolicLink()))
       throw new Error("The capture helper directory is not a regular directory.");
     await regularFile(executable);
+    // SCIENT-FORK:START — drop the helper installed under T3's name.
+    await NodeFSP.rm(legacyExecutable(executable), { force: true }).catch(() => undefined);
+    // SCIENT-FORK:END
     if (action === "remove-kde-helper") {
       if (entry) await NodeFSP.unlink(desktop);
       await NodeFSP.unlink(executable).catch((error: NodeJS.ErrnoException) => {
@@ -186,7 +198,6 @@ export class KdeCaptureSetup {
     await run("kbuildsycoca6", ["--noincremental"]);
     // AppImages change XDG search paths, and KService caches are also locale-specific.
     // Refresh Plasma's cache in its session environment, not just the app's cache.
-    // Non-systemd sessions use the direct refresh and atomic directory notification above.
     await run("systemd-run", [
       "--user",
       "--quiet",

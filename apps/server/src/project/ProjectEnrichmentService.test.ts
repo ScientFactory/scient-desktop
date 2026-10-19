@@ -249,7 +249,6 @@ it.effect("getAvailable returns immediately while repository identity is still u
     yield* Effect.gen(function* () {
       const service = yield* ProjectEnrichment.ProjectEnrichmentService;
 
-      // Non-blocking path must not wait on hung git/identity resolution.
       const immediate = yield* service.getAvailable("/pending-identity");
       assert.isNull(immediate.repositoryIdentity);
       assert.isNull(immediate.faviconPath);
@@ -257,7 +256,6 @@ it.effect("getAvailable returns immediately while repository identity is still u
 
       yield* Deferred.await(repositoryStarted);
 
-      // Background lane still resolves after the snapshot path has returned.
       yield* Deferred.succeed(releaseRepository, undefined);
       const resolved = yield* waitForAvailable(
         service,
@@ -318,7 +316,6 @@ it.effect(
         assert.isNull(nullChange.enrichment.repositoryIdentity);
         assert.isTrue(nullChange.enrichment.repositoryIdentityResolved);
 
-        // Warm success null stays resolved and does not republish.
         const warmNull = yield* service.getAvailable("/no-remote");
         assert.isNull(warmNull.repositoryIdentity);
         assert.isTrue(warmNull.repositoryIdentityResolved);
@@ -414,7 +411,6 @@ it.effect("rescans a favicon only after 15 minutes", () =>
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
         invalidate: () => Effect.void,
-        // Each scan returns a new path, so a wait can tell a rescan from the cached value.
         resolvePath: (workspaceRoot) =>
           Ref.updateAndGet(faviconScans, (count) => count + 1).pipe(
             Effect.map((scan) => `${workspaceRoot}/favicon-${scan}.svg`),
@@ -431,7 +427,6 @@ it.effect("rescans a favicon only after 15 minutes", () =>
         (value) => value.faviconPath === "/repo/favicon-1.svg",
       );
 
-      // Callers such as the shell stream read projects far more often than this.
       for (let minute = 1; minute < 15; minute += 1) {
         yield* TestClock.adjust("1 minute");
         yield* service.getAvailable("/repo");
@@ -454,7 +449,6 @@ it.effect(
   "follows repository identity changes within a minute without rescanning the favicon",
   () =>
     Effect.gen(function* () {
-      // 0: no repository yet, then one version per remote.
       const remoteVersion = yield* Ref.make(0);
       const faviconScans = yield* Ref.make(0);
       const layerMetadata = Layer.merge(
@@ -476,7 +470,6 @@ it.effect(
         yield* waitForAvailable(service, "/folder", (value) => value.repositoryIdentityResolved);
         assert.equal((yield* service.peek("/folder")).repositoryIdentity, null);
 
-        // The folder is published as a repository, then its remote moves to another host.
         for (const version of [1, 2]) {
           yield* Ref.set(remoteVersion, version);
           yield* TestClock.adjust("1 minute");

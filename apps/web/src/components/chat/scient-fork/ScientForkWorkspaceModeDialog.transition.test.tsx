@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, useState } from "react";
+import { act, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -176,7 +176,9 @@ it.each([false, true])(
     function Probe() {
       const [open, setOpen] = useState(true);
       const [busy, setBusy] = useState(false);
-      reopen = () => setOpen(true);
+      useLayoutEffect(() => {
+        reopen = () => setOpen(true);
+      });
       return (
         <ScientForkWorkspaceModeDialog
           open={open}
@@ -253,7 +255,9 @@ it.each([
     function Probe() {
       const [open, setOpen] = useState(true);
       const [busy, setBusy] = useState(false);
-      setDialogOpen = setOpen;
+      useLayoutEffect(() => {
+        setDialogOpen = setOpen;
+      });
       return (
         <ScientForkWorkspaceModeDialog
           open={open}

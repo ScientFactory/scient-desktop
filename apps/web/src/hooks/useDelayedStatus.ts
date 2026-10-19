@@ -7,12 +7,6 @@ import {
 } from "@t3tools/client-runtime/delayed-status";
 import { useEffect, useState } from "react";
 
-/**
- * Returns `value` only once it has lasted past the show delay, then holds it
- * for a minimum time, so a short status never flashes. `key` is what the
- * status belongs to (for example a thread). A new key drops it at once.
- * Mobile has the same hook.
- */
 export function useDelayedStatus<A>(
   key: string,
   value: A | null,

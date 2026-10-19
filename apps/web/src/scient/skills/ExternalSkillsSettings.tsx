@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ArrowLeftIcon, LibraryBigIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import {
@@ -39,7 +39,7 @@ const skillKey = (environmentId: string | null, instanceId: string, path: string
 export function ExternalSkillsSettings() {
   const environmentId = usePrimaryEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const groups = useMemo(() => collectExternalSkillProviders(providers), [providers]);
+  const groups = collectExternalSkillProviders(providers);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [local, setLocal] = useState({
     environmentId,
@@ -137,38 +137,49 @@ export function ExternalSkillsSettings() {
 
     void (async () => {
       let nextEnabled = input.enabled;
-      try {
-        for (;;) {
-          const result = await setEnabled({
-            environmentId,
-            input: { ...input, enabled: nextEnabled },
-          });
-          if (result._tag === "Failure") {
-            await reconcileFailure();
-            return;
-          }
-          if (lane.desired !== nextEnabled) {
-            nextEnabled = lane.desired;
-            continue;
-          }
-          setLocal((current) =>
-            current.environmentId === environmentId && current.pending[key]
-              ? {
-                  ...current,
-                  pending: {
-                    ...current.pending,
-                    [key]: { enabled: nextEnabled, confirmed: true },
-                  },
+      let actionFailure: { readonly cause: unknown } | undefined;
+      finishAction: {
+        try {
+          try {
+            for (;;) {
+              const result = await setEnabled({
+                environmentId,
+                input: { ...input, enabled: nextEnabled },
+              });
+              if (result._tag === "Failure") {
+                await reconcileFailure();
+                {
+                  break finishAction;
                 }
-              : current,
-          );
-          return;
+              }
+              if (lane.desired !== nextEnabled) {
+                nextEnabled = lane.desired;
+                continue;
+              }
+              setLocal((current) =>
+                current.environmentId === environmentId && current.pending[key]
+                  ? {
+                      ...current,
+                      pending: {
+                        ...current.pending,
+                        [key]: { enabled: nextEnabled, confirmed: true },
+                      },
+                    }
+                  : current,
+              );
+              {
+                break finishAction;
+              }
+            }
+          } catch {
+            await reconcileFailure();
+          }
+        } catch (cause) {
+          actionFailure = { cause };
         }
-      } catch {
-        await reconcileFailure();
-      } finally {
-        inFlight.current.delete(key);
       }
+      inFlight.current.delete(key);
+      if (actionFailure) throw actionFailure.cause;
     })();
   };
 

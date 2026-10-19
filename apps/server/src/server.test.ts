@@ -11,7 +11,6 @@ import * as PlatformError from "effect/PlatformError";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
-  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -264,6 +263,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -285,6 +285,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -292,7 +293,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -602,6 +603,7 @@ const buildAppUnderTest = (options?: {
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+    knownWorkspaces?: Partial<KnownWorkspaces.KnownWorkspaces["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
@@ -794,12 +796,21 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
+    // Every folder is known unless a test narrows it; WorkspaceFileSystem's own tests cover
+    // the rejection.
+    const knownWorkspacesLayer = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: () => Effect.succeed(true),
+      assertContains: () => Effect.void,
+      ...options?.layers?.knownWorkspaces,
+    });
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
+      knownWorkspacesLayer,
       WorkspaceFileSystem.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
+        Layer.provide(knownWorkspacesLayer),
       ),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
@@ -965,6 +976,10 @@ const buildAppUnderTest = (options?: {
               streamChanges: Stream.make([]),
               refresh: Effect.void,
               ...options?.layers?.usageLimitSources,
+            }),
+            Layer.mock(DatabaseStorage.DatabaseStorage)({
+              reclaim: Effect.void,
+              status: Stream.make(null),
             }),
           ),
         ),
@@ -1308,6 +1323,13 @@ const buildAppUnderTest = (options?: {
           }),
         ),
         Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+            getEnvironmentId:
+              options?.layers?.serverEnvironment?.getEnvironmentId ??
+              Effect.succeed(testEnvironmentDescriptor.environmentId),
+          }),
+        ),
+        Layer.provide(
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () => Effect.succeed(null),
             ...options?.layers?.repositoryIdentityResolver,
@@ -1400,7 +1422,7 @@ const buildAppUnderTest = (options?: {
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
         Layer.provide(
-          GitHubApi.layerWithDependencies.pipe(
+          GitHubRest.layerWithDependencies.pipe(
             Layer.provide(ServerSourceControlHost.layer),
             Layer.provide(VcsDriverRegistry.layer),
             Layer.provideMerge(VcsProcess.layer),
@@ -1828,7 +1850,7 @@ const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstra
 const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, body } = yield* exchangeAccessToken(credential, {
-      scope: AuthAdministrativeScopes.join(" "),
+      scope: AuthStandardClientScopes.join(" "),
     });
     if (!responseOk(response)) {
       return yield* new AuthenticationGetterError({
@@ -3294,9 +3316,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(ownerResponse.status, 200);
       assert.equal(ownerBody.publishAgentActivity, true);
 
+      // The default grant includes relay management; a narrower link must not.
       const credentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: { cookie: ownerCookie },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "relay:write"),
+        }),
       });
       const credential = (yield* credentialResponse.json) as { readonly credential: string };
       const pairedCookie = yield* getAuthenticatedSessionCookieHeader(credential.credential);
@@ -5066,7 +5091,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepInclude(listed, {
         label: "Synthetic phone",
         // Frozen legacy scope metadata and the full granular grant are distinct.
-        scopes: ["orchestration:read", "orchestration:operate", "terminal:operate", "relay:read"],
+        scopes: [
+          "orchestration:read",
+          "orchestration:operate",
+          "terminal:operate",
+          "relay:read",
+          "access:read",
+          "access:write",
+          "relay:write",
+        ],
         permissions: [...AuthStandardClientScopes],
       });
 
@@ -5211,11 +5244,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      // The default grant includes access management; a narrower link must not.
       const ownerResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "access:write"),
+        }),
       });
       const ownerBody = (yield* ownerResponse.json) as {
         readonly credential: string;

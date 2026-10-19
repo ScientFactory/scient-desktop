@@ -334,11 +334,10 @@ it.effect(
       });
       yield* sql`UPDATE orchestration_v2_legacy_imports SET transcript_imported_at = '2026-02-01T00:00:00.000Z'
       WHERE thread_id = ${THREAD}`;
+      // Compaction now keeps each message's first event, but databases compacted by
+      // earlier releases lost it; remove it as those releases did.
+      yield* sql`DELETE FROM orchestration_events WHERE event_id = 'migration:v1:message:answer'`;
       yield* maintenance.compactEventStore;
-      assert.deepEqual(
-        yield* sql`SELECT event_id FROM orchestration_events WHERE event_id = 'migration:v1:message:answer'`,
-        [],
-      );
       yield* maintenance.rebuild;
       yield* migration.ensureTranscript(THREAD);
       const repaired = yield* projections.getThreadProjection(THREAD);

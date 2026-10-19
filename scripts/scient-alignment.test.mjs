@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { inspectAlignment, startAlignment } from "./scient-alignment.mjs";
+import { alignmentFacts, inspectAlignment, startAlignment } from "./scient-alignment.mjs";
 
 const directories = [];
 afterEach(() => {
@@ -64,6 +64,72 @@ function fixture({ conflict = true, cleanOverlap = false } = {}) {
 }
 
 describe("alignment workflow", () => {
+  it("derives receipt facts from the committed merge, its tag and later owned-main catch-ups", () => {
+    const f = fixture();
+    f.git("tag", "v1.0.0-nightly", f.target);
+    f.git("switch", "-q", "-c", "codex/facts");
+    expect(
+      NodeChildProcess.spawnSync("git", ["merge", "--no-ff", "--no-commit", f.target], {
+        cwd: f.root,
+      }).status,
+    ).toBe(1);
+    NodeFS.writeFileSync(NodePath.join(f.root, "shared.txt"), "composed\n");
+    f.git("add", "shared.txt");
+    f.git("commit", "-qm", "align");
+    const merge = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "main");
+    NodeFS.writeFileSync(NodePath.join(f.root, "owned.txt"), "later owned work\n");
+    f.git("add", "owned.txt");
+    f.git("commit", "-qm", "owned main advances");
+    const ownedMain = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "codex/facts");
+    f.git("merge", "-q", "--no-ff", "-m", "catch up", ownedMain);
+    const catchUp = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "official");
+    NodeFS.writeFileSync(NodePath.join(f.root, "official-later.txt"), "later upstream work\n");
+    f.git("add", "official-later.txt");
+    f.git("commit", "-qm", "later upstream behavior");
+    const laterTarget = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", laterTarget);
+    f.git("switch", "-q", "codex/facts");
+    f.git("merge", "-q", "--no-ff", "-m", "extend", laterTarget);
+    const extension = f.git("rev-parse", "HEAD");
+    // Main lands the alignment and moves on; catching up with it is still an owned merge.
+    f.git("switch", "-q", "main");
+    f.git("merge", "-q", "--no-ff", "-m", "land alignment", extension);
+    NodeFS.writeFileSync(NodePath.join(f.root, "owned-later.txt"), "owned work after landing\n");
+    f.git("add", "owned-later.txt");
+    f.git("commit", "-qm", "owned main after landing");
+    const landedMain = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "codex/facts");
+    f.git("merge", "-q", "--no-ff", "-m", "catch up after landing", landedMain);
+    const laterCatchUp = f.git("rev-parse", "HEAD");
+
+    const facts = alignmentFacts(merge, { cwd: f.root });
+    expect(facts).toMatchObject({
+      base: f.base,
+      previous: f.previous,
+      target: f.target,
+      tagsAtTarget: ["v1.0.0-nightly"],
+      commitCount: 1,
+      incomingPaths: 1,
+      overlappingPaths: 1,
+      initiallyUnmerged: ["shared.txt"],
+      merge,
+      tree: f.git("rev-parse", `${merge}^{tree}`),
+      laterMerges: [
+        { merge: catchUp, merged: ownedMain, kind: "owned-main-catch-up" },
+        { merge: extension, merged: laterTarget, kind: "official-extension" },
+        { merge: laterCatchUp, merged: landedMain, kind: "owned-main-catch-up" },
+      ],
+    });
+    expect(() => alignmentFacts(f.base, { cwd: f.root })).toThrow(/exactly two parents/u);
+    expect(() => alignmentFacts(catchUp, { cwd: f.root })).toThrow(/not official history/u);
+    // On main the alignment arrived through a second parent, so its continuation is elsewhere.
+    f.git("switch", "-q", "main");
+    expect(() => alignmentFacts(merge, { cwd: f.root })).toThrow(/not on its mainline/u);
+  });
+
   it("freezes ancestry, lists overlaps, and simulates conflicts without touching the checkout", () => {
     const f = fixture();
     NodeFS.writeFileSync(NodePath.join(f.root, "local-note.txt"), "keep");

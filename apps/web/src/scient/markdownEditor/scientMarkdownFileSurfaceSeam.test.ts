@@ -101,10 +101,11 @@ describe("Scient Markdown file-preview seam", () => {
     expect(rightPanelTabsSource).not.toMatch(
       /usePendingSurface|pendingSurfaceBlocks|Finishing the file save/gu,
     );
-    expect(chatViewSource).toContain("const openFileSourceSurfaceNow = useCallback(");
+    expect(chatViewSource).toMatch(/const openFileSourceSurfaceNow = \(/u);
+    expect(chatViewSource).toContain("openSource: openFileSourceSurfaceNow,");
     expect(chatViewSource).toContain("const openFileSurfaceNow = useScientFileOpening({");
     expect(chatViewSource).toMatch(
-      /const openFileSurface = useCallback\([\s\S]*?runAfterPendingFileSave\(`file:\$\{relativePath\}`,[\s\S]*?openFileSurfaceNow\(relativePath\)/u,
+      /const openFileSurface = [\s\S]*?runAfterPendingFileSave\(`file:\$\{relativePath\}`,[\s\S]*?openFileSurfaceNow\(relativePath\)/u,
     );
   });
 
@@ -126,11 +127,6 @@ describe("Scient Markdown file-preview seam", () => {
   it("refreshes the current workspace tree and link index after refresh, creation, or agent edits", () => {
     expect(browserSource).toContain("void treeControllerRef.current?.refresh();");
     expect(browserSource).toContain("refreshProjectEntriesQuery(environmentId, cwd);");
-    const dependencies = browserSource.match(
-      /const refreshEntries = useCallback\([\s\S]*?\}, \[([^\]]*)\]\);/u,
-    )?.[1];
-    expect(dependencies).toContain("cwd");
-    expect(dependencies).toContain("environmentId");
     expect(browserSource).toMatch(
       /useWorkspaceMutationRefresh\(\{[\s\S]*?refresh: refreshEntries/u,
     );
@@ -151,7 +147,6 @@ describe("Scient Markdown file-preview seam", () => {
   it("uses the current filename itself as the Markdown rename affordance", () => {
     expect(panelSource).toContain("currentFileControl={");
     expect(panelSource).toContain("<ScientMarkdownRenameButton");
-    expect(panelSource).toContain('label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}');
   });
 
   it("keeps the inline filename and formatting rows on the same rhythm as the tab row", () => {

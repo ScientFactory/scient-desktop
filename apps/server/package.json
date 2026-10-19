@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.45",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,7 +15,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/bin.ts",
+    "dev": "node --watch --watch-path=src --watch-path=../../packages --watch-path=package.json src/bin.ts",
     "build:bundle": "node scripts/compute-recipes.ts seal && vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",
@@ -75,7 +75,7 @@
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "msgpackr-extract": "3.0.4",
-    "node-pty": "^1.1.0",
+    "node-pty": "^1.2.0-beta.15",
     "parse5": "7.3.0",
     "pdfjs-dist": "6.2.108",
     "playwright-core": "1.60.0",
@@ -84,6 +84,7 @@
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
     "tldts": "7.4.2",
+    "undici": "catalog:",
     "yaml": "catalog:",
     "yauzl": "^3.4.0",
     "yazl": "3.3.1"

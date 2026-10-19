@@ -17,7 +17,6 @@ export function createDeviceEnvironmentAtoms<R, E>(
     key: ({ environmentId }: { environmentId: string }) => environmentId,
   };
   return {
-    /** Server-pushed device hosts, devices, and open sessions for one environment. */
     state: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:device:state",
       tag: WS_METHODS.subscribeDeviceState,
@@ -71,7 +70,6 @@ export function createDeviceEnvironmentAtoms<R, E>(
   };
 }
 
-/** Unknown inventory is distinct from a completed check that found no install. */
 export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
   if (!tools) return ["Device tool versions have not been checked."];
   return (
@@ -96,4 +94,4 @@ export function deviceToolUpdatePolicy(tools: DeviceToolVersions | undefined) {
     : "Required tools are installed automatically when needed. Checking versions does not install or start anything.";
 }
 export const deviceToolUpdateOwnership =
-  "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.";
+  "This environment's Scient server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.";

@@ -2,8 +2,8 @@
 
 Status: Active maintainer runbook
 Owner: ScientFactory
-Last updated: 2026-09-22
-Purpose: Defines the one canonical Scient development baseline and the isolated worktree runtimes used to review changes safely.
+Last updated: 2026-10-18
+Purpose: Defines the isolated worktree runtimes used to develop and review changes safely, and points to the standing stable review app.
 
 ## Contributor Quickstart
 
@@ -89,9 +89,10 @@ uses the separate foreground procedure linked above.
 
 There are two deliberately different local-development roles:
 
-1. **Scient (Dev) Stable** is the one canonical, clickable development app.
-   Its checkout follows the owned repository `main` branch and is refreshed
-   through the guarded main-sync process described below.
+1. **Scient (Dev) Stable** is the one standing, clickable development app,
+   switched to the branch, pull request or commit under review with
+   `pnpm dev:app:review`. See [reviewing in Scient (Dev) Stable](./dev-app-review.md);
+   it covers macOS and Windows.
 2. **Scient (Dev)** is a disposable candidate runtime started from a separate
    feature worktree when a change needs to be reviewed. It never owns or
    silently replaces the stable launcher.
@@ -116,62 +117,18 @@ channel, signing status, production guarantee, or permission to publish.
 
 Cloud, telemetry delivery, product background-service installation, product
 updater polling, release signing, and publication remain disabled by the
-candidate safety envelope. The local `main` watcher below only refreshes this development
-checkout; it is not a product updater. A working local dev app does not
-authorize release, cutover, or user-data import.
+candidate safety envelope. Switching the stable review app between references
+is not a product updater. A working local dev app does not authorize release,
+cutover, or user-data import.
 
-## Stable Baseline Launcher
+## Stable Review App
 
-Only the canonical clean `main` checkout may own the clickable launcher at:
-
-```text
-~/Applications/Scient (Dev) Stable.app
-```
-
-From the selected clean checkout:
-
-```sh
-# Activate the repository-supported Node 24 runtime first.
-pnpm install --frozen-lockfile
-pnpm dev:app:install -- --stable
-```
-
-The stable installer creates the generated Electron development bundle, copies
-it to the user Applications directory, records the exact owning checkout and
-stable role inside the bundle, and registers it with macOS. It refuses to
-overwrite an unrecognized application or a launcher owned by another
-checkout. The stable role also sets the fixed candidate-owned state root
-`~/.scient-next/scient-dev-stable/`; it does not import or copy another
-worktree's data.
-
-The visible name and icon may evolve without weakening isolation. The
-development protocol, bundle identifier, state root, and launcher-ownership
-marker remain development-specific compatibility values unless a separate
-migration explicitly changes them.
-
-To deliberately transfer launcher ownership after selecting a new stable
-checkout:
-
-```sh
-pnpm dev:app:install -- --stable --replace
-```
-
-Never use `--replace` merely because another worktree is convenient. Confirm
-the previous owner is stopped, clean, and intentionally superseded first.
-
-Clicking the installed app enters Electron directly, then starts the stable
-background runtime in its recorded checkout using the Node runtime captured
-during installation. A Finder-opened `.scic` is reviewed locally before the
-service, web renderer, or backend starts. On acceptance, a private single-use
-receipt transfers the reviewed file identity to the managed app; on
-cancellation, no runtime starts. This does not use Terminal automation or
-request permission to control another app. After changing the dev launcher,
-reinstall this clickable bundle from its owning checkout before testing Finder
-file opening.
-Stable launches write an append-only development log to
-`~/.scient-next/scient-dev-stable/local-dev-app.log`; candidate launches write
-to `<worktree>/.scient-next/local-dev-app.log`. Direct terminal launches keep
-their output in that terminal instead.
+`Scient (Dev) Stable` is installed once with `pnpm dev:app:stable install` and
+then switched with `pnpm dev:app:review <#123 | branch | commit:<sha>>`. Its
+lifecycle, state profiles and safety rules are in
+[reviewing in Scient (Dev) Stable](./dev-app-review.md). The commands below are
+for candidates; `--stable` on them is refused in favour of
+`pnpm dev:app:stable <start|stop|status|logs>`.
 
 ## Daily Commands
 
@@ -191,16 +148,6 @@ returns; compilation continues in the background. The initial cold build can
 still take tens of seconds. Use status and logs instead of keeping an agent
 shell or terminal open. `pnpm dev:app` remains available when a maintainer
 explicitly wants the same lifecycle attached to the foreground terminal.
-
-For the canonical stable role, pass `--stable` to status, logs, and stop so
-the command addresses `~/.scient-next/scient-dev-stable/` rather than a
-candidate worktree:
-
-```sh
-pnpm dev:app:logs -- --stable
-pnpm dev:app:status -- --stable
-pnpm dev:app:stop -- --stable
-```
 
 Each checkout and role has its own deterministic service label, state root,
 ports, app identity, and visible name. Different worktrees can therefore run
@@ -307,71 +254,15 @@ System Settings when macOS asks. Reloading the renderer cannot repair an
 incorrect app identity or permission grant; stop and start the exact candidate
 after changing either one.
 
-## Updating The Stable Baseline
-
-The stable baseline follows the repository's `main` branch. A local macOS
-`launchd` watcher may check `origin/main` at a modest interval (for example,
-once per minute); it is a fetch-and-fast-forward helper, not a release updater.
-When no new `main` commit exists it does nothing. When a new commit exists, it
-may update only if all guards pass:
-
-- the recorded stable checkout is actually on `main`;
-- the checkout is clean and the stable runner is managed by this checkout;
-- `origin/main` is a descendant of the current head; and
-- no competing update is in progress.
-
-The guarded update stops the managed app, fast-forwards to `origin/main`,
-installs locked dependencies only when required, and restarts the same stable
-checkout. It never resets, cleans, force-updates, switches branches, imports
-another worktree's data, or runs a feature branch into the stable launcher. A
-dirty, divergent, or feature-branch checkout pauses and records an actionable
-status instead of mutating anything.
-
-Until the stable checkout has been explicitly transitioned to clean `main`,
-the watcher must remain paused. Agents must not switch, reset, clean, or
-repurpose an active dev checkout. To advance the baseline manually:
-
-1. stop the stable local dev app and confirm
-   `pnpm dev:app:status -- --stable` reports stopped;
-2. confirm the checkout is clean and identify its current branch and head;
-3. fetch without pulling;
-4. advance only through the repository's accepted integration process;
-5. install locked dependencies when the lockfile changed;
-6. run the applicable focused checks; and
-7. rerun the stable installer if the Electron runtime, icon, launcher, or
-   checkout path changed.
-
-Ordinary T3 movement is not applied directly to this launcher. The candidate's
-bounded upstream-merge process decides which exact owned head reaches
-`origin/main`; the stable watcher then follows that owned `main` history.
-
-The one-shot check and the user-level watcher are managed from the canonical
-checkout:
-
-```sh
-# Check once; this is also what launchd invokes.
-pnpm canonical:sync
-
-# Install or remove the guarded macOS watcher. Installation refuses a
-# feature branch, dirty checkout, divergent history, or foreign launcher.
-pnpm canonical:sync:install
-pnpm canonical:sync:uninstall
-```
-
-The watcher checks every 60 seconds and also runs once when loaded. It records
-pause reasons and update events under
-`~/.scient-next/scient-dev-stable/canonical-main-sync.log`.
-
 ## State And Project Safety
 
 - Never point `SCIENT_NEXT_HOME`, `--home-dir`, or `--base-dir` at `.t3`, the
   current Scient application, or another worktree's state.
-- The stable app uses one explicitly designated stable development state root
-  so changing the `main` checkout does not make its projects and conversations
-  disappear. Candidate worktrees always use their own isolated state roots.
-- Do not change the stable state root or copy data into it as part of an
-  ordinary refresh. Any one-time state-root transition requires a separate,
-  explicit preservation plan.
+- The stable app keeps one state profile per reviewed reference under
+  `~/.scient-next/scient-dev-stable/profiles/`
+  ([state profiles](./dev-app-review.md#state-profiles)). Candidate worktrees
+  always use their own isolated state roots.
+- Do not copy data into a stable profile by hand.
 - Never seed the dev app from live T3 or current-Scient data. Use synthetic or
   deliberately created candidate state.
 - A project folder may be opened by the dev app, but app sessions, settings,

@@ -1,10 +1,11 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ProjectScript, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -49,7 +50,9 @@ export function useProjectScriptAutoPreview<E>(input: {
   const nextRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const activeThreadRefRef = useRef(input.activeThreadRef);
-  activeThreadRefRef.current = input.activeThreadRef;
+  useLayoutEffect(() => {
+    activeThreadRefRef.current = input.activeThreadRef;
+  });
   const discovered = useDiscoveredPortsState(
     pending?.threadRef.environmentId ?? null,
     pending ? [pending.request.requestedUrl] : undefined,
@@ -58,13 +61,13 @@ export function useProjectScriptAutoPreview<E>(input: {
     selectActiveRightPanelSurface(state.byThreadKey, pending?.threadRef),
   );
 
-  const clearPending = useCallback((expectedId?: number): boolean => {
+  const clearPending = useStableCallback((expectedId?: number): boolean => {
     const current = pendingRef.current;
     if (current === null || (expectedId !== undefined && current.id !== expectedId)) return false;
     pendingRef.current = null;
     setPending(null);
     return true;
-  }, []);
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -74,23 +77,23 @@ export function useProjectScriptAutoPreview<E>(input: {
     };
   }, []);
 
-  const openRequest = useCallback(
-    async (threadRef: ScopedThreadRef, request: ProjectScriptPreviewRequest): Promise<void> => {
-      const result = await openProjectScriptPreview({
-        threadRef,
-        request,
-        openPreview: input.openPreview,
-      });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Unable to open preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    },
-    [input.openPreview],
-  );
+  const openRequest = async (
+    threadRef: ScopedThreadRef,
+    request: ProjectScriptPreviewRequest,
+  ): Promise<void> => {
+    const result = await openProjectScriptPreview({
+      threadRef,
+      request,
+      openPreview: input.openPreview,
+    });
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: "Unable to open preview",
+      description: error instanceof Error ? error.message : "An error occurred.",
+    });
+  };
 
   useEffect(() => {
     if (pending === null) return;
@@ -144,56 +147,53 @@ export function useProjectScriptAutoPreview<E>(input: {
     return () => window.clearTimeout(timeout);
   }, [clearPending, pending]);
 
-  return useCallback(
-    async (script: ProjectScript, launchThreadRef: ScopedThreadRef): Promise<void> => {
-      if (
-        !mountedRef.current ||
-        !isCurrentProjectScriptPreviewLaunch(activeThreadRefRef.current, launchThreadRef)
-      ) {
-        return;
-      }
-      const threadRef = launchThreadRef;
-      let plan;
-      try {
-        plan = planProjectScriptAutoPreview({
-          script,
-          previewSupported: isPreviewSupportedInRuntime(),
-          sessions: input.sessions,
-          resolveRequest: () => resolveProjectScriptPreviewRequest(threadRef, script.previewUrl!),
-        });
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to open preview",
-          description: error instanceof Error ? error.message : "The preview URL is invalid.",
-        });
-        return;
-      }
+  return async (script: ProjectScript, launchThreadRef: ScopedThreadRef): Promise<void> => {
+    if (
+      !mountedRef.current ||
+      !isCurrentProjectScriptPreviewLaunch(activeThreadRefRef.current, launchThreadRef)
+    ) {
+      return;
+    }
+    const threadRef = launchThreadRef;
+    let plan;
+    try {
+      plan = planProjectScriptAutoPreview({
+        script,
+        previewSupported: isPreviewSupportedInRuntime(),
+        sessions: input.sessions,
+        resolveRequest: () => resolveProjectScriptPreviewRequest(threadRef, script.previewUrl!),
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open preview",
+        description: error instanceof Error ? error.message : "The preview URL is invalid.",
+      });
+      return;
+    }
 
-      if (plan.kind === "ignore") return;
-      if (plan.kind === "focus") {
-        clearPending();
-        useRightPanelStore.getState().openBrowser(threadRef, plan.tabId);
-        return;
-      }
-      if (plan.kind === "open") {
-        clearPending();
-        await openRequest(threadRef, plan.request);
-        return;
-      }
+    if (plan.kind === "ignore") return;
+    if (plan.kind === "focus") {
+      clearPending();
+      useRightPanelStore.getState().openBrowser(threadRef, plan.tabId);
+      return;
+    }
+    if (plan.kind === "open") {
+      clearPending();
+      await openRequest(threadRef, plan.request);
+      return;
+    }
 
-      nextRequestIdRef.current += 1;
-      const baseline = captureProjectScriptPreviewWaitBaseline(input.sessions, input.activeTabId);
-      const nextPending: PendingProjectScriptPreview = {
-        id: nextRequestIdRef.current,
-        threadRef,
-        request: plan.request,
-        baseline,
-      };
-      pendingRef.current = nextPending;
-      setPending(nextPending);
-      useRightPanelStore.getState().openBrowser(threadRef, baseline.visibleTabId);
-    },
-    [clearPending, input.activeTabId, input.sessions, openRequest],
-  );
+    nextRequestIdRef.current += 1;
+    const baseline = captureProjectScriptPreviewWaitBaseline(input.sessions, input.activeTabId);
+    const nextPending: PendingProjectScriptPreview = {
+      id: nextRequestIdRef.current,
+      threadRef,
+      request: plan.request,
+      baseline,
+    };
+    pendingRef.current = nextPending;
+    setPending(nextPending);
+    useRightPanelStore.getState().openBrowser(threadRef, baseline.visibleTabId);
+  };
 }

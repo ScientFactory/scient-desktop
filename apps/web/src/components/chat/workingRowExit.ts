@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
@@ -95,7 +96,7 @@ export function useWorkingRowExit(
   threadKey: string,
 ): { rows: readonly MessagesTimelineRow[]; exit: WorkingRowExit } {
   const reducedMotion = useMediaQuery(REDUCED_MOTION_QUERY);
-  const current = useMemo(() => findWorkingRow(rows), [rows]);
+  const current = findWorkingRow(rows);
   const [state, setState] = useState<WorkingRowExitState>(() => ({
     threadKey,
     last: current,
@@ -104,17 +105,16 @@ export function useWorkingRowExit(
   const next = nextWorkingRowExit(state, { threadKey, current, animate: !reducedMotion });
   if (next !== state) setState(next);
   const exiting = next.exiting;
-  const onExitEnd = useCallback(
-    () => setState((previous) => (previous.exiting ? { ...previous, exiting: null } : previous)),
-    [],
+  const onExitEnd = useStableCallback(() =>
+    setState((previous) => (previous.exiting ? { ...previous, exiting: null } : previous)),
   );
   useEffect(() => {
     if (!exiting) return;
     const timeout = window.setTimeout(onExitEnd, UNPLAYED_EXIT_TIMEOUT_MS);
     return () => window.clearTimeout(timeout);
   }, [exiting, onExitEnd]);
-  const listed = useMemo(() => withExitingWorkingRow(rows, exiting), [rows, exiting]);
-  const exit = useMemo(() => ({ exiting: exiting !== null, onExitEnd }), [exiting, onExitEnd]);
+  const listed = withExitingWorkingRow(rows, exiting);
+  const exit = { exiting: exiting !== null, onExitEnd };
   return { rows: listed, exit };
 }
 

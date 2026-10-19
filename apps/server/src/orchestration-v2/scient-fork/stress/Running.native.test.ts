@@ -44,6 +44,11 @@ import { ConversationForkService } from "../ConversationForkService.ts";
 import { codexReplayPreamble, makeCodexReplayTurn } from "./codexReplayFixture.ts";
 import { runtimeOptions } from "./stressHarness.ts";
 
+// A provider turn's terminal event lands before the run's final write, which
+// enqueues its checkpoint effect; drain only once the run has left `running`.
+const providerTurnSettled =
+  (status: "completed" | "interrupted") => (p: OrchestrationV2ThreadProjection) =>
+    p.providerTurns.some((turn) => turn.status === status) && p.runs[0]?.status !== "running";
 const waitFor = Effect.fn("stress.waitFor")(function* (
   threadId: ThreadId,
   predicate: (p: OrchestrationV2ThreadProjection) => boolean,
@@ -325,7 +330,7 @@ it.live.each([false, true])(
             gate.release(`cut-${cut}`);
           }
           yield* Fiber.join(starting);
-          yield* waitFor(threadId, (p) => p.providerTurns[0]?.status === "completed");
+          yield* waitFor(threadId, providerTurnSettled("completed"));
           yield* worker.drain(12);
           yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
           for (const child of children)

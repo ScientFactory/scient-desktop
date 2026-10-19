@@ -9,6 +9,7 @@ import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -79,11 +80,18 @@ export function makeClaudeVoiceTranscriptCorrection(
           });
           const catalog = yield* scopedModelCatalog;
           const model = resolveClaudeCatalogApiModelId(catalog, input.modelSelection);
-          const effort = normalizeClaudeCatalogEffort(
-            catalog,
-            resolveClaudeCatalogEffort(catalog, input.modelSelection.model, "low"),
-            input.modelSelection.model,
-          );
+          // Voice chooses its own effort; unknown models have no advertised support for that default.
+          const supportsEffort = (
+            getClaudeCatalogModelCapabilities(catalog, input.modelSelection.model)
+              .optionDescriptors ?? []
+          ).some((option) => option.id === "effort");
+          const effort = supportsEffort
+            ? normalizeClaudeCatalogEffort(
+                catalog,
+                resolveClaudeCatalogEffort(catalog, input.modelSelection.model, "low"),
+                input.modelSelection.model,
+              )
+            : undefined;
           const stdout = yield* runVoiceTranscriptCorrectionProcess({
             spawner,
             binaryPath: settings.binaryPath?.trim() || "claude",

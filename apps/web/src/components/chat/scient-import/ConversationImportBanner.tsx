@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -145,13 +145,9 @@ export function useConversationImportBanner(
   const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
     null,
   );
-  return useMemo(
-    () =>
-      thread == null || dismissedImportNoticeThreadId === thread.id
-        ? null
-        : conversationImportBannerItem(thread.source, () =>
-            setDismissedImportNoticeThreadId(thread.id),
-          ),
-    [thread, dismissedImportNoticeThreadId],
-  );
+  return thread == null || dismissedImportNoticeThreadId === thread.id
+    ? null
+    : conversationImportBannerItem(thread.source, () =>
+        setDismissedImportNoticeThreadId(thread.id),
+      );
 }

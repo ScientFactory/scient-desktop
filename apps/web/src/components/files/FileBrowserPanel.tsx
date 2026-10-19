@@ -5,9 +5,12 @@ import type {
 } from "@pierre/trees";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 
@@ -17,6 +20,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
@@ -42,6 +46,7 @@ import {
 import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
 
+import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
@@ -55,12 +60,17 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
-  /** Entry currently open in the surface; revealed and selected in the tree. A directory is expanded. */
   selectedPath: string | null;
-  /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string) => void;
+  /**
+   * Set when `cwd` is a host folder outside the workspace rather than the
+   * workspace root. Entries then open and mention as host paths. A host folder can
+   * be a home directory, so nothing walks it whole: there is no expand-all, and
+   * search filters the folders already loaded instead of indexing on the server.
+   */
+  hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
 }
@@ -100,7 +110,10 @@ export default function FileBrowserPanel({
   onOpenFileSource,
   onRefreshSelectedFile,
   workspaceMutationId,
+  hostFolder = false,
 }: FileBrowserPanelProps) {
+  const panelPath = (relativePath: string) =>
+    hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   // SCIENT-FORK:START — file visibility view and the lazily loaded tree
@@ -114,14 +127,12 @@ export default function FileBrowserPanel({
     ...lazyTree
   } = useScientLazyWorkspaceTree(directoryView);
   // SCIENT-FORK:END
-  const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
-  loadingDirectoriesRef.current = treeSnapshot.loadingDirectories;
   const [searchValue, setSearchValue] = useState("");
   const { query: searchQuery, normalizedQuery: normalizedSearchValue } =
     resolveFileBrowserSearchValue(searchValue);
   const isSearching = normalizedSearchValue.length > 0;
   const pathSearch = useProjectPathSearch(
-    { environmentId, cwd, query: searchQuery },
+    { environmentId, cwd: hostFolder ? null : cwd, query: searchQuery },
     FILE_SEARCH_LIMIT,
   );
   const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
@@ -143,111 +154,109 @@ export default function FileBrowserPanel({
     return () => document.removeEventListener("contextmenu", capturePointer, true);
   }, []);
 
-  /** Combines the file actions (open/reveal/open with) with the panel's own mention actions. */
-  const showEntryContextMenu = async (
-    item: TreeContextMenuItem,
-    context: TreeContextMenuOpenContext,
-  ) => {
-    const api = readLocalApi();
-    if (!api) {
-      context.close();
-      return;
-    }
-    const relativePath = item.path.replace(/\/$/, "");
-    const mention = serializeComposerFileLink(relativePath);
-    const pointer = contextMenuPointerRef.current;
-    const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
-    const anchorRect = context.anchorElement.getBoundingClientRect();
-    const position = pointerIsFresh
-      ? { x: pointer.x, y: pointer.y }
-      : { x: anchorRect.left, y: anchorRect.bottom };
-    const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
-    const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-    try {
-      const clicked = await api.contextMenu.show(
-        [
-          ...fileMenuItems,
-          ...(shouldOpenInBrowserByDefault(relativePath)
-            ? ([{ id: "open-source", label: "Open source" }] as const)
-            : []),
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
-        ],
-        position,
-      );
-      if (clicked === null) return;
-      // "Open with" submenu selections report the child id ("editor:<id>"),
-      // which is not present in the top-level item list.
-      const isFileMenuAction =
-        fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
-      if (isFileMenuAction) {
-        await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+  const showEntryContextMenu = useStableCallback(
+    (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+      const api = readLocalApi();
+      if (!api) {
+        context.close();
         return;
       }
-      if (clicked === "open-source") {
-        onOpenFileSource(relativePath);
-        return;
-      }
-      if (clicked === "copy-mention") {
-        try {
-          await writeTextToClipboard(mention);
-          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
-        return;
-      }
-      if (clicked === "add-to-chat") {
-        const composer = composerRef?.current;
-        if (!composer) {
-          toastManager.add({
-            type: "error",
-            title: "Unable to add to chat",
-            description: "Open a chat for this project and try again.",
-          });
+      const relativePath = item.path.replace(/\/$/, "");
+      const mention = serializeComposerFileLink(panelPath(relativePath));
+      const pointer = contextMenuPointerRef.current;
+      const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
+      const anchorRect = context.anchorElement.getBoundingClientRect();
+      const position = pointerIsFresh
+        ? { x: pointer.x, y: pointer.y }
+        : { x: anchorRect.left, y: anchorRect.bottom };
+      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      void settlePromise(async () => {
+        const clicked = await api.contextMenu.show(
+          [
+            ...fileMenuItems,
+            // SCIENT-FORK:START — files that open rendered by default can open as source
+            ...(shouldOpenInBrowserByDefault(relativePath)
+              ? ([{ id: "open-source", label: "Open source" }] as const)
+              : []),
+            // SCIENT-FORK:END
+            { id: "copy-mention", label: "Copy mention" },
+            { id: "add-to-chat", label: "Add to chat" },
+          ],
+          position,
+        );
+        if (clicked === null) return;
+        // "Open with" submenu selections report the child id ("editor:<id>"),
+        // which is not present in the top-level item list.
+        const isFileMenuAction =
+          fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
+        if (isFileMenuAction) {
+          await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
           return;
         }
-        const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
-        if (!inserted) {
-          toastManager.add({
-            type: "error",
-            title: "Unable to add to chat",
-            description: "The chat isn't ready to accept input right now.",
-          });
+        // SCIENT-FORK:START
+        if (clicked === "open-source") {
+          onOpenFileSource(panelPath(relativePath));
+          return;
         }
-      }
-    } finally {
-      context.close();
-    }
-  };
-  const showEntryContextMenuRef = useRef(showEntryContextMenu);
-  useEffect(() => {
-    showEntryContextMenuRef.current = showEntryContextMenu;
-  });
+        // SCIENT-FORK:END
+        if (clicked === "copy-mention") {
+          try {
+            await writeTextToClipboard(mention);
+            toastManager.add({
+              type: "success",
+              title: "Mention copied",
+              description: relativePath,
+            });
+          } catch (error) {
+            toastManager.add({
+              type: "error",
+              title: "Failed to copy mention",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            });
+          }
+          return;
+        }
+        if (clicked === "add-to-chat") {
+          const composer = composerRef?.current;
+          if (!composer) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to add to chat",
+              description: "Open a chat for this project and try again.",
+            });
+            return;
+          }
+          const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
+          if (!inserted) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to add to chat",
+              description: "The chat isn't ready to accept input right now.",
+            });
+          }
+        }
+      }).then((result) => {
+        context.close();
+        // Keep surfacing unexpected failures as unhandled rejections.
+        if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+      });
+    },
+  );
 
-  const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
-  const dragMention = useMemo(
-    () =>
-      createFileTreeDragMentionController({
-        deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
-      }),
-    [],
+  const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
+  const dragMention = createFileTreeDragMentionController(
+    hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
   const { model } = useFileTree({
     composition: {
       contextMenu: {
         triggerMode: "right-click",
         onOpen: (item, context) => {
-          void showEntryContextMenuRef.current(item, context);
+          showEntryContextMenu(item, context);
         },
       },
     },
-    // Rows only need to be draggable so entries can be dropped into the chat
-    // composer; rearranging files inside the tree stays off.
     dragAndDrop: { canDrop: () => false },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
@@ -258,33 +267,28 @@ export default function FileBrowserPanel({
       // The drag controller's selection cache must track every change,
       // including reveal-driven ones, or drags act on a stale selection.
       dragMention.handleSelectionChange(selectedPaths);
-      // Selection changes driven by the reveal sync below are echoes of an
-      // already-open file, not a request to open it again.
       if (syncingSelectionRef.current) return;
-      // Starting a drag selects the dragged row; that selection is a side
-      // effect of the gesture, not a request to open the file.
       if (dragMention.isDragInProgress()) {
         return;
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) !== "directory") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+        onOpenFile(panelPath(selectedPath));
       }
     },
     paths: [],
     // SCIENT-FORK:START — preserve upstream first-load feedback and read-only locks
-    renderRowDecoration: scientReadOnlyRowDecoration(treeEntriesRef, loadingDirectoriesRef),
+    renderRowDecoration: (context) =>
+      scientReadOnlyRowDecoration(treeEntriesRef, loadingDirectoriesRef)(context),
     // SCIENT-FORK:END
     search: false,
     unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   });
-  const previousLoadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
   useEffect(() => {
-    const previous = previousLoadingDirectoriesRef.current;
     const next = treeSnapshot.loadingDirectories;
-    if (areSamePaths(previous, next)) return;
-    previousLoadingDirectoriesRef.current = next;
+    if (areSamePaths(loadingDirectoriesRef.current, next)) return;
+    loadingDirectoriesRef.current = next;
     model.setComposition(model.getComposition());
   }, [model, treeSnapshot.loadingDirectories]);
   const treeSearch = useFileTreeSearch(model);
@@ -329,11 +333,11 @@ export default function FileBrowserPanel({
     model.closeSearch();
     setSearchValue("");
   };
-  const refreshEntries = useCallback(() => {
+  const refreshEntries = () => {
     void treeControllerRef.current?.refresh();
     refreshProjectEntriesQuery(environmentId, cwd);
     if (isSearching) pathSearch.refresh();
-  }, [cwd, environmentId, isSearching, pathSearch.refresh]);
+  };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: refreshEntries,
@@ -419,30 +423,24 @@ export default function FileBrowserPanel({
     };
   }, [entryKindsRef, isSearching, model, selectedPath, selectedPathRevealId, treeControllerRef]);
 
-  // Tag tree drags with the composer mention payload. The row is read from
-  // the composed event path (the tree's shadow root is open), so this does
-  // not depend on running after the tree's own dragstart handler; the drag
-  // data store is writable for every dragstart listener in the dispatch.
   // The capture phase runs before the tree's own dragstart handler selects
   // the dragged row, so the drag flag is up before that selection emits.
   const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    treeModelRef.current = model;
-  }, [model]);
   useEffect(() => {
     const panel = panelRef.current;
     if (panel === null) {
       return;
     }
     const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () => dragMention.handleDragEnd();
+    const handleDragEnd = () =>
+      dragMention.handleDragEnd((path) => model.getItem(path)?.deselect());
     panel.addEventListener("dragstart", handleDragStart, true);
     panel.addEventListener("dragend", handleDragEnd);
     return () => {
       panel.removeEventListener("dragstart", handleDragStart, true);
       panel.removeEventListener("dragend", handleDragEnd);
     };
-  }, [dragMention]);
+  }, [dragMention, model]);
 
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
@@ -461,16 +459,20 @@ export default function FileBrowserPanel({
           isPending={treeSnapshot.isPending || isSearchPending}
           onRefresh={handleRefresh}
         />
-        <ScientMarkdownCreateButton
-          environmentId={environmentId}
-          cwd={cwd}
-          selectedPath={selectedPath}
-          onCreated={(relativePath, contents, revision) => {
-            setProjectFileQueryData(environmentId, cwd, relativePath, contents, revision);
-            handleRefresh();
-            onOpenFile(relativePath);
-          }}
-        />
+        {/* SCIENT-FORK:START — host folders are read-only, so only the workspace creates documents */}
+        {hostFolder ? null : (
+          <ScientMarkdownCreateButton
+            environmentId={environmentId}
+            cwd={cwd}
+            selectedPath={selectedPath}
+            onCreated={(relativePath, contents, revision) => {
+              setProjectFileQueryData(environmentId, cwd, relativePath, contents, revision);
+              handleRefresh();
+              onOpenFile(relativePath);
+            }}
+          />
+        )}
+        {/* SCIENT-FORK:END */}
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
@@ -479,7 +481,7 @@ export default function FileBrowserPanel({
           onClose={handleSearchClose}
         />
         <div className="ms-auto flex shrink-0 items-center gap-1">
-          {loadedDirectoryPaths.length > 0 ? (
+          {loadedDirectoryPaths.length > 0 && !hostFolder ? (
             <Tooltip>
               <TooltipTrigger
                 render={

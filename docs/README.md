@@ -54,7 +54,7 @@ require a cosmetic folder migration.
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
-- [Use T3 Code as your default browser](./user/default-browser.md)
+- [Default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
@@ -72,7 +72,7 @@ require a cosmetic folder migration.
 - [Scientific computing](./user/scientific-computing.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
-- [Background service (Linux and macOS)](./user/background-service.md)
+- [Run a server without the desktop app](./user/background-service.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 
 ---
@@ -189,4 +189,4 @@ Follow their linked successors for current behavior.
 
 ## Manuscript integration foundation
 
-- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation and local application invariants.
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation: local application and connection-state invariants.

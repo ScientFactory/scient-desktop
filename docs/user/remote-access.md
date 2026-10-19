@@ -27,26 +27,59 @@ key, SSH agent, or host entry in `~/.ssh/config` first when possible.
    port.
 4. Review any host-key or password prompt and connect.
 
-Packaged desktop releases start the matching Scient server release on the
-remote host. Saved SSH environments reconnect through the same target. If the
-route, credentials, Node runtime, or remote launch fails, Scient keeps the
-environment disconnected and reports the problem instead of switching to
-another machine.
+Packaged desktop releases install and start the matching Scient server release
+on the remote host. Scient runs only that exact release, never a server command
+already installed on the host or a package from npm. Saved SSH environments
+reconnect through the same target. If the route, credentials, Node runtime, or
+remote launch fails, Scient keeps the environment disconnected and reports the
+problem instead of switching to another machine.
 
 If Scient started the remote server for this SSH connection, disconnecting
 stops that process. A compatible server that was already running is left
 running.
 
+### Where remote data lives
+
+On the remote host, Scient keeps its server data in `~/.scient-next`, the same
+folder Scient desktop uses on that computer. If the host also runs Scient
+desktop, an SSH connection uses that computer's own Scient server. Scient never
+connects to a server that uses the `~/.t3` folder, which other apps share.
+
+Earlier Scient versions kept remote data in `~/.t3`. The first connection from
+a newer version copies that data to `~/.scient-next` once, when
+`~/.scient-next` does not exist yet and the data in `~/.t3` was written by
+Scient. The copy holds threads, settings, attachments, and the server's
+credentials. Worktrees, projects, and scratch folders stay where they are and
+keep working from there; installed tools and runtimes download again when
+needed. The data in `~/.t3` stays as it was so an older Scient version can
+still use it, but the two folders do not share later changes. A `~/.t3` that
+another app wrote, or that Scient cannot read, is never changed, and Scient
+starts with an empty `~/.scient-next`.
+
+The copy runs before the server starts, so that first connection can take
+longer; the copy itself may run for up to 15 minutes. While it runs, a saved
+connection reports that Scient is still preparing the host and keeps retrying;
+it connects once the copy finishes, or shows the copy's error if it fails.
+Before copying, Scient stops the
+server it started on `~/.t3` for this connection, once it has confirmed that
+process is that server. The connection fails without copying anything if
+another older Scient server is still using `~/.t3`, if Scient cannot confirm
+which process its old server is, or if `~/.t3/userdata` contains a symbolic
+link, which the copy would share with the old folder. Disconnect older Scient
+apps from the host or stop that server, then reconnect. To start fresh instead
+of copying, create an empty `~/.scient-next` folder on the host before
+connecting.
+
 ## Direct and private-network access
 
 Advanced deployments can run a separately managed
-[background server](background-service.md) and connect through a reachable
+[headless server](background-service.md) and connect through a reachable
 endpoint. A private network such as Tailscale can make the server reachable
 without exposing it directly to the public internet.
 
 Keep these responsibilities separate:
 
-- the background-service setup decides how the server starts and updates;
+- how you run the server decides how it starts and updates;
 - SSH, a direct endpoint, or a private network decides how the client reaches
   it; and
 - a pairing credential decides what that client is allowed to do.
@@ -63,17 +96,17 @@ expose an unauthenticated Scient server port to the public internet.
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, another VPN, a public
-URL, SSH, or T3 Connect. Tailscale shares its `100.64.0.0/10` address range with
+URL, or SSH. Tailscale shares its `100.64.0.0/10` address range with
 other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
 unless the machine confirms it is on Tailscale. To add a route, choose **Add
-route** in the machine's route list, or next to it in the T3 Connect list.
+route** in the machine's route list.
 Pairing the same machine again over another address also adds a route instead
 of a second machine. A new route is placed by speed, in that order, and you can
 reorder routes at any time.
 
-While connected through T3 Connect or a paired address, Scient also learns the
-machine's current LAN and Tailscale addresses and adds them as routes, so
-pairing once through T3 Connect is enough to use the LAN at home. When the
+While connected through a paired address, Scient also learns the machine's
+current LAN and Tailscale addresses and adds them as routes, so pairing once
+is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
 address to be learned. You can reorder a learned route, but not remove it; it
@@ -89,14 +122,13 @@ return to the app, and every minute, and moves back as soon as one works.
 On web and desktop, select the route count under the machine's name in
 **Settings → Connections** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
-choose **Edit**. Signing out of T3 Connect removes only that route; a machine
-you can still reach another way stays saved.
+choose **Edit**.
 
 Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
 in the mobile route details, to see what your current connection can do on that
 environment. For a remote environment, this is in its route details. Permissions
 shown there apply only to the route marked **In use**; other routes are not
-checked. Direct pairing and T3 Connect have separate sessions and may grant
+checked. Separately paired routes have separate sessions and may grant
 different permissions.
 
 ### Balance new threads across machines
@@ -132,15 +164,16 @@ pairing model.
 ### Headless server
 
 For a separately managed server, use the exact Scient release archive and
-`SCIENT_SERVER_PACKAGE` variable described in [Background service setup](background-service.md).
-The retained compatibility executable is `t3`; do not use T3's npm package.
-For example, a Tailnet-only server can be started with:
+`SCIENT_SERVER_PACKAGE` variable described in
+[Run a Scient server without the desktop app](background-service.md). Do not
+substitute a package name for the release URL. For example, a Tailnet-only
+server can be started with:
 
 ```bash
-npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 serve --host "$(tailscale ip -4)"
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" scient serve --host "$(tailscale ip -4)"
 ```
 
-Use the same package command with `t3 serve --help` for the complete options. To ask the server to manage
+Use the same package command with `scient serve --help` for the complete options. To ask the server to manage
 Tailscale Serve directly, use `--tailscale-serve`; advanced users can add
 `--tailscale-serve-port 8443` for another HTTPS port. The command prints the
 address and temporary pairing information needed by a client.
@@ -198,6 +231,15 @@ If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
 running is left alone.
 
+Each desktop app keeps one session on the host for its SSH connection and reuses
+it when it reconnects. Revoke sessions you no longer use in **Settings →
+Connections** on the host, or on a headless host with `scient auth session list` and
+`scient auth session revoke <id>`. A desktop that can still sign in over SSH pairs
+again on its next connect.
+
+For Antigravity's Google callback on a remote host, see
+[remote sign-in](./providers-antigravity.md#sign-in-from-another-device).
+
 ## Use the desktop app only for remote environments
 
 If this computer should only control work running elsewhere, turn off **Local
@@ -242,13 +284,13 @@ the server says so at startup, and browser tabs and HTML previews show the
 command to run on the host:
 
 ```sh
-sudo t3 browser setup
+sudo scient browser setup
 ```
 
-The server shows the exact line for how you started it, such as
-`sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
-for your user. Where `t3` is not on your `PATH`, such as with only the
-desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
+The server shows the exact line for the installation that runs it, usually with
+the full path of the desktop app's `scient` launcher or of the Node runtime and
+server it runs from, so it works even where `scient` is not on your `PATH`. It
+keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries with apt. It is safe to run again. Without `sudo`, it
 only reports what it would change.
 
@@ -276,14 +318,16 @@ expires.
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-t3 pair --scope orchestration:read --scope relay:read
+scient pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with
-`t3 auth pairing create` and `t3 auth session issue`; each command's
-`--help` lists the available scopes. Without `--scope`, pairing tokens retain
-standard client permissions and issued bearer sessions retain administrative
-permissions.
+`scient auth pairing create` and `scient auth session issue`; each command's
+`--help` lists the available scopes. Without `--scope`, pairing tokens and issued
+bearer sessions get every permission, including managing access. A terminal or a
+full-access agent on the host can reach that as well, so a client that should not
+manage access also needs to go without `terminal:operate` and
+`orchestration:operate`.
 
 To change an existing client's permissions, create a fresh pairing link with the
 scopes it needs. In a browser opened directly on the environment, open that link
@@ -302,12 +346,13 @@ worktrees. It does not restrict what a task does. Starting a task in a new
 worktree still creates that branch and worktree with `orchestration:operate`,
 and the agent it runs can use Git however the environment allows.
 
-Settings changes, provider management, and environment maintenance can be granted
-separately from access administration. New standard pairings include these
-permissions. Existing clients can stay connected after an update, but newly separated
-features may require pairing again with the permissions they need. Older clients
-may show controls that the server denies. Create a fresh pairing link to change
-a client's permissions.
+Settings changes, provider management, environment maintenance, access
+management, and relay management can each be granted separately. New pairings
+without `--scope` include all of them. Existing clients keep the
+permissions they paired with and can stay connected after an update, but newly
+separated features may require pairing again with the permissions they need.
+Older clients may show controls that the server denies. Create a fresh pairing
+link to change a client's permissions.
 
 `filesystem:read` allows browsing host files, opening workspace files, and viewing
 local changes. Add `filesystem:write` to allow editing files or saving plans to

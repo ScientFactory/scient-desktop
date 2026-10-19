@@ -295,7 +295,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) =>
               event.type === "subagent.updated" &&
               event.subagent.presentation?.kind === "workflow_agent" &&
-              event.subagent.parentNodeId !== coordinatorId,
+              event.subagent.presentation?.workflowId !== coordinatorId,
           )?.type,
           "subagent.updated",
         );
@@ -303,7 +303,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           .flatMap((event) =>
             event.type === "subagent.updated" &&
             event.subagent.presentation?.kind === "workflow_agent" &&
-            event.subagent.parentNodeId !== coordinatorId
+            event.subagent.presentation?.workflowId !== coordinatorId
               ? [event.subagent]
               : [],
           )

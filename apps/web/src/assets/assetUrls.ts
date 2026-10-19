@@ -4,7 +4,6 @@ import { EMPTY_ASSET_URL_ATOM, resolveAssetUrl } from "@t3tools/client-runtime/s
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, AssetImageDimensions, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useMemo } from "react";
 
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -13,6 +12,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
+// SCIENT-FORK:START — every state carries `refresh`, so a failed signed URL can be re-minted.
 export type AssetUrlState =
   | { readonly _tag: "Loading"; readonly refresh: () => void }
   | {
@@ -20,6 +20,8 @@ export type AssetUrlState =
       readonly refresh: () => void;
       /** A refresh of the failed URL is in flight. */
       readonly waiting?: boolean;
+      /** Set when the session lacks `filesystem:read`; the file itself may be fine. */
+      readonly reason?: "missing-file-access";
     }
   | {
       readonly _tag: "Success";
@@ -29,18 +31,16 @@ export type AssetUrlState =
       readonly imageDimensions?: AssetImageDimensions;
       readonly refresh: () => void;
     };
+// SCIENT-FORK:END
 
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
+  // SCIENT-FORK:START — Scient gates `environment-file` too and returns `refresh` in every state;
+  // `reason` mirrors client-runtime's `blockedAssetUrlState`.
   const fileAccess = useFilesystemReadAccess(environmentId);
-  const canReadResource =
-    fileAccess.canReadFiles ||
-    (resource?._tag !== "environment-file" &&
-      resource?._tag !== "workspace-file" &&
-      resource?._tag !== "media-file" &&
-      resource?._tag !== "draft-workspace-file");
+  const canReadResource = fileAccess.canReadFiles || resource === null || !isFileResource(resource);
   const preparedConnection = usePreparedConnection(environmentId);
   const assetAtom =
     !canReadResource || environmentId === null || resource === null
@@ -48,7 +48,13 @@ export function useAssetUrlState(
       : assetEnvironment.createUrl({ environmentId, input: { resource } });
   const result = useAtomValue(assetAtom);
   const refresh = useAtomRefresh(assetAtom);
-  if (!canReadResource) return { _tag: fileAccess.isPending ? "Loading" : "Failure", refresh };
+  if (!canReadResource) {
+    if (fileAccess.isPending) return { _tag: "Loading", refresh };
+    // An error means the session check itself failed, such as when offline.
+    return fileAccess.error === null
+      ? { _tag: "Failure", refresh, reason: "missing-file-access" }
+      : { _tag: "Failure", refresh };
+  }
   if (result._tag === "Failure") {
     return { _tag: "Failure", refresh, waiting: result.waiting };
   }
@@ -68,6 +74,7 @@ export function useAssetUrlState(
           ? { imageDimensions: result.value.imageDimensions }
           : {}),
       };
+  // SCIENT-FORK:END
 }
 
 export function useAssetUrlRefresh(
@@ -80,21 +87,19 @@ export function useAssetUrlRefresh(
     reportFailure: false,
     refresh: true,
   });
-  return useCallback(async () => {
+  return async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const needsReadAccess =
-      resource._tag === "workspace-file" ||
-      resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file" ||
-      resource._tag === "environment-file";
+    // SCIENT-FORK:START — file access can be revoked while the signed URL is minted.
+    const needsReadAccess = isFileResource(resource);
     if (needsReadAccess && !readEnvironmentScope(environmentId, AuthFilesystemReadScope))
       return null;
     const result = await refresh({ environmentId, input: { resource } });
     if (needsReadAccess && !readEnvironmentScope(environmentId, AuthFilesystemReadScope))
       return null;
+    // SCIENT-FORK:END
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-  }, [environmentId, resource, refresh, httpBaseUrl]);
+  };
 }
 
 export function useAssetUrls(
@@ -103,41 +108,41 @@ export function useAssetUrls(
 ): ReadonlyArray<string | null> {
   const preparedConnection = usePreparedConnection(environmentId);
   const { canReadFiles } = useFilesystemReadAccess(environmentId);
-  const allowedResources = useMemo(
-    () =>
-      canReadFiles
-        ? resources
-        : resources.filter(
-            (resource) =>
-              resource._tag !== "environment-file" &&
-              resource._tag !== "workspace-file" &&
-              resource._tag !== "media-file" &&
-              resource._tag !== "draft-workspace-file",
-          ),
-    [canReadFiles, resources],
-  );
+  const allowedResources = canReadFiles
+    ? resources
+    : resources.filter((resource) => !isFileResource(resource));
   const results = useAtomValue(
     assetEnvironment.createUrls({
       environmentId,
       resources: allowedResources,
     }),
   );
-  return useMemo(() => {
-    if (preparedConnection._tag === "None") return resources.map(() => null);
-    let resultIndex = 0;
-    return resources.map((resource) => {
-      if (
-        !canReadFiles &&
-        (resource._tag === "environment-file" ||
-          resource._tag === "workspace-file" ||
-          resource._tag === "media-file" ||
-          resource._tag === "draft-workspace-file")
-      )
-        return null;
-      const result = results[resultIndex++];
-      return result && AsyncResult.isSuccess(result)
+  if (preparedConnection._tag === "None") return resources.map(() => null);
+  const urls: Array<string | null> = [];
+  let resultIndex = 0;
+  for (const resource of resources) {
+    if (!canReadFiles && isFileResource(resource)) {
+      urls.push(null);
+      continue;
+    }
+    const result = results[resultIndex];
+    resultIndex += 1;
+    urls.push(
+      result && AsyncResult.isSuccess(result)
         ? resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl)
-        : null;
-    });
-  }, [canReadFiles, preparedConnection, resources, results]);
+        : null,
+    );
+  }
+  return urls;
+}
+
+function isFileResource(resource: AssetResource): boolean {
+  return (
+    // SCIENT-FORK:START — environment files need `filesystem:read` too.
+    resource._tag === "environment-file" ||
+    // SCIENT-FORK:END
+    resource._tag === "workspace-file" ||
+    resource._tag === "media-file" ||
+    resource._tag === "draft-workspace-file"
+  );
 }

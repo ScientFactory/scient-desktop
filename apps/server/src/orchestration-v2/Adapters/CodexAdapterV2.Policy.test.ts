@@ -162,7 +162,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
       assert.equal(params.collaborationMode?.mode, "default");
       assert.include(
-        params.additionalContext?.t3_code_orchestration?.value ?? "",
+        params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "Use `delegate_task`",
       );
     }),
@@ -316,10 +316,12 @@ describe("CodexAdapterV2 process spawning", () => {
           cwd: "/workspace/thread-codex-mcp",
           model: "gpt-5.4",
           config: {
-            "tools.update_plan.enabled": true,
+            ...CodexAdapterV2.CODEX_THREAD_CONFIG,
             mcp_servers: {
               scient: {
                 url: "http://127.0.0.1:43123/mcp",
+                // Above the one-hour MCP wait cap, so the server's wait timeout ends long calls.
+                tool_timeout_sec: 3_900,
                 http_headers: {
                   Authorization: "Bearer secret-codex-token",
                 },
@@ -349,8 +351,11 @@ describe("CodexAdapterV2 process spawning", () => {
       if (!ChildProcess.isStandardCommand(command)) {
         return;
       }
-      assert.equal(command.command, '^"C:\\npm\\codex.cmd^"');
-      assert.deepEqual(command.args, ['^"app-server^"', '^"argument^ with^ spaces^"']);
+      assert.equal(
+        command.command,
+        '^"C:\\npm\\codex.cmd^" ^"app-server^" ^"argument^ with^ spaces^"',
+      );
+      assert.deepEqual(command.args, []);
       assert.equal(command.options.shell, true);
       assert.equal(command.options.cwd, "C:\\workspace");
       assert.deepEqual(command.options.env, { CUSTOM: "1" });

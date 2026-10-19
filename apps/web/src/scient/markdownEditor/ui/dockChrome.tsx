@@ -1,8 +1,10 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffectEvent } from "react";
+
 import { ChevronDown, ChevronUp, Ellipsis } from "lucide-react";
 import {
   Fragment,
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -154,9 +156,9 @@ export function DockMenu(props: {
 }) {
   const closedByCommand = useRef(false);
   const pendingCommand = useRef<(() => void) | null>(null);
-  const queueCommand = useCallback((action: () => void) => {
+  const queueCommand = useStableCallback((action: () => void) => {
     pendingCommand.current = action;
-  }, []);
+  });
   return (
     <DockCommandContext value={queueCommand}>
       <Menu
@@ -323,7 +325,9 @@ export function DockOverflowRow(props: {
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
   const groupsRef = useRef(props.groups);
-  groupsRef.current = props.groups;
+  useLayoutEffect(() => {
+    groupsRef.current = props.groups;
+  });
   const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(EMPTY_GROUP_SET);
   const layoutKey = props.groups
     .map(
@@ -339,7 +343,7 @@ export function DockOverflowRow(props: {
   const visibleLayoutKey = visible.map((group) => group.id).join("|");
   const showOverflowMenu = props.overflowItems !== undefined || overflowGroups.length > 0;
 
-  const recompute = useCallback(() => {
+  const recompute = useStableCallback(() => {
     const dock = dockRef.current;
     // clientWidth is 0 without a layout engine (tests, hidden panes): show all.
     if (!dock || dock.clientWidth === 0) return;
@@ -368,20 +372,30 @@ export function DockOverflowRow(props: {
       })),
     });
     setHiddenIds((previous) => (sameStringSet(previous, next) ? previous : next));
-  }, []);
+  });
 
-  useLayoutEffect(() => {
+  const measureDockLayout = useEffectEvent((..._changes: readonly unknown[]) => {
     recompute();
-  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
+  });
+  useLayoutEffect(
+    () =>
+      measureDockLayout(layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey),
+    [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey],
+  );
 
-  useEffect(() => {
+  const observeDockLayout = useEffectEvent((..._changes: readonly unknown[]) => {
     const dock = dockRef.current;
     if (!dock) return;
     return observeResize(
       [dock, ...dock.querySelectorAll<HTMLElement>("[data-dock-group], [data-dock-reserved]")],
       recompute,
     );
-  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
+  });
+  useEffect(
+    () =>
+      observeDockLayout(layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey),
+    [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey],
+  );
 
   return (
     <div

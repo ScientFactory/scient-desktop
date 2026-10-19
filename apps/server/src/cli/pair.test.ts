@@ -147,9 +147,6 @@ const runCli = (args: ReadonlyArray<string>) =>
 const provideCliTestLayers = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.provide(effect, Layer.mergeAll(layerCliRuntime, TestConsole.layer));
 
-// Console output accumulates across CLI runs within a test, and each
-// Console.log call is one entry — so the latest command's output is the last
-// entry, even when it spans many lines.
 const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   provideCliTestLayers(
     Effect.gen(function* () {
@@ -214,13 +211,11 @@ describe("t3 pair", () => {
         assert.include(output, `Pairing with pair-test (${origin})`);
         assert.include(output, `Pairing URL: ${origin}/pair#token=`);
         assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
-        // Loopback origins are not reachable from a phone; the output must say so.
         assert.include(output, "only reachable from this machine");
 
         const token = /#token=([A-Z2-9]+)/.exec(output)?.[1];
         assert.isString(token);
 
-        // The token must be in the same store the running server reads.
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
         );
@@ -229,7 +224,7 @@ describe("t3 pair", () => {
           readonly scopes: ReadonlyArray<string>;
         }>;
         assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
+        assert.equal(credentials[0]?.label, "scient pair");
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
@@ -334,16 +329,12 @@ describe("t3 pair", () => {
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-pid-test-"));
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-        // The origin answers (another server reused the port), but the pid
-        // that wrote this state file is dead — pairing must not mint a token
-        // into the dead server's database.
         const state = yield* makePersistedServerRuntimeState({
           config: { host: "127.0.0.1", devUrl: undefined },
           port: Number(new URL(origin).port),
         });
         yield* persistServerRuntimeState({
           path: statePath,
-          // pid 2**22 + 1 exceeds any default Linux/macOS pid range.
           state: { ...state, pid: 4_194_305 },
         });
 
@@ -363,8 +354,6 @@ describe("t3 pair", () => {
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-stale-test-"));
       const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-      // A port from the dynamic range with nothing listening: the probe fails
-      // fast with ECONNREFUSED and discovery moves on.
       yield* persistServerRuntimeState({
         path: statePath,
         state: yield* makePersistedServerRuntimeState({

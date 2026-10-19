@@ -20,8 +20,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-// SCIENT-FORK:START — bounded native failure metadata, without provider payloads.
-import { recordAntigravityAuthFailure } from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
+// SCIENT-FORK:START — bounded local failure diagnostics and the shared setup-failure message.
+import {
+  ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE,
+  recordAntigravityAuthFailure,
+} from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
 // SCIENT-FORK:END
 import {
   antigravityAuthStageFailure,
@@ -65,7 +68,6 @@ export interface AntigravityAuth {
   readonly controller: ProviderAuthController;
   /** Physical process teardown for connection actions; manager-owned sessions remain separate. */
   readonly stopProcesses: Effect.Effect<void>;
-  /** Tracks startup and the process scope so sign-out cannot leave cached credentials in memory. */
   readonly withProcess: <A, E, R>(
     stop: Effect.Effect<void>,
     task: Effect.Effect<A, E, R>,
@@ -90,7 +92,6 @@ export interface AntigravityAuthOptions<
   ) => Effect.Effect<void>;
   readonly onSignedOut: Effect.Effect<void>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
-  /** False for API key methods, which authenticate without a Google sign-in page. */
   readonly usesBrowser?: boolean;
 }
 
@@ -127,7 +128,7 @@ function safeAuthFailure(
         return "Google sign-in was not approved. Start sign-in again.";
       }
       if (error.value.method === "session/new" && error.value.code === -32603) {
-        return "Antigravity authenticated, but could not initialize a session or load models.";
+        return ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE;
       }
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
@@ -140,7 +141,6 @@ function safeAuthFailure(
 }
 
 // SCIENT-FORK:END
-/** Owns one instance's explicit sign-in and all process admission around sign-out. */
 export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   Runtime extends AntigravityAuthRuntime,
 >(
@@ -367,11 +367,13 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             if (operation !== "idle") {
               return yield* setupError("start", "Antigravity setup is already in progress.");
             }
-            const flowId = yield* crypto.randomUUIDv4.pipe(
-              Effect.mapError(() =>
-                setupError("start", "Could not start Google sign-in. Try again."),
-              ),
-            );
+            const flowId = yield* crypto
+              .randomUUIDv4()
+              .pipe(
+                Effect.mapError(() =>
+                  setupError("start", "Could not start Google sign-in. Try again."),
+                ),
+              );
             const expiresAtMillis = (yield* Clock.currentTimeMillis) + AUTH_TIMEOUT_MS;
             const state: ProviderAuthState = {
               ...emptyState,
@@ -426,10 +428,6 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             authorizationUrl: null,
             message: "Waiting for Google to finish sign-in.",
           });
-          // The instance owns delivery and its failure handling. The RPC that
-          // sent the callback may disconnect before Google answers, and the
-          // flow must still settle instead of sitting at "verifying" until
-          // the deadline.
           const forwarding = yield* (
             options.forwardCallback?.(callback) ??
             forwardAntigravityCallback(options.instanceId, callback)

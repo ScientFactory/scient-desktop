@@ -234,8 +234,6 @@ function makeRegistry(
 
 const makeTestRunner = (
   registry: ProviderRegistry.ProviderRegistry["Service"],
-  // Generic updater fixtures use synthetic versions. Keep their compatibility
-  // unknown so real harness minimums do not bypass the command under test.
   manifest: ModelManifest.ModelManifestData = {
     version: 1,
     currentModels: {},
@@ -259,7 +257,6 @@ const makeTestRunner = (
               forceRefresh: Effect.succeed(manifest),
               refreshInBackground: Effect.void,
             }),
-            // Fresh per runner so a version cached by one test cannot leak into another.
             ProviderLatestVersions.layer,
           ),
         ),
@@ -309,7 +306,6 @@ describe("providerMaintenanceRunner", () => {
   it.effect("reports unchanged when the updater exits 0 but the provider is gone", () => {
     return Effect.gen(function* () {
       const { registry, providersRef } = yield* makeRegistry(baseProvider);
-      // After the update, the refreshed snapshot no longer sees an install.
       const updater = yield* makeTestRunner({
         ...registry,
         refreshInstance: () =>
@@ -337,7 +333,6 @@ describe("providerMaintenanceRunner", () => {
     () => {
       return Effect.gen(function* () {
         const { registry, providersRef } = yield* makeRegistry(baseNativeCliProvider);
-        // A native CLI version probe can fail immediately after a successful update.
         const updater = yield* makeTestRunner({
           ...registry,
           refreshInstance: () =>
@@ -417,7 +412,6 @@ describe("providerMaintenanceRunner", () => {
       });
 
       yield* updater.updateProvider(CODEX_DRIVER);
-      // Cached read picks the lock; the two fresh reads bracket the command.
       assert.deepStrictEqual(fresh, [false, true, true]);
       assert.deepStrictEqual(calls, [
         { command: "/opt/homebrew/bin/brew", args: ["upgrade", "--cask", "codex"] },
@@ -864,6 +858,124 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  // SCIENT-FORK:START — an interrupted queued update must not stay queued.
+  it.effect("ends an update interrupted while it waits for the installer lock", () => {
+    const firstStartedLatch: { resolve: () => void } = { resolve: () => {} };
+    const releaseFirstLatch: { resolve: () => void } = { resolve: () => {} };
+    const firstStarted = new Promise<void>((resolve) => {
+      firstStartedLatch.resolve = resolve;
+    });
+    const releaseFirst = new Promise<void>((resolve) => {
+      releaseFirstLatch.resolve = resolve;
+    });
+    const calls: Array<string> = [];
+    const statusOf = (providers: ReadonlyArray<ServerProvider>) =>
+      providers.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)?.updateState;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+              updateExecutable: "npm",
+              updateArgs:
+                provider === OPENCODE_DRIVER
+                  ? ["install", "-g", "opencode-ai@latest"]
+                  : ["install", "-g", "@openai/codex@latest"],
+              updateLockKey: "npm-global",
+            }),
+          ),
+      });
+
+      const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => firstStarted);
+      const second = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (statusOf(yield* registry.getProviders)?.status === "queued") break;
+        yield* Effect.yieldNow;
+      }
+      assert.strictEqual(statusOf(yield* registry.getProviders)?.status, "queued");
+
+      // The client's connection drops while the update still waits for the lock.
+      yield* Fiber.interrupt(second);
+      const interrupted = statusOf(yield* registry.getProviders);
+      assert.strictEqual(interrupted?.status, "failed");
+      assert.notStrictEqual(interrupted?.finishedAt, null);
+
+      releaseFirstLatch.resolve();
+      yield* Fiber.join(first);
+      assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
+      assert.strictEqual(statusOf(yield* registry.getProviders)?.status, "failed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.0.0"),
+          layerMockSpawner((_command, args) => {
+            calls.push(args.join(" "));
+            firstStartedLatch.resolve();
+            return {
+              stdout: "updated",
+              exitCode: Effect.promise(() => releaseFirst).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            };
+          }),
+        ),
+      ),
+    );
+  });
+  it.effect("keeps a published result when cancelled before the update returns", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const publishedLatch: { resolve: () => void } = { resolve: () => {} };
+      const releaseLatch: { resolve: () => void } = { resolve: () => {} };
+      const published = new Promise<void>((resolve) => {
+        publishedLatch.resolve = resolve;
+      });
+      const release = new Promise<void>((resolve) => {
+        releaseLatch.resolve = resolve;
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        setProviderMaintenanceActionState: Effect.fn(
+          "providerMaintenanceRunner.test.holdPublishedResult",
+        )(function* (input) {
+          const providers = yield* registry.setProviderMaintenanceActionState(input);
+          if (input.state?.status === "succeeded") {
+            publishedLatch.resolve();
+            yield* Effect.promise(() => release);
+          }
+          return providers;
+        }),
+      });
+
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => published);
+      // Cancellation arrives after the result is published but before the update returns.
+      const cancelling = yield* Fiber.interrupt(update).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      releaseLatch.resolve();
+      yield* Fiber.join(cancelling);
+
+      const providers = yield* registry.getProviders;
+      assert.strictEqual(providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(providers[0]?.updateState?.message, "Provider updated.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect("accepts arbitrary driver-provided update lock keys", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
@@ -963,22 +1075,15 @@ describe("providerMaintenanceRunner", () => {
 
       const result = yield* runner.updateProvider(CODEX_DRIVER);
 
-      // On win32, resolveSpawnCommand resolves `npm` to the `.cmd` shim and
-      // routes the spawn through cmd.exe (shell: true), escaping every arg.
       assert.strictEqual(captured.length, 1);
       const call = captured[0];
       assert.ok(call, "expected the spawner to be invoked once");
-      // The resolved command is the escaped `.cmd` path. Asserting the precise
-      // escaped string is brittle, so verify it carries the resolved shim and
-      // that shell mode was used.
-      assert.match(call.command, /npm\.cmd/i);
+      assert.strictEqual(
+        call.command,
+        '^"C:\\fake\\npm\\npm.cmd^" ^"install^" ^"-g^" ^"@openai/codex@latest^"',
+      );
+      assert.deepEqual(call.args, []);
       assert.strictEqual(call.shell, true);
-      // Args are escaped for cmd.exe shell mode (each quoted) but still carry
-      // the original install command (`install -g @openai/codex@latest`) in order.
-      assert.strictEqual(call.args.length, 3);
-      assert.match(call.args[0] ?? "", /install/);
-      assert.match(call.args[1] ?? "", /-g/);
-      assert.match(call.args[2] ?? "", /@openai\/codex@latest/);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
     }).pipe(
       Effect.provide(

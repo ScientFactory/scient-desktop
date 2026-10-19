@@ -1004,16 +1004,16 @@ it.effect("returns successful desktop sign-in to the original Welcome step", () 
   provision(
     Effect.gen(function* () {
       const h = yield* makeHarness;
-      h.setReturnUrl("t3code-dev://app/welcome#agents:test-environment");
+      h.setReturnUrl("scient-next-dev://app/welcome#agents:test-environment");
       yield* h.signIn;
       yield* h.phase("succeeded");
       assert.include(
         h.callbackResponses[0]!.body,
-        'content="1;url=t3code-dev://app/welcome#agents:test-environment"',
+        'content="1;url=scient-next-dev://app/welcome#agents:test-environment"',
       );
       assert.include(
         h.callbackResponses[0]!.body,
-        'href="t3code-dev://app/welcome#agents:test-environment"',
+        'href="scient-next-dev://app/welcome#agents:test-environment"',
       );
     }),
   ),
@@ -1998,7 +1998,6 @@ it.effect("an unreadable unrelated profile omits counts without failing sign-in"
       const unrelated = yield* ProviderCredentialStore.make("codex-chatgpt", "codex").pipe(
         Effect.provideService(ServerSecretStore.ServerSecretStore, h.secrets),
       );
-      // The harness owns its store; seed the corresponding binding in that store.
       h.bytes.set(unrelated.binding.key, new TextEncoder().encode("invalid"));
       yield* h.signIn;
       yield* h.phase("succeeded");

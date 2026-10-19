@@ -23,7 +23,7 @@ export const makeCursorSdkConnectionActions = Effect.fn("makeCursorSdkConnection
       start: Effect.fnUntraced(function* (method) {
         if (method !== "cursor_browser")
           return yield* failure("Cursor does not support this sign-in method.");
-        const owner = `scient-cursor-${yield* crypto.randomUUIDv4.pipe(
+        const owner = `scient-cursor-${yield* crypto.randomUUIDv4().pipe(
           Effect.mapError(
             (cause) =>
               new ProviderConnectionActionError({

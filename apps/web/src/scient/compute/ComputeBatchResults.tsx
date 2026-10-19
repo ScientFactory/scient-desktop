@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
@@ -157,10 +157,7 @@ function RunOutputView(props: {
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => void;
 }) {
-  const segments = useMemo(
-    () => outputSegments(props.run.receipt.output),
-    [props.run.receipt.output],
-  );
+  const segments = outputSegments(props.run.receipt.output);
   const output = (
     <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
       {segments.length > 0
@@ -351,7 +348,14 @@ function PersistedRunOutput(props: {
   });
   const result = useAtomValue(runAtom);
   const refreshRun = useAtomRefresh(runAtom);
-  useEffect(() => refreshRun(), [props.storageStatus, refreshRun]);
+  const refreshStorageRun = useStableCallback(
+    (refresh: () => void, _storageStatus: AnalysisRunSummary["localStorage"]["status"]) =>
+      refresh(),
+  );
+  useEffect(
+    () => refreshStorageRun(refreshRun, props.storageStatus),
+    [props.storageStatus, refreshRun, refreshStorageRun],
+  );
   const run = resultValue(result);
   if (run)
     return (
@@ -492,7 +496,7 @@ export function useComputeBatchRun(
     !isStarting &&
     !isCancelling;
 
-  const start = useCallback((): Promise<AnalysisRunSnapshot | null> => {
+  const start = (): Promise<AnalysisRunSnapshot | null> => {
     if (pendingStart.current) return pendingStart.current;
     const submitted = submittedRunRef.current;
     const current =
@@ -579,22 +583,9 @@ export function useComputeBatchRun(
       });
     pendingStart.current = promise;
     return promise;
-  }, [
-    canStart,
-    profile,
-    refreshRuntime,
-    source.environmentId,
-    source.cwd,
-    source.relativePath,
-    source.sourceRevision,
-    source.runtimeLabel,
-    startRun,
-    onRunStarted,
-    onRunReserved,
-    onStartRejected,
-  ]);
+  };
 
-  const cancel = useCallback((): Promise<boolean> => {
+  const cancel = (): Promise<boolean> => {
     if (pendingCancel.current) return pendingCancel.current;
     setIsCancelling(true);
     const promise = (async () => {
@@ -648,7 +639,7 @@ export function useComputeBatchRun(
     });
     pendingCancel.current = promise;
     return promise;
-  }, [cancelById, source.environmentId, source.cwd, options.runId, restoredRun]);
+  };
 
   return {
     source,
@@ -730,7 +721,7 @@ export function ComputeBatchResults({
 
   const historyPage = resultValue(runsResult);
   const history = loadedHistory;
-  const runs = useMemo(() => {
+  const runs = (() => {
     const byId = new Map<string, AnalysisRunSummary | AnalysisRunSnapshot>(
       history.map((run) => [run.receipt.runId, run]),
     );
@@ -742,7 +733,7 @@ export function ComputeBatchResults({
     return [...byId.values()].toSorted((left, right) =>
       right.receipt.startedAt.localeCompare(left.receipt.startedAt),
     );
-  }, [history, streamedRuns, model.submittedRun, model.restoredRun]);
+  })();
   const targetRunId = model.isOwned ? model.runId : (selectedRunId ?? model.runId);
   const selectedRun =
     (targetRunId === null
@@ -777,22 +768,35 @@ export function ComputeBatchResults({
   const storage = resultValue(storageResult);
   const projectNotInitialized = analysisOperationReason(runsResult) === "project-not-initialized";
 
-  useEffect(() => {
+  const [previousHistoryContext, setPreviousHistoryContext] = useState({
+    cwd: props.cwd,
+    relativePath: props.relativePath,
+  });
+  if (
+    previousHistoryContext.cwd !== props.cwd ||
+    previousHistoryContext.relativePath !== props.relativePath
+  ) {
+    setPreviousHistoryContext({ cwd: props.cwd, relativePath: props.relativePath });
     setHistoryCursor(null);
     setLoadedHistory([]);
-  }, [props.cwd, props.relativePath]);
+  }
 
-  useEffect(() => {
-    if (!historyPage) return;
-    setLoadedHistory((current) => {
-      if (historyCursor === null) return historyPage.runs;
-      const byId = new Map(current.map((run) => [run.receipt.runId, run]));
-      for (const run of historyPage.runs) byId.set(run.receipt.runId, run);
-      return [...byId.values()].toSorted((left, right) =>
-        right.receipt.startedAt.localeCompare(left.receipt.startedAt),
-      );
-    });
-  }, [historyCursor, historyPage]);
+  const [previousHistoryPage, setPreviousHistoryPage] = useState<{
+    page: typeof historyPage;
+    cursor: typeof historyCursor;
+  } | null>(null);
+  if (previousHistoryPage?.page !== historyPage || previousHistoryPage?.cursor !== historyCursor) {
+    setPreviousHistoryPage({ page: historyPage, cursor: historyCursor });
+    if (historyPage)
+      setLoadedHistory((current) => {
+        if (historyCursor === null) return historyPage.runs;
+        const byId = new Map(current.map((run) => [run.receipt.runId, run]));
+        for (const run of historyPage.runs) byId.set(run.receipt.runId, run);
+        return [...byId.values()].toSorted((left, right) =>
+          right.receipt.startedAt.localeCompare(left.receipt.startedAt),
+        );
+      });
+  }
 
   useEffect(() => {
     if (streamedRunValue === null) return;
@@ -953,12 +957,17 @@ export function ComputeBatchResults({
           ? "Removing local data…"
           : null;
   const submittedRunId = model.runId;
+  const [previousSubmittedRunId, setPreviousSubmittedRunId] = useState<string | null>(null);
+  if (previousSubmittedRunId !== submittedRunId) {
+    setPreviousSubmittedRunId(submittedRunId);
+    if (submittedRunId) {
+      setSelectedRunId(submittedRunId);
+      setExpanded(true);
+      setHistoryCursor(null);
+    }
+  }
   useEffect(() => {
-    if (!submittedRunId) return;
-    setSelectedRunId(submittedRunId);
-    setExpanded(true);
-    setHistoryCursor(null);
-    refreshRuns();
+    if (submittedRunId) refreshRuns();
   }, [submittedRunId, refreshRuns]);
   return (
     <section
@@ -1201,3 +1210,4 @@ export function ComputeBatchResults({
     </section>
   );
 }
+import { useStableCallback } from "~/hooks/useStableCallback";

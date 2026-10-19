@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientLatexResolveResult } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { requestLatexResolution } from "./client";
 
@@ -25,32 +25,23 @@ export function useLatexDocumentResolution(input: {
 }): LatexDocumentResolutionState {
   const requestRef = useRef(0);
   const [state, setState] = useState<StoredLatexDocumentResolution | null>(null);
-  const request = useMemo(
-    () => ({
-      environmentId: input.environmentId,
-      key: JSON.stringify([
-        input.environmentId,
-        input.workspaceRoot,
-        input.sourceRelativePath,
-        input.sourceRevision,
-        input.contextRootRelativePath ?? null,
-      ]),
-      payload: {
-        workspaceRoot: input.workspaceRoot,
-        sourceRelativePath: input.sourceRelativePath,
-        ...(input.contextRootRelativePath === undefined
-          ? {}
-          : { contextRootRelativePath: input.contextRootRelativePath }),
-      },
-    }),
-    [
-      input.contextRootRelativePath,
+  const request = {
+    environmentId: input.environmentId,
+    key: JSON.stringify([
       input.environmentId,
+      input.workspaceRoot,
       input.sourceRelativePath,
       input.sourceRevision,
-      input.workspaceRoot,
-    ],
-  );
+      input.contextRootRelativePath ?? null,
+    ]),
+    payload: {
+      workspaceRoot: input.workspaceRoot,
+      sourceRelativePath: input.sourceRelativePath,
+      ...(input.contextRootRelativePath === undefined
+        ? {}
+        : { contextRootRelativePath: input.contextRootRelativePath }),
+    },
+  };
 
   useEffect(() => {
     const requestId = requestRef.current + 1;

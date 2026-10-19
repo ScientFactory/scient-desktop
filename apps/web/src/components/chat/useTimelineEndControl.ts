@@ -1,5 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { Debouncer } from "@tanstack/react-pacer";
-import { type RefObject, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { endTransition } from "./readerScrollPolicy";
 import type { TimelineScrollMode } from "./timelineScrollAnchoring";
 
@@ -49,39 +50,32 @@ export function useTimelineEndControl({
     onReachedEndRef.current = onReachedEnd;
     onLeftEndRef.current = onLeftEnd;
   });
-  const showDebouncer = useRef<Debouncer<() => void> | null>(null);
-  showDebouncer.current ??= new Debouncer(() => setShowScrollToBottom(true), {
-    wait: END_CONTROL_SHOW_DELAY_MS,
+  const [showDebouncer] = useState(
+    () => new Debouncer(() => setShowScrollToBottom(true), { wait: END_CONTROL_SHOW_DELAY_MS }),
+  );
+
+  const onIsAtEndChange = useStableCallback((isAtEnd: boolean) => {
+    const transition = endTransition(isAtEndRef.current, isAtEnd);
+    if (transition === null) return;
+    isAtEndRef.current = isAtEnd;
+    if (transition === "reached") {
+      onReachedEndRef.current();
+      showDebouncer.cancel();
+      setShowScrollToBottom(false);
+      setUnreadBelowCount(0);
+    } else {
+      onLeftEndRef.current?.();
+      showDebouncer.maybeExecute();
+    }
   });
 
-  const onIsAtEndChange = useCallback(
-    (isAtEnd: boolean) => {
-      const transition = endTransition(isAtEndRef.current, isAtEnd);
-      if (transition === null) return;
-      isAtEndRef.current = isAtEnd;
-      if (transition === "reached") {
-        onReachedEndRef.current();
-        showDebouncer.current?.cancel();
-        setShowScrollToBottom(false);
-        setUnreadBelowCount(0);
-      } else {
-        onLeftEndRef.current?.();
-        showDebouncer.current?.maybeExecute();
-      }
-    },
-    [isAtEndRef],
-  );
-
   /** A thread returned to mid-history shows the control right away. */
-  const resetForThread = useCallback(
-    (savedAtEnd: boolean) => {
-      isAtEndRef.current = savedAtEnd;
-      showDebouncer.current?.cancel();
-      setShowScrollToBottom(!savedAtEnd);
-      setUnreadBelowCount(0);
-    },
-    [isAtEndRef],
-  );
+  const resetForThread = useStableCallback((savedAtEnd: boolean) => {
+    isAtEndRef.current = savedAtEnd;
+    showDebouncer.cancel();
+    setShowScrollToBottom(!savedAtEnd);
+    setUnreadBelowCount(0);
+  });
 
   return {
     showScrollToBottom,

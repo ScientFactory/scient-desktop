@@ -1,5 +1,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -7,6 +8,53 @@ const mapping = JSON.parse(
   NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
 );
 const matches = (path, prefix) => path.startsWith(prefix);
+const LIVE_SUITES = "**/*.live.test.ts";
+const WEB_UNIT_LANE_COST =
+  "Opt-in: every web unit suite, about 14 minutes on a Windows 11 workstation. Fails on any " +
+  "failure; --web-unit-baseline from the unmodified base only labels failures new or pre-existing.";
+
+/**
+ * Child environment for local checks. A Scient desktop host gives its agents
+ * variables that point at the live profile or make Electron run as Node; drop
+ * them and, given a synthetic home, root every default state path there.
+ */
+export function checkEnvironment(env, home) {
+  const hostOwned = (name) => {
+    const upper = name.toUpperCase();
+    return (
+      ["ELECTRON_RUN_AS_NODE", "T3CODE_HOME", "T3CODE_CLI_PATH"].includes(upper) ||
+      upper.startsWith("SCIENT_NEXT_") ||
+      upper.startsWith("SCIENT_ANALYTICS_")
+    );
+  };
+  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !hostOwned(name)));
+  return home === undefined ? kept : { ...kept, SCIENT_NEXT_HOME: home, T3CODE_HOME: home };
+}
+
+/** A fresh state root, so a check cannot fall back to a live profile. */
+export const makeCheckHome = () =>
+  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-check-home-"));
+
+/** Run a repository tool with the check environment. Windows reaches `pnpm.cmd` through its shell. */
+export function runTool(argv, { home, ...options } = {}) {
+  const spawnOptions = {
+    stdio: "inherit",
+    ...options,
+    env: checkEnvironment(process.env, home),
+  };
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone alignment CLI has no Effect runtime.
+  if (NodeOS.platform() !== "win32") {
+    return NodeChildProcess.spawnSync(argv[0], argv.slice(1), spawnOptions);
+  }
+  // A quoted command name breaks `%~dp0` in npm-style .cmd shims, so only arguments
+  // are quoted. Inside double quotes cmd.exe still expands `%` and cannot escape `"`.
+  const [name, ...rest] = argv;
+  if (!/^[\w.-]+$/u.test(name) || rest.some((arg) => /["%]/u.test(arg))) {
+    throw new Error(`Unsupported shell command: ${argv.join(" ")}`);
+  }
+  const command = [name, ...rest.map((arg) => `"${arg}"`)].join(" ");
+  return NodeChildProcess.spawnSync(command, { ...spawnOptions, shell: true });
+}
 
 /** Select consumers conservatively, including paths the maintained map does not know. */
 export function selectBoundaries(paths) {
@@ -39,22 +87,25 @@ function parseArgs(argv) {
     run: false,
     native: false,
     all: false,
+    webUnit: false,
+    webUnitBaseline: null,
   };
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (key === "--") continue;
-    if (["--all", "--run", "--native"].includes(key)) {
+    if (["--all", "--run", "--native", "--web-unit"].includes(key)) {
       if (seen.has(key)) throw new Error(`Duplicate argument: ${key}`);
-      args[key.slice(2)] = true;
-    } else if (["--cwd", "--base", "--path", "--boundary"].includes(key)) {
+      args[key === "--web-unit" ? "webUnit" : key.slice(2)] = true;
+    } else if (["--cwd", "--base", "--path", "--boundary", "--web-unit-baseline"].includes(key)) {
       const value = argv[++i];
       if (!value || value.startsWith("--")) throw new Error(`Missing value: ${key}`);
-      if (["--cwd", "--base"].includes(key) && seen.has(key)) {
+      if (["--cwd", "--base", "--web-unit-baseline"].includes(key) && seen.has(key)) {
         throw new Error(`Duplicate argument: ${key}`);
       }
       if (key === "--path") args.paths.push(value);
       else if (key === "--boundary") args.boundaries.push(value);
+      else if (key === "--web-unit-baseline") args.webUnitBaseline = NodePath.resolve(value);
       else args[key.slice(2)] = value;
     } else throw new Error(`Unsupported argument: ${key}`);
     seen.add(key);
@@ -64,10 +115,14 @@ function parseArgs(argv) {
     Number(Boolean(args.base)) +
     Number(args.paths.length > 0) +
     Number(args.boundaries.length > 0);
-  if (modes !== 1)
+  // The full web unit lane may run alone or beside one boundary selection.
+  if (modes > 1 || (modes === 0 && !args.webUnit))
     throw new Error(
-      "Choose exactly one of --all, --base REF, --path PATH (repeatable), or --boundary ID (repeatable)",
+      "Choose exactly one of --all, --base REF, --path PATH (repeatable), or --boundary ID (repeatable); --web-unit may run alone",
     );
+  if (args.webUnitBaseline && !args.webUnit) {
+    throw new Error("--web-unit-baseline compares a --web-unit run");
+  }
   for (const path of args.paths) {
     if (
       NodePath.posix.normalize(path) !== path ||
@@ -138,17 +193,27 @@ export function main(argv) {
   const commands = Object.entries(mapping.groups).flatMap(([id, group]) => {
     const files = [...new Set(selection.boundaries.flatMap((row) => row.checks[id] ?? []))];
     if (!files.length) return [];
+    // A directory entry never brings in live suites; they run only as listed native checks.
+    const exclude = files.some((file) => file.endsWith("/")) ? ["--exclude", LIVE_SUITES] : [];
     return [
       {
         id,
         cwd: NodePath.join(cwd, group.cwd),
-        argv: ["pnpm", ...group.args, ...files],
+        argv: ["pnpm", ...group.args, ...files, ...exclude],
         files,
         requiredEnv: group.requiredEnv ?? null,
         included: id !== "native" || args.native,
       },
     ];
   });
+  const webUnitLane = args.webUnit
+    ? {
+        cwd: NodePath.join(cwd, mapping.groups["web-unit"].cwd),
+        argv: ["pnpm", ...mapping.groups["web-unit"].args],
+        baseline: args.webUnitBaseline,
+        cost: WEB_UNIT_LANE_COST,
+      }
+    : null;
   const plan = {
     scope: mapping.scope,
     cwd,
@@ -159,6 +224,7 @@ export function main(argv) {
     unknown: selection.unknown,
     boundaries: selection.boundaries.map((row) => row.id),
     commands,
+    webUnitLane,
     limits: selection.boundaries.flatMap((row) => row.limits),
   };
   console.log(JSON.stringify(plan, null, 2));
@@ -171,35 +237,154 @@ export function main(argv) {
   // suite is unavailable evidence, never a substring-filtered empty success.
   for (const command of commands.filter((command) => command.included)) {
     for (const file of command.files) {
-      if (!NodeFS.statSync(NodePath.join(command.cwd, file), { throwIfNoEntry: false })?.isFile()) {
+      const entry = NodeFS.statSync(NodePath.join(command.cwd, file), { throwIfNoEntry: false });
+      // A trailing `/` names every suite in a directory the boundary owns.
+      if (!(file.endsWith("/") ? entry?.isDirectory() : entry?.isFile())) {
         throw new Error(`Unavailable check in target checkout: ${file}`);
       }
     }
-    if (command.requiredEnv && !process.env[command.requiredEnv]) {
+    if (command.requiredEnv && !checkEnvironment(process.env)[command.requiredEnv]) {
       throw new Error(`Native checks require ${command.requiredEnv}; no native pass claimed`);
     }
   }
-  if (!commands.some((command) => command.included)) {
+  const baseline = webUnitLane?.baseline ? readBaseline(webUnitLane.baseline) : null;
+  if (!webUnitLane && !commands.some((command) => command.included)) {
     console.log("No mapped checks selected; no behavioral qualification claimed.");
   }
+  // Run every group so one pass reports all failing boundaries.
+  const failed = [];
   for (const command of commands.filter((command) => command.included)) {
-    const start = performance.now();
-    const result = NodeChildProcess.spawnSync(command.argv[0], command.argv.slice(1), {
-      cwd: command.cwd,
-      stdio: "inherit",
-    });
-    console.log(
-      JSON.stringify({
-        check: command.id,
-        exit: result.status,
-        signal: result.signal,
-        elapsedSeconds: (performance.now() - start) / 1000,
-      }),
-    );
-    if (result.error) throw result.error;
-    if (result.status !== 0) return result.status ?? 1;
+    const result = runCheck(command.id, command.argv, command.cwd);
+    if (result.status !== 0) failed.push(command.id);
   }
-  return 0;
+  if (webUnitLane) {
+    const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-web-unit-lane-"));
+    const report = NodePath.join(out, "vitest.json");
+    const result = runCheck(
+      "web-unit-lane",
+      [...webUnitLane.argv, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
+      webUnitLane.cwd,
+    );
+    const outcome = webUnitOutcome(result, readVitestReport(report, webUnitLane.cwd));
+    const failuresPath = NodePath.join(out, "web-unit-failures.json");
+    NodeFS.writeFileSync(failuresPath, `${JSON.stringify({ head, cwd, ...outcome }, null, 2)}\n`);
+    // The baseline only labels failures for the reader; it never changes the verdict.
+    const labels = baseline ? compareFailures(outcome.failures, baseline.failures) : null;
+    console.log(
+      JSON.stringify(
+        {
+          check: "web-unit-lane",
+          failuresFile: failuresPath,
+          ...outcome,
+          baseline: baseline?.path,
+          ...labels,
+        },
+        null,
+        2,
+      ),
+    );
+    if (!outcome.passed) failed.push("web-unit-lane");
+  }
+  if (failed.length) console.log(`Failed checks: ${failed.join(", ")}`);
+  return failed.length ? 1 : 0;
+}
+
+/** Run one check command with a fresh synthetic home and report its exit and duration. */
+function runCheck(id, argv, cwd) {
+  const start = performance.now();
+  const home = makeCheckHome();
+  let result;
+  try {
+    result = runTool(argv, { cwd, home });
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+  }
+  console.log(
+    JSON.stringify({
+      check: id,
+      exit: result.status,
+      signal: result.signal,
+      elapsedSeconds: (performance.now() - start) / 1000,
+    }),
+  );
+  if (result.error) throw result.error;
+  return result;
+}
+
+function readBaseline(path) {
+  let failures;
+  try {
+    ({ failures } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
+  } catch (error) {
+    throw new Error(`Unreadable --web-unit-baseline ${path}: ${error.message}`, { cause: error });
+  }
+  if (!Array.isArray(failures) || failures.some((id) => typeof id !== "string")) {
+    throw new Error(`--web-unit-baseline ${path} has no failures list from a --web-unit run`);
+  }
+  return { path, failures };
+}
+
+/**
+ * A Vitest JSON report's test-file count and failures: `file > full test name`
+ * for a failed test and `file > (file error)` for a failed file with an error
+ * of its own or no failed test (an import or hook failure). Null when there is
+ * no readable report.
+ */
+export function readVitestReport(reportPath, cwd) {
+  let report;
+  try {
+    report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(report?.testResults)) return null;
+  const failures = report.testResults.flatMap((file) => {
+    const path = NodePath.relative(cwd, file.name).split(NodePath.sep).join("/");
+    const tests = (file.assertionResults ?? [])
+      .filter((test) => test.status === "failed")
+      .map((test) => `${path} > ${test.fullName}`);
+    const fileError = file.status === "failed" && (Boolean(file.message) || tests.length === 0);
+    return fileError ? [...tests, `${path} > (file error)`] : tests;
+  });
+  return { files: report.testResults.length, failures: [...new Set(failures)].sort() };
+}
+
+/**
+ * The lane passes only when Vitest exited 0 and its readable report covers at
+ * least one test file with no failure; missing evidence never passes.
+ */
+export function webUnitOutcome({ status, signal }, report) {
+  const reason =
+    signal || status === null
+      ? `terminated abnormally (${signal ?? "no exit status"})`
+      : !report
+        ? `no readable Vitest report (exit ${status})`
+        : report.files === 0
+          ? `the Vitest report has no test files (exit ${status})`
+          : report.failures.length > 0
+            ? `${report.failures.length} failure(s) (exit ${status})`
+            : status !== 0
+              ? `exit ${status}`
+              : null;
+  return {
+    passed: reason === null,
+    reason,
+    exit: status,
+    files: report?.files ?? 0,
+    failures: report?.failures ?? [],
+  };
+}
+
+/** Labels failures as new or also in the baseline, and lists baseline failures absent now. */
+export function compareFailures(failures, baseline) {
+  const before = new Set(baseline);
+  const after = new Set(failures);
+  return {
+    new: failures.filter((id) => !before.has(id)),
+    preexisting: failures.filter((id) => before.has(id)),
+    // Fixed, deleted, renamed or skipped: the baseline failure is simply absent.
+    noLongerFailing: baseline.filter((id) => !after.has(id)),
+  };
 }
 
 if (

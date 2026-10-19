@@ -3,7 +3,6 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 /** Queue-owned future messages are not conversation history. */
 export function hasCommittedConversationMessages(input: {
@@ -25,13 +24,13 @@ export function hasCommittedConversationMessages(input: {
 }
 
 /** Existing conversation forks preserve the ordinary composer draft. */
-export function useComposerModelPickerFork(input: {
+export function createComposerModelPickerFork(input: {
   readonly hasConversationMessages: boolean;
   readonly onForkConversation: (options?: { readonly preserveComposerDraft?: boolean }) => void;
 }): (() => void) | undefined {
   const { onForkConversation } = input;
-  const continueInNewChat = useCallback(() => {
+  const continueInNewChat = () => {
     onForkConversation({ preserveComposerDraft: true });
-  }, [onForkConversation]);
+  };
   return input.hasConversationMessages ? continueInNewChat : undefined;
 }

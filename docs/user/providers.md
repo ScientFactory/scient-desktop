@@ -91,9 +91,12 @@ When provider update checks are enabled, Scient checks its qualified stable-rele
 app starts, periodically while it remains open, and when you click **Install**, **Update**, or
 **Repair**. A newly qualified release can appear as **Update** without restarting Scient. **Refresh
 providers** in Settings also checks the catalog immediately without changing its normal automatic
-schedule. If a Scient-managed runtime has an update, Scient shows a notice with **Update** and
-**Settings**. **Update** installs it in place and reports when the verified version is active or why
-it failed, with **Retry**. **Settings** opens the provider in the correct environment. Clicking
+schedule. In the desktop app, a Scient-managed runtime update on any connected machine appears in the
+sidebar's update circle, whose **Update** installs it in place and shows its progress, failure, and
+**Retry** ([Update Scient](./updating.md#update-other-machines-and-providers)). The web app shows a
+notice with **Update** and **Settings** instead. Its **Update** installs in place and reports when
+the verified version is active or why it failed, with **Retry**. **Settings** opens the provider in
+the correct environment. Clicking
 **Install** or **Update** starts the operation directly, without a second confirmation. In Settings,
 it runs without opening the management card: Settings and onboarding show **Installing**, **Updating**, or **Verifying**, with a
 small download percentage when available, beside an icon-only **Manage** button. Progress remains
@@ -101,6 +104,12 @@ visible when you close the card. Click either control to reopen details without 
 operation. After a failure, **Manage** opens the existing error and recovery controls; errors before
 an operation starts appear as notifications. The local computer independently verifies and tests the
 release before activation.
+
+For a runtime Scient manages or can install, Settings and the provider setup screens show a status
+line such as **Update 0.241.1 available · checked 5m ago** or **Up to date · checked 2h ago**. It
+says when Scient last checked its qualified-release catalog. If the latest check failed, the line
+says so with the reason and the time of the last successful check, and Scient keeps using the
+catalog it already has. When automatic update checks are off, the line says that instead.
 
 Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
 that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
@@ -135,6 +144,23 @@ The exact flow varies:
 - some show a device code that you copy from Scient to the provider page;
 - some occasionally show a returned authorization code that you paste into Scient; and
 - some provider tools open the browser themselves without exposing a URL to Scient.
+
+In **Settings > Providers** and in onboarding, **Sign in** on a provider's row starts sign-in
+directly when the provider has one sign-in method that only needs a browser page Scient opens
+(Codex's ChatGPT browser sign-in, Cursor, and Antigravity's Google account). The row shows
+**Starting** and then **Signing in**; select it for the details. A provider that asks you to choose
+a method, or shows a code or a pairing, opens its setup card instead, as does a flow that turns out
+to need something from you. When the provider may run on another computer, which is the case for
+every environment except the desktop app's own, the card opens too, so you can paste the sign-in's
+return address there.
+
+Scient opens a provider's sign-in page once, on the device where you started sign-in, even if you
+close the setup card, reload the window or briefly lose the connection while the provider starts.
+Other windows and devices show the sign-in in
+progress and offer to open the page, but never open it themselves. If the browser cannot open, the
+setup card says so, or a notification offers **Open sign-in page** when the card is closed. In a
+browser tab, a sign-in page that opens after a long start is often blocked as a popup; Scient then
+says so, and **Open sign-in page** opens it.
 
 Scient shows a code field only when the active provider operation says it can accept one. A submitted
 code goes to that live process and is not saved as provider state.

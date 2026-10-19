@@ -162,7 +162,8 @@ export async function durableJson(file: string, value: unknown) {
   await NodeFSP.rename(temporary, file);
   await syncDirectory(NodePath.dirname(file));
 }
-async function exchange(helper: string, left: string, right: string): Promise<void> {
+/** Atomically swaps two paths with the native helper (renamex_np / renameat2). */
+export async function exchange(helper: string, left: string, right: string): Promise<void> {
   if (!NodePath.isAbsolute(helper))
     throw new Error("Exchange helper must be an absolute host path.");
   const run = (args: string[]) =>

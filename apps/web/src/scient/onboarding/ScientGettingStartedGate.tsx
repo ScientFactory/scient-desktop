@@ -39,8 +39,9 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
     presentationActive,
   });
 
+  if (decision === "present" && !presentationActive) setPresentationActive(true);
+
   useEffect(() => {
-    if (decision === "present") setPresentationActive(true);
     if (decision === "complete-silently") complete();
   }, [complete, decision]);
 

@@ -107,6 +107,7 @@ it.effect.each(
                 const messages = yield* Queue.unbounded<SDKMessage>();
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                  backgroundTasks: () => Effect.succeed(false),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(messages),
@@ -148,6 +149,7 @@ it.effect.each(
                     return Queue.offer(messages, result).pipe(Effect.asVoid);
                   },
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
                     closes.set(input.threadId, (closes.get(input.threadId) ?? 0) + 1);

@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 // @effect-diagnostics globalTimers:off -- One zero-delay turn distinguishes Strict Mode rehearsal from final unmount.
 import { useEffect, useRef } from "react";
 
@@ -9,7 +10,9 @@ import { useEffect, useRef } from "react";
 export function useFinalUnmount(finalize: () => void): void {
   const finalizeRef = useRef(finalize);
   const finalizerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  finalizeRef.current = finalize;
+  useLayoutEffect(() => {
+    finalizeRef.current = finalize;
+  });
 
   useEffect(() => {
     if (finalizerTimerRef.current !== null) {

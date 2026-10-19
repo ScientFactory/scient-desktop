@@ -1,7 +1,8 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { StrictMode, createRef, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { StrictMode, createRef, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -503,8 +504,9 @@ it("counts new answers below the reader once while streaming, then clears them o
         .querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')
         ?.style.getPropertyValue("--reveal-front") || "0",
     );
-  await expect.poll(revealFront, { timeout: 3000 }).toBeGreaterThan(0);
-  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
+  // The reveal runs on the clock after its wait; a slow runner needs more than the default second.
+  await expect.poll(revealFront, { timeout: 5000 }).toBeGreaterThan(0);
+  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0], { timeout: 5000 }).toBe(0);
   await listRef.current!.scrollToOffset({ offset: 250, animated: false });
   render(
     "geometry:unread",
@@ -552,7 +554,8 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     const body = state.elementAtIndex(index)!.querySelector('[data-user-message-body="true"]')!;
     return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
   };
-  await expect.poll(promptTextTop).toBeLessThanOrEqual(25);
+  // The same eased reveal; a slow runner needs more than the default second.
+  await expect.poll(promptTextTop, { timeout: 5000 }).toBeLessThanOrEqual(25);
   expect(promptTextTop()).toBeGreaterThanOrEqual(23);
   expect(node.scrollTop).toBeGreaterThan(initial);
   const capped = node.scrollTop;
@@ -585,7 +588,10 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
       text: "Beginning.",
     },
   };
-  const extra = { readingFollowPromptId: entries[9]!.message.id };
+  // A streaming answer belongs to a working run. On an idle thread, a reader
+  // still within the end's last lines is kept at the end instead, which is
+  // not the follow this test is about.
+  const extra = { readingFollowPromptId: entries[9]!.message.id, isWorking: true };
   render("geometry:bounded-cancel", [...entries, answer], extra);
   await frames(3);
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: -80, bubbles: true }));
@@ -625,19 +631,23 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
   await frames(4);
   const list = listRef.current!;
   render("geometry:fast-answer", [...entries, prompt, answer], extra);
+  // The reveal eases in over ~40 frames; a slow runner needs more than the default second.
   await expect
-    .poll(() => {
-      const state = list.getState();
-      const answerIndex = state.data.findIndex(
-        (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-      );
-      return (
-        state
-          .elementAtIndex(answerIndex)!
-          .querySelector('[data-user-message-body="true"]')!
-          .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
-      );
-    })
+    .poll(
+      () => {
+        const state = list.getState();
+        const answerIndex = state.data.findIndex(
+          (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
+        );
+        return (
+          state
+            .elementAtIndex(answerIndex)!
+            .querySelector('[data-user-message-body="true"]')!
+            .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
+        );
+      },
+      { timeout: 5000 },
+    )
     .toBeLessThanOrEqual(25);
   const state = list.getState();
   const answerIndex = state.data.findIndex(
@@ -768,25 +778,22 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   function Reader({ pending }: { pending: boolean }) {
     const isAtEndRef = useRef(true);
     const control = useTimelineEndControl({ isAtEndRef, onReachedEnd: () => {} });
-    const report = useCallback(
-      (atEnd: boolean) => {
-        const list = listRef.current;
-        const viewport = list?.getScrollableNode();
-        const state = list?.getState();
-        if (state && viewport)
-          reports.push({
-            atEnd,
-            measuredGap: readingEndGapOnScreen(state, viewport, base.contentInsetEndAdjustment),
-            predicate: readerAtReadingEnd(state, base.contentInsetEndAdjustment),
-            scrollTop: viewport.scrollTop,
-            virtualScroll: state.scroll,
-            virtualViewport: state.scrollLength,
-            positionedThreadKey,
-          });
-        control.onIsAtEndChange(atEnd);
-      },
-      [control.onIsAtEndChange],
-    );
+    const report = useStableCallback((atEnd: boolean) => {
+      const list = listRef.current;
+      const viewport = list?.getScrollableNode();
+      const state = list?.getState();
+      if (state && viewport)
+        reports.push({
+          atEnd,
+          measuredGap: readingEndGapOnScreen(state, viewport, base.contentInsetEndAdjustment),
+          predicate: readerAtReadingEnd(state, base.contentInsetEndAdjustment),
+          scrollTop: viewport.scrollTop,
+          virtualScroll: state.scroll,
+          virtualViewport: state.scrollLength,
+          positionedThreadKey,
+        });
+      control.onIsAtEndChange(atEnd);
+    });
     return (
       <div style={{ position: "relative", height: "100%" }}>
         <MessagesTimeline

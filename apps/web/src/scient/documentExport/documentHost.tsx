@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -89,30 +89,38 @@ function ScientDocumentEnvironmentHost(props: {
     environmentId,
     input: { clientId, environmentId, supportedOperations: [...props.supportedOperations] },
   });
-  const respond = useAtomCommand(scientDocumentPdfEnvironment.respondToHost, {
-    reportFailure: false,
-  });
-  const handle = useCallback(
-    (request: ScientDocumentHostRequest, signal: AbortSignal) =>
-      executeScientDocumentHostRequest(environmentId, httpBaseUrl, request, signal),
-    [environmentId, httpBaseUrl],
-  );
+  const handle = (request: ScientDocumentHostRequest, signal: AbortSignal) =>
+    executeScientDocumentHostRequest(environmentId, httpBaseUrl, request, signal);
   const [requestHandlerAtom] = useState(() => Atom.make<ScientDocumentRequestHandler>({ handle }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);
   useEffect(() => {
     setRequestHandler({ handle });
   }, [handle, setRequestHandler]);
-  const consumerAtom = useMemo(
-    () =>
-      createScientDocumentHostRequestConsumerAtom({
-        requestsAtom,
-        clientId,
-        environmentId,
-        requestHandlerAtom,
-        respond: (response) => respond({ environmentId, input: response }),
-      }),
-    [clientId, environmentId, requestHandlerAtom, requestsAtom, respond],
+  return (
+    <ScientDocumentHostRequestConsumer
+      clientId={clientId}
+      environmentId={environmentId}
+      requestHandlerAtom={requestHandlerAtom}
+      requestsAtom={requestsAtom}
+    />
   );
+}
+
+/**
+ * The consumer is cached on these props alone. A new server URL only swaps the request
+ * handler; recreating the consumer would replay the stream's cached request.
+ */
+function ScientDocumentHostRequestConsumer(
+  props: Omit<Parameters<typeof createScientDocumentHostRequestConsumerAtom>[0], "respond">,
+) {
+  const respond = useAtomCommand(scientDocumentPdfEnvironment.respondToHost, {
+    reportFailure: false,
+  });
+  const { environmentId } = props;
+  const consumerAtom = createScientDocumentHostRequestConsumerAtom({
+    ...props,
+    respond: (response) => respond({ environmentId, input: response }),
+  });
   useAtomMount(consumerAtom);
   return null;
 }

@@ -1,4 +1,8 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   DownloadIcon,
@@ -8,7 +12,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -45,6 +49,7 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
+import { browserSignInWaitingView, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -88,10 +93,12 @@ export function CodexInlineSetup(props: {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
-  }, [props.provider.instanceId]);
+  }
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
@@ -102,6 +109,13 @@ export function CodexInlineSetup(props: {
   const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
     ? connectionOperation
     : null;
+  const browser = useProviderSignInBrowser(
+    props.controller.signInKey,
+    activeConnectionOperation,
+    props.displayName,
+  );
+  // Only this window opens the Codex page; others offer it.
+  const page = browserSignInWaitingView(browser, activeConnectionOperation);
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;
@@ -135,90 +149,122 @@ export function CodexInlineSetup(props: {
   const install = async () => {
     setLocalError(null);
     setPendingAction("install");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startReviewedCodexRuntimeAction(props.controller, "install");
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await startReviewedCodexRuntimeAction(props.controller, "install");
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const update = async () => {
     setLocalError(null);
     setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await updateCodexRuntime(props.controller, props.provider);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await updateCodexRuntime(props.controller, props.provider);
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const repair = async () => {
     setLocalError(null);
     setPendingAction("repair");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await startReviewedCodexRuntimeAction(props.controller, "repair");
-      if (
-        provider.connection?.runtime?.operation?.action === "repair" &&
-        provider.connection.runtime.operation.status === "succeeded"
-      ) {
-        props.onRepairSucceeded?.();
+      try {
+        const provider = await startReviewedCodexRuntimeAction(props.controller, "repair");
+        if (
+          provider.connection?.runtime?.operation?.action === "repair" &&
+          provider.connection.runtime.operation.status === "succeeded"
+        ) {
+          props.onRepairSucceeded?.();
+        }
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
       }
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
     setPendingAction("cancel-runtime");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const signIn = async (method: "codex_browser" | "codex_device_code" | null = signInMethod) => {
     if (!method) return;
     setLocalError(null);
     setPendingAction(method === "codex_device_code" ? "device-sign-in" : "sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      if (method === "codex_device_code") {
-        await startCodexDeviceSignIn(props.controller);
-      } else {
-        await startCodexBrowserSignIn(props.controller);
+      try {
+        if (method === "codex_device_code") {
+          await startCodexDeviceSignIn(props.controller);
+        } else {
+          await startCodexBrowserSignIn(props.controller);
+        }
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
+        );
       }
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelSignIn = async () => {
     if (!activeConnectionOperation) return;
     setLocalError(null);
     setPendingAction("cancel-sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelConnection(activeConnectionOperation.operationId);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelConnection(activeConnectionOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (
@@ -347,20 +393,39 @@ export function CodexInlineSetup(props: {
     pendingAction === "sign-in" ||
     pendingAction === "device-sign-in"
   ) {
+    const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
     const verifying = activeConnectionOperation?.status === "verifying";
     const usingDeviceCode = activeConnectionOperation?.method === "codex_device_code";
+    const openFailure = !starting && !verifying ? page.failure : null;
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            verifying
-              ? "Confirming sign-in with Codex…"
-              : usingDeviceCode
-                ? "Enter this code on Codex’s secure sign-in page."
-                : "Complete sign-in in your browser."
+            starting
+              ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
+              : verifying
+                ? "Confirming sign-in with Codex…"
+                : usingDeviceCode && !openFailure
+                  ? "Enter this code on Codex’s secure sign-in page."
+                  : page.body
           }
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={verifying ? "Checking your account" : "Finish signing in"}
+          icon={
+            openFailure ? (
+              <TriangleAlertIcon className="size-5 text-warning" />
+            ) : page.userMustOpen ? (
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
+            ) : (
+              <LoaderIcon className="size-5 animate-spin text-primary" />
+            )
+          }
+          role={openFailure ? "alert" : undefined}
+          title={
+            verifying
+              ? "Checking your account"
+              : page.blocked && !starting
+                ? "Sign-in page blocked"
+                : "Finish signing in"
+          }
         />
         {usingDeviceCode && activeConnectionOperation?.userCode ? (
           <AssistedSetupDeviceCode code={activeConnectionOperation.userCode} providerName="Codex" />
@@ -368,16 +433,14 @@ export function CodexInlineSetup(props: {
         {!verifying && activeConnectionOperation?.authorizationUrl ? (
           <AssistedSetupActions>
             <Button
-              onClick={() =>
-                void props.controller.openAuthorizationPage(
-                  activeConnectionOperation.authorizationUrl!,
-                )
-              }
+              disabled={browser.opening?.status === "opening"}
+              onClick={() => void browser.reopen()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant={page.userMustOpen ? "ghost-primary" : "ghost-muted"}
             >
-              <ExternalLinkIcon aria-hidden /> Reopen sign-in page
+              <ExternalLinkIcon aria-hidden />{" "}
+              {page.notOpenedHere || page.blocked ? "Open sign-in page" : "Reopen sign-in page"}
             </Button>
             {activeConnectionOperation ? (
               <Button
@@ -454,18 +517,23 @@ export function CodexInlineSetup(props: {
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
   const canInstallManaged =
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
-  const useManaged = async () => {
+  const switchToManaged = async () => {
     setLocalError(null);
     setPendingAction("install");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await startReviewedCodexRuntimeAction(props.controller, "install");
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await startReviewedCodexRuntimeAction(props.controller, "install");
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
   return (
     <SetupFrame>
@@ -516,7 +584,7 @@ export function CodexInlineSetup(props: {
         <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
-          onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
+          onUseManaged={canInstallManaged ? () => void switchToManaged() : undefined}
           provider={props.provider}
         />
       ) : null}

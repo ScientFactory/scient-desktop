@@ -13,10 +13,9 @@ export const MANAGED_RUNTIME_POLICY: Readonly<
     { readonly revision: number; readonly historicalRevisions: ReadonlyArray<number> }
   >
 > = {
-  // Codex 0.155 added the official voice runtime; newer Windows packages also
-  // exceed the shared extraction entry limit. Keep prior installers readable
-  // for publication tooling, while older app builds reject this policy safely.
-  codex: { revision: 3, historicalRevisions: [1, 2] },
+  // Codex 0.163 removed patched zsh. Older installers require it unconditionally;
+  // keep their qualified feeds readable but never advertise the new layout to them.
+  codex: { revision: 4, historicalRevisions: [1, 2, 3] },
   claudeAgent: { revision: 1, historicalRevisions: [] },
   antigravity: { revision: 1, historicalRevisions: [] },
   antigravityAcp: { revision: 2, historicalRevisions: [1] },

@@ -24,6 +24,13 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 // SCIENT-FORK:START — plugin skills are projected without their other components.
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
+import {
+  recordAntigravityPreflightChild,
+  verifyAntigravityBrowserHelperOnce,
+} from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
+import { prepareAntigravitySkillLink } from "../scient/skills/antigravityUserSkillLinks.ts";
+// SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
@@ -75,7 +82,7 @@ const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
 const isAcpInputStreamEndedError = Schema.is(AcpErrors.AcpInputStreamEndedError);
 const isAcpProtocolParseError = Schema.is(AcpErrors.AcpProtocolParseError);
 const helperPreparationDetails: Record<string, true> = {
-  "The T3 runtime path cannot be used to suppress Antigravity browser launches.": true,
+  "The Scient runtime path cannot be used to suppress Antigravity browser launches.": true,
   "Antigravity browser suppression could not be verified.": true,
   "Antigravity browser suppression verification timed out.": true,
   "The Antigravity profile directory could not be created.": true,
@@ -106,8 +113,8 @@ const missingNodeGuidance = `${ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE} ${
 
 // SCIENT-FORK:END
 // Python splits BROWSER on the platform path separator before it parses quotes.
-// Keep this source free of both colons and semicolons. EPIPE must still exit 0
-// so Python does not fall back to an OS browser after cancellation.
+// EPIPE must still exit 0 so Python does not fall back to an OS browser after
+// cancellation.
 const browserHelperSource =
   `process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
@@ -139,16 +146,10 @@ export interface AntigravityProfile {
   readonly geminiHome: string;
   readonly acpDirectory: string;
   readonly tokenPath: string;
-  /** Parent of the per-process temp directories PyInstaller unpacks into. */
   readonly tempDirectory: string;
   readonly browserCommand: string;
 }
 
-/**
- * Credentials for the non-personal ACP auth methods. The agent reads the API
- * key from its environment and the GCP project and location from
- * `settings.json` in the profile. Empty strings mean "not set".
- */
 export interface AntigravityAuthConfig {
   readonly authMethod: AntigravityAuthMethod;
   readonly apiKey: string;
@@ -163,12 +164,10 @@ export const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   gcpLocation: "",
 };
 
-/** True for the two methods that open a Google sign-in page. */
 export function antigravityAuthUsesBrowser(authMethod: AntigravityAuthMethod): boolean {
   return authMethod === "oauth-personal" || authMethod === "oauth-business";
 }
 
-/** Label shown on the provider card once the method has authenticated. */
 export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string {
   switch (authMethod) {
     case "oauth-personal":
@@ -182,10 +181,6 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
   }
 }
 
-/**
- * Explains what is missing before a non-personal method can authenticate, or
- * null when the config is complete. Personal sign-in never needs config.
- */
 export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
   switch (auth.authMethod) {
     case "oauth-personal":
@@ -204,10 +199,8 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
 }
 
 /**
- * `settings.json` content for the agent's profile. `auth.type` names the
- * selected method so a native logout clears only that method's credentials
- * instead of every stored token. The GCP block feeds Enterprise and Agent
- * Platform. Never holds a credential.
+ * `auth.type` names the selected method so a native logout clears only that method's credentials
+ * instead of every stored token. Never holds a credential.
  */
 export function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
   const gcp = {
@@ -290,7 +283,6 @@ export function antigravityAuthStageFailure(
 }
 
 // SCIENT-FORK:END
-/** Recognizes native auth failures and interactive login blocked by T3. */
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
     (isAcpRequestError(error) && error.code === -32000) ||
@@ -299,13 +291,10 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 }
 
 export interface AntigravityInstanceDirectories {
-  /** GEMINI_HOME for the agent. Holds the instance's Google sign-in. */
   readonly profile: string;
   /**
-   * Parent of the per-process directories the agent unpacks into. It sits
-   * beside the profile, not inside it: the agent unpacks members up to 120
-   * characters deep, and the profile's longer name would push them past
-   * Windows' 260-character path limit.
+   * It sits beside the profile, not inside it: the agent unpacks members up to 120 characters deep,
+   * and the profile's longer name would push them past Windows' 260-character path limit.
    */
   readonly runtimeTemp: string;
 }
@@ -338,18 +327,17 @@ function antigravityEnvironment(
     // Windows treats environment keys as case-insensitive. Remove aliases too.
     if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
   }
-  // Only the configured method's credential reaches the agent. The agent
-  // prefers GOOGLE_API_KEY over the GCP pair for Agent Platform, so the pair
-  // goes through settings.json instead of the environment.
+  // The agent prefers GOOGLE_API_KEY over the GCP pair for Agent Platform, so the pair goes through
+  // settings.json instead of the environment.
   const credential =
     auth.authMethod === "gemini-api-key" && auth.apiKey
       ? { GEMINI_API_KEY: auth.apiKey }
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
-  // The agent is a PyInstaller one-file bundle. It unpacks about 1 GB into
-  // the system temp directory per launch and a force kill leaves that behind.
-  // Point it at a T3-owned directory so the driver can reclaim the space.
+  // It unpacks about 1 GB into the system temp directory per launch and a force
+  // kill leaves that behind. Point it at a T3-owned directory so the driver can
+  // reclaim the space.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {
     ...environment,
@@ -387,6 +375,9 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      // SCIENT-FORK:START — link only an existing directory; never leave a dangling link.
+      if (yield* prepareAntigravitySkillLink({ link, target })) return;
+      // SCIENT-FORK:END
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
@@ -400,8 +391,6 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
       );
     }).pipe(
-      // A non-symlink at the link path fails `readLink`; anything else is a
-      // filesystem refusal. Both leave the profile usable.
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user skills are not linked into the profile.", {
           link,
@@ -413,16 +402,13 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   }
 });
 
-/** Prepares a private profile without reading or copying Google credentials. */
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly runtimeExecutablePath?: string;
   readonly platform?: NodeJS.Platform;
   readonly auth?: AntigravityAuthConfig;
-  /** Home the agent expands `~` against. Defaults to the launch environment's. */
   readonly userHome?: string;
-  /** Parent of per-process temp directories. Defaults to one inside the profile. */
   readonly tempDirectory?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
@@ -460,7 +446,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
-      "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
+      "The Scient runtime path cannot be used to suppress Antigravity browser launches.",
     );
   }
 
@@ -484,6 +470,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         shell: false,
       }),
     );
+    // SCIENT-FORK:START — a timed-out preflight can force-kill this helper.
+    yield* recordAntigravityPreflightChild(child);
+    // SCIENT-FORK:END
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectUint8StreamText({ stream: child.stdout, maxBytes: 4_096 }),
@@ -502,12 +491,15 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       return yield* authSupportError("Antigravity browser suppression could not be verified.");
     }
   }).pipe(
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: "5 seconds",
-      orElse: () =>
-        Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
+    // SCIENT-FORK:START — verified once per helper; a timeout does not wait for its teardown.
+    verifyAntigravityBrowserHelperOnce({
+      spawner,
+      helperExecutable,
+      environment,
+      timeout: "5 seconds",
+      onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
+    // SCIENT-FORK:END
     Effect.mapError((error) =>
       error._tag === "AcpTransportError"
         ? error
@@ -533,9 +525,6 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
-  // Rewriting on every launch keeps a method, project, or location edit in
-  // Settings effective. The agent also records auth.type here after a
-  // sign-in, which matches the value written below.
   yield* fs
     .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
     .pipe(
@@ -548,7 +537,6 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
-/** Applies the same subscription-only launch settings to every ACP process. */
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;
@@ -558,7 +546,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
-  /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
@@ -578,7 +565,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   };
 }
 
-/** Reads only the public authorization request, never an OAuth token file. */
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,
@@ -683,7 +669,6 @@ export function makeAntigravityStdoutTransform(
 }
 
 // SCIENT-FORK:START — bounded stderr and fatal malformed authorization markers.
-/** Receives native 1.1.1 sign-in URLs and T3 browser-helper URLs without logging stderr. */
 export function makeAntigravityStderrHandler(
   input: {
     readonly onAuthorizationUrl?: (

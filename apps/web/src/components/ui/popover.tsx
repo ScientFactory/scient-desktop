@@ -18,8 +18,6 @@ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trig
   );
 }
 
-// Popovers hold prose and forms, so a width is fixed rather than a minimum,
-// and every width is capped to the viewport.
 const popoverPopupWidthClassName = {
   auto: "",
   sm: "w-64",
@@ -27,14 +25,11 @@ const popoverPopupWidthClassName = {
   lg: "w-96",
 } as const;
 
-// The inset around the content. "compact" suits dense content (a list, a code excerpt, a
-// row of reactions); "none" is for content that draws its own frame edge to edge.
 const popoverViewportPaddingClassName = {
   default: "py-4 [--viewport-inline-padding:--spacing(4)]",
   comfortable: "p-3 [--viewport-inline-padding:--spacing(3)]",
   compact: "py-2 [--viewport-inline-padding:--spacing(3)]",
   tight: "p-2 [--viewport-inline-padding:--spacing(2)]",
-  // Rounded to the popup so edge-to-edge content clips to its corners.
   none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
 } as const;
 
@@ -56,6 +51,7 @@ function PopoverPopup({
   viewportClassName,
   anchor,
   collisionBoundary,
+  touchBackdrop = false,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   /** Keep the owner mounted while a nested portal owns interaction and focus. */
@@ -75,6 +71,7 @@ function PopoverPopup({
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
   collisionBoundary?: PopoverPrimitive.Positioner.Props["collisionBoundary"];
   width?: keyof typeof popoverPopupWidthClassName;
+  touchBackdrop?: boolean;
 }) {
   // Viewport rekeys its children when the active trigger clears on close. Persistent
   // single-trigger forms need a stable container to retain drafts and submit guards.
@@ -82,21 +79,26 @@ function PopoverPopup({
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
+      {touchBackdrop ? (
+        // A non-modal popover closes on an outside tap and lets that tap reach the
+        // control under the finger. On touch screens the backdrop takes the tap, so
+        // tapping away only closes the popover, as it does for modal menus and selects.
+        <PopoverPrimitive.Backdrop
+          className="fixed inset-0 z-[130] hidden pointer-coarse:block"
+          data-slot="popover-backdrop"
+        />
+      ) : null}
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
         collisionBoundary={collisionBoundary}
         collisionAvoidance={collisionAvoidance}
-        // A panel's card already sits inside its own padding, so the panel can reach the edge.
         collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
           "h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
           variant === "panel"
-            ? // The card inside is the panel width, or the anchor less 12px per side; the viewport
-              // pads it by --spacing(2) per side. Panels slide when their offset changes, e.g. to make
-              // room for a bar below the header, even when opened from the keyboard (data-instant).
-              "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
+            ? "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
             : "z-[130]",
         )}
         style={suspended ? { visibility: "hidden" } : undefined}

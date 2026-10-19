@@ -1992,6 +1992,8 @@ it.live(
         const resumed: string[] = [];
         const options = {
           runtimeOptions,
+          // The persisted project folder must outlive both runtime connections.
+          projectScope: yield* Scope.Scope,
           nativeIdFactory: () => `uncertain-native-${generation++}`,
           beforeFresh: () =>
             pauseReplacement

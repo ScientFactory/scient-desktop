@@ -1,18 +1,13 @@
-import { useMemo } from "react";
-
 import type { TurnDiffSummary } from "~/types";
 
 /**
  * A checkpoint the server could not capture leaves a diagnostics affordance
  * in the revert dialog, so a missing diff is explainable rather than silent.
  */
-export function useFileHistoryIssue(
+export function findFileHistoryIssue(
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>,
 ): TurnDiffSummary | null {
-  return useMemo(
-    () => turnDiffSummaries.findLast((checkpoint) => checkpoint.status === "error") ?? null,
-    [turnDiffSummaries],
-  );
+  return turnDiffSummaries.findLast((checkpoint) => checkpoint.status === "error") ?? null;
 }
 
 /**
