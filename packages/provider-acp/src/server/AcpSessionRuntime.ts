@@ -2832,9 +2832,17 @@ export const make = (
                 // SCIENT-FORK:END
                 Effect.catchCause((cause) =>
                   options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed({
-                        stopReason: "cancelled",
-                      } satisfies EffectAcpSchema.PromptResponse)
+                    ? Ref.get(terminationErrorRef).pipe(
+                        // Teardown interrupts requests that have not reached the transport.
+                        // Only a live runtime's explicit cancellation is a successful response.
+                        Effect.flatMap((error) =>
+                          Option.isSome(error)
+                            ? Effect.fail(error.value)
+                            : Effect.succeed({
+                                stopReason: "cancelled",
+                              } satisfies EffectAcpSchema.PromptResponse),
+                        ),
+                      )
                     : Effect.failCause(cause),
                 ),
                 Effect.tap(() =>
