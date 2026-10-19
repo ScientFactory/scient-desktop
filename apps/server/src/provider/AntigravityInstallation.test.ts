@@ -491,27 +491,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect("reports a runtime check that runs out of time, not a disk problem", () =>
-    Effect.gen(function* () {
-      const enteredValidation = yield* Deferred.make<void>();
-      const { installation, stagingReleased } = yield* makeHarness({
-        previous: true,
-        validate: () =>
-          Deferred.succeed(enteredValidation, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      yield* installation.start;
-      yield* Deferred.await(enteredValidation);
-      yield* TestClock.adjust("90 seconds");
-      expect(yield* terminalState(installation)).toMatchObject({
-        phase: "failed",
-        message:
-          "Antigravity didn't respond within 90 seconds while Scient was checking it. Try again when your computer is less busy.",
-      });
-      yield* Deferred.await(stagingReleased);
-      yield* expectPreviousRelease(installation);
-    }),
-  );
-
   it.effect.each(
     [
       {
@@ -565,6 +544,15 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         agentName: "antigravity-acp",
         version: "fixture-new",
         cancel: true,
+        valid: false,
+      },
+      {
+        name: "a Windows ARM verification that runs out of time with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        timeout: true,
         valid: false,
       },
     ].flatMap((testCase) => {
@@ -674,7 +662,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                   Effect.orDie,
                 );
                 methods.push(request.method);
-                if (testCase.cancel) {
+                if (testCase.cancel || testCase.timeout) {
                   yield* Deferred.succeed(initializationStarted, undefined);
                   return;
                 }
@@ -762,6 +750,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             Effect.forkChild,
           )
         : undefined;
+      if (testCase.timeout) {
+        yield* Deferred.await(initializationStarted);
+        yield* TestClock.adjust("90 seconds");
+      }
       if (platform === "win32") {
         yield* Effect.raceFirst(
           Deferred.await(cleanupRetryStarted).pipe(Effect.andThen(TestClock.adjust("100 millis"))),
@@ -772,6 +764,11 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect((yield* terminalState(installation)).phase).toBe(
         testCase.cancel ? "cancelled" : testCase.valid ? "succeeded" : "failed",
       );
+      if (testCase.timeout) {
+        expect((yield* terminalState(installation)).message).toBe(
+          "Antigravity didn't finish starting within 90 seconds while Scient was checking it. Starting it can take a while on some computers. Try again.",
+        );
+      }
       yield* Deferred.await(stagingReleased);
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);

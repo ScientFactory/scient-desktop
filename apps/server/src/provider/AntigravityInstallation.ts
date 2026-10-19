@@ -151,18 +151,19 @@ const installationError = (operation: string, detail: string, cause?: unknown) =
 const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
   isInstallationError(cause) ? cause : installationError(operation, detail, cause);
 
-// SCIENT-FORK: a check that runs out of time says so, instead of the install's
-// catch-all advice to check disk space.
+// SCIENT-FORK:START — a check that runs out of time says so, instead of the
+// install's catch-all advice to check disk space.
 const validationTimeout = Effect.timeoutOrElse({
   duration: VALIDATION_TIMEOUT,
   orElse: () =>
     Effect.fail(
       installationError(
         "verify",
-        "Antigravity didn't respond within 90 seconds while Scient was checking it. Try again when your computer is less busy.",
+        `Antigravity didn't finish starting within ${VALIDATION_TIMEOUT} while Scient was checking it. Starting it can take a while on some computers. Try again.`,
       ),
     ),
 });
+// SCIENT-FORK:END
 
 function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"
@@ -532,7 +533,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             return yield* installationError("verify", "The managed release has the wrong version.");
           }
           yield* report("verifying", "Checking the installed runtime.");
-          yield* validate(existing, asset.version).pipe(Effect.scoped, validationTimeout);
+          yield* validate(existing, asset.version).pipe(
+            Effect.scoped,
+            Effect.timeout(VALIDATION_TIMEOUT),
+          );
           return existing;
         }).pipe(Effect.result);
         if (verified._tag === "Success") {
@@ -722,7 +726,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
-      ).pipe(Effect.scoped, validationTimeout);
+      ).pipe(
+        Effect.scoped,
+        // SCIENT-FORK:START
+        validationTimeout,
+        // SCIENT-FORK:END
+      );
       const record: InstalledRelease = {
         releaseId: asset.sha256,
         version: asset.version,
@@ -782,7 +791,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             completedRelease(asset.sha256).pipe(
               Effect.flatMap((existing) =>
                 existing.version === asset.version
-                  ? validate(existing, asset.version).pipe(Effect.scoped, validationTimeout)
+                  ? validate(existing, asset.version).pipe(
+                      Effect.scoped,
+                      Effect.timeout(VALIDATION_TIMEOUT),
+                    )
                   : Effect.fail(
                       installationError(
                         "activate",
