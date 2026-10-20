@@ -564,12 +564,13 @@ it("draws no hyphen where Han text continues in the next column", async () => {
   const editor = await mount(
     String.raw`\documentclass[twocolumn]{article}
 \begin{document}
-${Array.from({ length: 40 }, () => han.repeat(6)).join("\n\n")}
+${han.repeat(240)}
 \end{document}
 `,
     "han-columns",
   );
-  // A column cut falls between two Han characters, which TeX does not hyphenate.
+  // One continuous paragraph forces a cut between Han characters regardless of
+  // fallback font metrics; short paragraphs can all end at column boundaries.
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 }, 60000);

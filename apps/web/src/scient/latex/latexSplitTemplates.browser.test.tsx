@@ -16,6 +16,8 @@ import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
 import { sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
+import { pagedLayoutSettled } from "./latexPagedGeometry";
+import { mathReadingPreviewReady } from "./mathReadingPreview";
 import type { MathfieldElement } from "mathlive";
 import template26 from "./fixtures/hebrew-math-and-tables.tex?raw";
 import template28 from "./fixtures/mock-medical-article.tex?raw";
@@ -168,6 +170,18 @@ async function mount(input: string, name: string) {
   const visual = host.querySelector<HTMLElement & { editor: ProseEditor }>(
     ".scient-latex-visual-document",
   )!.editor;
+  await expect
+    .poll(() => visual.view.dom.hasAttribute("data-latex-loading"), { timeout: 15_000 })
+    .toBe(false);
+  await document.fonts.ready;
+  await expect
+    .poll(
+      () => [...host.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  await frame();
+  await expect.poll(() => pagedLayoutSettled(visual.view), { timeout: 15_000 }).toBe(true);
   return { visual, source: () => sourceEditor!, reveals, text: () => current };
 }
 function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = true) {
@@ -188,12 +202,14 @@ function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = tru
       const range = document.createRange();
       range.setStart(node, index);
       range.setEnd(node, index + word.length);
-      box = range.getBoundingClientRect();
+      // A wrapped word's union box can be centred over unrelated text.
+      box = [...range.getClientRects()].find((rect) => rect.width > 0 && rect.height > 0);
     }
     if (!box || box.width <= 0 || box.height <= 0) continue;
     const bounds = element.getBoundingClientRect();
     return {
       element,
+      box,
       position: {
         x: box.left + box.width / 2 - bounds.left,
         y: box.top + box.height / 2 - bounds.top,
@@ -241,9 +257,7 @@ it.each([
     const scroll = host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     wordPosition(state.visual.view.dom, word);
     await frame();
-    await settleRect(() =>
-      wordPosition(state.visual.view.dom, word, false).element.getBoundingClientRect(),
-    );
+    await settleRect(() => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
