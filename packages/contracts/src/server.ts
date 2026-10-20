@@ -150,12 +150,52 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+/** A plugin installed in a provider instance's own plugin system. Provider-owned; Scient only reports it. */
+export const ServerProviderPlugin = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  version: Schema.optional(TrimmedNonEmptyString),
+  marketplace: Schema.optional(TrimmedNonEmptyString),
+  source: Schema.Literals(["local", "remote", "unknown"]),
+  enabled: Schema.Boolean,
+  /** Provider-owned capability. Absent means Scient must render this plugin read-only. */
+  canUninstall: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
+
+export const ServerProviderMcpServerStatus = Schema.Literals([
+  "connected",
+  "failed",
+  "needs-auth",
+  "pending",
+  "disabled",
+  "unknown",
+]);
+export type ServerProviderMcpServerStatus = typeof ServerProviderMcpServerStatus.Type;
+
+/** An MCP server configured natively in a provider instance (not one Scient delivers). */
+export const ServerProviderMcpServer = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  status: ServerProviderMcpServerStatus,
+  /** Plugin that contributed this server, when the provider reports it. */
+  pluginId: Schema.optional(TrimmedNonEmptyString),
+  scope: Schema.optional(TrimmedNonEmptyString),
+  toolCount: Schema.optional(Schema.Number),
+  error: Schema.optional(TrimmedNonEmptyString),
+  /** The provider can start its own sign-in for this server from Scient. */
+  canStartSignIn: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderMcpServer = typeof ServerProviderMcpServer.Type;
+
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -299,6 +339,10 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
+  /** Provider-native MCP servers as last reported by the provider. */
+  mcpServers: Schema.optionalKey(Schema.Array(ServerProviderMcpServer)),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),

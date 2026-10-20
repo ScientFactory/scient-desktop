@@ -425,6 +425,25 @@ import {
   WsProviderSkillsSetEnabledRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  SCIENT_EXTENSION_WS_METHODS,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorSetProjectSelectionRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsListRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsProviderPluginsActRpc,
+} from "./scient/extensionRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
 import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
@@ -494,6 +513,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient skill methods.
   ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient extensions methods.
+  ...SCIENT_EXTENSION_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -2309,6 +2332,25 @@ export const WsDeviceAndTelemetryRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
 );
 
+// SCIENT-FORK:START — Scient extensions group.
+export const WsExtensionsRpcGroup = RpcGroup.make(
+  WsExtensionsListRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsConnectorSetProjectSelectionRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsProviderPluginsActRpc,
+);
+// SCIENT-FORK:END
+
 export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsServerManagementRpcGroup,
   WsRepositoryRpcGroup,
@@ -2316,4 +2358,5 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
+  WsExtensionsRpcGroup,
 ).middleware(RpcScopeAuthorization);

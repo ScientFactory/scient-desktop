@@ -90,6 +90,8 @@ export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scientSkills.ts";
+export * from "./scient/secrets.ts";
+export * from "./scient/extensions.ts";
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";
