@@ -18,6 +18,11 @@ Generated with `pnpm alignment:facts --merge 9ef3f49f0d`:
   safety, provider-runtime reconnect work and approved release notes.
 - Qualification-fixture follow-up: `0ad0b7dde69723273861d00f8f20aa0d85c3a142`.
 - Image-refresh composition follow-up: `479dfd46d17cf22f8a33eadfdf2323b675e7803f`.
+- Second owned-main catch-up: `a0e936c50f2dfebe362a2fa3707aaecac1399797` of
+  `17f7bfb2f47a4622f627b34d378bc33c1f43eb01`, carrying landed CI queue reuse, the
+  Antigravity console and ACP prompt-teardown seams, OMP late tool updates, bigint
+  workspace stats and test-flake repairs.
+- Queue and analytics test follow-up: `d00f9e6d490b668ff73d16cf710b83ecca1eaf5c`.
 - Branch: `codex/t3-sync-f34ba437a5-20261019`; upstream push URL: `DISABLED`.
 - Scient PR: [#607](https://github.com/ScientFactory/scient-desktop/pull/607).
 
@@ -190,6 +195,40 @@ Windows/Linux/mobile and live-provider checks remain separate from macOS static,
 mocked and headless-browser evidence. Per owner instruction, isolated exact-head
 development-app review is last. Any agent turn exercised inside it must use Codex
 with Luna 6.
+
+### Second owned-main catch-up, 2026-10-20
+
+One textual conflict: the first-message anchor test in
+`MessagesTimeline.browser.test.tsx` keeps main's five-second wait and the alignment's
+tolerance for repeat measurements after real image decoding. Both sides added the
+same Shiki mock to `WorkflowOpeningBlock.browser.test.tsx`; `UPSTREAM.md` merged
+cleanly. Every other main-changed path matches main exactly.
+
+Hosted CI at `f39e52c9a9` failed five server tests, all incoming upstream
+expectations rather than catch-up interactions or flakes:
+
+- `SteeringCompletion` (plain send after Stop) and `ThreadLaunchService` (direct
+  send after failed worktree setup) assert upstream #21473's rule that any client
+  send releases a held queue. Scient's `QueuedRunSend.ts` releases only for an
+  ordinary direct send that starts its own run. Both expectations are now marked
+  Scient divergences, recorded in `UPSTREAM.md`.
+- The incoming held-follow-up check in `OrchestratorMcpToolkit` called
+  `t3_thread_send`; Scient's tool is `scient_thread_send`.
+- `server.test.ts` now expects upstream's inherited `feature.used` call site. The
+  Scient analytics contract drops that name, and a conformance assertion covers it.
+
+Local checks on `d00f9e6d49` (Windows 11, Node 24, pnpm 11.10.0): all package
+typechecks passed (49 tasks, no syntax-gate or type errors); formatting
+(9,040 files), diff, provenance and all five seam checks passed. Focused runs:
+ThreadLaunchService, SteeringCompletion, QueuedRunSend, ThreadStop,
+QueuedStartRecovery and QueuedRunOrder passed completely; the incoming MCP
+delegation test and the analytics expectation passed; analytics conformance
+passed 4 tests. Windows-only failures come from fixtures and code unchanged from
+main: 16 of 50 `NativeQueueHoldPolicy` cases use `:` in temporary-directory names;
+13 of 249 `server.test.ts` cases need symlinks, POSIX MATLAB fixtures or directory
+`fsync`; the Codex transcript fixture resolves a URL path. The MCP delegation test needs
+more than its 120-second budget on this host. Browser tests could not start a
+local Chromium session; hosted CI must qualify the pushed head.
 
 ## Publication boundary
 

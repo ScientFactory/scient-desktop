@@ -573,7 +573,9 @@ Literal merge `9ef3f49f0de3d380389e2e26d0ff9753ef37ff11` has exact owned base
 `129f4af07bc3b78cab506086fcad0c5f12d7105f` and the frozen official target as
 parents, retaining all 84 donor commits. Owned-main catch-up
 `667f48d7916020076ac97190ef84748566aaf06a` includes
-`7d6bd586a47220c44c880077fb64cf47e8fa9a78`. Native V2 remains the queue and
+`7d6bd586a47220c44c880077fb64cf47e8fa9a78`; owned-main catch-up
+`a0e936c50f2dfebe362a2fa3707aaecac1399797` includes
+`17f7bfb2f47a4622f627b34d378bc33c1f43eb01`. Native V2 remains the queue and
 execution owner; current Stop matching and native-child readiness compose through
 existing Scient policies. Workspace/environment PDFs retain Scient's local
 reader, while attachment previews and browser tabs remain separate contexts.
