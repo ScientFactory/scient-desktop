@@ -276,32 +276,42 @@ unresolved required variables. Package-only (local) entries are listed with
 
 ## Secrets integration
 
-The Secrets feature (separate owner) provides the encrypted credential store,
-Settings → Secrets, the egress proxy, and secret audit. Extensions consumes it
-through one port:
+The Secrets feature (separate owner, branch `claude/scient-secrets`) provides the
+encrypted vault, Settings → Secrets, brokered service profiles and the secret
+audit log. Extensions consumes the vault through one port,
+`ConnectorCredentialStore`, whose shape mirrors the agreed vault API:
 
 ```ts
-interface ConnectorCredentialStore {
-  put(
-    owner: { connectorId: string },
-    kind: "oauth-connection" | "header",
-    material: Uint8Array,
-  ): Effect<SecretRef>;
-  read(ref: SecretRef): Effect<Option<Uint8Array>>; // server-internal only
-  replace(ref: SecretRef, material: Uint8Array): Effect<void>; // atomic rotation
-  remove(ref: SecretRef): Effect<void>;
-  recordUse(ref: SecretRef, use: { threadId; providerSessionId; target; outcome }): Effect<void>;
-}
+type SecretOwner = { type: "user" } | { type: "connector"; connectorId: string };
+type SecretKind = "oauth-connection" | "bearer" | "header" | "basic";
+
+put(owner, kind, material: Uint8Array, opts: { label: string }): Effect<VaultSecretRef>
+readOwned(ref, owner): Effect<Option<{ material; version }>>   // connector-owned (OAuth, entered keys)
+resolveBound(ref, consumer: { type: "connector"; connectorId; origin }): Effect<Option<{ material; version }>>
+bind(ref, connectorId, origin): Effect<void>                    // user action only; agents never bind
+listBindable({ strategy, origin }): Effect<ReadonlyArray<{ ref; name; last4? }>>
+replace(ref, material, expectedVersion): Effect<number, SecretVersionConflict> // compare-and-swap
+remove(ref): Effect<void>
+recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlationId }): Effect<void> // non-blocking
 ```
 
-- Connector-owned secrets appear in Settings → Secrets as "Managed by
-  <connector>" and are removed by disconnecting the connector.
-- A header-auth connector binds an existing user secret by reference.
-- The egress proxy must not intercept agent traffic to the Scient server origin
-  (connector endpoints are on the Scient server; `NO_PROXY` includes it).
-- Until the Secrets vault lands, the port is implemented over the existing
-  `ServerSecretStore` (0600 files, same as cloud tokens). Switching to the vault
-  is a single adapter change with no data model change in Extensions.
+- `VaultSecretRef` lives in `packages/contracts/src/scient/secrets.ts` (owned by
+  Secrets). It is distinct from the one-use `SecretRef` of `request_secret`.
+- Connector-owned entries carry a label and appear in Settings → Secrets as
+  "Managed by <connector>"; they are removed only by disconnecting.
+- Header-style connectors either own an entered key or bind a user secret.
+  Binding is checked inside the vault against the connector and its origin, so
+  a user's token cannot be replayed to another connector URL.
+- `recordUse` receives the server-derived `McpInvocationScope`, never
+  request-supplied ids, and carries no arguments, headers or bodies.
+- Both features resolve grants from the project per session, so delegated
+  children in the same project inherit them; writes keep the provider's own
+  per-call approval.
+- Until the vault lands, the port is implemented over `ServerSecretStore` with
+  entries named `connector-<uuid>.bin` and a versioned material envelope; the
+  vault migration moves them by that prefix. Binding user secrets is offered
+  only once the vault exists, because user secrets exist only there.
+- A future egress proxy must never intercept a Scient server origin.
 
 ## Phases
 
