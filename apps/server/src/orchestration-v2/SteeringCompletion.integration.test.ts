@@ -874,7 +874,9 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
   ),
 );
 
-it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
+// SCIENT-FORK:START — only a direct send that starts its own run releases a held queue.
+it.effect("queues a plain send behind the stopped queue and keeps it held", () =>
+  // SCIENT-FORK:END
   Effect.scoped(
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn } =
@@ -922,8 +924,9 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
           ),
           ["queued", "sent"],
         );
-        // The user sent it, so the queue they stopped runs again once the provider stops.
-        assert.isFalse(queued.some((run) => run.queueHeld === true));
+        // SCIENT-FORK:START — the send joins the held queue; Send or Resume releases it.
+        assert.isTrue(queued.every((run) => run.queueHeld === true));
+        // SCIENT-FORK:END
       }).pipe(Effect.provide(layer));
     }),
   ),

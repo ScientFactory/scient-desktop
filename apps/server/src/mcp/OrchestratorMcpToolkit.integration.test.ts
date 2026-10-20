@@ -2287,7 +2287,7 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(false);
-            const heldFollowupCall = yield* invoke("t3_thread_send", {
+            const heldFollowupCall = yield* invoke("scient_thread_send", {
               threadId: delegated.childThreadId,
               message: "This queued follow-up must remain stopped until resumed.",
               mode: "queue",

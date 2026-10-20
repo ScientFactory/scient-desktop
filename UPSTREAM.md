@@ -210,6 +210,14 @@ The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
 
+Scient owns held-queue release in `orchestration-v2/scient-fork/QueuedRunSend.ts`. Upstream
+releases a held queue for any client send that starts or queues a run, except after worktree setup
+failed without a worktree. Scient releases it only for an ordinary direct send that starts its own
+run, including after such a failure, where the queue follows that checkout turn. A plain send that
+Stop turns into a queued message joins the held queue. Upstream's release block in `Orchestrator.ts`
+is not composed; marked expectations in `ThreadLaunchService.test.ts` and
+`SteeringCompletion.integration.test.ts` assert Scient's rule.
+
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
 `SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the

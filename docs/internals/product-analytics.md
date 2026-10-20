@@ -403,8 +403,9 @@ connection method. The server validates those values and can persist the support
 connection management can describe current clients. Invalid or unknown values are ignored and never
 reject a connection.
 
-Upstream also added `client.connected` and `client.turn.requested` analytics call sites. Those names
-are not registered in Scient's analytics contract and are therefore dropped at the Scient boundary.
+Upstream also added `client.connected`, `client.turn.requested` and `feature.used` analytics call
+sites. Those names are not registered in Scient's analytics contract and are therefore dropped at the
+Scient boundary.
 They must not be documented as collected or used to build a dashboard unless Scient deliberately
 adds a reviewed, privacy-bounded contract for them.
 

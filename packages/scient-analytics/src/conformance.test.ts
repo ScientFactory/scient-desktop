@@ -97,5 +97,12 @@ describe("analytics contract conformance corpus", () => {
         { appVersion: "0.6.8", buildChannel: "stable" },
       ),
     ).toBeNull();
+    expect(
+      normalizeInheritedEvent(
+        "feature.used",
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
+        { appVersion: "0.6.8", buildChannel: "stable" },
+      ),
+    ).toBeNull();
   });
 });

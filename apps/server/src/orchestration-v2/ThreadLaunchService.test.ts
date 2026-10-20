@@ -1869,8 +1869,9 @@ it.effect.each(["failed", "interrupted"] as const)(
       assert.equal(held.status, "queued");
       assert.equal(held.queueHeld, true);
 
-      // A message the user starts does not release it: the held message would
-      // run after it in the project checkout.
+      // SCIENT-FORK:START — an ordinary direct send releases a held queue (QueuedRunSend.ts).
+      // A message the user starts releases it, even after worktree setup failed.
+      // SCIENT-FORK:END
       yield* threads.sendToThread({
         projectId,
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:start`),
@@ -1882,8 +1883,9 @@ it.effect.each(["failed", "interrupted"] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      // Nor does the next one, though the run that message started is now the
-      // latest and carries no workspace preparation.
+      // SCIENT-FORK:START
+      // So does the next one.
+      // SCIENT-FORK:END
       yield* threads.sendToThread({
         projectId,
         commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:again`),
@@ -1896,7 +1898,9 @@ it.effect.each(["failed", "interrupted"] as const)(
         creationSource: "web",
       });
       const after = yield* threads.getThreadProjection(launched.threadId);
-      assert.isTrue(after.runs.find((run) => run.id === held.id)?.queueHeld);
+      // SCIENT-FORK:START
+      assert.isFalse(after.runs.find((run) => run.id === held.id)?.queueHeld);
+      // SCIENT-FORK:END
     }).pipe(Effect.provide(harness.layer));
   },
 );
