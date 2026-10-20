@@ -19,6 +19,7 @@ import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
 import { newOverleafId } from "./OverleafGitExecutor.ts";
 import {
   isOverleafLfsPointer,
+  isOverleafRepositoryShape,
   OVERLEAF_LIMITS,
   overleafPathExclusion,
   type OverleafInventory,
@@ -129,11 +130,20 @@ export type OverleafReviewRefusal =
   | { readonly reason: "remote-file-limit" }
   | { readonly reason: "remote-too-large" }
   | { readonly reason: "remote-file-too-large"; readonly path: string }
-  /** Overleaf has content the folder could never hold: a dropping, a reserved name, an LFS pointer. */
+  /**
+   * Overleaf has content the folder could never hold: a dropping, a reserved name,
+   * an LFS pointer, or files that would make `path`, a folder, a Git repository.
+   */
   | {
       readonly reason: "remote-forbidden";
       readonly path: string;
-      readonly kind: "reserved" | "dropping" | "staging" | "invalid-path" | "lfs-pointer";
+      readonly kind:
+        | "reserved"
+        | "dropping"
+        | "staging"
+        | "invalid-path"
+        | "lfs-pointer"
+        | "repository";
     }
   /** Two paths differ only by letter case or Unicode form; one would silently replace the other. */
   | { readonly reason: "path-alias"; readonly first: string; readonly second: string }
@@ -262,6 +272,27 @@ function findCollisions(input: {
   };
 }
 
+/**
+ * A folder that these paths together would make a Git repository, or null. The
+ * inventory never walks into one already on disk, so one found here is made by
+ * Overleaf's content; the file layer would refuse to write into it partway.
+ */
+function repositoryFolder(paths: Iterable<string>) {
+  const children = new Map<string, Set<string>>();
+  for (const path of paths) {
+    const segments = path.split("/");
+    for (const [index, segment] of segments.entries()) {
+      const parent = segments.slice(0, index).join("/");
+      const names = children.get(parent) ?? new Set<string>();
+      names.add(segment);
+      children.set(parent, names);
+    }
+  }
+  for (const [folder, names] of [...children].toSorted(([left], [right]) => byPath(left, right)))
+    if (isOverleafRepositoryShape(names)) return folder === "" ? "." : folder;
+  return null;
+}
+
 /** Two different spellings of one path, by letter case or Unicode form, or null. */
 function findAlias(paths: Iterable<string>) {
   const seen = new Map<string, string>();
@@ -311,6 +342,16 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     if (isOverleafLfsPointer(prefix))
       return refused({ reason: "remote-forbidden", path, kind: "lfs-pointer" });
   }
+  const repository = repositoryFolder([
+    ...remote.keys(),
+    ...inventory.captured.keys(),
+    ...inventory.additions.map((entry) => entry.path),
+    ...inventory.localOnly,
+    ...inventory.folders,
+    ...inventory.excluded.map((entry) => entry.path),
+  ]);
+  if (repository !== null)
+    return refused({ reason: "remote-forbidden", path: repository, kind: "repository" });
   const alias = findAlias([
     ...inventory.captured.keys(),
     ...inventory.additions.map((entry) => entry.path),
@@ -542,6 +583,17 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       ACKNOWLEDGED.has(kind),
     ),
   };
+  // On a disk that ignores letter case or Unicode form, a path absent before and after
+  // but spelled like a file that is present resolves to that file: the applier, which
+  // checks every path of a unit, would find a file where none should be, and it cannot
+  // rename a file to another spelling of its name. The alias check above refuses any
+  // plan that changes a spelling on disk, so such a path needs no change on disk. It
+  // stays in the review and the base, and leaves the applier's plan with its renames.
+  const presentKeys = new Set([...capturedPaths, ...target.keys()].map(manuscriptCollisionKey));
+  const spelledLikePresent = (path: string) =>
+    !inventory.captured.has(path) &&
+    !target.has(path) &&
+    presentKeys.has(manuscriptCollisionKey(path));
   const review: OverleafReview = {
     id: newOverleafId(),
     digest: overleafReviewDigest(binding),
@@ -562,8 +614,13 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
         capturedPaths.map((path) => [path, inventory.captured.get(path)!.revision]),
       ),
       target,
-      renames,
-      conflicts: groups,
+      renames: renames.filter(
+        (rename) => !spelledLikePresent(rename.from) && !spelledLikePresent(rename.to),
+      ),
+      conflicts: groups.flatMap((group) => {
+        const paths = group.paths.filter((path) => !spelledLikePresent(path));
+        return paths.length === 0 ? [] : [{ ...group, paths }];
+      }),
       markerPaths,
     },
   };

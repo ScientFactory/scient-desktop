@@ -111,6 +111,58 @@ describe("captureOverleafInventory", () => {
     ]);
   });
 
+  it("skips Git's folders under every name the file layer refuses, and bare repositories", async () => {
+    const root = await folder({
+      "main.tex": "main",
+      // Dotless i upcases to `.GIT`, as does any letter case.
+      ".gıt/config": "x",
+      ".GIT/config": "x",
+      "GIT~1/config": "x",
+      // A bare repository, and a linked worktree's Git folder, under ordinary names.
+      ".bare/HEAD": "ref: refs/heads/main\n",
+      ".bare/objects/info/packs": "",
+      ".bare/refs/heads/main": "",
+      ".bare/config": "x",
+      "worktree/HEAD": "ref: refs/heads/main\n",
+      "worktree/commondir": "../..\n",
+      // Git's names alone do not make a repository.
+      "notes/HEAD": "x",
+      "notes/refs/a.bib": "x",
+    });
+    const inventory = await captured(root, { managedPaths: ["main.tex"] });
+    expect(inventory.additions.map((addition) => addition.path)).toEqual([
+      "notes/HEAD",
+      "notes/refs/a.bib",
+    ]);
+    expect(inventory.excluded).toEqual([
+      { path: ".GIT", reason: "reserved" },
+      { path: ".bare", reason: "repository" },
+      { path: ".gıt", reason: "reserved" },
+      { path: "GIT~1", reason: "reserved" },
+      { path: "worktree", reason: "repository" },
+    ]);
+  });
+
+  it("refuses a manuscript folder inside Git's own folders", async () => {
+    const bare = await folder({
+      HEAD: "ref",
+      "objects/x": "",
+      "refs/x": "",
+      "paper/main.tex": "m",
+    });
+    expect(await refusal(NodePath.join(bare, "paper"))).toEqual({ reason: "git-folder" });
+    const named = await folder({ ".git/paper/main.tex": "m" });
+    expect(await refusal(NodePath.join(named, ".git", "paper"))).toEqual({ reason: "git-folder" });
+    // A linked worktree's top holds a `.git` file; what lies above it is not checked.
+    const worktree = await folder({
+      HEAD: "ref",
+      commondir: "..",
+      "wt/.git": "gitdir: x",
+      "wt/a.tex": "a",
+    });
+    expect((await captured(NodePath.join(worktree, "wt"))).additions).toHaveLength(1);
+  });
+
   it("treats a managed file replaced by a folder as missing, and its contents as additions", async () => {
     const root = await folder({ "chapter/one.tex": "one" });
     const inventory = await captured(root, { managedPaths: ["chapter"] });

@@ -490,6 +490,41 @@ describe("buildOverleafReview", () => {
     ),
   );
 
+  it.live("refuses Overleaf content under any name the file layer treats as Git's", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m" },
+        // Dotless i: `.gıt` upcases to `.GIT`, so the file layer would refuse the write.
+        remote: { "main.tex": "m", ".gıt/config": "[core]" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "refused",
+            refusal: { reason: "remote-forbidden", path: ".gıt/config", kind: "reserved" },
+          });
+        }),
+    ),
+  );
+
+  it.live("refuses Overleaf content that would make a folder a Git repository", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "data/HEAD": "mine" },
+        remote: { "main.tex": "m", "data/objects/a": "x", "data/refs/b": "x" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "refused",
+            refusal: { reason: "remote-forbidden", path: "data", kind: "repository" },
+          });
+        }),
+    ),
+  );
+
   it.live("refuses a Git LFS pointer arriving from Overleaf", () =>
     withScenario(
       {

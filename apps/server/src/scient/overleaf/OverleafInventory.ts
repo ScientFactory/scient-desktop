@@ -55,8 +55,28 @@ const LFS_POINTER = new TextEncoder().encode("version https://git-lfs.github.com
 export const isOverleafLfsPointer = (bytes: Uint8Array) =>
   bytes.length >= LFS_POINTER.length && LFS_POINTER.every((byte, index) => bytes[index] === byte);
 
-/** Folder names that are never part of a connection, wherever they appear. */
-const RESERVED_NAMES = new Set([".git", ".scient", ".scient-overleaf"]);
+/**
+ * Names that are never part of a connection, wherever they appear: Git's own
+ * folder and Scient's. They compare as the host's file layer compares Git's
+ * (`WorkspaceFileSystem`): upcased, ignoring the trailing dots and spaces and
+ * `:` stream suffix Windows ignores, plus the 8.3 short name `GIT~1`. A path
+ * the file layer would refuse to write must never reach a plan.
+ */
+const RESERVED_NAMES = new Set([".GIT", "GIT~1", ".SCIENT", ".SCIENT-OVERLEAF"]);
+const isReservedName = (segment: string) =>
+  RESERVED_NAMES.has((segment.split(":")[0] ?? "").replace(/[. ]+$/u, "").toUpperCase());
+/**
+ * What Git reads as a repository, as the host's file layer recognizes it: a
+ * folder holding `HEAD` plus `objects` and `refs`, or `HEAD` plus `commondir`,
+ * whatever the folder is called. Names compare upcased, so the answer does not
+ * depend on whether the disk ignores case.
+ */
+export const isOverleafRepositoryShape = (names: Iterable<string>) => {
+  const upper = new Set([...names].map((name) => name.toUpperCase()));
+  return (
+    upper.has("HEAD") && (upper.has("COMMONDIR") || (upper.has("OBJECTS") && upper.has("REFS")))
+  );
+};
 const DROPPED_FOLDERS = new Set([
   ".Trashes",
   ".Spotlight-V100",
@@ -102,7 +122,7 @@ export function overleafPathExclusion(
 ): "reserved" | "dropping" | "staging" | "invalid-path" | null {
   const segments = path.split("/");
   for (const [index, segment] of segments.entries()) {
-    if (RESERVED_NAMES.has(segment.toLowerCase())) return "reserved";
+    if (isReservedName(segment)) return "reserved";
     if (isStaging(segment)) return "staging";
     const last = index === segments.length - 1;
     if (last ? isDroppedFile(segment) : DROPPED_FOLDERS.has(segment)) return "dropping";
@@ -145,6 +165,8 @@ export interface OverleafInventory {
 export type OverleafInventoryRefusal =
   /** The manuscript folder is missing or is not a folder. */
   | { readonly reason: "folder-unavailable" }
+  /** The manuscript folder is inside Git's own folders, where Scient never writes. */
+  | { readonly reason: "git-folder" }
   /** More entries than one walk examines; the user should choose a narrower folder. */
   | { readonly reason: "walk-limit" }
   | { readonly reason: "managed-limit" }
@@ -226,6 +248,34 @@ export async function captureOverleafInventory(
   const folderIdentity = async (path: string): Promise<Identity | null> => {
     const stat = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
     return stat !== null && stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : null;
+  };
+  /** Which of the names Git looks for are present in the folder at absolute path `folder`. */
+  const gitNames = async (folder: string) => {
+    const present: string[] = [];
+    for (const name of [".git", "HEAD", "commondir", "objects", "refs"]) {
+      const stat = await NodeFSP.lstat(NodePath.join(folder, name)).catch((error: unknown) => {
+        if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
+        throw new Refused({
+          reason: "unreadable",
+          path: NodePath.relative(input.folder, folder) || ".",
+        });
+      });
+      if (stat !== null) present.push(name === ".git" && stat.isFile() ? ".git-file" : name);
+    }
+    return present;
+  };
+  /**
+   * The host's file layer refuses every write inside a repository folder, checking
+   * upward until a linked worktree's top (which holds a `.git` file). A manuscript
+   * folder in such a place could never receive Overleaf's changes.
+   */
+  const insideGitFolder = async () => {
+    if (input.folder.split(NodePath.sep).some(isReservedName)) return true;
+    for (let folder = input.folder; ; folder = NodePath.dirname(folder)) {
+      const names = await gitNames(folder);
+      if (isOverleafRepositoryShape(names)) return true;
+      if (names.includes(".git-file") || NodePath.dirname(folder) === folder) return false;
+    }
   };
   /** The walked folder `folder` is still the folder that was listed; `path` names the refusal. */
   const verifyFolder = async (folder: string, path: string) => {
@@ -324,6 +374,7 @@ export async function captureOverleafInventory(
   try {
     const root = await folderIdentity("");
     if (root === null) throw new Refused({ reason: "folder-unavailable" });
+    if (await insideGitFolder()) throw new Refused({ reason: "git-folder" });
     folders.set("", root);
 
     const managed = new Set(input.managedPaths);
@@ -338,12 +389,12 @@ export async function captureOverleafInventory(
     const queue: Array<{ relative: string; hidden: boolean }> = [{ relative: "", hidden: false }];
     for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
       // A nested repository is someone else's project; it is skipped without being listed.
+      // So is a repository folder under any other name, such as a bare `.bare`.
+      const names = next.relative === "" ? [] : await gitNames(absolute(next.relative));
       if (
-        next.relative !== "" &&
-        (await NodeFSP.lstat(NodePath.join(absolute(next.relative), ".git")).then(
-          () => true,
-          () => false,
-        ))
+        names.includes(".git") ||
+        names.includes(".git-file") ||
+        isOverleafRepositoryShape(names)
       ) {
         folders.delete(next.relative);
         excluded.push({ path: next.relative, reason: "repository" });
@@ -374,7 +425,7 @@ export async function captureOverleafInventory(
         const path = next.relative === "" ? entry.name : `${next.relative}/${entry.name}`;
         if (staging.has(path) || isStaging(entry.name)) {
           excluded.push({ path, reason: "staging" });
-        } else if (RESERVED_NAMES.has(entry.name.toLowerCase())) {
+        } else if (isReservedName(entry.name)) {
           // A worktree's `.git` is a file; either way it is never manuscript content.
           excluded.push({ path, reason: "reserved" });
         } else if (entry.isSymbolicLink()) {

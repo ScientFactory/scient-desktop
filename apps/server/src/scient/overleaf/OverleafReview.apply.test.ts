@@ -200,4 +200,36 @@ describe("a review's plan, applied", () => {
       }),
     ),
   );
+
+  // The applier cannot rename a file to another spelling of its own name, and on a disk
+  // that ignores letter case the old spelling finds the new file. A review never asks it
+  // to change a spelling on disk (a folder renamed that way is refused at capture), so
+  // the old spelling, absent on both sides, stays out of the plan.
+  it.live("applies Overleaf's rename that only changes letter case", () =>
+    withRepos((repos, root) =>
+      fixture(async (h) => {
+        const chapter = paragraphs("chapter");
+        // Overleaf renamed `Chapter.tex` to `chapter.tex`; the folder had deleted it.
+        await put(h.cwd, { "main.tex": "m" });
+        const input = {
+          root,
+          folder: h.cwd,
+          base: { "main.tex": "m", "Chapter.tex": chapter },
+          remote: { "main.tex": "m", "chapter.tex": chapter },
+        };
+        const asked = await h.run(review(repos, input));
+        expect(asked.conflicts.map((conflict) => conflict.key)).toEqual([
+          overleafConflictKey(["Chapter.tex", "chapter.tex"]),
+        ]);
+        const choices = new Map([[asked.conflicts[0]!.key, "theirs" as const]]);
+        const built = await h.run(review(repos, { ...input, choices }));
+        expect(built.confirmable).toBe(true);
+        const result = await h.apply("case-only", built.applyPlan);
+        expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
+        expect(await contents(h.cwd)).toEqual({ "main.tex": "m", "chapter.tex": chapter });
+        // The old spelling leaves the base, as on Overleaf.
+        expect([...result.base.keys()].sort()).toEqual(["chapter.tex", "main.tex"]);
+      }),
+    ),
+  );
 });
