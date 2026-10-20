@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { DOCUMENT_TEMPLATES } from "./documentTemplates";
 import { type TemplatePicture, templatePicture } from "./templatePreviews";
@@ -23,16 +23,13 @@ const builtIns: readonly TemplateChoice[] = DOCUMENT_TEMPLATES.map(({ id, name }
 /** Every template a new document can start from: Scient's, then the person's own. */
 export function useTemplateChoices(): readonly TemplateChoice[] {
   const own = useSyncExternalStore(userTemplates.subscribe, userTemplates.list);
-  return useMemo(
-    () => [
-      ...builtIns,
-      ...own.map(({ id, name, preview }) => ({
-        id,
-        name,
-        own: true,
-        picture: templatePicture(null, preview),
-      })),
-    ],
-    [own],
-  );
+  return [
+    ...builtIns,
+    ...own.map(({ id, name, preview }) => ({
+      id,
+      name,
+      own: true,
+      picture: templatePicture(null, preview),
+    })),
+  ];
 }

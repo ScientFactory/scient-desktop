@@ -3,15 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { DocumentSourceEditOutcome } from "@scientfactory/scient-document";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
@@ -84,6 +76,87 @@ const refuseEdit = (): DocumentSourceEditOutcome => ({ accepted: false, reason: 
 const nothingToFlush = () => Promise.resolve(true);
 
 /**
+ * The files the editor composes. The open file's text is read from its session,
+ * outside React, so the surface's editor snapshot stands for its version.
+ */
+function projectFiles(
+  states: ReadonlyMap<string, FileState>,
+  relativePath: string,
+  source: string,
+  fileRevision: string,
+  fileTruncated: boolean,
+  documentPersistence: Props["documentPersistence"],
+  _sourceSnapshotId: string,
+) {
+  const result = new Map<string, VisualProjectFile>();
+  for (const [path, state] of states) if (state.data) result.set(path, state.data);
+  // The active source buffer is already optimistic and should never wait for a query round trip.
+  const selected = documentPersistence?.find((lease) => lease.target.relativePath === relativePath);
+  const selectedSource = selected?.getSnapshot();
+  result.set(relativePath, {
+    contents: selectedSource?.draftSource ?? source,
+    revision: selectedSource?.baselineRevision ?? fileRevision,
+    truncated: selectedSource ? false : fileTruncated,
+    ...(selected && selectedSource
+      ? {
+          owner: {
+            documentId: selected.documentId,
+            editVersion: selectedSource.editVersion,
+          },
+        }
+      : {}),
+  });
+  return result;
+}
+
+/** The projection an editor snapshot was made for, or that an accepted edit produced. */
+interface EditorProjection {
+  readonly root: string | null;
+  readonly document: VisualProjectDocument | null;
+  readonly files: ReadonlyMap<string, VisualProjectFile>;
+  /** The open file's text, which the snapshot holds while no document is assembled. */
+  readonly source: string;
+  readonly editorSnapshot: LatexEditorSourceSnapshot;
+}
+
+/** Whether the editor's snapshot still describes this projection, so its identity is kept. */
+function keepsEditorSnapshot(
+  previous: EditorProjection | null,
+  root: string | null,
+  document: VisualProjectDocument | null,
+  files: ReadonlyMap<string, VisualProjectFile>,
+  source: string,
+): previous is EditorProjection {
+  if (!previous) return false;
+  if (document === null)
+    return previous.document === null && previous.root === root && previous.source === source;
+  return (
+    root?.split("/").slice(0, -1).join("/") === previous.root?.split("/").slice(0, -1).join("/") &&
+    previous.document?.source === document?.source &&
+    (previous.root ? previous.files.get(previous.root)?.contents : undefined) ===
+      (root ? files.get(root)?.contents : undefined) &&
+    document.paths.length === previous.document?.paths.length &&
+    document.paths.every((path, index) => {
+      const beforePath = previous.document!.paths[index]!;
+      const before = previous.files.get(beforePath);
+      const after = files.get(path);
+      return (
+        // Only the same physical owner may change its diagnostic filename.
+        (path === beforePath ||
+          (before?.owner !== undefined &&
+            after?.owner !== undefined &&
+            path.split("/").slice(0, -1).join("/") ===
+              beforePath.split("/").slice(0, -1).join("/"))) &&
+        before?.contents === after?.contents &&
+        before?.truncated === after?.truncated &&
+        before?.owner?.documentId === after?.owner?.documentId &&
+        before?.owner?.editVersion === after?.owner?.editVersion
+      );
+    })
+  );
+}
+
+/**
  * One file of the document. The open file's session belongs to the surface;
  * every other LaTeX file gets its own here, the same one any other view of
  * that file would get, so a file never has two savers. A file of another kind
@@ -104,10 +177,7 @@ function ProjectFileSession(props: {
   const selected = path === owner.relativePath;
   const query = useProjectFileQuery(environmentId, cwd, path, !selected);
   const ownsSession = !selected && isLatexPreviewFile(path);
-  const target = useMemo(
-    () => (ownsSession ? { environmentId, cwd, relativePath: path } : null),
-    [ownsSession, environmentId, cwd, path],
-  );
+  const target = ownsSession ? { environmentId, cwd, relativePath: path } : null;
   const { lease, snapshot, admissionError, retryAdmission } = useMarkdownPersistenceLease({
     target,
     authoritativeSnapshot: query.authoritativeData,
@@ -204,44 +274,35 @@ function ProjectFileSession(props: {
     return () => reported(path, false);
   }, [path, observed, reported]);
 
-  const live = useMemo(
-    () =>
-      sourceLease === null
-        ? notLive
-        : () => {
-            const current = sourceLease.getSnapshot();
-            return current.editingBlocked || current.error !== null || current.conflict !== null
-              ? null
-              : {
-                  contents: current.draftSource,
-                  revision: current.baselineRevision,
-                  truncated: false,
-                  owner: { documentId: sourceLease.documentId, editVersion: current.editVersion },
-                };
-          },
-    [sourceLease],
-  );
-  const applyEdit = useMemo(
-    () =>
-      sourceLease === null
-        ? refuseEdit
-        : (edit: PhysicalLatexSourceEdit): DocumentSourceEditOutcome => {
-            const current = sourceLease.getSnapshot();
-            if (
-              current.editingBlocked ||
-              current.error !== null ||
-              current.conflict !== null ||
-              sourceLease.documentId !== edit.documentId
-            )
-              return refuseEdit();
-            return sourceLease.applyEdit(edit);
-          },
-    [sourceLease],
-  );
-  const unsaved = useMemo(
-    () => (lease === null ? nothingUnsaved : () => lease.getSnapshot().pending),
-    [lease],
-  );
+  const live =
+    sourceLease === null
+      ? notLive
+      : () => {
+          const current = sourceLease.getSnapshot();
+          return current.editingBlocked || current.error !== null || current.conflict !== null
+            ? null
+            : {
+                contents: current.draftSource,
+                revision: current.baselineRevision,
+                truncated: false,
+                owner: { documentId: sourceLease.documentId, editVersion: current.editVersion },
+              };
+        };
+  const applyEdit =
+    sourceLease === null
+      ? refuseEdit
+      : (edit: PhysicalLatexSourceEdit): DocumentSourceEditOutcome => {
+          const current = sourceLease.getSnapshot();
+          if (
+            current.editingBlocked ||
+            current.error !== null ||
+            current.conflict !== null ||
+            sourceLease.documentId !== edit.documentId
+          )
+            return refuseEdit();
+          return sourceLease.applyEdit(edit);
+        };
+  const unsaved = lease === null ? nothingUnsaved : () => lease.getSnapshot().pending;
   const flush = lease?.flushNow ?? nothingToFlush;
   const contents = file?.contents,
     revision = file?.revision,
@@ -292,17 +353,18 @@ function ProjectFileSession(props: {
 /** One editor for the compiled root, with revision-checked sessions for its source files. */
 export function LatexProjectVisualEditor(props: Props) {
   const [states, setStates] = useState(new Map<string, FileState>());
+  const registerSaveProject = props.registerSaveProject;
   useEffect(() => {
-    props.registerSaveProject?.(async () => {
+    registerSaveProject?.(async () => {
       const results = await Promise.all([...states.values()].map((file) => file.flush()));
       return results.every(Boolean);
     });
-    return () => props.registerSaveProject?.(null);
-  }, [props.registerSaveProject, states]);
+    return () => registerSaveProject?.(null);
+  }, [registerSaveProject, states]);
   const [pendingPaths, setPendingPaths] = useState(new Set<string>());
   const [saveErrors, setSaveErrors] = useState(new Map<string, string>());
   const [editError, setEditError] = useState<string | null>(null);
-  const update = useCallback((path: string, file: FileState) => {
+  const update = (path: string, file: FileState) => {
     setStates((previous) => {
       const current = previous.get(path);
       if (
@@ -317,99 +379,62 @@ export function LatexProjectVisualEditor(props: Props) {
         return previous;
       return new Map(previous).set(path, file);
     });
-  }, []);
-  const detach = useCallback(
-    (path: string) =>
-      setStates((previous) => {
-        const current = previous.get(path);
-        if (!current) return previous;
-        return new Map(previous).set(path, {
-          ...current,
-          live: notLive,
-          unsaved: nothingUnsaved,
-          applyEdit: refuseEdit,
-          flush: nothingToFlush,
-          persistence: undefined,
-        });
-      }),
-    [],
-  );
-  const pending = useCallback(
-    (path: string, value: boolean) =>
-      setPendingPaths((previous) => {
-        if (previous.has(path) === value) return previous;
-        const next = new Set(previous);
-        if (value) next.add(path);
-        else next.delete(path);
-        return next;
-      }),
-    [],
-  );
+  };
+  const detach = (path: string) =>
+    setStates((previous) => {
+      const current = previous.get(path);
+      if (!current) return previous;
+      return new Map(previous).set(path, {
+        ...current,
+        live: notLive,
+        unsaved: nothingUnsaved,
+        applyEdit: refuseEdit,
+        flush: nothingToFlush,
+        persistence: undefined,
+      });
+    });
+  const pending = (path: string, value: boolean) =>
+    setPendingPaths((previous) => {
+      if (previous.has(path) === value) return previous;
+      const next = new Set(previous);
+      if (value) next.add(path);
+      else next.delete(path);
+      return next;
+    });
   // Files whose session has reported its saver's state since it mounted. Data
   // kept from an earlier session of a file does not count.
   const [reportedPaths, setReportedPaths] = useState(new Set<string>());
-  const reported = useCallback(
-    (path: string, value: boolean) =>
-      setReportedPaths((previous) => {
-        if (previous.has(path) === value) return previous;
-        const next = new Set(previous);
-        if (value) next.add(path);
-        else next.delete(path);
-        return next;
-      }),
-    [],
-  );
-  const failure = useCallback(
-    (path: string, message: string | null) =>
-      setSaveErrors((previous) => {
-        if ((previous.get(path) ?? null) === message) return previous;
-        const next = new Map(previous);
-        if (message) next.set(path, message);
-        else next.delete(path);
-        return next;
-      }),
-    [],
-  );
-  const files = useMemo(() => {
-    const result = new Map<string, VisualProjectFile>();
-    for (const [path, state] of states) if (state.data) result.set(path, state.data);
-    // The active source buffer is already optimistic and should never wait for a query round trip.
-    const selected = props.documentPersistence?.find(
-      (lease) => lease.target.relativePath === props.relativePath,
-    );
-    const selectedSource = selected?.getSnapshot();
-    result.set(props.relativePath, {
-      contents: selectedSource?.draftSource ?? props.source,
-      revision: selectedSource?.baselineRevision ?? props.fileRevision,
-      truncated: selectedSource ? false : props.fileTruncated,
-      ...(selected && selectedSource
-        ? {
-            owner: {
-              documentId: selected.documentId,
-              editVersion: selectedSource.editVersion,
-            },
-          }
-        : {}),
+  const reported = (path: string, value: boolean) =>
+    setReportedPaths((previous) => {
+      if (previous.has(path) === value) return previous;
+      const next = new Set(previous);
+      if (value) next.add(path);
+      else next.delete(path);
+      return next;
     });
-    return result;
-  }, [
+  const failure = (path: string, message: string | null) =>
+    setSaveErrors((previous) => {
+      if ((previous.get(path) ?? null) === message) return previous;
+      const next = new Map(previous);
+      if (message) next.set(path, message);
+      else next.delete(path);
+      return next;
+    });
+  const files = projectFiles(
     states,
     props.relativePath,
     props.source,
     props.fileRevision,
     props.fileTruncated,
-    props.sourceSnapshot.id,
     props.documentPersistence,
-  ]);
-  const root = props.rootRelativePath;
-  const document = useMemo(() => (root ? assembleVisualProject(root, files) : null), [root, files]);
-  const visualNavigation = useMemo(
-    () =>
-      document && props.sourceNavigation
-        ? projectVisualNavigation(document, files, props.sourceNavigation)
-        : null,
-    [document, files, props.sourceNavigation],
+    props.sourceSnapshot.id,
   );
+  const root = props.rootRelativePath;
+  const document = root ? assembleVisualProject(root, files) : null;
+  const visualNavigation =
+    document && props.sourceNavigation
+      ? projectVisualNavigation(document, files, props.sourceNavigation)
+      : null;
   const warnedNavigation = useRef<number | null>(null);
   useEffect(() => {
     const request = props.sourceNavigation;
@@ -480,41 +505,18 @@ export function LatexProjectVisualEditor(props: Props) {
     selectedSnapshot: LatexEditorSourceSnapshot;
     editorSnapshot: LatexEditorSourceSnapshot;
   } | null>(null);
-  const editorSnapshot = useMemo(() => {
-    const previous = snapshot.current;
-    if (
-      previous &&
-      root?.split("/").slice(0, -1).join("/") ===
-        previous.root?.split("/").slice(0, -1).join("/") &&
-      previous.document?.source === document?.source &&
-      (previous.root ? previous.files.get(previous.root)?.contents : undefined) ===
-        (root ? files.get(root)?.contents : undefined) &&
-      document?.paths.length === previous.document?.paths.length &&
-      document?.paths.every((path, index) => {
-        const beforePath = previous.document!.paths[index]!;
-        const before = previous.files.get(beforePath);
-        const after = files.get(path);
-        return (
-          // Only the same physical owner may change its diagnostic filename.
-          (path === beforePath ||
-            (before?.owner !== undefined &&
-              after?.owner !== undefined &&
-              path.split("/").slice(0, -1).join("/") ===
-                beforePath.split("/").slice(0, -1).join("/"))) &&
-          before?.contents === after?.contents &&
-          before?.truncated === after?.truncated &&
-          before?.owner?.documentId === after?.owner?.documentId &&
-          before?.owner?.editVersion === after?.owner?.editVersion
-        );
-      })
-    )
-      return previous.editorSnapshot;
-    return createLatexEditorSourceSnapshot(
-      document?.source ?? props.source,
-      root ? files.get(root)?.contents : undefined,
-      document?.source ?? props.source,
-    );
-  }, [document, files, root, props.source]);
+  // Kept while the projection is unchanged; an accepted edit records its own.
+  const [editorProjection, setEditorProjection] = useState<EditorProjection | null>(null);
+  const keepsSnapshot = keepsEditorSnapshot(editorProjection, root, document, files, props.source);
+  const editorSnapshot = keepsSnapshot
+    ? editorProjection.editorSnapshot
+    : createLatexEditorSourceSnapshot(
+        document?.source ?? props.source,
+        root ? files.get(root)?.contents : undefined,
+        document?.source ?? props.source,
+      );
+  if (!keepsSnapshot)
+    setEditorProjection({ root, document, files, source: props.source, editorSnapshot });
   useLayoutEffect(() => {
     const previous = snapshot.current;
     const selected = files.get(props.relativePath);
@@ -544,129 +546,130 @@ export function LatexProjectVisualEditor(props: Props) {
       editorSnapshot,
     };
   }, [root, document, files, states, props.relativePath, props.sourceSnapshot, editorSnapshot]);
-  const resolveSourceOwner = useCallback<ResolveLatexSourceOwner>(
-    (source, from, to) => {
-      const current = snapshot.current;
-      if (!root || !current || current.document?.source !== source || from >= to) return null;
-      const spans = current.document.spans.filter((span) => span.to > from && span.from < to);
-      const first = spans[0],
-        last = spans.at(-1);
-      if (!first?.path || !last || spans.some((span) => span.path !== first.path)) return null;
-      const file = current.files.get(first.path);
-      if (!file) return null;
-      const lease =
-        first.path === props.relativePath
-          ? props.documentPersistence?.find((item) => item.target.relativePath === first.path)
-          : current.states.get(first.path)?.persistence;
-      const state = lease?.getSnapshot();
-      if (state && state.draftSource !== file.contents) return null;
-      return {
-        path: first.path,
-        rootRelativePath: root,
-        source: file.contents,
-        baselineSource: state?.baselineSource ?? file.contents,
-        from: first.sourceFrom + from - first.from,
-        to: last.sourceFrom + to - last.from,
-      };
-    },
-    [root, props.relativePath, props.documentPersistence],
-  );
-  const onEdit = useCallback<LatexVisualEditorProps["onEdit"]>(
-    (request) => {
-      const refuse = (reason: string): LatexVisualEditOutcome => {
-        setEditError(reason);
-        return { accepted: false, reason };
-      };
-      const current = snapshot.current;
+  const resolveSourceOwner: ResolveLatexSourceOwner = (source, from, to) => {
+    const current = snapshot.current;
+    if (!root || !current || current.document?.source !== source || from >= to) return null;
+    const spans = current.document.spans.filter((span) => span.to > from && span.from < to);
+    const first = spans[0],
+      last = spans.at(-1);
+    if (!first?.path || !last || spans.some((span) => span.path !== first.path)) return null;
+    const file = current.files.get(first.path);
+    if (!file) return null;
+    const lease =
+      first.path === props.relativePath
+        ? props.documentPersistence?.find((item) => item.target.relativePath === first.path)
+        : current.states.get(first.path)?.persistence;
+    const state = lease?.getSnapshot();
+    if (state && state.draftSource !== file.contents) return null;
+    return {
+      path: first.path,
+      rootRelativePath: root,
+      source: file.contents,
+      baselineSource: state?.baselineSource ?? file.contents,
+      from: first.sourceFrom + from - first.from,
+      to: last.sourceFrom + to - last.from,
+    };
+  };
+  const onEdit: LatexVisualEditorProps["onEdit"] = (request) => {
+    const refuse = (reason: string): LatexVisualEditOutcome => {
+      setEditError(reason);
+      return { accepted: false, reason };
+    };
+    const current = snapshot.current;
+    if (
+      props.disabled ||
+      !root ||
+      !current?.document ||
+      current.root !== root ||
+      current.document.errors.length ||
+      current.document.missing.length ||
+      request.snapshot.id !== current.editorSnapshot.id
+    )
+      return refuse("The source context changed while this edit was being prepared.");
+    for (const path of current.document.paths) {
+      const file = current.files.get(path);
+      if (!file?.owner) continue;
+      const live = current.states.get(path)?.live();
       if (
-        props.disabled ||
-        !root ||
-        !current?.document ||
-        current.root !== root ||
-        current.document.errors.length ||
-        current.document.missing.length ||
-        request.snapshot.id !== current.editorSnapshot.id
+        !live ||
+        live.contents !== file.contents ||
+        live.owner?.documentId !== file.owner.documentId ||
+        live.owner.editVersion !== file.owner.editVersion ||
+        saveErrors.has(path)
       )
-        return refuse("The source context changed while this edit was being prepared.");
-      for (const path of current.document.paths) {
-        const file = current.files.get(path);
-        if (!file?.owner) continue;
-        const live = current.states.get(path)?.live();
-        if (
-          !live ||
-          live.contents !== file.contents ||
-          live.owner?.documentId !== file.owner.documentId ||
-          live.owner.editVersion !== file.owner.editVersion ||
-          saveErrors.has(path)
-        )
-          return refuse("The source changed while this edit was being prepared.");
-      }
-      const plan = planVisualProjectEdit(current.document, request.edit, current.files, root);
-      if (plan.error) return refuse(plan.error);
-      const nextFiles = new Map(current.files);
-      const nextStates = new Map(current.states);
-      const inverses: NonNullable<typeof request.edit.physical>[number][] = [];
-      let selectedSnapshot = current.selectedSnapshot;
-      for (const [path, edit] of plan.edits) {
-        const file = current.files.get(path)!;
-        const state = current.states.get(path);
-        if (!state) return refuse(`The source session for ${path} is unavailable.`);
-        if (path === props.relativePath) {
-          const outcome = props.onEdit({
-            snapshot: current.selectedSnapshot,
-            edit: { source: file.contents, patches: edit.patches },
-          });
-          if (!outcome.accepted) return refuse(outcome.reason);
-          selectedSnapshot = outcome.snapshot;
-        } else {
-          const outcome = state.applyEdit(edit);
-          if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
-        }
-        const live = state.live();
-        if (!live) throw new Error("An accepted LaTeX source owner became unavailable.");
-        nextFiles.set(path, live);
-        nextStates.set(path, { ...state, data: live });
-        inverses.push({
-          path,
-          documentId: edit.documentId,
-          source: live.contents,
-          patches: invertLatexSourcePatches(file.contents, edit.patches),
+        return refuse("The source changed while this edit was being prepared.");
+    }
+    const plan = planVisualProjectEdit(current.document, request.edit, current.files, root);
+    if (plan.error) return refuse(plan.error);
+    const nextFiles = new Map(current.files);
+    const nextStates = new Map(current.states);
+    const inverses: NonNullable<typeof request.edit.physical>[number][] = [];
+    let selectedSnapshot = current.selectedSnapshot;
+    for (const [path, edit] of plan.edits) {
+      const file = current.files.get(path)!;
+      const state = current.states.get(path);
+      if (!state) return refuse(`The source session for ${path} is unavailable.`);
+      if (path === props.relativePath) {
+        const outcome = props.onEdit({
+          snapshot: current.selectedSnapshot,
+          edit: { source: file.contents, patches: edit.patches },
         });
-        if (path !== props.relativePath)
-          checkpointVisualDraft(
-            `${props.environmentId}\0${props.cwd}\0${path}`,
-            live.contents,
-            file.revision,
-          );
+        if (!outcome.accepted) return refuse(outcome.reason);
+        selectedSnapshot = outcome.snapshot;
+      } else {
+        const outcome = state.applyEdit(edit);
+        if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
       }
-      const nextDocument = plan.edits.size
-        ? assembleVisualProject(root, nextFiles)
-        : current.document;
-      const nextSnapshot = plan.edits.size
-        ? createLatexEditorSourceSnapshot(
-            nextDocument.source,
-            nextFiles.get(root)?.contents,
-            nextDocument.source,
-          )
-        : current.editorSnapshot;
-      snapshot.current = {
-        root,
-        document: nextDocument,
-        files: nextFiles,
-        states: nextStates,
-        selectedSnapshot,
-        editorSnapshot: nextSnapshot,
-      };
-      if (plan.edits.size) setStates(nextStates);
-      setEditError(null);
-      return {
-        accepted: true,
-        snapshot: nextSnapshot,
-        inverseEdit: { source: nextSnapshot.source, patches: [], physical: inverses },
-      };
-    },
-    [root, props, saveErrors],
-  );
+      const live = state.live();
+      if (!live) throw new Error("An accepted LaTeX source owner became unavailable.");
+      nextFiles.set(path, live);
+      nextStates.set(path, { ...state, data: live });
+      inverses.push({
+        path,
+        documentId: edit.documentId,
+        source: live.contents,
+        patches: invertLatexSourcePatches(file.contents, edit.patches),
+      });
+      if (path !== props.relativePath)
+        checkpointVisualDraft(
+          `${props.environmentId}\0${props.cwd}\0${path}`,
+          live.contents,
+          file.revision,
+        );
+    }
+    const nextDocument = plan.edits.size
+      ? assembleVisualProject(root, nextFiles)
+      : current.document;
+    const nextSnapshot = plan.edits.size
+      ? createLatexEditorSourceSnapshot(
+          nextDocument.source,
+          nextFiles.get(root)?.contents,
+          nextDocument.source,
+        )
+      : current.editorSnapshot;
+    snapshot.current = {
+      root,
+      document: nextDocument,
+      files: nextFiles,
+      states: nextStates,
+      selectedSnapshot,
+      editorSnapshot: nextSnapshot,
+    };
+    setEditorProjection({
+      root,
+      document: nextDocument,
+      files: nextFiles,
+      source: props.source,
+      editorSnapshot: nextSnapshot,
+    });
+    if (plan.edits.size) setStates(nextStates);
+    setEditError(null);
+    return {
+      accepted: true,
+      snapshot: nextSnapshot,
+      inverseEdit: { source: nextSnapshot.source, patches: [], physical: inverses },
+    };
+  };
   const ready =
     !!document &&
     !document.missing.length &&

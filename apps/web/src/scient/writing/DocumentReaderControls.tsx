@@ -195,7 +195,11 @@ export function DocumentReaderControls(props: {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [menuRow, setMenuRow] = useState<HTMLElement | null>(null);
   const searchOwnsFocus = useRef(false);
-  useEffect(() => setPageInput(String(props.page)), [props.page]);
+  const [previousPage, setPreviousPage] = useState(props.page);
+  if (previousPage !== props.page) {
+    setPreviousPage(props.page);
+    setPageInput(String(props.page));
+  }
   const host = useContext(ReaderBarHostContext);
   const hostSlot = host?.slot ?? null;
   const onHosted = host?.onHosted;

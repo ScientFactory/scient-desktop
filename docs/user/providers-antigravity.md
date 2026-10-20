@@ -30,6 +30,15 @@ mobile app.
 Installation and sign-in continue if you leave the setup surface. Background
 status checks never open a browser or start a sign-in flow.
 
+With the Google account method, **Sign in** on the provider's row in **Settings >
+Providers** starts sign-in directly. Antigravity prepares itself each time it
+starts, so sign-in can take up to a minute before the Google page opens; Scient
+shows that it is starting. The page opens once, on the device where you started
+sign-in, even if you leave the setup surface meanwhile. Other windows and
+devices show the sign-in in progress and offer **Open Google sign-in** without
+opening it themselves. If the browser cannot open, the setup card says so, or a
+notification offers **Open sign-in page** when the card is closed.
+
 Google sign-in allows five minutes for runtime startup, browser authorization,
 and account verification. If Scient cannot open the browser, choose **Reopen
 Google sign-in** to retry the same attempt. Once the attempt expires, start a
@@ -61,12 +70,11 @@ official agent:
 
 Gemini Enterprise resolves access for its configured project and location.
 Agent Platform can use Application Default Credentials on the environment.
-Configured keys are stored in that environment's provider settings and passed
-only to Antigravity. Ambient `GEMINI_API_KEY` and `GOOGLE_*` values do not
-silently change the selected method.
-
-Changing the method stops that provider instance's sessions. Disconnect or
-sign out before switching accounts.
+The environment stores the Antigravity API key outside its settings file, and
+clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
+ambient `GEMINI_API_KEY` and Google credential variables do not override them.
+Changing the method stops the instance's sessions. Sign out before replacing an
+account.
 
 ## Runtime ownership and updates
 
@@ -176,13 +184,13 @@ Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase
 that external credential store.
 
-Disconnect does not erase API keys saved in provider settings or Application
+Disconnect does not erase API keys saved for the instance or Application
 Default Credentials managed outside Scient. Remove those separately if you no
 longer want that credential method available.
 
 ## Troubleshooting
 
-Health checks, model refresh, and sign-out allow up to 90 seconds for the official
+Installation checks, model refresh, and sign-out allow up to 5 minutes for the official
 runtime to start, which can be slow on some computers. Explicit refresh uses saved
 credentials and does not launch a login page. Automatic checks verify installation
 only. Google controls account eligibility and limits; Scient does not silently
@@ -194,6 +202,9 @@ switch authentication methods to bypass an account restriction.
   waiting. Helper preparation, runtime startup, and link-capture failures show
   which stage stopped; these failures require a new attempt. Passive refreshes
   intentionally do not launch a browser.
+- **Signed in, but Antigravity couldn't start:** Google accepted the sign-in,
+  but the agent could not start a session or load models with it. Try again; if
+  it keeps failing, the server log records the agent's reason.
 - **Remote sign-in stopped at localhost:** paste the full return URL through
   the collapsed remote-device control.
 - **Credentials are incomplete:** return to provider configuration and supply

@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 import { DownloadIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEnvironments } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
@@ -18,19 +19,21 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 // SCIENT-FORK:START — reviewed Scient-managed runtime updates get their own notice
 import { ManagedRuntimeUpdateNotification } from "../scient/providerConnection/ManagedRuntimeUpdateNotification";
 export { ManagedRuntimeUpdateNotification };
+import { offersProviderUpdateToasts } from "../scient/desktopUpdate/updateAvailabilityToasts";
 // SCIENT-FORK:END
 
 function useHasLocalSecondaryEnvironment(): boolean {
   const { environments } = useEnvironments();
-  return useMemo(
-    () =>
-      environments.some((environment) => isDesktopLocalConnectionTarget(environment.entry.target)),
-    [environments],
+  return environments.some((environment) =>
+    isDesktopLocalConnectionTarget(environment.entry.target),
   );
 }
 
 export function ProviderUpdateLaunchNotification() {
   const hasLocalSecondary = useHasLocalSecondaryEnvironment();
+  // SCIENT-FORK:START — on desktop the sidebar's update circle offers provider CLI updates.
+  if (!offersProviderUpdateToasts()) return <ManagedRuntimeUpdateNotification />;
+  // SCIENT-FORK:END
 
   return hasLocalSecondary ? (
     <>
@@ -63,7 +66,6 @@ function ProviderUpdateEnvironmentsNotification() {
     readonly toastId: ProviderUpdateToastId;
     readonly key: string;
   } | null>(null);
-  const notificationKeyRef = useRef<string | null>(null);
   // Whether the user has triggered an update from the current toast. Until they
   // do, the prompt is replaced when the available updates change; afterward it
   // is kept so in-progress rows are not torn down.
@@ -78,36 +80,41 @@ function ProviderUpdateEnvironmentsNotification() {
     };
   }, []);
 
-  const updateGroups = useMemo(() => environmentGroupsWithUpdates(groups), [groups]);
-  const notificationKey = useMemo(() => localEnvironmentUpdateNotificationKey(groups), [groups]);
-  useEffect(() => {
-    notificationKeyRef.current = notificationKey;
-  }, [notificationKey]);
-
-  const candidateUnion = useMemo(
-    () => collectProviderUpdateCandidates(updateGroups.flatMap((group) => group.candidates)),
-    [updateGroups],
+  const updateGroups = environmentGroupsWithUpdates(groups);
+  const notificationKey = localEnvironmentUpdateNotificationKey(groups);
+  const candidateUnion = collectProviderUpdateCandidates(
+    updateGroups.flatMap((group) => group.candidates),
   );
 
   const [settleGraceElapsed, setSettleGraceElapsed] = useState(false);
+  // The grace period restarts with the next settling phase.
+  if (!isAnySettling && settleGraceElapsed) {
+    setSettleGraceElapsed(false);
+  }
   useEffect(() => {
-    if (!isAnySettling) {
-      setSettleGraceElapsed(false);
-      return;
-    }
+    if (!isAnySettling) return;
     const timer = setTimeout(() => setSettleGraceElapsed(true), SETTLING_GRACE_MS);
     return () => clearTimeout(timer);
   }, [isAnySettling]);
   const isGated = isAnySettling && !settleGraceElapsed;
 
-  const openProviderSettings = useCallback(() => {
+  const openProviderSettings = () => {
     const active = activeToastRef.current;
     if (active !== null) {
       toastManager.close(active.toastId);
       activeToastRef.current = null;
     }
     void navigate({ to: "/settings/providers" });
-  }, [navigate]);
+  };
+
+  // The toast closes long after the effect that opened it, so it dismisses the key
+  // the updates have moved to by then.
+  const dismissPrompt = useStableCallback(() => {
+    if (notificationKey) {
+      dismissNotificationKey(notificationKey);
+    }
+    activeToastRef.current = null;
+  });
 
   useEffect(() => {
     const canShowPrompt =
@@ -133,14 +140,6 @@ function ProviderUpdateEnvironmentsNotification() {
 
     seenProviderUpdateNotificationKeys.add(notificationKey);
     hasInteractedRef.current = false;
-
-    const dismissPrompt = () => {
-      const liveKey = notificationKeyRef.current;
-      if (liveKey) {
-        dismissNotificationKey(liveKey);
-      }
-      activeToastRef.current = null;
-    };
 
     const toastId = toastManager.add(
       stackedThreadToast({
@@ -175,7 +174,7 @@ function ProviderUpdateEnvironmentsNotification() {
     isGated,
     candidateUnion,
     dismissedNotificationKeys,
-    dismissNotificationKey,
+    dismissPrompt,
     openProviderSettings,
   ]);
 

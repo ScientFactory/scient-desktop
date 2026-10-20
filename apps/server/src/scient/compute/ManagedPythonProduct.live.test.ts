@@ -34,6 +34,7 @@ import { MANAGED_PYTHON_VERSION } from "./ManagedPythonProvisioner.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
 import { ComputeRecipeNetwork } from "./ComputeRecipeSource.ts";
 import { managedPythonFileCheck } from "./ManagedPythonScientificChecks.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const ENABLED = NodeProcess.env.SCIENT_TEST_MANAGED_PYTHON === "1";
 const PYTHON = ComputeLanguageId.make("python");
@@ -98,6 +99,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
           Layer.provide(NodeServices.layer),
         );
         const workspaceLayer = WorkspaceFileSystem.layer.pipe(
+          Layer.provide(layerKnownWorkspacesAllowAll),
           Layer.provide(WorkspacePaths.layer),
           Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
           Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),

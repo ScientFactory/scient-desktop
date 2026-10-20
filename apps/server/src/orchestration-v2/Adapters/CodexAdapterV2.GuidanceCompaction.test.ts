@@ -16,6 +16,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
@@ -224,11 +225,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/,
           );
           assert.deepEqual(Object.keys(packet.additionalContext), [
-            "t3_code_orchestration",
-            "t3_code_workspace",
+            "t3_code_orchestration_01",
+            "t3_code_orchestration_02",
             "t3_code_runtime",
             "scient_awareness",
           ]);
+          const orchestration = Object.entries(packet.additionalContext)
+            .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([, entry]) => entry.value)
+            .join("\n\n");
+          assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
+          assert.include(orchestration, "delegate_task");
+          assert.include(orchestration, "structured object, never as JSON text");
           const awareness = packet.additionalContext.scient_awareness?.value ?? "";
           for (const required of [
             "preview_status",

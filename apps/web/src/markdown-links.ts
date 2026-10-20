@@ -60,7 +60,11 @@ export function markdownLinkLookupKey(href: string): string {
 
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
-  const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
+  // SCIENT-FORK:START — Chromium on Windows can parse d:alert as a file URL.
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  if (!/^file:/i.test(normalizedHref)) return null;
+  const target = parseFileUrlHref(normalizedHref);
+  // SCIENT-FORK:END
   return target ? `${target.path}${target.hash}` : null;
 }
 

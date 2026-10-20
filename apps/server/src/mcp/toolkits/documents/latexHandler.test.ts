@@ -50,6 +50,7 @@ import * as AgentInvocationContext from "../../../scient/operations/AgentInvocat
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import type * as PlatformError from "effect/PlatformError";
+import { layerKnownWorkspacesAllowAll } from "../../../scient/workspace/knownWorkspaces.testkit.ts";
 
 const fixtures: string[] = [];
 const now = "2026-08-29T12:00:00.000Z";
@@ -68,6 +69,7 @@ type DocumentToolWorkspaceLayer = Layer.Layer<
 >;
 const makeWorkspaceLayer = (root: string, stateRoot: string, helper = publicationHelper) =>
   WorkspaceFileSystem.layer.pipe(
+    Layer.provide(layerKnownWorkspacesAllowAll),
     Layer.provide(
       ServerConfig.layerTest(
         root,

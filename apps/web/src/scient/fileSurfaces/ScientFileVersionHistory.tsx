@@ -412,17 +412,17 @@ export function ScientFileVersionHistory(props: {
     operating.current = true;
     setBusy(true);
     setError(null);
-    try {
-      return await operation();
-    } catch {
-      setError(
-        "The operation’s outcome could not be confirmed. Review the current file and retained versions before trying a new operation.",
-      );
-      return false;
-    } finally {
-      operating.current = false;
-      setBusy(false);
-    }
+    return settleVersionOperation(
+      operation,
+      () =>
+        setError(
+          "The operation’s outcome could not be confirmed. Review the current file and retained versions before trying a new operation.",
+        ),
+      () => {
+        operating.current = false;
+        setBusy(false);
+      },
+    );
   };
   const readComplete = async (path: string) => {
     const result = await read({ ...request, input: { cwd: props.cwd, relativePath: path } });
@@ -641,4 +641,20 @@ export function ScientFileVersionHistory(props: {
       </PopoverPopup>
     </Popover>
   );
+}
+
+// Outside the component: the React Compiler does not compile try/finally.
+async function settleVersionOperation(
+  operation: () => Promise<boolean>,
+  failed: () => void,
+  settled: () => void,
+): Promise<boolean> {
+  try {
+    return await operation();
+  } catch {
+    failed();
+    return false;
+  } finally {
+    settled();
+  }
 }

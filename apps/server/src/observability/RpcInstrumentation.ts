@@ -269,6 +269,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.documentsReleaseDocumentPdf]: "documents",
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",
+  // SCIENT-FORK:START — sign-in page claims count with the other server RPCs.
+  [WS_METHODS.serverClaimProviderSignInPage]: "server",
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: "server",
   [WS_METHODS.serverDisconnectProvider]: "server",
   [WS_METHODS.serverPlanProviderRuntime]: "server",

@@ -1,7 +1,7 @@
 import { CustomMathActionDialog } from "./CustomMathActionDialog";
 import type { CustomMathCommand } from "./customMath";
 import { ShortcutReference } from "./ShortcutReference";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
@@ -59,7 +59,7 @@ export function AuthoringKeybindingsSettings({
     getKeyboardPreferences,
   );
   const mac = isMacKeyboard();
-  const commands = useMemo(() => authoringCommands(snapshot.preferences, mac), [snapshot, mac]);
+  const commands = authoringCommands(snapshot.preferences, mac);
   const [customAction, setCustomAction] = useState<CustomMathCommand | null | undefined>(undefined);
   const [editing, setEditing] = useState<{
     id: string;
@@ -87,11 +87,8 @@ export function AuthoringKeybindingsSettings({
     document.addEventListener("pointerdown", cancelOutside, true);
     return () => document.removeEventListener("pointerdown", cancelOutside, true);
   }, [isEditing]);
-  const effective = useMemo(
-    () => effectiveSurfaceBindings(snapshot.preferences, mac),
-    [snapshot.preferences, mac],
-  );
-  const keysByCommand = useMemo(() => {
+  const effective = effectiveSurfaceBindings(snapshot.preferences, mac);
+  const keysByCommand = (() => {
     const grouped = new Map<string, string[]>();
     for (const binding of effective) {
       const keys = grouped.get(binding.command) ?? [];
@@ -99,7 +96,7 @@ export function AuthoringKeybindingsSettings({
       grouped.set(binding.command, keys);
     }
     return grouped;
-  }, [effective]);
+  })();
   const visible = commands.filter(
     (command) =>
       (command.scope === scope ||

@@ -128,12 +128,12 @@ bindings are exercised through the sequence matcher on both Mac and non-Mac
 platforms. Math ownership checks remain side-effect-free, and held keys do not
 repeat structural edits.
 
-`pnpm --filter @t3tools/web test:layout` is a separate Chromium suite using the
+The Math card's `*.browser.test.tsx` suite runs in headless Chromium with the
 real settings components and styles. At desktop, tablet, and narrow widths it
 checks the Math card's controls and dropdown menus against the card and viewport,
 and the Restore confirmation against its trigger and viewport. These are explicit
-surface-specific bounds, not a global ban on intentional popover overflow. CI runs
-this suite separately from DOM-only unit tests.
+surface-specific bounds, not a global ban on intentional popover overflow. It runs
+in the web package's browser project, with the other React tests.
 
 Native
 menu interception and screen-reader behavior require platform interaction tests;

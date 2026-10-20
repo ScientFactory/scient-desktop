@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import type { ProjectReadFileError, ProjectReadFileResult } from "@t3tools/contracts";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import {
@@ -40,7 +33,7 @@ export function useMarkdownPersistenceLease(input: {
     readonly error: unknown | null;
   } | null>(null);
   const [admissionAttempt, setAdmissionAttempt] = useState(0);
-  const retryAdmission = useCallback(() => setAdmissionAttempt((attempt) => attempt + 1), []);
+  const retryAdmission = () => setAdmissionAttempt((attempt) => attempt + 1);
   // Every lease this view takes carries this owner, so an in-place rename can
   // tell that no other view holds the document.
   const [owner] = useState(() => ({}));

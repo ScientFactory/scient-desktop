@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
@@ -72,6 +73,7 @@ const harness = Effect.fnUntraced(function* (
         WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer)),
         WorkspacePaths.layer,
         configLayer,
+        layerKnownWorkspacesAllowAll,
       ),
     ),
   );

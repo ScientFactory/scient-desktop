@@ -6,14 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   type ScientRichFenceAuthoringActions,
-  useRichFenceContextMenu,
+  createRichFenceContextMenu,
 } from "./RichFenceSourceActions";
 
 function ContextMenuFixture(props: {
   readonly actions?: ScientRichFenceAuthoringActions | undefined;
   readonly onCopySource: () => void;
 }) {
-  const onContextMenu = useRichFenceContextMenu(props.actions, props.onCopySource);
+  const onContextMenu = createRichFenceContextMenu(props.actions, props.onCopySource);
   return <div data-card onContextMenu={onContextMenu} />;
 }
 

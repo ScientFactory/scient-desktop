@@ -16,7 +16,107 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Reuse is an optimization only: an absent/failed probe must run normal CI. A queue entry
+  # reuses its PR run, and a main push its queue runs, only for the exact same content and base.
+  queue_ci:
+    name: Reuse exact CI
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reused: ${{ steps.complete.outputs.reused }}
+      source_run_id: ${{ steps.restore.outputs.source_run_id }}
+      source_url: ${{ steps.restore.outputs.source_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - name: Verify qualification and restore reports
+        id: restore
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./.github/scripts/ci-queue-reuse.cjs').restore({ github, context, core });
+      - name: Preserve transfer report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/ci-queue-reuse/thread-transfer-result.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Preserve web_1 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-web-1-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-1.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      - name: Preserve web_2 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-web-2-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-2.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      - name: Preserve web_3 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-web-3-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-3.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      - name: Preserve server_1 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-server-1-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-1.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      - name: Preserve server_2 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-server-2-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-2.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      - name: Preserve server_3 report
+        if: steps.restore.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-server-3-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-3.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+      # This is deliberately last: partial publication never suppresses CI.
+      - name: Confirm reuse
+        if: steps.restore.outputs.candidate == 'true'
+        id: complete
+        env:
+          SOURCE_URL: ${{ steps.restore.outputs.source_url }}
+        run: |
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+          printf 'Reused successful [CI](%s) of this exact content and comparison base. All seven reporting artifacts were preserved.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+
   check:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Check
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -30,6 +130,9 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+
+      - name: Test queue CI reuse and workflow coverage
+        run: node --test .github/scripts/ci-queue-reuse.test.cjs
 
       - name: Reject repository-owned PR assets
         run: |
@@ -80,6 +183,8 @@ jobs:
   # runners between dependency layers. The concurrency limit stays at the
   # default 4 so peak load per runner is unchanged.
   test_workspaces:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Workspaces
     runs-on: ubuntu-24.04
     # Preserve the existing ceiling while measuring the web suite split.
@@ -131,6 +236,8 @@ jobs:
             2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
 
   compute_changes:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Compute Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -150,14 +257,16 @@ jobs:
         run: node .github/scripts/compute-ci-gate.mjs detect
 
   compute_native:
-    needs: compute_changes
-    if: ${{ !cancelled() && needs.compute_changes.outputs.changed != 'false' }}
+    needs: [queue_ci, compute_changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.compute_changes.outputs.changed != 'false' }}
     uses: ./.github/workflows/scient-compute-python-kernel.yml
     with:
       real_kernel: ${{ needs.compute_changes.outputs.real_kernel != 'false' }}
       managed_python: ${{ needs.compute_changes.outputs.managed_python != 'false' }}
 
   windows_packaging_changes:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Windows Packaging Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -176,25 +285,25 @@ jobs:
         run: node .github/scripts/windows-packaging-ci-gate.mjs detect
 
   windows_packaging:
-    needs: windows_packaging_changes
-    if: ${{ !cancelled() && needs.windows_packaging_changes.outputs.changed != 'false' }}
+    needs: [queue_ci, windows_packaging_changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}
     uses: ./.github/workflows/windows-packaging.yml
 
   remote_server_packaging:
-    needs: windows_packaging_changes
-    if: ${{ !cancelled() && needs.windows_packaging_changes.outputs.changed != 'false' }}
+    needs: [queue_ci, windows_packaging_changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}
     uses: ./.github/workflows/remote-server-packaging.yml
 
   linux_packaging:
-    needs: windows_packaging_changes
-    if: ${{ !cancelled() && needs.windows_packaging_changes.outputs.linux_changed != 'false' }}
+    needs: [queue_ci, windows_packaging_changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.linux_changed != 'false' }}
     uses: ./.github/workflows/linux-packaging.yml
 
   # Keep the already-required check name. Native failures must block it, while
   # unrelated PRs may skip native qualification only after a successful diff.
   test:
     name: Test
-    needs: [test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging]
+    needs: [queue_ci, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -202,7 +311,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
+      - name: Report reused qualification
+        if: needs.queue_ci.outputs.reused == 'true'
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: printf 'Test suites passed in [exact-content CI](%s). Reporting artifacts are attached to this run.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
       - name: Require applicable test suites
+        if: needs.queue_ci.outputs.reused != 'true'
         env:
           WORKSPACE_RESULT: ${{ needs.test_workspaces.result }}
           DETECTION_RESULT: ${{ needs.compute_changes.result }}
@@ -223,6 +338,8 @@ jobs:
   # replace deterministic synchronization in tests. These unit tests need
   # neither the Electron binary nor libsecret.
   test_web:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -243,15 +360,49 @@ jobs:
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
+      # The browser project runs React tests in headless Chromium. Same cache key as
+      # test_server, so both jobs share one downloaded browser.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
       - name: Test
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
+          # SCIENT-FORK: the Markdown editor timing suite runs in its own step below.
+          SCIENT_MARKDOWN_PERF_SHARED_RUNNER: "1"
         run: >-
           vp run --filter @t3tools/web test
           --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           --reporter=default
           --reporter=json
           --outputFile.json="$TEST_REPORT"
+
+      # SCIENT-FORK:START — the Markdown editor's timing budgets skip in the shard, where they
+      # would share the runner with headless Chromium and measure that contention, and run alone.
+      - name: Test Markdown editor performance
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: vp run --filter @t3tools/web test src/scient/markdownEditor/prosemirror/performance.test.ts
+      # SCIENT-FORK:END
 
       - name: Upload test result
         if: always()
@@ -260,36 +411,16 @@ jobs:
           name: vitest-web-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 14
-
-  test_web_layout:
-    name: Test Web layout
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Install Chromium
-        run: apps/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
-
-      - name: Test layout
-        run: vp run --filter @t3tools/web test:layout
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
   # isolation that flag buys is preserved exactly.
   test_server:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     # V2 roughly tripled the server suite (957 files). The three shard names
@@ -364,6 +495,7 @@ jobs:
           name: vitest-server-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/vitest-server-${{ matrix.shard }}.json
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 14
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
@@ -396,11 +528,46 @@ jobs:
           name: thread-transfer-results
           path: ${{ runner.temp }}/thread-transfer-result.json
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 30
+
+  # A matrix job skipped as a whole reports one unexpanded name, never `Test Web 1` to `3` or
+  # `Test Server 1` to `3`. When a queue entry reuses its PR run, these report the required
+  # shard names for the shards that run qualified.
+  test_web_reused:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    name: Test Web ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Report reused shard
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+
+  test_server_reused:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    name: Test Server ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Report reused shard
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
 
   transfer-report:
     name: Transfer report artifact
-    needs: test_server
+    needs: [queue_ci, test_server]
+    if: ${{ !cancelled() && (needs.queue_ci.outputs.reused == 'true' || needs.test_server.result == 'success') }}
     # On Blacksmith like every other job here: the GitHub-hosted queue is shared
     # with the PR bots and can leave this job waiting until it is abandoned,
     # which fails `Check` on an otherwise green run.
@@ -416,6 +583,8 @@ jobs:
   # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
   # for checks that take under 3s, on the critical path of every PR.
   rust:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Rust
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -460,21 +629,26 @@ jobs:
   # for it on every push. Detection is API-only (no checkout) and fails open: if
   # the diff cannot be resolved, the lint runs.
   mobile_native_changes:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Mobile Native Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: .github/scripts
       - name: Detect mobile native changes
         id: detect
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BEFORE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
+          # The same immutable comparison as the other change gates on every event. A PR's live
+          # file list can change during a run, and the merge queue reuses this decision.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           set -uo pipefail
 
@@ -484,40 +658,15 @@ jobs:
             exit 0
           }
 
-          count_rows() {
-            printf '%s\n' "$1" | grep -c . || true
-          }
+          # Match bytes, not characters: a Git filename need not be valid UTF-8.
+          export LC_ALL=C
 
-          # One row per changed file, holding the new path and, for a rename,
-          # the path it replaced: renaming a matched file out of the matched
-          # paths removes a lint input just like editing it.
-          row='[.filename, (.previous_filename // empty)] | @tsv'
-
-          if [[ -n "${PR_NUMBER}" ]]; then
-            # The PR files endpoint stops at 3000 files and pagination cannot
-            # extend it, so cross-check against the count the PR itself reports.
-            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
-              || fail_open "Could not read the pull request."
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -lt "$expected" ]]; then
-              fail_open "GitHub listed only ${listed} of ${expected} changed files."
-            fi
-          else
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            # The compare endpoint reports at most 300 files and pagination does
-            # not extend that list, so a full list may be hiding native changes.
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -ge 300 ]]; then
-              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
-            fi
-          fi
-
-          paths=$(tr '\t' '\n' <<< "$rows")
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
+          # Without rename detection a rename lists both paths: renaming a matched file
+          # out of the matched paths removes a lint input just like editing it. A newline
+          # inside a filename becomes `?`, so each path stays on one line for the matcher.
+          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\n\0' '?\n') \
+            || fail_open "Could not resolve changed files."
 
           # Sources scripts/mobile-native-static-check.ts lints, plus the tool
           # and rule configuration that decides how it lints them, plus the
@@ -535,10 +684,10 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    needs: mobile_native_changes
+    needs: [queue_ci, mobile_native_changes]
     # Skip only on an explicit "no": a gate job that failed or errored leaves the
     # output empty, and that must run the lint rather than silently skip it.
-    if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.mobile_native_changes.outputs.changed != 'false' }}
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -576,6 +725,8 @@ jobs:
         run: node scripts/mobile-native-static-check.ts
 
   release_smoke:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Release Smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -600,3 +751,33 @@ jobs:
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
+
+  # Records the exact content and base a fully successful queue run, or same-repository PR run,
+  # qualified. Fork PRs never record one, so their queue entries always run normal CI.
+  qualification:
+    name: Qualification receipt
+    needs: [queue_ci, check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - name: Record complete qualification
+        id: receipt
+        uses: actions/github-script@v8
+        env:
+          QUALIFICATION_NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            return await require('./.github/scripts/ci-queue-reuse.cjs').writeReceipt({
+              github, context, core, needs: JSON.parse(process.env.QUALIFICATION_NEEDS),
+            });
+      - if: steps.receipt.outputs.result == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}-qualification-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-queue-reuse/receipt.json
+          if-no-files-found: error
+          retention-days: 14

@@ -146,6 +146,10 @@ vp lint <files>
 vp run --filter <package> typecheck
 ```
 
+In `apps/web`, a test that renders React or touches the DOM is named `*.browser.test.{ts,tsx}`
+and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
+`*.test.ts` files run in Node.
+
 TypeScript workspaces typecheck with tsc-rs, which has Effect diagnostics built in.
 Keep `typescript`, `@effect/tsgo`, and the `effect-tsgo patch` prepare step: editors
 still use them for Effect quick fixes and refactors. Keep `@effect/tsgo` on the
@@ -156,6 +160,14 @@ Marketing keeps `astro check` for Astro files.
 Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization
 expectations use Scient's shared client identity.
+Replay threads resolve their workspace as production does: their worktree, else their project
+root (a project-less test thread gets its disposable replay profile). Give a test that checks
+checkpoints a real repository with `checkpointWorkspace()` from
+`@t3tools/provider-testing/replayWorkspace`. Server tests run with `GIT_CEILING_DIRECTORIES` set to
+the checkout root (`apps/server/src/testUtils/checkoutIsolation.setup.ts`), so Git started anywhere
+below the root, `apps/server` included, cannot find the source repository: a test that falls back to
+its working directory cannot capture, restore or publish refs there. A test that names the checkout
+root itself, such as an opt-in live suite, still reaches it.
 
 Complete Electron's dependency installation before running concurrent desktop suites:
 `pnpm --filter @t3tools/desktop exec install-electron`.

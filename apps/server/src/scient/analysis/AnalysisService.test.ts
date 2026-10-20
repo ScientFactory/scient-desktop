@@ -47,6 +47,7 @@ import {
 } from "./AnalysisService.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const output: ReadonlyArray<ExecutionOutputChunk> = [
   {
@@ -181,6 +182,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       }),
   };
   const workspaceLayer = WorkspaceFileSystem.layer.pipe(
+    Layer.provide(layerKnownWorkspacesAllowAll),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(ServerConfig.layerTest(projectRoot, baseDir)),

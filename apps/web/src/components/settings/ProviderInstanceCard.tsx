@@ -40,6 +40,7 @@ import {
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -59,7 +60,9 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
 import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
-import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:START — the presentation reads this client's in-flight sign-in starts.
+import { useProviderSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — managed-copy guidance retains its lifecycle owner.
 import { managedVersionAdvisory } from "~/scient/providerConnection/providerSettingsLifecyclePresentation";
 // SCIENT-FORK:END
@@ -138,11 +141,6 @@ function providerEnvironmentsEqual(
       );
     })
   );
-}
-
-function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefinition> {
-  if (config === null || typeof config !== "object") return [];
-  return readCustomModelEntries((config as Record<string, unknown>).customModels);
 }
 
 function readConfigString(config: unknown, key: string): string | null {
@@ -630,6 +628,7 @@ interface ProviderInstanceCardProps {
 }
 
 const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
+const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 
 /**
  * Unknown drivers (`driverOption === undefined`) get a read-only
@@ -690,7 +689,13 @@ export function ProviderInstanceCard({
   const authLabel = isAuthenticated
     ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
     : null;
-  const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
+  // SCIENT-FORK:START — a sign-in this client starts reads as starting from the click.
+  const connectionPresentation = useProviderSettingsLifecyclePresentation(
+    environmentId,
+    liveProvider,
+    displayName,
+  );
+  // SCIENT-FORK:END
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   // Custom instances of a driver still come from the same company.
   const vendorLabel = driverOption?.vendorLabel;
@@ -750,10 +755,16 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  // Keyed on the stored list, not the whole instance, so writing another field
+  // leaves the models list (often ~50 rows) with the same props.
+  const storedCustomModels =
+    instance.config !== null && typeof instance.config === "object"
+      ? (instance.config as Record<string, unknown>).customModels
+      : undefined;
   const customModels =
     driverOption?.supportsCustomModels === false || instance.driver === "antigravity"
-      ? []
-      : readConfigCustomModels(instance.config);
+      ? NO_CUSTOM_MODELS
+      : readCustomModelEntries(storedCustomModels);
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
@@ -795,7 +806,7 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
+  const updateCustomModels = useStableCallback((next: ReadonlyArray<CustomModelDefinition>) => {
     const nextConfig = nextConfigBlobWithValue(
       instance.config,
       "customModels",
@@ -803,7 +814,7 @@ export function ProviderInstanceCard({
     );
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
-  };
+  });
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
@@ -871,10 +882,14 @@ export function ProviderInstanceCard({
       ? summary.headline
       : (connectionPresentation.statusLabel ?? summary.headline);
 
+  // SCIENT-FORK:START — a failed sign-in or setup reads as an error, whatever the probe says.
+  const statusDotStyle =
+    connectionPresentation.kind === "failed" ? PROVIDER_STATUS_STYLES.error : statusStyle;
   const statusDotNode =
-    statusKey === "warning" || statusKey === "error" ? (
-      <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
+    statusKey === "warning" || statusKey === "error" || connectionPresentation.kind === "failed" ? (
+      <span className={cn("size-1.5 shrink-0 rounded-full", statusDotStyle.dot)} aria-hidden />
     ) : null;
+  // SCIENT-FORK:END
   // Pi's model inventory lives in the Models tab. Keep routine setup copy out
   // of its header, but preserve failed probes and runtime recovery details.
   const quietPiStatus =
@@ -965,7 +980,7 @@ export function ProviderInstanceCard({
             </p>
             <p
               className={cn(
-                "text-xs leading-snug",
+                "text-xs leading-snug [overflow-wrap:anywhere]",
                 versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
               )}
             >
@@ -1284,22 +1299,24 @@ export function ProviderInstanceCard({
         {setup || environmentFields.length > 0 ? (
           <SettingsSection title="Setup">
             {setup ? <div className="px-3 py-3 sm:px-4">{setup}</div> : null}
-            <div
-              inert={readOnly}
-              aria-disabled={readOnly || undefined}
-              className={readOnly ? "opacity-50 select-none" : undefined}
-            >
-              {environmentFields.map((field) => (
-                <ProviderEnvironmentFieldRow
-                  key={field.name}
-                  field={field}
-                  variable={readProviderEnvironmentVariable(instance.environment, field.name)}
-                  idPrefix={`provider-instance-${instanceId}`}
-                  onCommit={updateEnvironmentField}
-                  onRemove={removeEnvironmentField}
-                />
-              ))}
-            </div>
+            {environmentFields.length > 0 ? (
+              <div
+                inert={readOnly}
+                aria-disabled={readOnly || undefined}
+                className={readOnly ? "opacity-50 select-none" : undefined}
+              >
+                {environmentFields.map((field) => (
+                  <ProviderEnvironmentFieldRow
+                    key={field.name}
+                    field={field}
+                    variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                    idPrefix={`provider-instance-${instanceId}`}
+                    onCommit={updateEnvironmentField}
+                    onRemove={removeEnvironmentField}
+                  />
+                ))}
+              </div>
+            ) : null}
           </SettingsSection>
         ) : null}
         {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (

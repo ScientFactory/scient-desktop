@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -143,9 +143,11 @@ describe("usePandocTool answers that arrive out of order", () => {
   let install: () => void = () => undefined;
   function Watch() {
     const controller = usePandocTool(environmentId, onInstalled);
-    kind = controller.view.kind;
-    refresh = controller.refresh;
-    install = controller.act;
+    useLayoutEffect(() => {
+      kind = controller.view.kind;
+      refresh = controller.refresh;
+      install = controller.act;
+    });
     return null;
   }
   const deferred = () => {

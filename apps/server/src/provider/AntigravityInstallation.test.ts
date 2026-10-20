@@ -546,6 +546,15 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         cancel: true,
         valid: false,
       },
+      {
+        name: "a Windows ARM verification that runs out of time with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        timeout: true,
+        valid: false,
+      },
     ].flatMap((testCase) => {
       const cleanupErrorTags =
         testCase.platform === "win32"
@@ -622,7 +631,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             Effect.asVoid,
           );
           if (!helper) {
-            expect(command.options.detached).toBe(true);
+            // The real host decides, not the simulated platform: Windows owns the
+            // tree with taskkill, and detaching there would show a console.
+            expect(command.options.detached).toBe(hostPlatform !== "win32");
             stopNative = terminate;
           }
           yield* Effect.addFinalizer(() =>
@@ -652,7 +663,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                   Effect.orDie,
                 );
                 methods.push(request.method);
-                if (testCase.cancel) {
+                if (testCase.cancel || testCase.timeout) {
                   yield* Deferred.succeed(initializationStarted, undefined);
                   return;
                 }
@@ -740,6 +751,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             Effect.forkChild,
           )
         : undefined;
+      if (testCase.timeout) {
+        yield* Deferred.await(initializationStarted);
+        yield* TestClock.adjust("5 minutes");
+      }
       if (platform === "win32") {
         yield* Effect.raceFirst(
           Deferred.await(cleanupRetryStarted).pipe(Effect.andThen(TestClock.adjust("100 millis"))),
@@ -750,6 +765,11 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect((yield* terminalState(installation)).phase).toBe(
         testCase.cancel ? "cancelled" : testCase.valid ? "succeeded" : "failed",
       );
+      if (testCase.timeout) {
+        expect((yield* terminalState(installation)).message).toBe(
+          "Antigravity didn't finish starting within 5 minutes while Scient was checking it. Starting it can take a while on some computers. Try again.",
+        );
+      }
       yield* Deferred.await(stagingReleased);
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);

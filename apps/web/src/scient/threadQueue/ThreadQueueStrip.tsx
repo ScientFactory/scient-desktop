@@ -17,7 +17,6 @@ import { CSS } from "@dnd-kit/utilities";
 import type { ScientThreadQueueItem } from "@t3tools/contracts";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { CornerDownRight, GripVertical, Paperclip, Pencil, Trash2 } from "lucide-react";
-import { useCallback } from "react";
 
 import { useDelayedStatus } from "~/hooks/useDelayedStatus";
 import { cn } from "~/lib/utils";
@@ -340,20 +339,17 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const { canReorder, dispatchingItemId, items, onReorder } = props;
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      if (canReorder === false || dispatchingItemId !== null) return;
-      const activeId = String(event.active.id) as I["queueItemId"];
-      const overId = event.over === null ? null : (String(event.over.id) as I["queueItemId"]);
-      if (overId === null || activeId === overId) return;
-      const ids = items.map((item) => item.queueItemId);
-      const fromIndex = ids.indexOf(activeId);
-      const toIndex = ids.indexOf(overId);
-      if (fromIndex === -1 || toIndex === -1) return;
-      onReorder(arrayMove([...ids], fromIndex, toIndex));
-    },
-    [items, onReorder, canReorder, dispatchingItemId],
-  );
+  const handleDragEnd = (event: DragEndEvent) => {
+    if (canReorder === false || dispatchingItemId !== null) return;
+    const activeId = String(event.active.id) as I["queueItemId"];
+    const overId = event.over === null ? null : (String(event.over.id) as I["queueItemId"]);
+    if (overId === null || activeId === overId) return;
+    const ids = items.map((item) => item.queueItemId);
+    const fromIndex = ids.indexOf(activeId);
+    const toIndex = ids.indexOf(overId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    onReorder(arrayMove([...ids], fromIndex, toIndex));
+  };
 
   const pendingMessages = props.pendingMessages ?? [];
   // Once a pending follow-up becomes a queued row, every row gets a grip; reserve it now.

@@ -2910,8 +2910,8 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "beta" 
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
-function isDesktopPreviewVersion(version: string): boolean {
-  return /-pr\./.test(version);
+export function isDesktopPreviewVersion(version: string): boolean {
+  return /-pr\./.test(version) || /-preview\.\d{8}\.\d+$/.test(version);
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
@@ -3054,7 +3054,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ...(platform === "mac" && nativePreviewPath
       ? { extraFiles: [{ from: nativePreviewPath, to: `PlugIns/${MAC_PREVIEW_BUNDLE}` }] }
       : {}),
-    ...(publishConfig ? { publish: [publishConfig] } : {}),
+    // A missing `publish` makes electron-builder infer a GitHub feed from
+    // GH_TOKEN/GITHUB_TOKEN. The staged app has no repository to resolve it
+    // against, so writing update manifests then crashes on a null config.
+    publish: publishConfig ? [publishConfig] : null,
   };
   if (platform === "mac") {
     const path = yield* Path.Path;

@@ -104,8 +104,6 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Vitest loads this through the per-file @vitest-environment directive.
-      "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) and the dep-cache warmer run
       // this directly. The Mermaid smoke harness loads its recovery corpus
       // through Vite in a real Chromium renderer, so that fixture module is
@@ -126,6 +124,11 @@
         "scripts/latex-visual-benchmark.ts",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",
         "public/scient-voice-worklet.js!",
+        // Retained donor update capsule and confirmation dialog: the sidebar shows other machines'
+        // updates in its own circle and asks beside the pill (docs/user/updating.md). Kept
+        // unmounted so upstream changes still merge.
+        "src/components/sidebar/SidebarUpdateCapsule.tsx",
+        "src/components/sidebar/UpdateEverythingDialog.tsx",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still

@@ -3,7 +3,7 @@ import type {
   PdfSourceResolution,
   ResolvedPdfSource,
 } from "@scientfactory/document-artifacts";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { PresentedPdfSource } from "./useScientPdfReader";
 
@@ -57,28 +57,17 @@ export function usePresentedPdfSourceBundle(input: {
   readonly presentation: PresentedPdfSource | null;
 }): PresentedPdfSourceBundle | null {
   const revisionId = input.source._tag === "generated-pdf" ? input.source.revisionId : null;
-  const requested = useMemo<PresentedPdfSourceBundle>(
-    () => ({
-      documentKey: input.documentKey,
-      revisionId,
-      source: input.source,
-      resolved: {
-        url: input.asset.url,
-        expiresAt: input.asset.expiresAt,
-        refresh: input.asset.refresh,
-        ...(input.asset.sourcePath === undefined ? {} : { sourcePath: input.asset.sourcePath }),
-      },
-    }),
-    [
-      input.asset.expiresAt,
-      input.asset.refresh,
-      input.asset.sourcePath,
-      input.asset.url,
-      input.documentKey,
-      input.source,
-      revisionId,
-    ],
-  );
+  const requested: PresentedPdfSourceBundle = {
+    documentKey: input.documentKey,
+    revisionId,
+    source: input.source,
+    resolved: {
+      url: input.asset.url,
+      expiresAt: input.asset.expiresAt,
+      refresh: input.asset.refresh,
+      ...(input.asset.sourcePath === undefined ? {} : { sourcePath: input.asset.sourcePath }),
+    },
+  };
   const [history, setHistory] = useState<PresentedPdfSourceHistory>(() => ({
     bundles: [requested],
     presentation: input.presentation,
@@ -88,7 +77,7 @@ export function usePresentedPdfSourceBundle(input: {
   // commit as the painted presentation. Keep only that presentation and the
   // current request, so rapid superseding revisions cannot accumulate.
   if (
-    history.requested !== requested ||
+    !sameBundle(history.requested, requested) ||
     !samePresentation(history.presentation, input.presentation)
   ) {
     const painted = history.bundles.find((bundle) =>
@@ -97,7 +86,7 @@ export function usePresentedPdfSourceBundle(input: {
     const requestIsPainted = matchesPresentation(requested, input.presentation);
     setHistory({
       bundles:
-        painted === undefined || requestIsPainted || painted === requested
+        painted === undefined || requestIsPainted || sameBundle(painted, requested)
           ? [requested]
           : [painted, requested],
       presentation: input.presentation,
@@ -106,4 +95,17 @@ export function usePresentedPdfSourceBundle(input: {
   }
 
   return history.bundles.find((bundle) => matchesPresentation(bundle, input.presentation)) ?? null;
+}
+
+/** Compared by content: the request is rebuilt on every render. */
+function sameBundle(a: PresentedPdfSourceBundle, b: PresentedPdfSourceBundle): boolean {
+  return (
+    a.documentKey === b.documentKey &&
+    a.revisionId === b.revisionId &&
+    a.source === b.source &&
+    a.resolved.url === b.resolved.url &&
+    a.resolved.expiresAt === b.resolved.expiresAt &&
+    a.resolved.refresh === b.resolved.refresh &&
+    a.resolved.sourcePath === b.resolved.sourcePath
+  );
 }

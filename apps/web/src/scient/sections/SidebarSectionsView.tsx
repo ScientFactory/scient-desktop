@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   closestCenter,
   type CollisionDetection,
@@ -27,20 +28,23 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { type ScopedThreadRef, ThreadSectionId } from "@t3tools/contracts";
+import {
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+  ThreadSectionId,
+} from "@t3tools/contracts";
 import { ChevronRightIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
-  useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 
+import { EnvironmentMachineIcon } from "../../components/EnvironmentMachineIcon";
 import type { SidebarDropVerb } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
@@ -79,6 +83,12 @@ export type SectionsRowSortable = Pick<
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
 
+/** The machine a section header names by its icon. */
+export interface SectionMachine {
+  readonly label: string;
+  readonly kind: EnvironmentMachineKind;
+}
+
 export interface SidebarSectionsViewProps {
   readonly canonicalGroupOrders?: ReadonlyMap<string, readonly string[]> | undefined;
   readonly onManualPlacement?: (
@@ -89,8 +99,8 @@ export interface SidebarSectionsViewProps {
   ) => void;
   readonly onInteractionChange?: (active: boolean) => void;
   readonly groups: readonly SectionGroup<Shell>[];
-  /** Machine names for section headers, by environment; null when one environment's sections show. */
-  readonly environmentLabels?: ReadonlyMap<string, string> | null;
+  /** Machines for section headers, by environment; null when one environment's sections show. */
+  readonly environmentMachines?: ReadonlyMap<string, SectionMachine> | null;
   readonly collapsedGroupIds: ReadonlySet<string>;
   /** The open thread stays visible even inside a collapsed section. */
   readonly routeThreadKey: string | null;
@@ -234,7 +244,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const listRef = useRef<HTMLUListElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const threadByKey = useMemo(() => {
+  const threadByKey = (() => {
     const map = new Map<string, Shell>();
     for (const thread of [
       ...groups.flatMap((group) => group.threads),
@@ -244,10 +254,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       map.set(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread);
     }
     return map;
-  }, [groups, settledThreads, snoozedThreads]);
+  })();
 
   // The canonical sortable list: headers own the rows after them; shelves end it.
-  const canonicalItems = useMemo((): SectionsListItem[] => {
+  const canonicalItems: SectionsListItem[] = ((): SectionsListItem[] => {
     const items: SectionsListItem[] = [];
     for (const group of groups) {
       items.push({ kind: "header", id: sectionHeaderItemId(group.id), groupId: group.id });
@@ -279,15 +289,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       items.push({ kind: "thread", id: keyOf(thread), lifecycle: "settled", groupId: null });
     }
     return items;
-  }, [
-    collapsedGroupIds,
-    groups,
-    props.routeThreadKey,
-    props.showSnoozedShelf,
-    settledThreads,
-    shelfMarkerId,
-    snoozedThreads,
-  ]);
+  })();
 
   // A held layout expires on its own, and stops applying (below) as soon as the
   // live order catches up with it.
@@ -301,7 +303,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   }, [held]);
 
   // The held layout applies only while it still describes the same rows.
-  const items = useMemo((): SectionsListItem[] => {
+  const items: SectionsListItem[] = ((): SectionsListItem[] => {
     if (held === null) return canonicalItems;
     const byId = new Map(canonicalItems.map((item) => [item.id, item]));
     if (held.ids.length !== byId.size || held.ids.some((id) => !byId.has(id))) {
@@ -310,46 +312,34 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     // Caught up: the live order already matches, so drags are allowed again.
     if (held.ids.every((id, index) => canonicalItems[index]!.id === id)) return canonicalItems;
     return held.ids.map((id) => byId.get(id)!);
-  }, [canonicalItems, held]);
+  })();
   const holding = items !== canonicalItems;
 
-  const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
+  const sortableIds = items.map((item) => item.id);
   // Rows and headers slide to the same insertion slot the drop will commit.
-  const sortingStrategy = useCallback<SortingStrategy>(
-    (args) =>
-      verticalListSortingStrategy(
-        args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
-          ? args
-          : {
-              ...args,
-              overIndex: sectionsDropIndex(
-                items,
-                args.activeIndex,
-                args.overIndex,
-                drag?.kind === "thread" ? drag.placement : "before",
-              ),
-            },
-      ),
-    [drag, items],
-  );
+  const sortingStrategy = ((args) =>
+    verticalListSortingStrategy(
+      args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
+        ? args
+        : {
+            ...args,
+            overIndex: sectionsDropIndex(
+              items,
+              args.activeIndex,
+              args.overIndex,
+              drag?.kind === "thread" ? drag.placement : "before",
+            ),
+          },
+    )) as SortingStrategy;
 
-  const lifecycleByKey = useMemo(
-    () =>
-      new Map(
-        items.flatMap((item) =>
-          item.kind === "thread" ? [[item.id, item.lifecycle] as const] : [],
-        ),
-      ),
-    [items],
+  const lifecycleByKey = new Map(
+    items.flatMap((item) => (item.kind === "thread" ? [[item.id, item.lifecycle] as const] : [])),
   );
 
   // Every row of each section, including those a collapsed section hides:
   // a drop is planned against the whole section, not only what it shows.
-  const fullOrderByGroup = useMemo(
-    () => new Map(groups.map((group) => [group.id, group.threads.map(keyOf)])),
-    [groups],
-  );
-  const planLifecycleByKey = useMemo(() => {
+  const fullOrderByGroup = new Map(groups.map((group) => [group.id, group.threads.map(keyOf)]));
+  const planLifecycleByKey = (() => {
     const map = new Map(lifecycleByKey);
     for (const group of groups) {
       for (const thread of group.threads) {
@@ -357,335 +347,289 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       }
     }
     return map;
-  }, [groups, lifecycleByKey]);
+  })();
 
-  const handleDragStart = useCallback(
-    (event: DragStartEvent) => {
-      const id = String(event.active.id);
-      const groupId = sectionGroupIdFromHeaderItemId(id);
-      if (groupId === null) {
-        onInteractionChange?.(true);
-        setDrag({ kind: "thread", key: id, target: null, placement: "before" });
-        return;
-      }
-      const groupIds = groups.map((group) => group.id);
-      const list = listRef.current;
-      const blocks = list ? measureSectionBlocks(list, groupIds) : null;
-      const pointer = event.activatorEvent as PointerEvent | null;
-      if (blocks === null || pointer === null || typeof pointer.clientY !== "number") return;
-      const scroller = scrollParentOf(list);
+  const handleDragStart = (event: DragStartEvent) => {
+    const id = String(event.active.id);
+    const groupId = sectionGroupIdFromHeaderItemId(id);
+    if (groupId === null) {
       onInteractionChange?.(true);
-      setDrag({
-        kind: "section",
-        groupId,
-        preview: groupIds,
-        geometry: {
-          blocks,
-          pointerY: pointer.clientY,
-          scroller,
-          scrollTop: scroller?.scrollTop ?? 0,
-        },
-      });
-    },
-    [groups, onInteractionChange],
-  );
+      setDrag({ kind: "thread", key: id, target: null, placement: "before" });
+      return;
+    }
+    const groupIds = groups.map((group) => group.id);
+    const list = listRef.current;
+    const blocks = list ? measureSectionBlocks(list, groupIds) : null;
+    const pointer = event.activatorEvent as PointerEvent | null;
+    if (blocks === null || pointer === null || typeof pointer.clientY !== "number") return;
+    const scroller = scrollParentOf(list);
+    onInteractionChange?.(true);
+    setDrag({
+      kind: "section",
+      groupId,
+      preview: groupIds,
+      geometry: {
+        blocks,
+        pointerY: pointer.clientY,
+        scroller,
+        scrollTop: scroller?.scrollTop ?? 0,
+      },
+    });
+  };
 
   // Measure against the untransformed droppable rects: preview animations must
   // not change the insertion side beneath a stationary pointer. Use the pointer
   // rather than the lifted card's centre so pickup position cannot bias the slot.
-  const collisionDetection = useCallback<CollisionDetection>(
-    (args) => {
-      if (sectionGroupIdFromHeaderItemId(String(args.active.id)) !== null) return [];
-      const pointer = args.pointerCoordinates;
-      const rect = args.collisionRect;
-      const collisions = closestCenter(
-        pointer
-          ? {
-              ...args,
-              collisionRect: {
-                ...rect,
-                top: pointer.y - rect.height / 2,
-                bottom: pointer.y + rect.height / 2,
-              },
-            }
-          : args,
-      );
-      const nearest = collisions[0];
-      if (!nearest) return collisions;
-      const item = items.find((entry) => entry.id === nearest.id);
-      const targetRect = args.droppableRects.get(nearest.id);
-      const placement: SectionsDropPlacement =
-        pointer &&
-        targetRect &&
-        item?.kind === "header" &&
-        pointer.y < targetRect.top + targetRect.height / 2
-          ? "before-header"
-          : item?.kind === "thread" &&
-              item.groupId !== null &&
-              pointer &&
-              targetRect &&
-              pointer.y >= targetRect.top + targetRect.height / 2
-            ? "after"
-            : "before";
-      return [{ ...nearest, data: { ...nearest.data, placement } }, ...collisions.slice(1)];
-    },
-    [items],
-  );
+  const collisionDetection = ((args) => {
+    if (sectionGroupIdFromHeaderItemId(String(args.active.id)) !== null) return [];
+    const pointer = args.pointerCoordinates;
+    const rect = args.collisionRect;
+    const collisions = closestCenter(
+      pointer
+        ? {
+            ...args,
+            collisionRect: {
+              ...rect,
+              top: pointer.y - rect.height / 2,
+              bottom: pointer.y + rect.height / 2,
+            },
+          }
+        : args,
+    );
+    const nearest = collisions[0];
+    if (!nearest) return collisions;
+    const item = items.find((entry) => entry.id === nearest.id);
+    const targetRect = args.droppableRects.get(nearest.id);
+    const placement: SectionsDropPlacement =
+      pointer &&
+      targetRect &&
+      item?.kind === "header" &&
+      pointer.y < targetRect.top + targetRect.height / 2
+        ? "before-header"
+        : item?.kind === "thread" &&
+            item.groupId !== null &&
+            pointer &&
+            targetRect &&
+            pointer.y >= targetRect.top + targetRect.height / 2
+          ? "after"
+          : "before";
+    return [{ ...nearest, data: { ...nearest.data, placement } }, ...collisions.slice(1)];
+  }) as CollisionDetection;
 
-  const reportFailure = useCallback(
-    (title: string, result: AtomCommandResult<unknown, unknown>) => {
-      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title,
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    },
-    [],
-  );
+  const reportFailure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  };
 
-  const dropSection = useCallback(
-    (next: readonly string[]) => {
-      const current = groups.map((group) => group.id);
-      if (next.every((groupId, index) => groupId === current[index])) return;
-      // Hold the full layout in the new group order, shelves last, so the
-      // blocks stay where they slid while the catalog write travels.
-      const blocks = new Map<string, string[]>();
-      let owner: string | null = null;
-      const tail: string[] = [];
-      for (const item of items) {
-        if (item.kind === "header") owner = item.groupId;
-        else if (item.kind === "shelf") owner = null;
-        if (owner === null) {
-          tail.push(item.id);
-        } else {
-          const block = blocks.get(owner) ?? [];
-          block.push(item.id);
-          blocks.set(owner, block);
-        }
+  const dropSection = (next: readonly string[]) => {
+    const current = groups.map((group) => group.id);
+    if (next.every((groupId, index) => groupId === current[index])) return;
+    // Hold the full layout in the new group order, shelves last, so the
+    // blocks stay where they slid while the catalog write travels.
+    const blocks = new Map<string, string[]>();
+    let owner: string | null = null;
+    const tail: string[] = [];
+    for (const item of items) {
+      if (item.kind === "header") owner = item.groupId;
+      else if (item.kind === "shelf") owner = null;
+      if (owner === null) {
+        tail.push(item.id);
+      } else {
+        const block = blocks.get(owner) ?? [];
+        block.push(item.id);
+        blocks.set(owner, block);
       }
-      setHeld({
-        ids: [...next.flatMap((groupId) => blocks.get(groupId) ?? []), ...tail],
-        expiresAt: Date.now() + HELD_LAYOUT_MS,
-      });
-      onReorderSections(next);
-    },
-    [groups, items, onReorderSections],
-  );
+    }
+    setHeld({
+      ids: [...next.flatMap((groupId) => blocks.get(groupId) ?? []), ...tail],
+      expiresAt: Date.now() + HELD_LAYOUT_MS,
+    });
+    onReorderSections(next);
+  };
 
   /** What dropping the lifted row over `overId` would do; null when nothing. */
-  const planThreadDrop = useCallback(
-    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
-      const thread = threadByKey.get(activeKey);
-      const source = items.find((item) => item.id === activeKey);
-      const shown = resolveSectionsDropTarget(items, activeKey, overId, placement);
-      if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
-      // A thread joins only its own environment's sections; General takes any.
-      if (
-        shown.kind === "section" &&
-        shown.groupId !== GENERAL_SECTION_GROUP_ID &&
-        sectionRefFromGroupId(shown.groupId)?.environmentId !== thread.environmentId
-      ) {
-        return null;
-      }
-      const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
-      const target =
-        shown.kind === "section" && fullOrder !== undefined
-          ? {
-              ...shown,
-              order: expandSectionDropOrder({
-                shownOrder: shown.order,
-                fullOrder,
-                droppedId: activeKey,
-                onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
-                atEnd: placement === "before-header",
-              }),
-            }
-          : shown;
-      const plan = planSectionsThreadDrop({
-        source: {
-          key: activeKey,
-          lifecycle: source.lifecycle,
-          groupId: source.groupId,
-          pinned: thread.pinnedAt != null,
-        },
-        target,
-        targetOrderBefore: target.kind === "section" ? (fullOrder ?? []) : [],
-        lifecycleByKey: planLifecycleByKey,
-        pinnedKeysById,
-        activeKeysById,
-        toSectionId: (groupId) => {
-          const ref = sectionRefFromGroupId(groupId);
-          return ref === null ? null : ThreadSectionId.make(ref.sectionId);
-        },
-        canWriteOrderKeys: (ids, group) =>
-          ids.every((id) => {
-            const row = threadByKey.get(id);
-            return (
-              row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, group)
-            );
-          }),
-        canonicalActiveOrder: props.canonicalGroupOrders?.get(
-          target.kind === "section" ? target.groupId : "",
-        ),
-      });
-      return plan.kind === "none" ? null : { thread, target, plan };
-    },
-    [
-      activeKeysById,
-      fullOrderByGroup,
-      items,
+  const planThreadDrop = (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
+    const thread = threadByKey.get(activeKey);
+    const source = items.find((item) => item.id === activeKey);
+    const shown = resolveSectionsDropTarget(items, activeKey, overId, placement);
+    if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
+    // A thread joins only its own environment's sections; General takes any.
+    if (
+      shown.kind === "section" &&
+      shown.groupId !== GENERAL_SECTION_GROUP_ID &&
+      sectionRefFromGroupId(shown.groupId)?.environmentId !== thread.environmentId
+    ) {
+      return null;
+    }
+    const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
+    const target =
+      shown.kind === "section" && fullOrder !== undefined
+        ? {
+            ...shown,
+            order: expandSectionDropOrder({
+              shownOrder: shown.order,
+              fullOrder,
+              droppedId: activeKey,
+              onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
+              atEnd: placement === "before-header",
+            }),
+          }
+        : shown;
+    const plan = planSectionsThreadDrop({
+      source: {
+        key: activeKey,
+        lifecycle: source.lifecycle,
+        groupId: source.groupId,
+        pinned: thread.pinnedAt != null,
+      },
+      target,
+      targetOrderBefore: target.kind === "section" ? (fullOrder ?? []) : [],
+      lifecycleByKey: planLifecycleByKey,
       pinnedKeysById,
-      planLifecycleByKey,
-      props.canonicalGroupOrders,
-      threadByKey,
-    ],
-  );
+      activeKeysById,
+      toSectionId: (groupId) => {
+        const ref = sectionRefFromGroupId(groupId);
+        return ref === null ? null : ThreadSectionId.make(ref.sectionId);
+      },
+      canWriteOrderKeys: (ids, group) =>
+        ids.every((id) => {
+          const row = threadByKey.get(id);
+          return (
+            row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, group)
+          );
+        }),
+      canonicalActiveOrder: props.canonicalGroupOrders?.get(
+        target.kind === "section" ? target.groupId : "",
+      ),
+    });
+    return plan.kind === "none" ? null : { thread, target, plan };
+  };
 
   // Only a drop that changes something highlights its section or shelf.
-  const handleDragOver = useCallback(
-    (event: DragOverEvent | DragMoveEvent) => {
-      const activeId = String(event.active.id);
-      if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
-      const placement = threadDropPlacement(event);
-      const target = event.over
-        ? (planThreadDrop(activeId, String(event.over.id), placement)?.target ?? null)
-        : null;
-      setDrag((current) =>
-        current?.kind === "thread" && current.key === activeId
-          ? { ...current, target, placement }
-          : current,
-      );
-    },
-    [planThreadDrop],
-  );
+  const handleDragOver = (event: DragOverEvent | DragMoveEvent) => {
+    const activeId = String(event.active.id);
+    if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
+    const placement = threadDropPlacement(event);
+    const target = event.over
+      ? (planThreadDrop(activeId, String(event.over.id), placement)?.target ?? null)
+      : null;
+    setDrag((current) =>
+      current?.kind === "thread" && current.key === activeId
+        ? { ...current, target, placement }
+        : current,
+    );
+  };
 
-  const handleDragMove = useCallback(
-    (event: DragMoveEvent) => {
-      // The hovered id can stay the same while the pointer crosses its midpoint.
-      handleDragOver(event);
-      setDrag((current) => {
-        if (current?.kind !== "section") return current;
-        const { geometry } = current;
-        const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
-        const pointerY = geometry.pointerY + event.delta.y + scrolled;
-        const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
-        return preview.every((groupId, position) => groupId === current.preview[position])
-          ? current
-          : { ...current, preview };
-      });
-    },
-    [handleDragOver],
-  );
+  const handleDragMove = (event: DragMoveEvent) => {
+    // The hovered id can stay the same while the pointer crosses its midpoint.
+    handleDragOver(event);
+    setDrag((current) => {
+      if (current?.kind !== "section") return current;
+      const { geometry } = current;
+      const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
+      const pointerY = geometry.pointerY + event.delta.y + scrolled;
+      const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
+      return preview.every((groupId, position) => groupId === current.preview[position])
+        ? current
+        : { ...current, preview };
+    });
+  };
 
-  const dropThread = useCallback(
-    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
-      const planned = planThreadDrop(activeKey, overId, placement);
-      if (planned === null) return;
-      const { thread, target, plan } = planned;
-      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-      if (plan.kind === "settle") {
-        onSettleThread(threadRef);
+  const dropThread = (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
+    const planned = planThreadDrop(activeKey, overId, placement);
+    if (planned === null) return;
+    const { thread, target, plan } = planned;
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    if (plan.kind === "settle") {
+      onSettleThread(threadRef);
+      return;
+    }
+    if (target.kind === "section") {
+      // Show the drop where it landed while the writes travel.
+      const activeIndex = items.findIndex((item) => item.id === activeKey);
+      const overIndex = items.findIndex((item) => item.id === overId);
+      const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
+      ids.splice(sectionsDropIndex(items, activeIndex, overIndex, placement), 0, activeKey);
+      setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
+    }
+
+    const release = () => setHeld(null);
+    setPendingDrops((count) => count + 1);
+    void (async () => {
+      if (plan.unsettle) {
+        const result = await unsettleThread(threadRef);
+        if (result._tag === "Failure") {
+          release();
+          return reportFailure("Failed to un-settle thread", result);
+        }
+      }
+      if (plan.unsnooze) {
+        const result = await unsnoozeThread(threadRef);
+        if (result._tag === "Failure") {
+          release();
+          return reportFailure("Failed to wake thread", result);
+        }
+      }
+      if (
+        plan.sectionId !== undefined &&
+        !(await moveThreadsToSection(
+          [threadRef],
+          plan.sectionId === null
+            ? null
+            : { environmentId: thread.environmentId, sectionId: plan.sectionId },
+        ))
+      ) {
+        release();
         return;
       }
-      if (target.kind === "section") {
-        // Show the drop where it landed while the writes travel.
-        const activeIndex = items.findIndex((item) => item.id === activeKey);
-        const overIndex = items.findIndex((item) => item.id === overId);
-        const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
-        ids.splice(sectionsDropIndex(items, activeIndex, overIndex, placement), 0, activeKey);
-        setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
-      }
-
-      const release = () => setHeld(null);
-      setPendingDrops((count) => count + 1);
-      void (async () => {
-        if (plan.unsettle) {
-          const result = await unsettleThread(threadRef);
-          if (result._tag === "Failure") {
-            release();
-            return reportFailure("Failed to un-settle thread", result);
-          }
-        }
-        if (plan.unsnooze) {
-          const result = await unsnoozeThread(threadRef);
-          if (result._tag === "Failure") {
-            release();
-            return reportFailure("Failed to wake thread", result);
-          }
-        }
-        if (
-          plan.sectionId !== undefined &&
-          !(await moveThreadsToSection(
-            [threadRef],
-            plan.sectionId === null
-              ? null
-              : { environmentId: thread.environmentId, sectionId: plan.sectionId },
-          ))
-        ) {
+      // Stop on failure; each successful key write remains a valid placement.
+      for (const assignment of plan.assignments) {
+        const target = threadByKey.get(assignment.id);
+        if (target === undefined) continue;
+        const result = await (plan.group === "pinned" ? reorderPinnedThread : reorderActiveThread)(
+          scopeThreadRef(target.environmentId, target.id),
+          assignment.orderKey,
+        );
+        if (result._tag === "Failure") {
+          reportFailure(
+            plan.group === "pinned"
+              ? "Failed to reorder pinned threads"
+              : "Failed to reorder threads",
+            result,
+          );
           release();
           return;
         }
-        // Stop on failure; each successful key write remains a valid placement.
-        for (const assignment of plan.assignments) {
-          const target = threadByKey.get(assignment.id);
-          if (target === undefined) continue;
-          const result = await (
-            plan.group === "pinned" ? reorderPinnedThread : reorderActiveThread
-          )(scopeThreadRef(target.environmentId, target.id), assignment.orderKey);
-          if (result._tag === "Failure") {
-            reportFailure(
-              plan.group === "pinned"
-                ? "Failed to reorder pinned threads"
-                : "Failed to reorder threads",
-              result,
-            );
-            release();
-            return;
-          }
-        }
-        if (target.kind === "section" && plan.group === "active") {
-          props.onManualPlacement?.(
-            target.groupId,
-            target.order,
-            activeKey,
-            new Map(plan.assignments.map((assignment) => [assignment.id, assignment.orderKey])),
-          );
-        }
-        // Every write has been applied locally by now; show the store's order.
-        release();
-      })().finally(() => setPendingDrops((count) => count - 1));
-    },
-    [
-      items,
-      moveThreadsToSection,
-      onSettleThread,
-      planThreadDrop,
-      props.onManualPlacement,
-      reorderActiveThread,
-      reorderPinnedThread,
-      reportFailure,
-      threadByKey,
-      unsettleThread,
-      unsnoozeThread,
-    ],
-  );
+      }
+      if (target.kind === "section" && plan.group === "active") {
+        props.onManualPlacement?.(
+          target.groupId,
+          target.order,
+          activeKey,
+          new Map(plan.assignments.map((assignment) => [assignment.id, assignment.orderKey])),
+        );
+      }
+      // Every write has been applied locally by now; show the store's order.
+      release();
+    })().finally(() => setPendingDrops((count) => count - 1));
+  };
 
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const current = drag;
-      setDrag(null);
-      if (current === null) return;
-      if (current.kind === "section") dropSection(current.preview);
-      else if (event.over !== null)
-        dropThread(current.key, String(event.over.id), threadDropPlacement(event));
-    },
-    [drag, dropSection, dropThread],
-  );
-  const handleDragCancel = useCallback(() => setDrag(null), []);
+  const handleDragEnd = useStableCallback((event: DragEndEvent) => {
+    const current = drag;
+    setDrag(null);
+    if (current === null) return;
+    if (current.kind === "section") dropSection(current.preview);
+    else if (event.over !== null)
+      dropThread(current.key, String(event.over.id), threadDropPlacement(event));
+  });
+  const handleDragCancel = () => setDrag(null);
 
   const dragTarget = drag?.kind === "thread" ? drag.target : null;
   const draggingThreadKey = drag?.kind === "thread" ? drag.key : null;
@@ -697,12 +641,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     return null;
   };
 
-  const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  const groupById = new Map(groups.map((group) => [group.id, group]));
   const liftedGroup = drag?.kind === "section" ? groupById.get(drag.groupId) : undefined;
-  const shifts = useMemo(
-    () => (drag?.kind === "section" ? sectionShifts(drag.geometry.blocks, drag.preview) : null),
-    [drag],
-  );
+  const shifts =
+    drag?.kind === "section" ? sectionShifts(drag.geometry.blocks, drag.preview) : null;
   const shiftedSortable = (
     sortable: SectionsRowSortable,
     groupId: string | null,
@@ -744,7 +686,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   machine={
                     group.environmentId === null
                       ? null
-                      : (props.environmentLabels?.get(group.environmentId) ?? null)
+                      : (props.environmentMachines?.get(group.environmentId) ?? null)
                   }
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
@@ -821,10 +763,7 @@ function SortableSectionsRow(props: {
     disabled: { draggable: props.disabled },
   });
   // dnd-kit memoizes each field but not the bag; memoized rows need a stable one.
-  const sortable = useMemo(
-    () => ({ listeners, setNodeRef, transform, transition, isDragging }),
-    [listeners, setNodeRef, transform, transition, isDragging],
-  );
+  const sortable = { listeners, setNodeRef, transform, transition, isDragging };
   return props.children(sortable);
 }
 
@@ -833,7 +772,7 @@ function SectionHeaderRow(props: {
   group: SectionGroup<Shell>;
   label: string;
   /** The section's machine, shown while sections from several machines are listed. */
-  machine: string | null;
+  machine: SectionMachine | null;
   collapsed: boolean;
   isDropTarget: boolean;
   /** The section being dragged: it slides with its rows and takes the accent. */
@@ -915,10 +854,26 @@ function SectionHeaderRow(props: {
                 collapsed count and chevron stay whole beside them. */}
             <span className="flex h-full min-w-0 items-center gap-2">
               <FadeTruncate text={props.label} className="shrink" />
+              {/* An icon, not the name, so a narrow sidebar keeps the section's name. */}
               {props.machine !== null ? (
-                <span className="-ml-1 max-w-24 shrink-0 truncate font-normal opacity-70">
-                  · {props.machine}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        role="img"
+                        aria-label={props.machine.label}
+                        className="-ml-1 inline-flex shrink-0 opacity-70"
+                      />
+                    }
+                  >
+                    <EnvironmentMachineIcon
+                      aria-hidden
+                      kind={props.machine.kind}
+                      className="size-3"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{props.machine.label}</TooltipPopup>
+                </Tooltip>
               ) : null}
               {props.collapsed ? (
                 <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>

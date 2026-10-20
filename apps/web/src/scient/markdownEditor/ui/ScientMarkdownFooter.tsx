@@ -1,6 +1,6 @@
 import { Table as TableIcon } from "lucide-react";
 import type { EditorState } from "prosemirror-state";
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { DocumentFooter } from "../../writing/DocumentFooter";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
@@ -43,10 +43,7 @@ export function ScientMarkdownFooter({
   );
   const state = controller.view?.state ?? null;
   const document = state?.doc ?? null;
-  const total = useMemo(
-    () => (document ? countWords(document.textBetween(0, document.content.size, " ", " ")) : 0),
-    [document],
-  );
+  const total = document ? countWords(document.textBetween(0, document.content.size, " ", " ")) : 0;
   const selected = state ? countSelectedWords(state) : null;
   return (
     <DocumentFooter

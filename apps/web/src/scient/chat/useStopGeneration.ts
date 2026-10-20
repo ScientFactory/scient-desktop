@@ -1,5 +1,5 @@
 import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { showStreamedAnswersNow } from "~/components/chat/useStreamingBlockEntrance";
 
@@ -25,7 +25,7 @@ export function useStopGeneration(input: {
       : null;
   const [requested, setRequested] = useState<StopRequest | null>(null);
   const submitting = useRef<StopRequest | null>(null);
-  const serverRequested = useMemo(() => {
+  const serverRequested = (() => {
     if (ownedRunId === undefined || turnItems === undefined) return false;
     let requested = false;
     for (const item of turnItems) {
@@ -34,13 +34,15 @@ export function useStopGeneration(input: {
       if (item.type === "run_interrupt_request") requested = true;
     }
     return requested;
-  }, [ownedRunId, rootNodeId, turnItems]);
+  })();
 
-  useEffect(() => {
+  const [previousTargetKey, setPreviousTargetKey] = useState(targetKey);
+  if (previousTargetKey !== targetKey) {
+    setPreviousTargetKey(targetKey);
     setRequested((previous) => (previous?.targetKey === targetKey ? previous : null));
-  }, [targetKey]);
+  }
 
-  const onInterrupt = useCallback(async () => {
+  const onInterrupt = async () => {
     if (targetKey === null || submitting.current?.targetKey === targetKey) return;
     // What has arrived shows at once; the cut-off answer is not typed out.
     showStreamedAnswersNow();
@@ -53,11 +55,11 @@ export function useStopGeneration(input: {
       if ((await input.operation()) !== true) clearOwnedRequest();
     } catch (error) {
       clearOwnedRequest();
-      throw error;
-    } finally {
       if (submitting.current === request) submitting.current = null;
+      throw error;
     }
-  }, [input.operation, targetKey]);
+    if (submitting.current === request) submitting.current = null;
+  };
   return {
     isStopping: targetKey !== null && (requested?.targetKey === targetKey || serverRequested),
     onInterrupt,

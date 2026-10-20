@@ -1,8 +1,8 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   type Dispatch,
   type RefObject,
   type SetStateAction,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -170,9 +170,10 @@ export function useSaveReadingPosition({
   paintedExpandedAttemptIds: ReadingDisclosures["attempts"];
   workGroupViewState: ReadingDisclosures["workGroupState"];
 }) {
-  const saveReadingPosition = useCallback(() => {
+  const saveReadingPosition = useStableCallback((threadKey = listIdentityKey) => {
     const state = listRef.current?.getState?.();
     if (
+      threadKey !== listIdentityKey ||
       paintOnly ||
       restoringThreadPosition ||
       !readingListLoaded ||
@@ -211,33 +212,14 @@ export function useSaveReadingPosition({
         workGroupState: workGroupViewState,
       },
     });
-  }, [
-    listRef,
-    paintOnly,
-    restoringThreadPosition,
-    readingListLoaded,
-    positionHistoryLoading,
-    citationPositioning,
-    timelinePositioningPending,
-    runningRunId,
-    turnUnfinished,
-    followingPromptId,
-    rows,
-    listIdentityKey,
-    anchorMessageId,
-    contentInsetEndAdjustment,
-    paintedExpandedRunIds,
-    paintedExpandedWorkGroupIds,
-    paintedExpandedAttemptIds,
-    workGroupViewState,
-  ]);
+  });
   const saveReadingPositionRef = useRef(saveReadingPosition);
   useLayoutEffect(() => {
     saveReadingPositionRef.current = saveReadingPosition;
   });
   useLayoutEffect(() => {
     const save = () => {
-      saveReadingPositionRef.current();
+      saveReadingPositionRef.current(listIdentityKey);
       flushTimelinePositions();
     };
     window.addEventListener("pagehide", save);
@@ -328,7 +310,7 @@ export function useReadingBookkeepingFrame({
   useLayoutEffect(() => {
     idleEndKeepingRef.current = idleEndKeeping;
   });
-  const keepReadingEndInView = useCallback(() => {
+  const keepReadingEndInView = useStableCallback(() => {
     const resting = restingAtReadingEndRef.current;
     const list = listRef.current;
     const viewport = list?.getScrollableNode();
@@ -349,20 +331,20 @@ export function useReadingBookkeepingFrame({
     const grown = gap - resting.gap;
     if (grown > 1) viewport.scrollTop += grown;
     // The refs are the caller's stable useRef objects; listing them changes nothing.
-  }, [contentInsetEndAdjustment, listRef, readerInputRef, restingAtReadingEndRef]);
+  });
   const keepReadingEndInViewRef = useRef(keepReadingEndInView);
   useLayoutEffect(() => {
     keepReadingEndInViewRef.current = keepReadingEndInView;
   });
   const bookkeepingFrameRef = useRef<number | null>(null);
-  const handleScrollOnNextFrame: () => void = useCallback(() => {
+  const handleScrollOnNextFrame: () => void = useStableCallback(() => {
     if (bookkeepingFrameRef.current !== null) return;
     bookkeepingFrameRef.current = requestAnimationFrame(() => {
       bookkeepingFrameRef.current = null;
       keepReadingEndInViewRef.current();
       handleScrollRef.current();
     });
-  }, []);
+  });
   useLayoutEffect(() => {
     scheduleBookkeepingRef.current = handleScrollOnNextFrame;
   }, [handleScrollOnNextFrame, scheduleBookkeepingRef]);
@@ -381,6 +363,15 @@ export function useReadingBookkeepingFrame({
 
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
+
+function currentScrollOffset(viewport: HTMLElement) {
+  return {
+    get offset() {
+      return viewport.scrollTop;
+    },
+    animated: false,
+  };
+}
 
 /** Pages of older history requested for one thread's saved position. */
 export interface ReadingHistoryPages {
@@ -524,13 +515,7 @@ export function useReadingPositionRestore({
       cancelled = true;
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
       // Supersede any pending estimated-index scroll before the browser applies the gesture.
-      if (viewport)
-        void list.scrollToOffset({
-          get offset() {
-            return viewport.scrollTop;
-          },
-          animated: false,
-        });
+      if (viewport) void list.scrollToOffset(currentScrollOffset(viewport));
       setPositionedThreadKey(listIdentityKey);
     };
     const cancelForNavigation = () => {
@@ -606,7 +591,8 @@ export function useReadingPositionRestore({
         const settleAtEnd = () => {
           if (cancelled) return;
           const element = list.getScrollableNode();
-          if (!element || --remainingEndFrames <= 0) {
+          if (element) remainingEndFrames -= 1;
+          if (!element || remainingEndFrames <= 0) {
             // Gave up: the list never held still (see settledListThreadKey).
             setAbandonedPositionKey(listIdentityKey);
             setPositionedThreadKey(listIdentityKey);
@@ -619,7 +605,8 @@ export function useReadingPositionRestore({
             });
             return;
           }
-          if (++stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
+          stableEndFrames += 1;
+          if (stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
           else settleFrame = requestAnimationFrame(settleAtEnd);
         };
         settleFrame = requestAnimationFrame(settleAtEnd);
@@ -631,7 +618,8 @@ export function useReadingPositionRestore({
       let remainingFrames = 60;
       const reconcile = () => {
         if (cancelled) return;
-        if (--remainingFrames <= 0) {
+        remainingFrames -= 1;
+        if (remainingFrames <= 0) {
           // Gave up: the list never held still (see settledListThreadKey).
           setAbandonedPositionKey(listIdentityKey);
           setPositionedThreadKey(listIdentityKey);
@@ -662,7 +650,8 @@ export function useReadingPositionRestore({
           });
           return;
         }
-        if (++stableFrames >= 2) {
+        stableFrames += 1;
+        if (stableFrames >= 2) {
           setPositionedThreadKey(listIdentityKey);
         } else {
           settleFrame = requestAnimationFrame(reconcile);

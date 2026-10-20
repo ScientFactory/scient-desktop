@@ -9,10 +9,11 @@ import {
   PaletteIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AssetImageDimensions, ScopedThreadRef } from "@t3tools/contracts";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
+import { useWorkspaceImageRefresh } from "./useWorkspaceImageRefresh";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
 import { useMediaActionUrl } from "~/components/media/MediaActions";
 import { Button } from "~/components/ui/button";
@@ -322,6 +323,7 @@ export function ScientInlineWorkspaceImage(props: {
   readonly caption?: string | undefined;
   readonly authoredAlt?: string | undefined;
   readonly authoredSource?: string | undefined;
+  readonly workspaceMutationId?: string | null | undefined;
 }) {
   const resolveActionUrl = useMediaActionUrl();
   const controlsRef = useRef<ScientImageControlsHandle>(null);
@@ -338,12 +340,17 @@ export function ScientInlineWorkspaceImage(props: {
     props.image.workspaceRoot,
     props.image.relativePath,
     props.srcFragment ?? "",
+    props.workspaceMutationId,
   ]);
-  const resource = useMemo(
-    () => inlineWorkspaceImageResource(props.image, props.threadRef),
-    [props.image, props.threadRef],
-  );
+  const resource = inlineWorkspaceImageResource(props.image, props.threadRef);
   const asset = useAssetUrlState(props.threadRef.environmentId, resource);
+  useWorkspaceImageRefresh({
+    environmentId: props.threadRef.environmentId,
+    resource,
+    workspaceMutationId: props.workspaceMutationId,
+    loading: asset._tag === "Loading" || asset.waiting === true,
+    requestRefresh: asset.refresh,
+  });
   const retryKey = props.filePresentation
     ? displayIdentity
     : `${props.image.workspaceRoot}\u0000${props.image.relativePath}`;
@@ -381,29 +388,31 @@ export function ScientInlineWorkspaceImage(props: {
     [],
   );
 
-  useEffect(() => {
+  const [previousUrl, setPreviousUrl] = useState(() => url);
+  if (previousUrl !== url) {
+    setPreviousUrl(url);
     setLoadedUrl(null);
     setFailedUrl(null);
-  }, [url]);
+  }
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
     }, 1_500);
-  }, []);
+  };
 
-  const showPersistentMessage = useCallback((message: string) => {
+  const showPersistentMessage = (message: string) => {
     if (messageTimerRef.current != null) {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
     setActionMessage(message);
-  }, []);
+  };
 
-  const handleImageError = useCallback(() => {
+  const handleImageError = () => {
     if (url == null) return;
     setRetainedDisplay(null);
     setLoadedUrl(null);
@@ -415,9 +424,9 @@ export function ScientInlineWorkspaceImage(props: {
     }
     setFailedUrl(url);
     setExpanded(false);
-  }, [asset, props.filePresentation, retryKey, url]);
+  };
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = () => {
     setRetainedDisplay(null);
     if (props.filePresentation) setDisplayAttempt((attempt) => attempt + 1);
     autoRetriedRef.current = null;
@@ -425,33 +434,30 @@ export function ScientInlineWorkspaceImage(props: {
     setLoadedUrl(null);
     setActionMessage(null);
     asset.refresh();
-  }, [asset, props.filePresentation]);
+  };
 
-  const runAction = useCallback(
-    (
-      action: Exclude<ImageAction, null>,
-      operation: () => Promise<void>,
-      successMessage: string | null,
-      failureMessage: string,
-    ) => {
-      if (activeAction != null) return;
-      setActiveAction(action);
-      void operation().then(
-        () => {
-          setActiveAction(null);
-          if (successMessage) showTransientMessage(successMessage);
-        },
-        (cause: unknown) => {
-          console.error("[scient-images] Inline image action failed", action, cause);
-          setActiveAction(null);
-          showPersistentMessage(failureMessage);
-        },
-      );
-    },
-    [activeAction, showPersistentMessage, showTransientMessage],
-  );
+  const runAction = (
+    action: Exclude<ImageAction, null>,
+    operation: () => Promise<void>,
+    successMessage: string | null,
+    failureMessage: string,
+  ) => {
+    if (activeAction != null) return;
+    setActiveAction(action);
+    void operation().then(
+      () => {
+        setActiveAction(null);
+        if (successMessage) showTransientMessage(successMessage);
+      },
+      (cause: unknown) => {
+        console.error("[scient-images] Inline image action failed", action, cause);
+        setActiveAction(null);
+        showPersistentMessage(failureMessage);
+      },
+    );
+  };
 
-  const handleCopyPath = useCallback(() => {
+  const handleCopyPath = () => {
     if (!navigator.clipboard?.writeText) {
       showPersistentMessage("Clipboard access is unavailable.");
       return;
@@ -462,13 +468,13 @@ export function ScientInlineWorkspaceImage(props: {
       "Path copied",
       "Unable to copy the image path.",
     );
-  }, [props.image.relativePath, runAction, showPersistentMessage]);
+  };
 
-  const handleOpenFile = useCallback(() => {
+  const handleOpenFile = () => {
     useRightPanelStore.getState().openFile(props.threadRef, props.image.relativePath);
-  }, [props.image.relativePath, props.threadRef]);
+  };
 
-  const handleCopyImage = useCallback(() => {
+  const handleCopyImage = () => {
     if (url == null) return;
     runAction(
       "copy-image",
@@ -482,9 +488,9 @@ export function ScientInlineWorkspaceImage(props: {
       "Image copied",
       "Unable to copy the image.",
     );
-  }, [props.threadRef.environmentId, resource, resolveActionUrl, runAction, url]);
+  };
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = () => {
     if (url == null) return;
     runAction(
       "download",
@@ -499,16 +505,9 @@ export function ScientInlineWorkspaceImage(props: {
       null,
       "Unable to download the image.",
     );
-  }, [
-    props.image.fileName,
-    props.threadRef.environmentId,
-    resource,
-    resolveActionUrl,
-    runAction,
-    url,
-  ]);
+  };
 
-  const fileActions = useMemo<readonly ScientImageAction[]>(() => {
+  const fileActions: readonly ScientImageAction[] = (() => {
     const location = {
       src: url,
       asset: { environmentId: props.threadRef.environmentId, resource },
@@ -542,31 +541,20 @@ export function ScientInlineWorkspaceImage(props: {
         run: () => navigator.clipboard.writeText(props.image.relativePath),
       },
     ];
-  }, [
-    handleOpenFile,
-    props.authoredSource,
-    props.image,
-    props.threadRef.environmentId,
-    resource,
-    resolveActionUrl,
-    url,
-  ]);
-  const showContextMenu = useCallback<ScientImageContextMenuHandler>(
-    async (items, position) =>
-      (await readLocalApi()?.contextMenu.show([...items], position)) ?? null,
-    [],
-  );
-  const resolveViewerSource = useCallback(async () => {
+  })();
+  const showContextMenu: ScientImageContextMenuHandler = async (items, position) =>
+    (await readLocalApi()?.contextMenu.show([...items], position)) ?? null;
+  const resolveViewerSource = async () => {
     const fresh = await resolveActionUrl({
       src: url,
       asset: { environmentId: props.threadRef.environmentId, resource },
     });
     return fresh + (props.srcFragment ?? "");
-  }, [props.srcFragment, props.threadRef.environmentId, resource, resolveActionUrl, url]);
+  };
 
-  const handleCycleBackground = useCallback(() => {
+  const handleCycleBackground = () => {
     setBackground((current) => nextInlineImageBackground(current));
-  }, []);
+  };
 
   return (
     <span
@@ -691,7 +679,7 @@ export function ScientInlineWorkspaceImage(props: {
                 autoRetriedRef.current = null;
                 setFailedUrl(null);
                 setLoadedUrl(url);
-                if (props.filePresentation)
+                if (props.filePresentation && asset.waiting !== true)
                   setRetainedDisplay({ identity: displayIdentity, url, dimensions });
               }}
               src={url}

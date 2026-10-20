@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import {
@@ -127,13 +128,73 @@ export function useScientPdfReader(input: {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
+  // Mirrors presentationRef for render: the request whose PDF is painted, or null.
+  const [presentedRequest, setPresentedRequest] = useState<{
+    readonly container: HTMLDivElement | null;
+    readonly viewerElement: HTMLDivElement | null;
+    readonly documentKey: string;
+    readonly revisionId: string | null;
+    readonly sourceUrl: string;
+    readonly loadAttempt: number;
+  } | null>(null);
+  const presentsRequest =
+    presentedRequest !== null &&
+    presentedRequest.container === input.container &&
+    presentedRequest.viewerElement === input.viewerElement &&
+    presentedRequest.documentKey === input.documentKey &&
+    presentedRequest.revisionId === input.revisionId &&
+    presentedRequest.sourceUrl === input.sourceUrl &&
+    presentedRequest.loadAttempt === input.loadAttempt;
+  const loadInputs = [
+    input.container,
+    input.viewerElement,
+    input.documentKey,
+    input.revisionId,
+    input.sourceUrl,
+    input.candidateReady,
+    input.loadAttempt,
+  ] as const;
+  const [previousLoadInputs, setPreviousLoadInputs] = useState<readonly unknown[] | null>(null);
+  if (
+    previousLoadInputs === null ||
+    loadInputs.some((value, index) => value !== previousLoadInputs[index])
+  ) {
+    setPreviousLoadInputs(loadInputs);
+    if (input.container && input.viewerElement) {
+      if (!input.candidateReady) {
+        setState((previous) =>
+          previous.updating || previous.updateError
+            ? { ...previous, updating: false, updateError: null }
+            : previous,
+        );
+      } else if (presentsRequest) {
+        setState((previous) =>
+          previous.updating
+            ? { ...previous, phase: "ready", updating: false, updateError: null }
+            : previous,
+        );
+      } else if (
+        presentedRequest !== null &&
+        presentedRequest.container === input.container &&
+        presentedRequest.viewerElement === input.viewerElement &&
+        presentedRequest.documentKey === input.documentKey
+      ) {
+        // The displayed revision stays until its successor is painted.
+        setState((previous) => ({ ...previous, updating: true, updateError: null }));
+      } else {
+        setState(INITIAL_STATE);
+      }
+    }
+  }
   const presentationRef = useRef<
     | (PresentedPdfSource & { readonly runtime: ScientPdfRuntime; readonly loadAttempt: number })
     | null
   >(null);
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
-  invalidateRef.current = input.onSourceInvalidated;
+  useLayoutEffect(() => {
+    invalidateRef.current = input.onSourceInvalidated;
+  });
   const requestedSourceRef = useRef({
     documentKey: input.documentKey,
     revisionId: input.revisionId,
@@ -162,13 +223,12 @@ export function useScientPdfReader(input: {
   const syncMarkerRef = useRef<HTMLElement | null>(null);
   const syncMarkerFrameRef = useRef<number | null>(null);
   const syncMarkerTimerRef = useRef<number | null>(null);
-  const documentKeyRef = useRef(input.documentKey);
-  if (documentKeyRef.current !== input.documentKey) {
-    documentKeyRef.current = input.documentKey;
+  const resetDocumentSearch = useEffectEvent((..._changes: readonly unknown[]) => {
     activeSearchQueryRef.current = "";
-  }
+  });
+  useLayoutEffect(() => resetDocumentSearch(input.documentKey), [input.documentKey]);
 
-  const clearSyncMarker = useCallback(() => {
+  const clearSyncMarker = useStableCallback(() => {
     if (syncMarkerFrameRef.current !== null) {
       cancelAnimationFrame(syncMarkerFrameRef.current);
       syncMarkerFrameRef.current = null;
@@ -179,53 +239,43 @@ export function useScientPdfReader(input: {
     }
     syncMarkerRef.current?.remove();
     syncMarkerRef.current = null;
-  }, []);
+  });
 
-  useEffect(() => {
+  const resetSourceMarker = useEffectEvent((..._changes: readonly unknown[]) => {
     clearSyncMarker();
     return clearSyncMarker;
-  }, [clearSyncMarker, input.sourceUrl]);
+  });
+  useEffect(
+    () => resetSourceMarker(clearSyncMarker, input.sourceUrl),
+    [clearSyncMarker, input.sourceUrl],
+  );
 
   // Document lifetime is distinct from revision-request lifetime. In particular,
   // an asset callback change must not tear down a displayed PDF.
+  const retirePresentedDocument = useEffectEvent((..._changes: readonly unknown[]) => () => {
+    disposePresentedRef.current?.();
+    disposePresentedRef.current = null;
+    presentationRef.current = null;
+    runtimeRef.current = null;
+    responsiveZoomRef.current = null;
+    setPresentedRequest(null);
+  });
   useEffect(
-    () => () => {
-      disposePresentedRef.current?.();
-      disposePresentedRef.current = null;
-      presentationRef.current = null;
-      runtimeRef.current = null;
-      responsiveZoomRef.current = null;
-    },
+    () => retirePresentedDocument(input.container, input.viewerElement, input.documentKey),
     [input.container, input.viewerElement, input.documentKey],
   );
 
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
-    if (!input.candidateReady) {
-      setState((previous) =>
-        previous.updating || previous.updateError
-          ? { ...previous, updating: false, updateError: null }
-          : previous,
-      );
-      return;
-    }
-    const settleOnPresentedRevision = () => {
-      if (presentationRef.current === null) return;
-      setState((previous) =>
-        previous.updating
-          ? { ...previous, phase: "ready", updating: false, updateError: null }
-          : previous,
-      );
-    };
+    // Render already moved the reader state: cleared, settled or updating.
+    if (!input.candidateReady) return;
     if (
       presentationRef.current?.documentKey === input.documentKey &&
       presentationRef.current.revisionId === input.revisionId &&
       presentationRef.current.sourceUrl === input.sourceUrl &&
       presentationRef.current.loadAttempt === input.loadAttempt
-    ) {
-      settleOnPresentedRevision();
+    )
       return;
-    }
     const { container, viewerElement } = createPdfPresentationLayer(input.viewerElement);
     const abortController = new AbortController();
     let current = true;
@@ -247,9 +297,6 @@ export function useScientPdfReader(input: {
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
     const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
     const responsiveZoom = createPdfResponsiveZoomController();
-    if (runtimeRef.current)
-      setState((previous) => ({ ...previous, updating: true, updateError: null }));
-    else setState(INITIAL_STATE);
     const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
       onPassword: ({ reason, submit }) => {
         if (!isRequested()) return;
@@ -324,6 +371,14 @@ export function useScientPdfReader(input: {
             // surface become current together, before the browser's next paint.
             flushSync(() => {
               setPresentation(nextPresentation);
+              setPresentedRequest({
+                container: input.container,
+                viewerElement: input.viewerElement,
+                documentKey: input.documentKey,
+                revisionId: input.revisionId,
+                sourceUrl: input.sourceUrl,
+                loadAttempt: input.loadAttempt,
+              });
               setState((previous) => ({
                 ...previous,
                 phase: "ready",
@@ -565,75 +620,72 @@ export function useScientPdfReader(input: {
     input.loadAttempt,
   ]);
 
-  const submitPassword = useCallback((password: string) => {
+  const submitPassword = useStableCallback((password: string) => {
     const submit = passwordRef.current;
     if (!submit || password.length === 0) return false;
     passwordRef.current = null;
     setState((previous) => ({ ...previous, phase: "loading", passwordReason: null }));
     submit(password);
     return true;
-  }, []);
+  });
 
-  const goToPage = useCallback((page: number) => {
+  const goToPage = useStableCallback((page: number) => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.viewer.currentPageNumber = clampPdfPage(page, runtime.document.numPages);
-  }, []);
+  });
 
-  const goToSyncPoint = useCallback(
-    (target: { page: number; x: number; y: number }) => {
-      const runtime = runtimeRef.current;
-      if (!runtime) return;
-      clearSyncMarker();
-      const page = clampPdfPage(target.page, runtime.document.numPages);
-      const pageView = runtime.viewer.getPageView(page - 1);
-      const pageHeight = pageView?.viewport.rawDims.pageHeight;
-      if (pageHeight === undefined) {
-        runtime.viewer.currentPageNumber = page;
-        return;
-      }
-      const { pageWidth, pageX, pageY } = pageView.viewport.rawDims;
-      const pdfX = Math.max(pageX, Math.min(pageX + pageWidth, target.x));
-      const pdfY = Math.max(pageY, Math.min(pageY + pageHeight, pageHeight - target.y));
-      runtime.cancelContainerSizeRefresh();
-      runtime.viewer.scrollPageIntoView({
-        pageNumber: page,
-        // SyncTeX measures from the top-left in 72-dpi big points; PDF
-        // destinations measure from the bottom-left in the same unit.
-        destArray: [null, { name: "XYZ" }, pdfX, pdfY, null],
-        center: "both",
-        allowNegativeOffset: true,
-        ignoreDestinationZoom: true,
-      });
-      // Page-change auto-fit must not restore the previous view over this jump.
-      runtime.viewer.update();
-      runtime.cancelContainerSizeRefresh();
-      syncMarkerFrameRef.current = requestAnimationFrame(() => {
-        syncMarkerFrameRef.current = null;
-        if (runtimeRef.current !== runtime) return;
-        const pageElement = presentationRef.current?.container.querySelector<HTMLElement>(
-          `.page[data-page-number="${page}"]`,
-        );
-        if (pageElement === undefined || pageElement === null) return;
-        const [rawLeft, rawTop] = pageView.viewport.convertToViewportPoint(pdfX, pdfY);
-        const marker = document.createElement("span");
-        marker.className = "scient-pdf-sync-marker";
-        marker.setAttribute("aria-hidden", "true");
-        marker.style.left = `${Math.max(0, Math.min(pageElement.clientWidth, rawLeft))}px`;
-        marker.style.top = `${Math.max(0, Math.min(pageElement.clientHeight, rawTop))}px`;
-        pageElement.append(marker);
-        syncMarkerRef.current = marker;
-        syncMarkerTimerRef.current = window.setTimeout(() => {
-          syncMarkerTimerRef.current = null;
-          marker.remove();
-          if (syncMarkerRef.current === marker) syncMarkerRef.current = null;
-        }, 1_600);
-      });
-    },
-    [clearSyncMarker, input.viewerElement],
-  );
+  const goToSyncPoint = (target: { page: number; x: number; y: number }) => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    clearSyncMarker();
+    const page = clampPdfPage(target.page, runtime.document.numPages);
+    const pageView = runtime.viewer.getPageView(page - 1);
+    const pageHeight = pageView?.viewport.rawDims.pageHeight;
+    if (pageHeight === undefined) {
+      runtime.viewer.currentPageNumber = page;
+      return;
+    }
+    const { pageWidth, pageX, pageY } = pageView.viewport.rawDims;
+    const pdfX = Math.max(pageX, Math.min(pageX + pageWidth, target.x));
+    const pdfY = Math.max(pageY, Math.min(pageY + pageHeight, pageHeight - target.y));
+    runtime.cancelContainerSizeRefresh();
+    runtime.viewer.scrollPageIntoView({
+      pageNumber: page,
+      // SyncTeX measures from the top-left in 72-dpi big points; PDF
+      // destinations measure from the bottom-left in the same unit.
+      destArray: [null, { name: "XYZ" }, pdfX, pdfY, null],
+      center: "both",
+      allowNegativeOffset: true,
+      ignoreDestinationZoom: true,
+    });
+    // Page-change auto-fit must not restore the previous view over this jump.
+    runtime.viewer.update();
+    runtime.cancelContainerSizeRefresh();
+    syncMarkerFrameRef.current = requestAnimationFrame(() => {
+      syncMarkerFrameRef.current = null;
+      if (runtimeRef.current !== runtime) return;
+      const pageElement = presentationRef.current?.container.querySelector<HTMLElement>(
+        `.page[data-page-number="${page}"]`,
+      );
+      if (pageElement === undefined || pageElement === null) return;
+      const [rawLeft, rawTop] = pageView.viewport.convertToViewportPoint(pdfX, pdfY);
+      const marker = document.createElement("span");
+      marker.className = "scient-pdf-sync-marker";
+      marker.setAttribute("aria-hidden", "true");
+      marker.style.left = `${Math.max(0, Math.min(pageElement.clientWidth, rawLeft))}px`;
+      marker.style.top = `${Math.max(0, Math.min(pageElement.clientHeight, rawTop))}px`;
+      pageElement.append(marker);
+      syncMarkerRef.current = marker;
+      syncMarkerTimerRef.current = window.setTimeout(() => {
+        syncMarkerTimerRef.current = null;
+        marker.remove();
+        if (syncMarkerRef.current === marker) syncMarkerRef.current = null;
+      }, 1_600);
+    });
+  };
 
-  const syncPointFromClient = useCallback(
+  const syncPointFromClient = useStableCallback(
     (input: { pageElement: HTMLElement; clientX: number; clientY: number }) => {
       const runtime = runtimeRef.current;
       if (!runtime) return null;
@@ -652,71 +704,66 @@ export function useScientPdfReader(input: {
         y: Math.max(0, pageView.viewport.rawDims.pageHeight - pdfY),
       };
     },
-    [],
   );
 
-  const setZoom = useCallback((scale: number) => {
+  const setZoom = useStableCallback((scale: number) => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.cancelContainerSizeRefresh();
     const normalized = responsiveZoomRef.current?.rememberScale(scale) ?? normalizePdfZoom(scale);
     runtime.viewer.currentScale = normalized;
-  }, []);
+  });
 
-  const setZoomMode = useCallback((mode: "page-width" | "page-fit" | "page-actual") => {
+  const setZoomMode = useStableCallback((mode: "page-width" | "page-fit" | "page-actual") => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.cancelContainerSizeRefresh();
     responsiveZoomRef.current?.rememberMode(mode);
     runtime.viewer.currentScaleValue = mode;
-  }, []);
+  });
 
-  const rotate = useCallback(() => {
+  const rotate = useStableCallback(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.viewer.pagesRotation = nextPdfRotation(runtime.viewer.pagesRotation);
-  }, []);
+  });
 
-  const dispatchFind = useCallback((query: string, type: "" | "again", findPrevious = false) => {
-    const runtime = runtimeRef.current;
-    if (!runtime) return;
-    activeSearchQueryRef.current = query;
-    runtime.eventBus.dispatch("find", {
-      source: runtime,
-      type,
-      query,
-      phraseSearch: true,
-      caseSensitive: false,
-      entireWord: false,
-      highlightAll: query.length > 0,
-      findPrevious,
-      matchDiacritics: true,
-    });
-    if (query.length === 0) {
-      setState((previous) => ({
-        ...previous,
-        findCount: { current: 0, total: 0 },
-        findPhase: "idle",
-      }));
-    } else {
-      setState((previous) => ({ ...previous, findPhase: "pending" }));
-    }
-  }, []);
-
-  const setSearchQuery = useCallback(
-    (query: string) => dispatchFind(query, "", false),
-    [dispatchFind],
-  );
-
-  const findAgain = useCallback(
-    (findPrevious = false) => {
-      const query = activeSearchQueryRef.current;
-      if (query.length > 0) dispatchFind(query, "again", findPrevious);
+  const dispatchFind = useStableCallback(
+    (query: string, type: "" | "again", findPrevious = false) => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+      activeSearchQueryRef.current = query;
+      runtime.eventBus.dispatch("find", {
+        source: runtime,
+        type,
+        query,
+        phraseSearch: true,
+        caseSensitive: false,
+        entireWord: false,
+        highlightAll: query.length > 0,
+        findPrevious,
+        matchDiacritics: true,
+      });
+      if (query.length === 0) {
+        setState((previous) => ({
+          ...previous,
+          findCount: { current: 0, total: 0 },
+          findPhase: "idle",
+        }));
+      } else {
+        setState((previous) => ({ ...previous, findPhase: "pending" }));
+      }
     },
-    [dispatchFind],
   );
 
-  const closeSearch = useCallback(() => {
+  const setSearchQuery = useStableCallback((query: string) => dispatchFind(query, "", false));
+
+  const findAgain = useStableCallback((findPrevious = false) => {
+    const query = activeSearchQueryRef.current;
+    if (query.length > 0) dispatchFind(query, "again", findPrevious);
+  });
+
+  const closeSearch = useStableCallback(() => {
     activeSearchQueryRef.current = "";
     runtimeRef.current?.eventBus.dispatch("findbarclose", { source: runtimeRef.current });
     setState((previous) => ({
@@ -724,9 +771,9 @@ export function useScientPdfReader(input: {
       findCount: { current: 0, total: 0 },
       findPhase: "idle",
     }));
-  }, []);
+  });
 
-  const prepareSearch = useCallback(() => {
+  const prepareSearch = useStableCallback(() => {
     const runtime = runtimeRef.current;
     if (!runtime || activeSearchQueryRef.current.length > 0) return;
     runtime.eventBus.dispatch("find", {
@@ -740,20 +787,15 @@ export function useScientPdfReader(input: {
       findPrevious: false,
       matchDiacritics: true,
     });
-  }, []);
+  });
 
-  const goToDestination = useCallback((destination: string | Array<unknown>) => {
+  const goToDestination = useStableCallback((destination: string | Array<unknown>) => {
     void runtimeRef.current?.linkService.goToDestination(destination as string | Array<unknown>);
-  }, []);
+  });
 
   return {
     presentation,
-    presentationCurrent:
-      input.candidateReady &&
-      presentationRef.current?.documentKey === input.documentKey &&
-      presentationRef.current.revisionId === input.revisionId &&
-      presentationRef.current.sourceUrl === input.sourceUrl &&
-      presentationRef.current.loadAttempt === input.loadAttempt,
+    presentationCurrent: input.candidateReady && presentsRequest,
     state,
     runtimeRef,
     submitPassword,

@@ -20,8 +20,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-// SCIENT-FORK:START — bounded native failure metadata, without provider payloads.
-import { recordAntigravityAuthFailure } from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
+// SCIENT-FORK:START — bounded local failure diagnostics and the shared setup-failure message.
+import {
+  ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE,
+  recordAntigravityAuthFailure,
+} from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
 // SCIENT-FORK:END
 import {
   antigravityAuthStageFailure,
@@ -125,7 +128,7 @@ function safeAuthFailure(
         return "Google sign-in was not approved. Start sign-in again.";
       }
       if (error.value.method === "session/new" && error.value.code === -32603) {
-        return "Antigravity authenticated, but could not initialize a session or load models.";
+        return ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE;
       }
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
@@ -498,7 +501,9 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             }).pipe(
               Effect.scoped,
               Effect.timeoutOrElse({
-                duration: "90 seconds",
+                // SCIENT-FORK:START — Antigravity unpacks itself (~320 MiB) on every start; slow disks need minutes.
+                duration: "5 minutes",
+                // SCIENT-FORK:END
                 orElse: () => Effect.fail(setupError("logout", "Antigravity sign-out timed out.")),
               }),
             ),

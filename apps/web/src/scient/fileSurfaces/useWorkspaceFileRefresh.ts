@@ -1,3 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect } from "react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   ProjectWriteFileError,
@@ -8,7 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DocumentPersistenceAttention } from "@scientfactory/scient-document";
 import { classifyMarkdownPersistenceFailure } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
@@ -123,7 +125,9 @@ export function useWorkspaceFileRefresh(input: {
   const [saveError, setSaveError] = useState<FileSaveErrorNotice | null>(null);
   const [saveResolution, setSaveResolution] = useState<FileSaveResolution | null>(null);
   const saveResolutionRef = useRef<FileSaveResolution | null>(null);
-  saveResolutionRef.current = saveResolution;
+  useLayoutEffect(() => {
+    saveResolutionRef.current = saveResolution;
+  });
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);
   const lastObservedChangeRef = useRef<object | null>(null);
   const lastConfirmedSaveRef = useRef<{
@@ -135,15 +139,15 @@ export function useWorkspaceFileRefresh(input: {
     saveError?.attention !== undefined ||
     file.authoritativeData?.publicationAttention !== undefined;
 
-  const refreshAuthoritativeFile = useCallback(() => {
+  const refreshAuthoritativeFile = () => {
     if (input.relativePath === null) return;
     file.refresh();
-  }, [file.refresh, input.relativePath]);
+  };
 
-  const refreshViewer = useCallback(() => {
+  const refreshViewer = () => {
     refreshAuthoritativeFile();
     setViewerRefreshKey((current) => current + 1);
-  }, [refreshAuthoritativeFile]);
+  };
 
   // The native watcher remains the freshness owner, including non-agent edits
   // and binary previews. Use T3's mutation hints only when watching is unavailable;
@@ -155,26 +159,40 @@ export function useWorkspaceFileRefresh(input: {
     resourceKey: `file:${input.environmentId}:${input.cwd}:${input.relativePath ?? ""}`,
   });
 
-  // Reset path-scoped UI state before any effects below interpret the first
-  // watcher/read snapshot for a newly selected file.
-  useEffect(() => {
+  const [noticePath, setNoticePath] = useState(input.relativePath);
+  if (noticePath !== input.relativePath) {
+    setNoticePath(input.relativePath);
     setReloadNotice(null);
     setSaveError(null);
     setSaveResolution(null);
+  }
+  const observedPath = useRef(input.relativePath);
+  useEffect(() => {
+    if (observedPath.current === input.relativePath) return;
+    observedPath.current = input.relativePath;
     lastObservedChangeRef.current = null;
     lastConfirmedSaveRef.current = null;
   }, [input.relativePath]);
 
-  useEffect(() => {
-    const attention = file.authoritativeData?.publicationAttention;
-    if (!attention || input.relativePath === null) return;
-    setSaveError({
-      relativePath: input.relativePath,
-      message: attention.message,
-      attention: "recovery_required",
-      error: attention,
-    });
-  }, [file.authoritativeData?.publicationAttention, input.relativePath]);
+  // A retained publication read with the file blocks saving until it is reviewed.
+  const publicationAttention = file.authoritativeData?.publicationAttention;
+  const [observedAttention, setObservedAttention] = useState<{
+    readonly attention: typeof publicationAttention;
+    readonly relativePath: string | null;
+  }>({ attention: undefined, relativePath: input.relativePath });
+  if (
+    observedAttention.attention !== publicationAttention ||
+    observedAttention.relativePath !== input.relativePath
+  ) {
+    setObservedAttention({ attention: publicationAttention, relativePath: input.relativePath });
+    if (publicationAttention && input.relativePath !== null)
+      setSaveError({
+        relativePath: input.relativePath,
+        message: publicationAttention.message,
+        attention: "recovery_required",
+        error: publicationAttention,
+      });
+  }
 
   useEffect(() => {
     if (fileChanges.change === null || lastObservedChangeRef.current === fileChanges.change) {
@@ -222,99 +240,96 @@ export function useWorkspaceFileRefresh(input: {
     input.surfaceOwnsConflictDetection,
   ]);
 
-  useEffect(() => {
+  const [noticeSource, setNoticeSource] = useState(file.authoritativeData);
+  if (noticeSource !== file.authoritativeData) {
     const authoritative = file.authoritativeData;
-    if (authoritative === null) return;
-    setReloadNotice((current) =>
-      current !== null &&
-      current.relativePath === input.relativePath &&
-      !(current.kind === "confirm-overwrite" && current.contents !== null)
-        ? {
-            ...current,
-            contents: authoritative.contents,
-            revision: authoritative.revision,
-          }
-        : current,
-    );
-  }, [file.authoritativeData, input.relativePath]);
+    setNoticeSource(authoritative);
+    if (authoritative !== null)
+      setReloadNotice((current) =>
+        current !== null &&
+        current.relativePath === input.relativePath &&
+        !(current.kind === "confirm-overwrite" && current.contents !== null)
+          ? {
+              ...current,
+              contents: authoritative.contents,
+              revision: authoritative.revision,
+            }
+          : current,
+      );
+  }
 
-  const handleSaveFailure = useCallback(
-    (path: string, error: unknown) => {
-      if (path !== input.relativePath) return;
-      if (
-        publicationBlocked &&
-        !(
-          isProjectWriteFileError(error) &&
-          (error.failure === "target_changed" ||
-            error.failure === "recovery_required" ||
-            error.failure === "mutation_unavailable" ||
-            error.failure === "mutation_intent_conflict")
-        ) &&
-        !isPublicationAttention(error)
-      )
-        return;
-      if (
+  const handleSaveFailure = (path: string, error: unknown) => {
+    if (path !== input.relativePath) return;
+    if (
+      publicationBlocked &&
+      !(
         isProjectWriteFileError(error) &&
-        error.failure === "revision_conflict" &&
-        error.currentRevision !== undefined
-      ) {
-        setSaveError(null);
-        const authoritative = file.authoritativeData;
-        setReloadNotice({
-          kind: "external-change",
-          relativePath: path,
-          contents:
-            authoritative?.revision === error.currentRevision ? authoritative.contents : null,
-          revision: error.currentRevision,
-        });
-        refreshAuthoritativeFile();
-        return;
-      }
-      const kind = classifyMarkdownPersistenceFailure(error);
-      setSaveError({
+        (error.failure === "target_changed" ||
+          error.failure === "recovery_required" ||
+          error.failure === "mutation_unavailable" ||
+          error.failure === "mutation_intent_conflict")
+      ) &&
+      !isPublicationAttention(error)
+    )
+      return;
+    if (
+      isProjectWriteFileError(error) &&
+      error.failure === "revision_conflict" &&
+      error.currentRevision !== undefined
+    ) {
+      setSaveError(null);
+      const authoritative = file.authoritativeData;
+      setReloadNotice({
+        kind: "external-change",
         relativePath: path,
-        error,
-        ...(isPublicationAttention(error)
-          ? { attention: "recovery_required" as const }
-          : kind === "terminal" || kind === "operation"
-            ? { attention: "outcome_unknown" as const }
-            : kind === "target_changed" ||
-                kind === "recovery_required" ||
-                kind === "mutation_unavailable" ||
-                kind === "mutation_intent_conflict" ||
-                kind === "outcome_unknown"
-              ? { attention: kind }
-              : {}),
-        message: isPublicationAttention(error)
-          ? error.message
-          : error instanceof Error && error.message.trim().length > 0
-            ? error.message
-            : "The workspace write failed.",
+        contents: authoritative?.revision === error.currentRevision ? authoritative.contents : null,
+        revision: error.currentRevision,
       });
-    },
-    [file.authoritativeData, input.relativePath, publicationBlocked, refreshAuthoritativeFile],
-  );
+      refreshAuthoritativeFile();
+      return;
+    }
+    const kind = classifyMarkdownPersistenceFailure(error);
+    setSaveError({
+      relativePath: path,
+      error,
+      ...(isPublicationAttention(error)
+        ? { attention: "recovery_required" as const }
+        : kind === "terminal" || kind === "operation"
+          ? { attention: "outcome_unknown" as const }
+          : kind === "target_changed" ||
+              kind === "recovery_required" ||
+              kind === "mutation_unavailable" ||
+              kind === "mutation_intent_conflict" ||
+              kind === "outcome_unknown"
+            ? { attention: kind }
+            : {}),
+      message: isPublicationAttention(error)
+        ? error.message
+        : error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The workspace write failed.",
+    });
+  };
 
-  const handleSaveConfirmed = useCallback((path: string, contents: string, revision: string) => {
-    lastConfirmedSaveRef.current = { relativePath: path, contents, revision };
-    setSaveError((current) =>
-      current?.relativePath === path && current.attention === undefined ? null : current,
-    );
-    setReloadNotice((current) => (current?.relativePath === path ? null : current));
-  }, []);
+  const handleSaveConfirmed = useStableCallback(
+    (path: string, contents: string, revision: string) => {
+      lastConfirmedSaveRef.current = { relativePath: path, contents, revision };
+      setSaveError((current) =>
+        current?.relativePath === path && current.attention === undefined ? null : current,
+      );
+      setReloadNotice((current) => (current?.relativePath === path ? null : current));
+    },
+  );
 
   /** A surface-observed external change conflicts with the local draft. */
-  const handleExternalConflict = useCallback(
-    (path: string, contents: string, revision: string) => {
-      if (path !== input.relativePath) return;
-      setSaveError((current) => (current?.attention ? current : null));
-      setReloadNotice({ kind: "external-change", relativePath: path, contents, revision });
-      refreshAuthoritativeFile();
-    },
-    [input.relativePath, refreshAuthoritativeFile],
-  );
+  const handleExternalConflict = (path: string, contents: string, revision: string) => {
+    if (path !== input.relativePath) return;
+    setSaveError((current) => (current?.attention ? current : null));
+    setReloadNotice({ kind: "external-change", relativePath: path, contents, revision });
+    refreshAuthoritativeFile();
+  };
 
-  const handleSaveResolutionApplied = useCallback(() => {
+  const handleSaveResolutionApplied = useStableCallback(() => {
     const applied = saveResolutionRef.current;
     setSaveResolution(null);
     setSaveError(null);
@@ -326,9 +341,9 @@ export function useWorkspaceFileRefresh(input: {
       );
     }
     refreshAuthoritativeFile();
-  }, [refreshAuthoritativeFile]);
+  });
 
-  const requestRetrySave = useCallback(() => {
+  const requestRetrySave = () => {
     if (input.relativePath === null || saveError?.relativePath !== input.relativePath) return;
     if (publicationBlocked) return;
     const authoritative = file.authoritativeData;
@@ -344,17 +359,9 @@ export function useWorkspaceFileRefresh(input: {
       action: "retry",
     });
     setSaveError(null);
-  }, [
-    file.authoritativeData?.revision,
-    file.authoritativeData?.contents,
-    input.relativePath,
-    refreshAuthoritativeFile,
-    saveError?.relativePath,
-    saveResolution?.id,
-    publicationBlocked,
-  ]);
+  };
 
-  const requestManualReload = useCallback(() => {
+  const requestManualReload = () => {
     if (input.relativePath === null) return;
     fileChanges.refresh();
     if (publicationBlocked) {
@@ -374,63 +381,42 @@ export function useWorkspaceFileRefresh(input: {
     clearProjectFileQueryData(input.environmentId, input.cwd, input.relativePath);
     setReloadNotice(null);
     refreshViewer();
-  }, [
-    file.authoritativeData,
-    file.data,
-    fileChanges.refresh,
-    input.cwd,
-    input.environmentId,
-    input.relativePath,
-    input.sourcePending,
-    publicationBlocked,
-    refreshViewer,
-  ]);
+  };
 
-  const resolveReloadNotice = useCallback(
-    (action: "discard" | "retry") => {
-      if (publicationBlocked) return;
-      if (reloadNotice === null || reloadNotice.contents === null || input.relativePath === null)
-        return;
-      setSaveResolution({
-        id: (saveResolution?.id ?? 0) + 1,
-        relativePath: input.relativePath,
-        contents: reloadNotice.contents,
-        revision: reloadNotice.revision,
-        action,
-      });
-      if (action === "discard") {
-        clearProjectFileQueryData(input.environmentId, input.cwd, input.relativePath);
-        setReloadNotice(null);
-        refreshViewer();
-      }
-    },
-    [
-      input.cwd,
-      input.environmentId,
-      input.relativePath,
-      refreshViewer,
-      reloadNotice,
-      saveResolution?.id,
-      publicationBlocked,
-    ],
-  );
+  const resolveReloadNotice = (action: "discard" | "retry") => {
+    if (publicationBlocked) return;
+    if (reloadNotice === null || reloadNotice.contents === null || input.relativePath === null)
+      return;
+    setSaveResolution({
+      id: (saveResolution?.id ?? 0) + 1,
+      relativePath: input.relativePath,
+      contents: reloadNotice.contents,
+      revision: reloadNotice.revision,
+      action,
+    });
+    if (action === "discard") {
+      clearProjectFileQueryData(input.environmentId, input.cwd, input.relativePath);
+      setReloadNotice(null);
+      refreshViewer();
+    }
+  };
 
-  const cancelReloadNotice = useCallback(() => {
+  const cancelReloadNotice = useStableCallback(() => {
     setReloadNotice((current) => {
       if (current?.kind === "confirm-overwrite") {
         return { ...current, kind: "external-change" };
       }
       return null;
     });
-  }, []);
+  });
 
-  const requestOverwrite = useCallback(() => {
+  const requestOverwrite = useStableCallback(() => {
     setReloadNotice((current) =>
       current?.kind === "external-change" && current.contents !== null
         ? { ...current, kind: "confirm-overwrite" }
         : current,
     );
-  }, []);
+  });
 
   return {
     automaticRefreshUnavailable: fileChanges.unavailable,

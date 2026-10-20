@@ -6,11 +6,59 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2ProviderTurn,
+  OrchestrationV2TurnItem,
   OrchestrationV2ThreadProjection,
+  RunId,
 } from "@t3tools/contracts";
+import { latestProviderTurnForAttempt } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+
+export interface CurrentRunStopRecords {
+  readonly runs: ReadonlyArray<
+    Pick<OrchestrationV2Run, "id" | "activeAttemptId" | "rootNodeId" | "providerThreadId">
+  >;
+  readonly attempts: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "id" | "runId" | "rootNodeId" | "providerTurnId">
+  >;
+  readonly providerTurns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "nodeId" | "ordinal">
+  >;
+  readonly turnItems: ReadonlyArray<
+    Pick<
+      OrchestrationV2TurnItem,
+      "type" | "runId" | "nodeId" | "providerThreadId" | "providerTurnId"
+    >
+  >;
+}
+
+/** Historical Stop records must not fence a different attempt or native turn. */
+export function hasCurrentRunStop(projection: CurrentRunStopRecords, runId: RunId): boolean {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  const attempt = projection.attempts.find(
+    (candidate) =>
+      candidate.id === run?.activeAttemptId &&
+      candidate.runId === runId &&
+      candidate.rootNodeId === run?.rootNodeId,
+  );
+  if (run === undefined || attempt === undefined) return false;
+  const turnId =
+    attempt.providerTurnId ??
+    latestProviderTurnForAttempt(
+      projection.providerTurns.filter((turn) => turn.nodeId === attempt.rootNodeId),
+      attempt.id,
+    )?.id;
+  return projection.turnItems.some(
+    (item) =>
+      item.type === "run_interrupt_request" &&
+      item.runId === runId &&
+      item.nodeId === attempt.rootNodeId &&
+      (item.providerThreadId === null || item.providerThreadId === run.providerThreadId) &&
+      (item.providerTurnId === null || item.providerTurnId === turnId),
+  );
+}
 
 /** A failed attempt is retried as a fresh pending attempt; any other attempt starts as is. */
 export function queuedRunStartAttempt(input: {

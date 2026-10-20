@@ -78,6 +78,9 @@ export const RPC_REQUIRED_SCOPES = {
 
   [WS_METHODS.serverStartProviderConnection]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderConnection]: AuthProvidersManageScope,
+  // SCIENT-FORK:START — claiming a sign-in page needs the scope that starts the sign-in.
+  [WS_METHODS.serverClaimProviderSignInPage]: AuthProvidersManageScope,
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: AuthProvidersManageScope,
   [WS_METHODS.serverDisconnectProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
@@ -342,11 +345,22 @@ const requiredScopesForRpcCall = (
   return [requiredScopeForRpcMethod(method)];
 };
 
-export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+/**
+ * `onAuthorized` runs once after an authorized request succeeds; for a stream
+ * RPC, that is when the stream completes. Every RPC passes through here, so it
+ * is the one place to observe requests without wrapping each handler.
+ */
+export const layer = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));
+    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+    return onAuthorized === undefined
+      ? effect
+      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

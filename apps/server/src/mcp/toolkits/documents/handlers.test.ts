@@ -52,6 +52,7 @@ import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientPdfForInvocation } from "./handlers.ts";
+import { layerKnownWorkspacesAllowAll } from "../../../scient/workspace/knownWorkspaces.testkit.ts";
 
 const fixtures: string[] = [];
 const now = "2026-08-29T08:00:00.000Z";
@@ -79,6 +80,7 @@ const configLayer = Layer.unwrap(
 const assetLayer = Layer.mergeAll(
   configLayer,
   WorkspaceFileSystem.layer.pipe(
+    Layer.provide(layerKnownWorkspacesAllowAll),
     Layer.provide(configLayer),
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),

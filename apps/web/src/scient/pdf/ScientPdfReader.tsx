@@ -7,7 +7,17 @@ import type {
 import { LegendList } from "@legendapp/list/react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Download, FileText, ListTree, LoaderCircle, RotateCw, FolderSearch } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 
 import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
@@ -113,16 +123,16 @@ export function ScientPdfReader(props: {
   // Only the candidate request changes on retry; the painted reader stays mounted.
   const [loadAttempt, setLoadAttempt] = useState(0);
   const refreshAsset = asset.refresh;
-  const retryLoad = useCallback(() => {
+  const retryLoad = () => {
     refreshAsset();
     setLoadAttempt((attempt) => attempt + 1);
-  }, [refreshAsset]);
+  };
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
     previousRefreshKey.current = props.refreshKey;
-    asset.refresh();
-  }, [asset.refresh, props.refreshKey]);
+    refreshAsset();
+  }, [refreshAsset, props.refreshKey]);
   const authorizationPending = asset._tag === "Loading" || asset.waiting === true;
   const candidateReady = asset._tag === "Success" && !authorizationPending;
   if (asset._tag === "Failure" && displayed === null) {
@@ -206,8 +216,12 @@ function LoadedScientPdfReader(props: {
   const requestedRevisionId =
     props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  // Each document gets a fresh selection keeper on the same container.
+  const installRetainedSelection = useEffectEvent((..._changes: readonly unknown[]) =>
+    container ? installPdfRetainedSelection(container) : undefined,
+  );
   useEffect(
-    () => (container ? installPdfRetainedSelection(container) : undefined),
+    () => installRetainedSelection(container, props.documentKey),
     [container, props.documentKey],
   );
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
@@ -235,17 +249,6 @@ function LoadedScientPdfReader(props: {
       .map((keys) => labelKeys(keys))
       .join(" / ");
   const keyboardAction = useRef<(command: string) => boolean>(() => false);
-  keyboardAction.current = (command) => {
-    if (command === "pdf.find") {
-      setSearchOpen(true);
-      setSearchFocus((request) => request + 1);
-    } else if (state.phase !== "ready") return false;
-    else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
-    else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
-    else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
-    else return false;
-    return true;
-  };
   useEffect(() => {
     const root = rootRef.current;
     return root
@@ -272,6 +275,20 @@ function LoadedScientPdfReader(props: {
     viewerElement,
   });
   const { state } = reader;
+  const handleKeyboardAction = (command: string) => {
+    if (command === "pdf.find") {
+      setSearchOpen(true);
+      setSearchFocus((request) => request + 1);
+    } else if (state.phase !== "ready") return false;
+    else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
+    else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
+    else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
+    else return false;
+    return true;
+  };
+  useLayoutEffect(() => {
+    keyboardAction.current = handleKeyboardAction;
+  });
   const presentedSource = usePresentedPdfSourceBundle({
     documentKey: props.documentKey,
     source: props.source,
@@ -284,61 +301,41 @@ function LoadedScientPdfReader(props: {
     reader.presentationCurrent &&
     reader.presentation?.revisionId === requestedRevisionId &&
     reader.presentation.sourceUrl === props.sourceAsset.url;
-  const thumbnailPages = useMemo(
-    () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
-    [state.pageCount],
-  );
+  const thumbnailPages = Array.from({ length: state.pageCount }, (_, index) => index + 1);
 
-  const setSidebar = useCallback(
-    (next: PdfSidebarMode) => {
-      setSidebarState(next);
-      pdfReaderSessionStore.updateSidebar(props.documentKey, next);
-    },
-    [props.documentKey],
-  );
+  const setSidebar = (next: PdfSidebarMode) => {
+    setSidebarState(next);
+    pdfReaderSessionStore.updateSidebar(props.documentKey, next);
+  };
 
   const onSyncPageChange = props.syncNavigation?.onPageChange;
   useEffect(() => {
     if (state.phase === "ready") onSyncPageChange?.(state.page);
   }, [onSyncPageChange, state.page, state.phase]);
+  const { prepareSearch, goToSyncPoint } = reader;
   useEffect(() => {
     if (!searchOpen) return;
-    reader.prepareSearch();
-  }, [reader.prepareSearch, searchOpen]);
+    prepareSearch();
+  }, [prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
     if (target === null || target === undefined || !currentPresentation) return;
-    reader.goToSyncPoint(target);
-  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, currentPresentation]);
+    goToSyncPoint(target);
+  }, [props.syncNavigation?.forwardTarget, goToSyncPoint, currentPresentation]);
 
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     setSearchOpen(false);
     setSearchQuery("");
     reader.closeSearch();
-  }, [reader.closeSearch]);
+  };
 
-  const saveCopy = useCallback(async () => {
-    if (saveCopyPendingRef.current || presentedSource === null) return;
-    const bundle = presentedSource;
-    saveCopyPendingRef.current = true;
-    setSavingCopy(true);
-    try {
-      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
-        props.actions.saveCopy(bundle.source, bundle.resolved),
-      );
-      const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) bundle.resolved.refresh();
-    } catch {
-      toastManager.add({
-        type: "error",
-        title: "The PDF could not be saved",
-        description: "Try again or choose another location.",
-      });
-    } finally {
-      saveCopyPendingRef.current = false;
-      setSavingCopy(false);
-    }
-  }, [presentedSource, props.actions]);
+  const saveCopy = () =>
+    createReaderSaveCopy({
+      presentedSource,
+      actions: props.actions,
+      saveCopyPendingRef,
+      setSavingCopy,
+    })();
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.key !== "Escape") return;
@@ -583,4 +580,39 @@ function LoadedScientPdfReader(props: {
       </div>
     </div>
   );
+}
+
+function createReaderSaveCopy({
+  presentedSource,
+  actions,
+  saveCopyPendingRef,
+  setSavingCopy,
+}: {
+  presentedSource: ReturnType<typeof usePresentedPdfSourceBundle>;
+  actions: PdfSourceActions;
+  saveCopyPendingRef: RefObject<boolean>;
+  setSavingCopy: Dispatch<SetStateAction<boolean>>;
+}) {
+  return async () => {
+    if (saveCopyPendingRef.current || presentedSource === null) return;
+    const bundle = presentedSource;
+    saveCopyPendingRef.current = true;
+    setSavingCopy(true);
+    try {
+      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
+        actions.saveCopy(bundle.source, bundle.resolved),
+      );
+      const presentation = announcePdfSaveCopyResult(result);
+      if (presentation.refreshSource) bundle.resolved.refresh();
+    } catch {
+      toastManager.add({
+        type: "error",
+        title: "The PDF could not be saved",
+        description: "Try again or choose another location.",
+      });
+    } finally {
+      saveCopyPendingRef.current = false;
+      setSavingCopy(false);
+    }
+  };
 }

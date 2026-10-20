@@ -33,7 +33,6 @@ export const checkedFileIdentity = (
 ): CheckedFile => ({
   canonicalPath,
   size: Number(info.size),
-  // Compared with Node's numeric handle stats below.
   dev: Number(info.dev),
   ino: Option.isSome(info.ino) ? Number(info.ino.value) : null,
   mtimeMs: Option.isSome(info.mtime) ? info.mtime.value.getTime() : null,
@@ -95,16 +94,17 @@ export const readVerifiedWorkspaceFile = (
           if (openedPath.endsWith(" (deleted)") || !isInsideNative(canonicalRoot, openedPath))
             return { _tag: "unreadable" };
         }
-        const before = await handle.stat();
+        // Match Effect's bigint stat: numeric mtimeMs can round into the next millisecond.
+        const before = await handle.stat({ bigint: true });
         if (
           !before.isFile() ||
-          before.dev !== located.dev ||
-          (located.ino !== null && before.ino !== located.ino) ||
-          before.size !== located.size ||
-          (located.mtimeMs !== null && Math.trunc(before.mtimeMs) !== located.mtimeMs)
+          Number(before.dev) !== located.dev ||
+          (located.ino !== null && Number(before.ino) !== located.ino) ||
+          Number(before.size) !== located.size ||
+          (located.mtimeMs !== null && Number(before.mtimeMs) !== located.mtimeMs)
         )
           return { _tag: "unreadable" };
-        const buffer = Buffer.allocUnsafe(Math.min(before.size, maxBytes) + 1);
+        const buffer = Buffer.allocUnsafe(Math.min(Number(before.size), maxBytes) + 1);
         let length = 0;
         while (length < buffer.byteLength) {
           const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);
@@ -112,8 +112,8 @@ export const readVerifiedWorkspaceFile = (
           length += bytesRead;
         }
         if (length > maxBytes) return { _tag: "too-large" };
-        const after = await handle.stat();
-        const current = await NodeFS.promises.lstat(located.canonicalPath);
+        const after = await handle.stat({ bigint: true });
+        const current = await NodeFS.promises.lstat(located.canonicalPath, { bigint: true });
         if (
           !current.isFile() ||
           current.dev !== before.dev ||
@@ -121,12 +121,12 @@ export const readVerifiedWorkspaceFile = (
           after.dev !== before.dev ||
           after.ino !== before.ino ||
           after.size !== before.size ||
-          after.mtimeMs !== before.mtimeMs ||
-          after.ctimeMs !== before.ctimeMs ||
+          after.mtimeNs !== before.mtimeNs ||
+          after.ctimeNs !== before.ctimeNs ||
           current.size !== before.size ||
-          current.mtimeMs !== before.mtimeMs ||
-          current.ctimeMs !== before.ctimeMs ||
-          length !== before.size
+          current.mtimeNs !== before.mtimeNs ||
+          current.ctimeNs !== before.ctimeNs ||
+          BigInt(length) !== before.size
         )
           return { _tag: "unreadable" };
         return { _tag: "bytes", bytes: new Uint8Array(buffer.subarray(0, length)) };
@@ -155,16 +155,16 @@ export const readCappedFile = (checked: CheckedFile, maxBytes: number) =>
         NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
       );
       try {
-        const info = await handle.stat();
+        const info = await handle.stat({ bigint: true });
         if (
           !info.isFile() ||
-          info.dev !== checked.dev ||
-          (checked.ino !== null && info.ino !== checked.ino) ||
-          info.size !== checked.size ||
-          (checked.mtimeMs !== null && Math.trunc(info.mtimeMs) !== checked.mtimeMs)
+          Number(info.dev) !== checked.dev ||
+          (checked.ino !== null && Number(info.ino) !== checked.ino) ||
+          Number(info.size) !== checked.size ||
+          (checked.mtimeMs !== null && Number(info.mtimeMs) !== checked.mtimeMs)
         )
           return { _tag: "unreadable" };
-        const buffer = Buffer.allocUnsafe(Math.min(info.size, maxBytes) + 1);
+        const buffer = Buffer.allocUnsafe(Math.min(Number(info.size), maxBytes) + 1);
         let length = 0;
         while (length < buffer.byteLength) {
           const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);

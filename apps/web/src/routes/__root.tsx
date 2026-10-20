@@ -13,7 +13,7 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -23,6 +23,9 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+// SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
+import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
+// SCIENT-FORK:END
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
@@ -161,19 +164,11 @@ function RootRouteView() {
     authGateState.status === "hosted-static",
   );
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      syncBrowserChromeTheme();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
-
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -185,6 +180,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         {hostedPromptLinkLanding}
       </>
     );
@@ -195,6 +191,7 @@ function RootRouteView() {
       <ToastProvider>
         <AnchoredToastProvider>
           <DocumentTitleSync />
+          <BrowserChromeThemeSync key={pathname} />
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
@@ -203,6 +200,9 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost suspended />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -217,6 +217,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -236,6 +237,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
@@ -257,6 +259,9 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           <ProjectCloneToastCoordinator />
@@ -359,6 +364,19 @@ function FontAppearanceSync() {
   return null;
 }
 
+/** Keyed by pathname: each route paints its own surface, which the browser chrome samples. */
+function BrowserChromeThemeSync() {
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      syncBrowserChromeTheme();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return null;
+}
+
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
@@ -418,7 +436,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const reconnecting = isTransientSessionError(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
-  const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
+  const report = errorReport(error, pathname);
 
   useEffect(() => {
     if (!isTransientSessionError(error)) return;

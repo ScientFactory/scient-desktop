@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogHeader,
@@ -34,10 +34,7 @@ export function WritingShortcutsDialog({
 }) {
   const primaryId = usePrimaryEnvironmentId();
   const environment = useEnvironment(environmentId ?? primaryId);
-  const appBindings = useMemo(
-    () => mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []),
-    [environment?.serverConfig?.keybindings],
-  );
+  const appBindings = mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []);
   const [scope, setScope] = useState<KeyboardScope | "writing">(initialScope);
   const [query, setQuery] = useState("");
   return (

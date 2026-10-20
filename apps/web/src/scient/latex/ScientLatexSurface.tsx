@@ -24,10 +24,9 @@ import {
   lazy,
   memo,
   Suspense,
-  useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -35,6 +34,7 @@ import {
 } from "react";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { MarkdownCiteHandler } from "~/scient/markdownEditor/markdownCitation";
 import { LatexVisualSourcePane, type LatexVisualSourceReveal } from "./LatexVisualSourcePane";
 import {
@@ -441,8 +441,8 @@ function LatexReadOnlyHalf(props: {
   readonly onPostRender: FilePostRender;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const baseline = useCallback(() => props.contents, [props.contents]);
-  const ready = useCallback(() => true, []);
+  const baseline = () => props.contents;
+  const ready = () => true;
   return (
     <div ref={setViewport} className="flex min-h-0 flex-1">
       {props.threadRef ? (
@@ -551,6 +551,34 @@ interface SourceSyncPosition {
   readonly column: number;
 }
 
+/** Outside the component: the React Compiler does not compile `finally`. */
+async function settleAfter(task: () => Promise<void>, settle: () => void): Promise<void> {
+  try {
+    await task();
+  } finally {
+    settle();
+  }
+}
+
+interface LatexSourceBinding {
+  readonly documentId: string | null;
+  readonly editVersion: number;
+  readonly snapshot: LatexEditorSourceSnapshot;
+}
+
+/**
+ * A new snapshot for each document version. Identical bytes reached through
+ * another edit are a new version, so the version is an input here: the
+ * compiler caches a call by its arguments.
+ */
+function bindLatexSource(
+  documentId: string | null,
+  editVersion: number,
+  source: string,
+): LatexSourceBinding {
+  return { documentId, editVersion, snapshot: createLatexEditorSourceSnapshot(source) };
+}
+
 export const ScientLatexSurface = memo(function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -596,20 +624,17 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   });
   const resolvedRootRelativePath =
     resolution.result?._tag === "resolved" ? resolution.result.rootRelativePath : null;
-  const target = useMemo<LatexBuildTarget | null>(
-    () =>
-      resolvedRootRelativePath === null
-        ? null
-        : {
-            environmentId: props.environmentId,
-            cwd: props.cwd,
-            relativePath: resolvedRootRelativePath,
-          },
-    [props.cwd, props.environmentId, resolvedRootRelativePath],
-  );
+  const target: LatexBuildTarget | null =
+    resolvedRootRelativePath === null
+      ? null
+      : {
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: resolvedRootRelativePath,
+        };
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
-  const status = useMemo(() => latexStatusStripModel(build, props.cwd), [build, props.cwd]);
+  const status = latexStatusStripModel(build, props.cwd);
   const [preferredMode, setPreferredMode] = useState(
     () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
   );
@@ -665,34 +690,35 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
   const [hostedReaders, setHostedReaders] = useState(0);
   const switchKeepsFocus = useRef<string | null>(null);
-  const headerRow = useRef<HTMLDivElement>(null);
-  const onReaderHosted = useCallback(
-    (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
-    [],
-  );
+  const [headerRow, setHeaderRow] = useState<HTMLDivElement | null>(null);
+  const onReaderHosted = (hosted: boolean) =>
+    setHostedReaders((count) => count + (hosted ? 1 : -1));
   const { persistence } = props;
   const workingSnapshot = useSyncExternalStore(
     persistence?.subscribe ?? noSubscription,
     () => persistence?.getSnapshot() ?? null,
   );
-  const sourceBinding = useRef<{
-    documentId: string | null;
-    editVersion: number;
-    snapshot: LatexEditorSourceSnapshot;
-  } | null>(null);
+  // The snapshot Visual edits against: kept while the session's version and
+  // source still match it, so an accepted edit keeps the snapshot it returned.
+  const [renderedBinding, setRenderedBinding] = useState<LatexSourceBinding | null>(null);
   const workingSource = workingSnapshot?.draftSource ?? props.contents;
+  let currentBinding = renderedBinding;
   if (
-    sourceBinding.current === null ||
-    sourceBinding.current.documentId !== documentId ||
-    sourceBinding.current.editVersion !== (workingSnapshot?.editVersion ?? -1) ||
-    sourceBinding.current.snapshot.source !== workingSource
-  )
-    sourceBinding.current = {
-      documentId,
-      editVersion: workingSnapshot?.editVersion ?? -1,
-      snapshot: createLatexEditorSourceSnapshot(workingSource),
-    };
-  const editorSourceSnapshot = sourceBinding.current.snapshot;
+    currentBinding === null ||
+    currentBinding.documentId !== documentId ||
+    currentBinding.editVersion !== (workingSnapshot?.editVersion ?? -1) ||
+    currentBinding.snapshot.source !== workingSource
+  ) {
+    currentBinding = bindLatexSource(documentId, workingSnapshot?.editVersion ?? -1, workingSource);
+    setRenderedBinding(currentBinding);
+  }
+  // Edits are validated against the latest binding, including one an accepted
+  // edit installed before the next render.
+  const sourceBinding = useRef(currentBinding);
+  useLayoutEffect(() => {
+    sourceBinding.current = currentBinding;
+  }, [currentBinding]);
+  const editorSourceSnapshot = currentBinding.snapshot;
   const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
   const sourcePending = useSyncExternalStore(
@@ -723,29 +749,67 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const syncRequestRef = useRef(0);
   const pdfPageRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const request = props.latexPresentationRequest;
-    if (request === null) return;
-    finishVisualEditingRef.current?.();
-    setPreferredMode(request.mode);
-    if (request.mode === "visual") {
-      setSplitPreview("visual");
-      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, "visual", Schema.String);
-    }
-    setHandledRevealRequestId(props.revealRequestId);
-    props.onLatexPresentationRequestHandled(props.relativePath, request);
-  }, [
+  const presentationInputs = [
     props.latexPresentationRequest,
     props.onLatexPresentationRequestHandled,
     props.relativePath,
     props.revealRequestId,
-  ]);
+  ] as const;
+  const [previousPresentationInputs, setPreviousPresentationInputs] = useState<
+    readonly unknown[] | null
+  >(null);
+  if (
+    previousPresentationInputs === null ||
+    presentationInputs.some((value, index) => value !== previousPresentationInputs[index])
+  ) {
+    setPreviousPresentationInputs(presentationInputs);
+    const request = props.latexPresentationRequest;
+    if (request !== null) {
+      setPreferredMode(request.mode);
+      if (request.mode === "visual") setSplitPreview("visual");
+      setHandledRevealRequestId(props.revealRequestId);
+    }
+  }
+  const acknowledgePresentation = props.onLatexPresentationRequestHandled;
+  const acknowledgePresentationRequest = useEffectEvent(
+    (
+      _revealRequestId: number,
+      _request: typeof props.latexPresentationRequest,
+      _acknowledge: typeof acknowledgePresentation,
+      _path: string,
+    ) => {
+      const request = props.latexPresentationRequest;
+      if (request === null) return;
+      // Visual stays mounted while hidden, so its pending input still settles.
+      finishVisualEditingRef.current?.();
+      if (request.mode === "visual")
+        persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, "visual", Schema.String);
+      acknowledgePresentation(props.relativePath, request);
+    },
+  );
+  useEffect(
+    () =>
+      acknowledgePresentationRequest(
+        props.revealRequestId,
+        props.latexPresentationRequest,
+        acknowledgePresentation,
+        props.relativePath,
+      ),
+    [
+      props.latexPresentationRequest,
+      acknowledgePresentation,
+      props.relativePath,
+      props.revealRequestId,
+    ],
+  );
 
   useEffect(() => (target === null ? undefined : startWatchingLatexBuild(target)), [target]);
+  const previousBindingTarget = useRef(target);
   useEffect(() => {
-    lastBindingChangeRef.current = null;
-  }, [target]);
-  useEffect(() => {
+    if (previousBindingTarget.current !== target) {
+      previousBindingTarget.current = target;
+      lastBindingChangeRef.current = null;
+    }
     if (bindingChange === null || lastBindingChangeRef.current === bindingChange) return;
     lastBindingChangeRef.current = bindingChange;
     if (target !== null) notifyLatexBindingChange(target);
@@ -757,14 +821,17 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   );
   const visualSourceRequest = useRef(0);
   const [visualNavigation, setVisualNavigation] = useState<LatexSourceNavigation | null>(null);
-  const navigateVisual = useCallback((path: string, source: string, line: number) => {
+  const navigateVisual = (path: string, source: string, line: number) => {
     visualSourceRequest.current += 1;
     setVisualNavigation({ path, source, line, requestId: visualSourceRequest.current });
-  }, []);
-  useEffect(() => {
+  };
+  const navigationScope = `${props.environmentId}\0${props.cwd}\0${props.relativePath}\0${props.revealRequestId}`;
+  const [previousNavigationScope, setPreviousNavigationScope] = useState(navigationScope);
+  if (previousNavigationScope !== navigationScope) {
+    setPreviousNavigationScope(navigationScope);
     setVisualSourceReveal(null);
     setVisualNavigation(null);
-  }, [props.environmentId, props.cwd, props.relativePath, props.revealRequestId]);
+  }
   const citationSourceReveal =
     props.citationReveal?.latex && !props.citationReveal.sourceSelection
       ? {
@@ -788,74 +855,73 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   }, [persistence, target]);
   // Visual and Source edit one working source, the session's. An edit made on
   // any other text is refused.
-  const handleVisualEdit = useCallback(
-    (request: LatexVisualEditRequest): LatexVisualEditOutcome => {
-      const refuse = (reason: string): LatexVisualEditOutcome => ({ accepted: false, reason });
-      if (persistence === null) return refuse("The source session is unavailable.");
-      const bound = sourceBinding.current;
-      const current = persistence.getSnapshot();
-      if (bound === null) return refuse("The source snapshot is unavailable.");
-      if (
-        current.editingBlocked ||
-        current.error !== null ||
-        current.conflict !== null ||
-        sourceRecovery.blocked
-      )
-        return refuse("The source session is waiting for recovery or another operation.");
-      if (
-        request.snapshot.id !== bound.snapshot.id ||
-        bound.documentId !== persistence.documentId ||
-        bound.editVersion !== current.editVersion ||
-        bound.snapshot.source !== current.draftSource
-      )
-        return refuse("The source changed while this edit was being prepared.");
-      const path = persistence.target.relativePath;
-      const file = {
-        contents: current.draftSource,
-        revision: current.baselineRevision,
-        truncated: false,
-        owner: { documentId: persistence.documentId, editVersion: bound.editVersion },
-      };
-      const plan = planVisualProjectEdit(
-        {
-          source: bound.snapshot.source,
-          spans: [{ from: 0, to: file.contents.length, path, sourceFrom: 0, occurrence: 1 }],
-          paths: [path],
-          missing: [],
-          errors: [],
-        },
-        request.edit,
-        new Map([[path, file]]),
-        path,
-      );
-      if (plan.error) return refuse(plan.error);
-      const edit = plan.edits.get(path);
-      if (!edit)
-        return {
-          accepted: true,
-          snapshot: bound.snapshot,
-          inverseEdit: { source: bound.snapshot.source, patches: [] },
-        };
-      const outcome = persistence.applyEdit(edit);
-      if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
-      const accepted = persistence.getSnapshot();
-      const nextSnapshot = createLatexEditorSourceSnapshot(accepted.draftSource);
-      sourceBinding.current = {
-        documentId: persistence.documentId,
-        editVersion: accepted.editVersion,
-        snapshot: nextSnapshot,
-      };
+  const handleVisualEdit = (request: LatexVisualEditRequest): LatexVisualEditOutcome => {
+    const refuse = (reason: string): LatexVisualEditOutcome => ({ accepted: false, reason });
+    if (persistence === null) return refuse("The source session is unavailable.");
+    const bound = sourceBinding.current;
+    const current = persistence.getSnapshot();
+    if (bound === null) return refuse("The source snapshot is unavailable.");
+    if (
+      current.editingBlocked ||
+      current.error !== null ||
+      current.conflict !== null ||
+      sourceRecovery.blocked
+    )
+      return refuse("The source session is waiting for recovery or another operation.");
+    if (
+      request.snapshot.id !== bound.snapshot.id ||
+      bound.documentId !== persistence.documentId ||
+      bound.editVersion !== current.editVersion ||
+      bound.snapshot.source !== current.draftSource
+    )
+      return refuse("The source changed while this edit was being prepared.");
+    const path = persistence.target.relativePath;
+    const file = {
+      contents: current.draftSource,
+      revision: current.baselineRevision,
+      truncated: false,
+      owner: { documentId: persistence.documentId, editVersion: bound.editVersion },
+    };
+    const plan = planVisualProjectEdit(
+      {
+        source: bound.snapshot.source,
+        spans: [{ from: 0, to: file.contents.length, path, sourceFrom: 0, occurrence: 1 }],
+        paths: [path],
+        missing: [],
+        errors: [],
+      },
+      request.edit,
+      new Map([[path, file]]),
+      path,
+    );
+    if (plan.error) return refuse(plan.error);
+    const edit = plan.edits.get(path);
+    if (!edit)
       return {
         accepted: true,
-        snapshot: nextSnapshot,
-        inverseEdit: {
-          source: accepted.draftSource,
-          patches: invertLatexSourcePatches(file.contents, edit.patches),
-        },
+        snapshot: bound.snapshot,
+        inverseEdit: { source: bound.snapshot.source, patches: [] },
       };
-    },
-    [persistence, sourceRecovery.blocked],
-  );
+    const outcome = persistence.applyEdit(edit);
+    if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
+    const accepted = persistence.getSnapshot();
+    const nextSnapshot = createLatexEditorSourceSnapshot(accepted.draftSource);
+    const nextBinding = {
+      documentId: persistence.documentId,
+      editVersion: accepted.editVersion,
+      snapshot: nextSnapshot,
+    };
+    sourceBinding.current = nextBinding;
+    setRenderedBinding(nextBinding);
+    return {
+      accepted: true,
+      snapshot: nextSnapshot,
+      inverseEdit: {
+        source: accepted.draftSource,
+        patches: invertLatexSourcePatches(file.contents, edit.patches),
+      },
+    };
+  };
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
   // its source until the reader picks a layout again. The file panel's
@@ -869,11 +935,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // transaction boundary so its layout effect can checkpoint the live
   // textarea before React removes the interaction layer. This runs before
   // paint, so the intermediate render is not visible to the user.
+  // The editor is an external system: finish it, then release the layout.
+  const finishVisualForReveal = useStableCallback((requestId: number) => {
+    finishVisualEditingRef.current?.();
+    setFinishedVisualRevealRequestId(requestId);
+  });
   useLayoutEffect(() => {
     if (!visualRevealNeedsFinish) return;
-    finishVisualEditingRef.current?.();
-    setFinishedVisualRevealRequestId(revealRequestId);
-  }, [revealRequestId, visualRevealNeedsFinish]);
+    finishVisualForReveal(revealRequestId);
+  }, [finishVisualForReveal, revealRequestId, visualRevealNeedsFinish]);
   const revealPending = revealRequested && !visualRevealNeedsFinish;
   const mode =
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
@@ -885,30 +955,27 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     sourceIdentity !== null &&
     sourceIdentity.revision === compiledRevision &&
     build.snapshot?.state === "succeeded";
-  const selectMode = useCallback(
-    (next: ScientLatexPreviewMode) => {
-      finishVisualEditingRef.current?.();
-      setPreferredMode(next);
-      setHandledRevealRequestId(revealRequestId);
-      persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
-      if (next === "pdf" || next === "visual") {
-        setSplitPreview(next);
-        persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
-      }
-    },
-    [revealRequestId],
-  );
+  const selectMode = (next: ScientLatexPreviewMode) => {
+    finishVisualEditingRef.current?.();
+    setPreferredMode(next);
+    setHandledRevealRequestId(revealRequestId);
+    persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+    if (next === "pdf" || next === "visual") {
+      setSplitPreview(next);
+      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+    }
+  };
 
-  const selectSplitPreview = useCallback((next: ScientLatexSplitPreview) => {
+  const selectSplitPreview = (next: ScientLatexSplitPreview) => {
     finishVisualEditingRef.current?.();
     setSplitPreview(next);
     persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
-  }, []);
+  };
 
-  const commitSplitFraction = useCallback((fraction: number) => {
+  const commitSplitFraction = (fraction: number) => {
     setSplitFraction(fraction);
     persist(LATEX_SPLIT_RATIO_STORAGE_KEY, fraction, Schema.Number);
-  }, []);
+  };
   const { containerRef, primaryPaneRef, separatorHandlers } = useScientSplit({
     active: mode === "split",
     fraction: splitFraction,
@@ -919,7 +986,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   });
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
-  const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
+  const diagnosticRows = latexDiagnosticRows(diagnostics);
   const descriptor = build.snapshot?.descriptor ?? null;
   const descriptorRevision = descriptor?._tag === "generated-pdf" ? descriptor.revisionId : null;
   // Visual's page markers: where the pages of the last build begin, by file
@@ -953,17 +1020,20 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       .catch(() => {});
     return () => request.abort();
   }, [pdfMatchesBuffer, descriptor, buildRoot, props.cwd, props.environmentId]);
-  useEffect(() => {
-    syncRequestRef.current += 1;
-    pdfPageRef.current = null;
+  const [previousDescriptorRevision, setPreviousDescriptorRevision] = useState(descriptorRevision);
+  if (previousDescriptorRevision !== descriptorRevision) {
+    setPreviousDescriptorRevision(descriptorRevision);
     setForwardSyncTarget(null);
     setSyncNotice(null);
-  }, [descriptorRevision]);
-
-  useLayoutEffect(() => {
+  }
+  const resetSyncForRevision = useEffectEvent((_revision: typeof descriptorRevision) => {
     syncRequestRef.current += 1;
-    setForwardSyncTarget(null);
-  }, [
+    pdfPageRef.current = null;
+  });
+  useEffect(() => resetSyncForRevision(descriptorRevision), [descriptorRevision]);
+
+  // A forward answer belongs to one source, build and PDF.
+  const forwardSyncInputs = [
     props.environmentId,
     props.cwd,
     props.relativePath,
@@ -976,7 +1046,47 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     build.snapshot?.rootRelativePath,
     build.snapshot?.pendingRerun,
     status.stale,
-  ]);
+  ] as const;
+  const [previousForwardSyncInputs, setPreviousForwardSyncInputs] =
+    useState<readonly unknown[]>(forwardSyncInputs);
+  if (forwardSyncInputs.some((value, index) => value !== previousForwardSyncInputs[index])) {
+    setPreviousForwardSyncInputs(forwardSyncInputs);
+    setForwardSyncTarget(null);
+  }
+  const retireForwardSync = useEffectEvent((..._changes: readonly unknown[]) => {
+    syncRequestRef.current += 1;
+  });
+  useLayoutEffect(
+    () =>
+      retireForwardSync(
+        props.environmentId,
+        props.cwd,
+        props.relativePath,
+        props.contents,
+        props.revision,
+        sourceIdentity?.revision,
+        compiledRevision,
+        descriptor,
+        build.snapshot?.state,
+        build.snapshot?.rootRelativePath,
+        build.snapshot?.pendingRerun,
+        status.stale,
+      ),
+    [
+      props.environmentId,
+      props.cwd,
+      props.relativePath,
+      props.contents,
+      props.revision,
+      sourceIdentity?.revision,
+      compiledRevision,
+      descriptor,
+      build.snapshot?.state,
+      build.snapshot?.rootRelativePath,
+      build.snapshot?.pendingRerun,
+      status.stale,
+    ],
+  );
 
   // External refreshes and freshness hints invalidate answers even without a local edit.
   useEffect(() => {
@@ -990,227 +1100,203 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     });
   }, [persistence]);
 
-  const handlePdfPageChange = useCallback((page: number) => {
+  const handlePdfPageChange = (page: number) => {
     pdfPageRef.current = page;
-  }, []);
+  };
 
-  const handleForwardSync = useCallback(
-    (position: SourceSyncPosition) => {
-      const snapshot = build.snapshot;
-      if (
-        snapshot === null ||
-        descriptor === null ||
-        descriptor._tag !== "generated-pdf" ||
-        snapshot.state !== "succeeded" ||
-        descriptor.bindingStatus !== "current"
-      ) {
-        setSyncNotice({
-          label: "Build required",
-          message: "Source-to-PDF navigation is available after the current build succeeds.",
+  const handleForwardSync = (position: SourceSyncPosition) => {
+    const snapshot = build.snapshot;
+    if (
+      snapshot === null ||
+      descriptor === null ||
+      descriptor._tag !== "generated-pdf" ||
+      snapshot.state !== "succeeded" ||
+      descriptor.bindingStatus !== "current"
+    ) {
+      setSyncNotice({
+        label: "Build required",
+        message: "Source-to-PDF navigation is available after the current build succeeds.",
+      });
+      return;
+    }
+    const current = persistence?.getSnapshot();
+    if (current?.pending) {
+      setSyncNotice(UNSAVED_SYNC_NOTICE);
+      return;
+    }
+    if (
+      !pdfMatchesBuffer ||
+      sourceIdentity === null ||
+      status.stale ||
+      snapshot.pendingRerun ||
+      (current !== undefined &&
+        (current.baselineRevision !== compiledRevision ||
+          current.draftSource !== sourceIdentity.source ||
+          current.reading ||
+          current.currentMissing ||
+          current.error !== null ||
+          current.conflict !== null ||
+          current.editingBlocked))
+    ) {
+      setSyncNotice({
+        label: "Build required",
+        message: "This source revision has not been compiled into the displayed PDF.",
+      });
+      return;
+    }
+    const issued = syncRequestRef.current + 1;
+    syncRequestRef.current = issued;
+    setSyncNotice(null);
+    void requestLatexForwardSync(props.environmentId, {
+      workspaceRoot: props.cwd,
+      rootRelativePath: snapshot.rootRelativePath,
+      artifactId: descriptor.artifactId,
+      revisionId: descriptor.revisionId,
+      sourceRelativePath: props.relativePath,
+      sourceRevision: sourceIdentity.revision,
+      line: position.line,
+      column: position.column,
+      ...(pdfPageRef.current === null ? {} : { pageHint: pdfPageRef.current }),
+    })
+      .then((result) => {
+        if (syncRequestRef.current !== issued) return;
+        if (result._tag === "unavailable") {
+          setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
+          return;
+        }
+        setForwardSyncTarget({
+          requestId: issued,
+          page: result.page,
+          x: result.x,
+          y: result.y,
         });
-        return;
-      }
-      const current = persistence?.getSnapshot();
-      if (current?.pending) {
-        setSyncNotice(UNSAVED_SYNC_NOTICE);
-        return;
-      }
-      if (
-        !pdfMatchesBuffer ||
-        sourceIdentity === null ||
-        status.stale ||
-        snapshot.pendingRerun ||
-        (current !== undefined &&
-          (current.baselineRevision !== compiledRevision ||
-            current.draftSource !== sourceIdentity.source ||
-            current.reading ||
-            current.currentMissing ||
-            current.error !== null ||
-            current.conflict !== null ||
-            current.editingBlocked))
-      ) {
-        setSyncNotice({
-          label: "Build required",
-          message: "This source revision has not been compiled into the displayed PDF.",
-        });
-        return;
-      }
-      const issued = syncRequestRef.current + 1;
-      syncRequestRef.current = issued;
-      setSyncNotice(null);
-      void requestLatexForwardSync(props.environmentId, {
-        workspaceRoot: props.cwd,
-        rootRelativePath: snapshot.rootRelativePath,
-        artifactId: descriptor.artifactId,
-        revisionId: descriptor.revisionId,
-        sourceRelativePath: props.relativePath,
-        sourceRevision: sourceIdentity.revision,
-        line: position.line,
-        column: position.column,
-        ...(pdfPageRef.current === null ? {} : { pageHint: pdfPageRef.current }),
       })
-        .then((result) => {
-          if (syncRequestRef.current !== issued) return;
-          if (result._tag === "unavailable") {
-            setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
-            return;
-          }
-          setForwardSyncTarget({
-            requestId: issued,
-            page: result.page,
-            x: result.x,
-            y: result.y,
-          });
-        })
-        .catch((error: unknown) => {
-          if (syncRequestRef.current !== issued) return;
-          setSyncNotice({
-            label: "Navigation failed",
-            message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
-          });
+      .catch((error: unknown) => {
+        if (syncRequestRef.current !== issued) return;
+        setSyncNotice({
+          label: "Navigation failed",
+          message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
         });
-    },
-    [
-      build.snapshot,
-      descriptor,
-      persistence,
-      props.cwd,
-      props.environmentId,
-      props.relativePath,
-      sourceIdentity,
-      compiledRevision,
-      pdfMatchesBuffer,
-      status.stale,
-    ],
-  );
+      });
+  };
 
   const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";
   const inverseSyncEnabledRef = useRef(inverseSyncEnabled);
   useLayoutEffect(() => {
     inverseSyncEnabledRef.current = inverseSyncEnabled;
   }, [inverseSyncEnabled]);
-  const handleInverseSync = useCallback(
-    (point: PdfInverseSyncPoint, selectedText?: string) => {
-      if (!inverseSyncEnabledRef.current) return;
-      const snapshot = build.snapshot;
-      if (
-        snapshot === null ||
-        descriptor === null ||
-        descriptor._tag !== "generated-pdf" ||
-        snapshot.state !== "succeeded" ||
-        descriptor.bindingStatus !== "current" ||
-        status.stale ||
-        snapshot.pendingRerun
-      ) {
-        setSyncNotice({
-          label: "Build required",
-          message: "PDF-to-source navigation is available after the current build succeeds.",
-        });
-        return;
-      }
-      const issued = syncRequestRef.current + 1;
-      syncRequestRef.current = issued;
-      setSyncNotice(null);
-      const targetSnapshots = new Map(
-        Object.keys(snapshot.visualSourceRevisions ?? {}).map(
-          (relativePath) =>
-            [
+  const handleInverseSync = (point: PdfInverseSyncPoint, selectedText?: string) => {
+    if (!inverseSyncEnabledRef.current) return;
+    const snapshot = build.snapshot;
+    if (
+      snapshot === null ||
+      descriptor === null ||
+      descriptor._tag !== "generated-pdf" ||
+      snapshot.state !== "succeeded" ||
+      descriptor.bindingStatus !== "current" ||
+      status.stale ||
+      snapshot.pendingRerun
+    ) {
+      setSyncNotice({
+        label: "Build required",
+        message: "PDF-to-source navigation is available after the current build succeeds.",
+      });
+      return;
+    }
+    const issued = syncRequestRef.current + 1;
+    syncRequestRef.current = issued;
+    setSyncNotice(null);
+    const targetSnapshots = new Map(
+      Object.keys(snapshot.visualSourceRevisions ?? {}).map(
+        (relativePath) =>
+          [
+            relativePath,
+            markdownPersistenceRegistry.getTargetSnapshot({
+              environmentId: props.environmentId,
+              cwd: props.cwd,
               relativePath,
-              markdownPersistenceRegistry.getTargetSnapshot({
-                environmentId: props.environmentId,
-                cwd: props.cwd,
-                relativePath,
-              }),
-            ] as const,
-        ),
-      );
-      void requestLatexInverseSync(props.environmentId, {
-        workspaceRoot: props.cwd,
-        rootRelativePath: snapshot.rootRelativePath,
-        artifactId: descriptor.artifactId,
-        revisionId: descriptor.revisionId,
-        page: point.page,
-        x: point.x,
-        y: point.y,
-      })
-        .then((result) => {
-          if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
-          if (result._tag === "unavailable") {
-            setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
-            return;
-          }
-          const target = markdownPersistenceRegistry.getTargetSnapshot({
-            environmentId: props.environmentId,
-            cwd: props.cwd,
-            relativePath: result.relativePath,
-          });
-          const targetInputPending = markdownPersistenceRegistry
-            .getSnapshot()
-            .some(
-              (entry) =>
-                entry.environmentId === props.environmentId &&
-                entry.cwd === props.cwd &&
-                entry.relativePath === result.relativePath &&
-                entry.pending,
-            );
-          if (
-            result.sourceRevision !== snapshot.visualSourceRevisions?.[result.relativePath] ||
-            targetInputPending ||
-            (target !== null &&
-              (target.pending ||
-                target.reading ||
-                target.currentMissing ||
-                target.error !== null ||
-                target.conflict !== null ||
-                target.editingBlocked ||
-                target.baselineRevision !== result.sourceRevision ||
-                target.draftSource !== target.baselineSource))
-          ) {
-            setSyncNotice({
-              label: "Build required",
-              message: "The matching source has changed since this PDF was compiled.",
-            });
-            return;
-          }
-          if (target !== targetSnapshots.get(result.relativePath)) return;
-          visualSourceRequest.current += 1;
-          setVisualSourceReveal({
-            path: result.relativePath,
-            line: result.line,
-            column: result.column,
-            ...(selectedText === undefined ? {} : { selectedText }),
-            rootRelativePath: snapshot.rootRelativePath,
-            requestId: visualSourceRequest.current,
-            sourceRevision: result.sourceRevision,
-          });
-        })
-        .catch((error: unknown) => {
-          if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
-          setSyncNotice({
-            label: "Navigation failed",
-            message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
-          });
+            }),
+          ] as const,
+      ),
+    );
+    void requestLatexInverseSync(props.environmentId, {
+      workspaceRoot: props.cwd,
+      rootRelativePath: snapshot.rootRelativePath,
+      artifactId: descriptor.artifactId,
+      revisionId: descriptor.revisionId,
+      page: point.page,
+      x: point.x,
+      y: point.y,
+    })
+      .then((result) => {
+        if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
+        if (result._tag === "unavailable") {
+          setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
+          return;
+        }
+        const target = markdownPersistenceRegistry.getTargetSnapshot({
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: result.relativePath,
         });
-    },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, status.stale],
-  );
-  const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
-    () =>
-      descriptor?._tag === "generated-pdf"
-        ? {
-            forwardTarget: forwardSyncTarget,
-            ...(inverseSyncEnabled ? { onInverseSearch: handleInverseSync } : {}),
-            onPageChange: handlePdfPageChange,
-          }
-        : undefined,
-    [
-      descriptor?._tag,
-      forwardSyncTarget,
-      handleInverseSync,
-      handlePdfPageChange,
-      inverseSyncEnabled,
-    ],
-  );
+        const targetInputPending = markdownPersistenceRegistry
+          .getSnapshot()
+          .some(
+            (entry) =>
+              entry.environmentId === props.environmentId &&
+              entry.cwd === props.cwd &&
+              entry.relativePath === result.relativePath &&
+              entry.pending,
+          );
+        if (
+          result.sourceRevision !== snapshot.visualSourceRevisions?.[result.relativePath] ||
+          targetInputPending ||
+          (target !== null &&
+            (target.pending ||
+              target.reading ||
+              target.currentMissing ||
+              target.error !== null ||
+              target.conflict !== null ||
+              target.editingBlocked ||
+              target.baselineRevision !== result.sourceRevision ||
+              target.draftSource !== target.baselineSource))
+        ) {
+          setSyncNotice({
+            label: "Build required",
+            message: "The matching source has changed since this PDF was compiled.",
+          });
+          return;
+        }
+        if (target !== targetSnapshots.get(result.relativePath)) return;
+        visualSourceRequest.current += 1;
+        setVisualSourceReveal({
+          path: result.relativePath,
+          line: result.line,
+          column: result.column,
+          ...(selectedText === undefined ? {} : { selectedText }),
+          rootRelativePath: snapshot.rootRelativePath,
+          requestId: visualSourceRequest.current,
+          sourceRevision: result.sourceRevision,
+        });
+      })
+      .catch((error: unknown) => {
+        if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
+        setSyncNotice({
+          label: "Navigation failed",
+          message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
+        });
+      });
+  };
+  const inverseSync = useStableCallback(handleInverseSync);
+  const pdfPageChange = useStableCallback(handlePdfPageChange);
+  const syncNavigation: PdfSyncNavigation | undefined =
+    descriptor?._tag === "generated-pdf"
+      ? {
+          forwardTarget: forwardSyncTarget,
+          ...(inverseSyncEnabled ? { onInverseSearch: inverseSync } : {}),
+          onPageChange: pdfPageChange,
+        }
+      : undefined;
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
   // the reader's asset URL, and the reader keeps page and zoom across that.
   const readerKey =
@@ -1228,13 +1314,13 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const [visualOpened, setVisualOpened] = useState(showVisual);
   if (showVisual && !visualOpened) setVisualOpened(true);
 
-  const registerFinishVisualEditing = useCallback((finish: (() => boolean) | null) => {
+  const registerFinishVisualEditing = (finish: (() => boolean) | null) => {
     finishVisualEditingRef.current = finish;
-  }, []);
-  const reportLocalVisualDraft = useCallback((pending: boolean) => {
+  };
+  const reportLocalVisualDraft = (pending: boolean) => {
     localVisualDraftRef.current = pending;
     setHasLocalVisualDraft(pending);
-  }, []);
+  };
   useLayoutEffect(
     () =>
       latexDocumentInputs.register({
@@ -1251,7 +1337,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   );
   // Builds and exports being prepared: their files are named by the old path.
   const preparing = useRef(0);
-  const prepareDocument = useCallback(async () => {
+  const prepareDocument = async () => {
     if (!target || props.truncated) return null;
     preparing.current += 1;
     const result = await prepareLatexDocument(target, {
@@ -1265,7 +1351,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     }
     setSyncNotice(null);
     return result;
-  }, [target, props.truncated, persistence]);
+  };
   const pdfVisible = activePreview === "pdf";
   const compilerSource = useSyncExternalStore(
     persistence?.subscribe ?? noSubscription,
@@ -1300,20 +1386,20 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     };
   }, [target, persistence, compilerEditBlocked]);
   const buildRequestInFlight = useRef(false);
-  const saveAndBuild = useCallback(
-    async (reprobe = false, compile = true) => {
-      if (buildRequestInFlight.current || buildBlocked) return;
-      buildRequestInFlight.current = true;
-      try {
+  const saveAndBuild = async (reprobe = false, compile = true) => {
+    if (buildRequestInFlight.current || buildBlocked) return;
+    buildRequestInFlight.current = true;
+    await settleAfter(
+      async () => {
         const prepared = await prepareDocument();
         if (prepared?.isCurrent() && compile && !compilerUnavailable && target !== null)
           requestLatexRebuild(target, { reprobeToolchain: reprobe });
-      } finally {
+      },
+      () => {
         buildRequestInFlight.current = false;
-      }
-    },
-    [buildBlocked, compilerUnavailable, prepareDocument, target],
-  );
+      },
+    );
+  };
   const installBuildIntent = useRef<{
     target: LatexBuildTarget;
     persistence: typeof persistence;
@@ -1323,7 +1409,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     editVersion: number | null;
     lastEditAt: number;
   } | null>(null);
-  const handleInstallToolchain = useCallback(() => {
+  const handleInstallToolchain = () => {
     if (
       target === null ||
       !build.canInstallManaged ||
@@ -1345,19 +1431,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       lastEditAt,
     };
     requestManagedLatexInstall(target);
-  }, [
-    target,
-    build.canInstallManaged,
-    status.offline,
-    status.busy,
-    compilerEditBlocked,
-    renaming,
-    persistence,
-    props.relativePath,
-    compilerSource,
-    compilerState.source,
-    lastEditAt,
-  ]);
+  };
   useEffect(() => {
     const intent = installBuildIntent.current;
     if (intent === null) return;
@@ -1421,29 +1495,32 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     buildRequestInFlight.current = true;
     preparing.current += 1;
     setChangingCompiler(true);
-    try {
-      const result = await changeLatexDocumentCompiler({
-        target,
-        lease: persistence,
-        compiler,
-        prepare: prepareDocument,
-        blocked: () => compilerOwner.current.blocked,
-        isActive: () =>
-          compilerOwner.current.target === target &&
-          compilerOwner.current.persistence === persistence,
-      });
-      if (!result.ok) setSyncNotice({ label: "Compiler not changed", message: result.message });
-      else requestLatexRebuild(target, { reprobeToolchain: true });
-    } catch (error) {
-      setSyncNotice({
-        label: "Compiler not changed",
-        message: error instanceof Error ? error.message : "Could not save the compiler change.",
-      });
-    } finally {
+    const change = async () => {
+      try {
+        const result = await changeLatexDocumentCompiler({
+          target,
+          lease: persistence,
+          compiler,
+          prepare: prepareDocument,
+          blocked: () => compilerOwner.current.blocked,
+          isActive: () =>
+            compilerOwner.current.target === target &&
+            compilerOwner.current.persistence === persistence,
+        });
+        if (!result.ok) setSyncNotice({ label: "Compiler not changed", message: result.message });
+        else requestLatexRebuild(target, { reprobeToolchain: true });
+      } catch (error) {
+        setSyncNotice({
+          label: "Compiler not changed",
+          message: error instanceof Error ? error.message : "Could not save the compiler change.",
+        });
+      }
+    };
+    await settleAfter(change, () => {
       preparing.current -= 1;
       buildRequestInFlight.current = false;
       setChangingCompiler(false);
-    }
+    });
   };
   const compilerControlProps = {
     source: compilerState.source,
@@ -1473,9 +1550,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             })
         : null,
   };
-  const requestAutoBuild = useCallback(() => {
+  const requestAutoBuild = () => {
     void saveAndBuild();
-  }, [saveAndBuild]);
+  };
   useLatexAutoBuild({
     mode: compilationMode,
     documentKey: `${props.environmentId}\0${props.cwd}\0${target?.relativePath ?? props.relativePath}`,
@@ -1556,13 +1633,12 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // The header row hides controls only when it runs out of room, one at a
   // time in this order, and shows them again as soon as they fit.
   useLayoutEffect(() => {
-    const row = headerRow.current;
-    if (!row) return;
-    return observeLatexHeaderFit(row, HEADER_FIT_STEPS);
-  }, []);
+    if (!headerRow) return;
+    return observeLatexHeaderFit(headerRow, HEADER_FIT_STEPS);
+  }, [headerRow]);
   // Changing the view, or Split's right pane, redraws the switch that had
   // focus. Give focus to the same switch once it is back in the row.
-  useEffect(() => {
+  const restoreSwitchFocus = useEffectEvent((..._changes: readonly unknown[]) => {
     const kept = switchKeepsFocus.current;
     if (kept === null) return;
     const current = surfaceRef.current?.querySelector<HTMLElement>(`${kept} [aria-pressed="true"]`);
@@ -1570,7 +1646,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     switchKeepsFocus.current = null;
     const active = document.activeElement;
     if (active === null || active === document.body || !active.isConnected) current.focus();
-  }, [mode, splitPreview, readerHosted, hostedReaders, readerSlot]);
+  });
+  useEffect(
+    () => restoreSwitchFocus(mode, splitPreview, readerHosted, hostedReaders, readerSlot),
+    [mode, splitPreview, readerHosted, hostedReaders, readerSlot],
+  );
   const buildButton = (
     <ScientTooltip
       content={
@@ -1667,7 +1747,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const exportWord = () => setWordExportOpen(true);
   // The file header's download button offers the same exports.
   const downloadActions = useRef({ pdf: exportPdf, word: exportWord });
-  downloadActions.current = { pdf: exportPdf, word: exportWord };
+  useLayoutEffect(() => {
+    downloadActions.current = { pdf: exportPdf, word: exportWord };
+  });
   const onDownloadActions = props.onDownloadActions;
   useEffect(() => {
     onDownloadActions({
@@ -1992,7 +2074,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       }}
     >
       <div
-        ref={headerRow}
+        ref={setHeaderRow}
         className="scient-latex-toolbar"
         data-reader-hosted={readerHosted ? "" : undefined}
         // Visual's More holds only what the row has no room for.
@@ -2017,7 +2099,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                 <Ellipsis />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <ReaderRowContext value={headerRow.current}>{documentMenuItems()}</ReaderRowContext>
+                <ReaderRowContext value={headerRow}>{documentMenuItems()}</ReaderRowContext>
               </DropdownMenuContent>
             </DropdownMenu>
           )}

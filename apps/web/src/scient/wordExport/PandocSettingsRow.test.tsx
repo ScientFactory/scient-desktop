@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { EnvironmentId, type ScientPandocToolStatus } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
+import { act, useLayoutEffect, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -47,8 +47,10 @@ let lastSummary = "";
 let refreshWordTab: () => void = () => undefined;
 function WordTab() {
   const controller = usePandocTool(EnvironmentId.make("local"));
-  lastSummary = pandocToolSummary(controller.view);
-  refreshWordTab = controller.refresh;
+  useLayoutEffect(() => {
+    lastSummary = pandocToolSummary(controller.view);
+    refreshWordTab = controller.refresh;
+  });
   return <PandocSettingsRow controller={controller} />;
 }
 

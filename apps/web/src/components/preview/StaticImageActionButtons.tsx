@@ -35,27 +35,36 @@ function StaticImageActionButton(props: StaticImageActionButtonProps) {
   const runAction = async () => {
     if (running || props.assetUrl === null) return;
     setRunning(true);
+    let operationFailure: { error: unknown } | null = null;
     try {
-      if (props.action === "copy") {
-        await copyStaticImage(props.assetUrl);
-        addThreadToast(props.threadRef, {
-          type: "success",
-          title: "Image copied",
-          timeout: 1_800,
-        });
-      } else {
-        await downloadStaticImage(props.assetUrl, props.fileName);
+      {
+        try {
+          if (props.action === "copy") {
+            await copyStaticImage(props.assetUrl);
+            addThreadToast(props.threadRef, {
+              type: "success",
+              title: "Image copied",
+              timeout: 1_800,
+            });
+          } else {
+            await downloadStaticImage(props.assetUrl, props.fileName);
+          }
+        } catch (cause) {
+          console.error(`[preview] ${idleLabel} failed`, cause);
+          addThreadToast(props.threadRef, {
+            type: "error",
+            title: isCopy ? "Unable to copy image" : "Unable to download image",
+            description: cause instanceof Error ? cause.message : "The image action failed.",
+          });
+        }
       }
-    } catch (cause) {
-      console.error(`[preview] ${idleLabel} failed`, cause);
-      addThreadToast(props.threadRef, {
-        type: "error",
-        title: isCopy ? "Unable to copy image" : "Unable to download image",
-        description: cause instanceof Error ? cause.message : "The image action failed.",
-      });
-    } finally {
-      setRunning(false);
+    } catch (error) {
+      operationFailure = { error };
     }
+
+    setRunning(false);
+
+    if (operationFailure !== null) throw operationFailure.error;
   };
 
   const isDisabled = props.disabled || props.assetUrl === null || running;

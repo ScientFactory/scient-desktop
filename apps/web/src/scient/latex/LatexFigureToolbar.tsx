@@ -162,20 +162,24 @@ export function LatexFigureToolbar(props: {
     if (!environmentId || !cwd || !relativePath || uploading) return;
     setUploading(true);
     report(null);
-    try {
-      const result = await uploadLatexImage(environmentId, {
-        cwd,
-        documentRelativePath: relativePath,
-        file: image,
-      });
-      if (!live.current) return;
-      refreshProjectFiles(environmentId, cwd);
-      replace(result.relativePath);
-    } catch {
-      if (live.current) report("Could not import the image. Use a PNG or JPEG under 20 MB.");
-    } finally {
-      if (live.current) setUploading(false);
-    }
+    await settleImageImport(
+      async () => {
+        const result = await uploadLatexImage(environmentId, {
+          cwd,
+          documentRelativePath: relativePath,
+          file: image,
+        });
+        if (!live.current) return;
+        refreshProjectFiles(environmentId, cwd);
+        replace(result.relativePath);
+      },
+      () => {
+        if (live.current) report("Could not import the image. Use a PNG or JPEG under 20 MB.");
+      },
+      () => {
+        if (live.current) setUploading(false);
+      },
+    );
   };
   const host = active
     ? props.editor.view.dom
@@ -330,4 +334,19 @@ export function LatexFigureToolbar(props: {
     </div>,
     host,
   );
+}
+
+// Outside the component: the React Compiler does not compile try/finally.
+async function settleImageImport(
+  task: () => Promise<void>,
+  failed: () => void,
+  settled: () => void,
+): Promise<void> {
+  try {
+    await task();
+  } catch {
+    failed();
+  } finally {
+    settled();
+  }
 }

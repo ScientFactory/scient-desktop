@@ -303,6 +303,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -620,6 +621,7 @@ const buildAppUnderTest = (options?: {
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+    knownWorkspaces?: Partial<KnownWorkspaces.KnownWorkspaces["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
@@ -812,12 +814,21 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
+    // Every folder is known unless a test narrows it; WorkspaceFileSystem's own tests cover
+    // the rejection.
+    const knownWorkspacesLayer = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: () => Effect.succeed(true),
+      assertContains: () => Effect.void,
+      ...options?.layers?.knownWorkspaces,
+    });
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
+      knownWorkspacesLayer,
       WorkspaceFileSystem.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
+        Layer.provide(knownWorkspacesLayer),
       ),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
@@ -10501,6 +10512,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
+        // Inherited feature usage; Scient's analytics contract drops this name.
+        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10529,6 +10542,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
         },
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );

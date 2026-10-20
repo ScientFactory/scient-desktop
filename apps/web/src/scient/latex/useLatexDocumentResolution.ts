@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientLatexResolveResult } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { requestLatexResolution } from "./client";
 
@@ -32,42 +32,32 @@ export function useLatexDocumentResolution(input: {
 }): LatexDocumentResolutionState {
   const requestRef = useRef(0);
   const [attempt, setAttempt] = useState(0);
-  const retry = useCallback(() => setAttempt((previous) => previous + 1), []);
+  const retry = () => setAttempt((previous) => previous + 1);
   const [state, setState] = useState<StoredLatexDocumentResolution | null>(null);
-  const request = useMemo(
-    () => ({
-      environmentId: input.environmentId,
-      documentKey: JSON.stringify([
-        input.environmentId,
-        input.workspaceRoot,
-        input.sourceRelativePath,
-        input.contextRootRelativePath ?? null,
-      ]),
-      key: JSON.stringify([
-        attempt,
-        input.environmentId,
-        input.workspaceRoot,
-        input.sourceRelativePath,
-        input.sourceRevision,
-        input.contextRootRelativePath ?? null,
-      ]),
-      payload: {
-        workspaceRoot: input.workspaceRoot,
-        sourceRelativePath: input.sourceRelativePath,
-        ...(input.contextRootRelativePath === undefined
-          ? {}
-          : { contextRootRelativePath: input.contextRootRelativePath }),
-      },
-    }),
-    [
-      attempt,
-      input.contextRootRelativePath,
+  const request = {
+    environmentId: input.environmentId,
+    documentKey: JSON.stringify([
       input.environmentId,
+      input.workspaceRoot,
+      input.sourceRelativePath,
+      input.contextRootRelativePath ?? null,
+    ]),
+    key: JSON.stringify([
+      attempt,
+      input.environmentId,
+      input.workspaceRoot,
       input.sourceRelativePath,
       input.sourceRevision,
-      input.workspaceRoot,
-    ],
-  );
+      input.contextRootRelativePath ?? null,
+    ]),
+    payload: {
+      workspaceRoot: input.workspaceRoot,
+      sourceRelativePath: input.sourceRelativePath,
+      ...(input.contextRootRelativePath === undefined
+        ? {}
+        : { contextRootRelativePath: input.contextRootRelativePath }),
+    },
+  };
 
   useEffect(() => {
     const requestId = requestRef.current + 1;

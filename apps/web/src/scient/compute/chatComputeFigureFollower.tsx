@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense } from "react";
 
 import type { PreviewMiniPlayerState } from "~/previewMiniPlayerStore";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
@@ -12,11 +12,11 @@ const ComputeFigureFollower = lazy(() =>
 );
 
 /** The static figures open in the right panel or the floating preview, once each. */
-export function useOpenStaticArtifacts(
+export function getOpenStaticArtifacts(
   surfaces: ReadonlyArray<RightPanelSurface>,
   activePreviewMiniPlayer: PreviewMiniPlayerState | null,
 ): ReadonlyArray<PreviewStaticImageSurfaceDescriptor> {
-  return useMemo(() => {
+  return (() => {
     const bySurfaceId = new Map<string, PreviewStaticImageSurfaceDescriptor>();
     for (const surface of surfaces) {
       if (surface.kind === "scient" && surface.module === "artifact") {
@@ -28,7 +28,7 @@ export function useOpenStaticArtifacts(
       bySurfaceId.set(artifact.surfaceId, artifact);
     }
     return [...bySurfaceId.values()];
-  }, [activePreviewMiniPlayer, surfaces]);
+  })();
 }
 
 /** Keeps open compute figures current while the thread's workspace is known. */

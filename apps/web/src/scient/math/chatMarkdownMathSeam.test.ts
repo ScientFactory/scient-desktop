@@ -28,8 +28,8 @@ describe("ChatMarkdown math seam", () => {
     expect(chatMarkdownSource).toContain('} from "../scient/math/remarkScientMath";');
     expect(chatMarkdownSource).toContain('} from "../scient/math/scientMathText";');
     expect(chatMarkdownSource).toContain('} from "../scient/markdown/scientMarkdownPipeline";');
-    expect(chatMarkdownSource).toContain("useScientMathMarkdownText,");
-    expect(chatMarkdownSource).toMatch(/\buseScientMathRemarkPlugins[\s,]*\}/u);
+    expect(chatMarkdownSource).toContain("scientMathMarkdownText,");
+    expect(chatMarkdownSource).toMatch(/\bscientMathRemarkPluginsForMessage[\s,]*\}/u);
     expect(chatMarkdownSource).toContain(
       'import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";',
     );
@@ -49,12 +49,12 @@ describe("ChatMarkdown math seam", () => {
   });
 
   it("normalizes delimiters unconditionally — the rewrite is length-preserving", () => {
-    expect(chatMarkdownSource).toContain("useScientMathMarkdownText(textProp)");
-    expect(chatMarkdownSource).not.toContain("useScientMathMarkdownText(textProp,");
+    expect(chatMarkdownSource).toContain("scientMathMarkdownText(textProp)");
+    expect(chatMarkdownSource).not.toContain("scientMathMarkdownText(textProp,");
   });
 
   it("threads the original text through the per-message plugin hook", () => {
-    expect(chatMarkdownSource).toContain("useScientMathRemarkPlugins(remarkPlugins, text)");
+    expect(chatMarkdownSource).toContain("scientMathRemarkPluginsForMessage(remarkPlugins, text)");
     expect(chatMarkdownSource).toContain("remarkPlugins={scientRemarkPlugins}");
   });
 

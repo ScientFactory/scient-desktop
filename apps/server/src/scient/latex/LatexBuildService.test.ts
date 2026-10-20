@@ -52,6 +52,7 @@ import {
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { decodePublishedLatexBuildEvidence } from "./latexBuildEvidence.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 const publicationHelper = await filePublicationTestHelper();
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
@@ -515,6 +516,7 @@ const makeHarness = (input: {
         ).pipe(
           Layer.provide(
             WorkspaceFileSystem.layer.pipe(
+              Layer.provide(layerKnownWorkspacesAllowAll),
               Layer.provide(WorkspaceEntries.layer),
               Layer.provide(WorkspacePaths.layer),
             ),

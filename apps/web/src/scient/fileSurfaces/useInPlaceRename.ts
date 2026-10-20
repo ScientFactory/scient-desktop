@@ -1,6 +1,7 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   clearProjectFileQueryData,
@@ -76,7 +77,7 @@ export function useInPlaceRename(input: {
     for (const resolve of waiting) resolve(true);
   });
 
-  const followed = useCallback(
+  const followed = useStableCallback(
     (path: string) =>
       new Promise<boolean>((resolve) => {
         let set = waiters.current.get(path);
@@ -90,7 +91,6 @@ export function useInPlaceRename(input: {
         const timer = setTimeout(() => done(false), FOLLOW_TIMEOUT_MS);
         waiting.add(done);
       }),
-    [],
   );
 
   const moveInPlace = async (

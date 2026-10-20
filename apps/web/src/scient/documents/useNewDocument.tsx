@@ -86,6 +86,15 @@ function companionsHaveUnsavedEdits(
   });
 }
 
+// Outside the hook: the React Compiler does not compile `finally`.
+async function settleAfter<A>(run: () => Promise<A>, settle: () => void): Promise<A> {
+  try {
+    return await run();
+  } finally {
+    settle();
+  }
+}
+
 function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   return new Promise((resolve) => {
@@ -191,7 +200,10 @@ export function useNewDocument(input: {
   const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setRetryTick] = useState(0);
   useEffect(() => () => clearTimeout(busyRetry.current), []);
-  useEffect(() => clearTimeout(busyRetry.current), [input.lease]);
+  const cancelBusyRetry = useEffectEvent((..._changes: readonly unknown[]) =>
+    clearTimeout(busyRetry.current),
+  );
+  useEffect(() => cancelBusyRetry(input.lease), [input.lease]);
 
   const draft = snapshot?.draftSource ?? null;
   const untouched =
@@ -255,55 +267,58 @@ export function useNewDocument(input: {
       // companions are never coerced into invented UTF-8 source.
       return null;
     }
-    try {
-      if (companion.getSnapshot().baselineRevision !== revision) return null;
-      const outcome = await renameOpenDocument({
-        lease: companion,
-        destination: { ...key, relativePath: to },
-        removeEmptyFolders: true,
-        rename: async (expectedRevision, mutationId, intent) => {
-          const result = await renameFile({
-            environmentId: intent.from.environmentId,
-            input: {
-              cwd: intent.from.cwd,
-              relativePath: intent.from.relativePath,
-              destinationRelativePath: intent.destination.relativePath,
-              expectedRevision,
-              mutationId,
-              ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
-            },
-          });
-          return result._tag === "Success"
-            ? {
-                ok: true,
-                destinationRelativePath: result.value.destinationRelativePath,
-                revision: result.value.revision,
-              }
-            : {
-                ok: false,
-                cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
-              };
-        },
-        // No view owns this companion lease; namespace/session authority still
-        // moves together and remains journaled through every compensation.
-        follow: () => {},
-        followed: async () => true,
-      });
-      if (outcome.kind === "moved" || outcome.kind === "repair") return outcome.revision;
-      if (outcome.kind === "attention")
-        return { attention: outcome.attention, cause: outcome.cause };
-      if (
-        outcome.kind === "failed" &&
-        typeof outcome.cause === "object" &&
-        outcome.cause !== null &&
-        "failure" in outcome.cause &&
-        outcome.cause.failure === "path_exists"
-      )
-        return "taken";
-      return null;
-    } finally {
-      companion.release();
-    }
+    return settleAfter(
+      async () => {
+        if (companion.getSnapshot().baselineRevision !== revision) return null;
+        const outcome = await renameOpenDocument({
+          lease: companion,
+          destination: { ...key, relativePath: to },
+          removeEmptyFolders: true,
+          rename: async (expectedRevision, mutationId, intent) => {
+            const result = await renameFile({
+              environmentId: intent.from.environmentId,
+              input: {
+                cwd: intent.from.cwd,
+                relativePath: intent.from.relativePath,
+                destinationRelativePath: intent.destination.relativePath,
+                expectedRevision,
+                mutationId,
+                ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
+              },
+            });
+            return result._tag === "Success"
+              ? {
+                  ok: true,
+                  destinationRelativePath: result.value.destinationRelativePath,
+                  revision: result.value.revision,
+                }
+              : {
+                  ok: false,
+                  cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
+                };
+          },
+          // No view owns this companion lease; namespace/session authority still
+          // moves together and remains journaled through every compensation.
+          follow: () => {},
+          followed: async () => true,
+        });
+        if (outcome.kind === "moved" || outcome.kind === "repair") return outcome.revision;
+        if (outcome.kind === "attention")
+          return { attention: outcome.attention, cause: outcome.cause };
+        if (
+          outcome.kind === "failed" &&
+          typeof outcome.cause === "object" &&
+          outcome.cause !== null &&
+          "failure" in outcome.cause &&
+          outcome.cause.failure === "path_exists"
+        )
+          return "taken";
+        return null;
+      },
+      () => {
+        companion.release();
+      },
+    );
   };
 
   /**
@@ -315,6 +330,7 @@ export function useNewDocument(input: {
    */
   const moveFolderToTitle = useEffectEvent(async (stem: string) => {
     if (!key || !entry || !lease || !snapshot || !input.moveInPlace) return;
+    const moveInPlace = input.moveInPlace;
     const commands = documentFiles.commandsFor(key);
     const base = newDocumentBase(key.relativePath, entry.template);
     const oldFolder = folderOf(key.relativePath);
@@ -359,30 +375,35 @@ export function useNewDocument(input: {
           description: `Its files are now split between ${oldFolder} and ${newFolder}.`,
         });
     };
-    try {
-      if ((await mainMove.preflight()) !== "empty") return keepName();
-      for (const file of entry.companions) {
-        if (written()) return await giveUp();
-        const to = newFolder + file.relativePath.slice(oldFolder.length);
-        const revision = await move(file.relativePath, to, file.revision);
-        if (revision !== null && typeof revision === "object") return stopUncertain();
-        if (revision === null || revision === "taken") return await giveUp();
-        moved.push({ from: file.relativePath, to, revision });
-      }
-      if (written()) return await giveUp();
-      const outcome = await input.moveInPlace(destination, mainMove);
-      if (outcome.kind === "attention") return stopUncertain();
-      if (outcome.kind !== "moved" && outcome.kind !== "repair") return await giveUp();
-      newDocuments.forget(key);
-      templateEdits.move(key, { ...key, relativePath: destination });
-      // Still the document showing (the panel follows it to its new name): the caret comes back.
-      const stillShown = shown.current === key.relativePath;
-      if (caretBefore !== null && stillShown) focusNewDocumentWhenOpen({ offset: caretBefore });
-    } catch {
-      stopUncertain();
-    } finally {
-      release();
-    }
+    return settleAfter(
+      async () => {
+        try {
+          if ((await mainMove.preflight()) !== "empty") return keepName();
+          for (const file of entry.companions) {
+            if (written()) return await giveUp();
+            const to = newFolder + file.relativePath.slice(oldFolder.length);
+            const revision = await move(file.relativePath, to, file.revision);
+            if (revision !== null && typeof revision === "object") return stopUncertain();
+            if (revision === null || revision === "taken") return await giveUp();
+            moved.push({ from: file.relativePath, to, revision });
+          }
+          if (written()) return await giveUp();
+          const outcome = await moveInPlace(destination, mainMove);
+          if (outcome.kind === "attention") return stopUncertain();
+          if (outcome.kind !== "moved" && outcome.kind !== "repair") return await giveUp();
+          newDocuments.forget(key);
+          templateEdits.move(key, { ...key, relativePath: destination });
+          // Still the document showing (the panel follows it to its new name): the caret comes back.
+          const stillShown = shown.current === key.relativePath;
+          if (caretBefore !== null && stillShown) focusNewDocumentWhenOpen({ offset: caretBefore });
+        } catch {
+          stopUncertain();
+        }
+      },
+      () => {
+        release();
+      },
+    );
   });
 
   useEffect(() => {
@@ -408,49 +429,52 @@ export function useNewDocument(input: {
       const move = input.moveInPlace;
       const initiatingLease = lease;
       void (async () => {
-        try {
-          for (let attempt = 1; attempt <= 20; attempt++) {
-            if (boundLease.current !== initiatingLease) return;
-            const outcome = await move(newDocumentCandidate(stem, entry.format, attempt, folder));
-            if (outcome.kind === "legacy-required") {
-              // Another view holds this name: the next name may be free.
-              if (outcome.reason === "destination") continue;
-              // No timeout may bypass durable admission. A busy editor retries
-              // the same owned path after it settles.
-              if (outcome.reason === "busy") {
-                clearTimeout(busyRetry.current);
-                busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
+        return settleAfter(
+          async () => {
+            for (let attempt = 1; attempt <= 20; attempt++) {
+              if (boundLease.current !== initiatingLease) return;
+              const outcome = await move(newDocumentCandidate(stem, entry.format, attempt, folder));
+              if (outcome.kind === "legacy-required") {
+                // Another view holds this name: the next name may be free.
+                if (outcome.reason === "destination") continue;
+                // No timeout may bypass durable admission. A busy editor retries
+                // the same owned path after it settles.
+                if (outcome.reason === "busy") {
+                  clearTimeout(busyRetry.current);
+                  busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
+                }
+                return;
               }
-              return;
-            }
-            if (outcome.kind === "attention") {
-              // The draft stays under the source name. Never infer a destination
-              // or try another rename after a partial or unconfirmed operation.
+              if (outcome.kind === "attention") {
+                // The draft stays under the source name. Never infer a destination
+                // or try another rename after a partial or unconfirmed operation.
+                newDocuments.forget(key);
+                return;
+              }
+              if (outcome.kind === "failed") {
+                const cause = outcome.cause;
+                const taken =
+                  typeof cause === "object" &&
+                  cause !== null &&
+                  "failure" in cause &&
+                  cause.failure === "path_exists";
+                if (taken) continue;
+                break;
+              }
+              templateEdits.move(key, { ...key, relativePath: outcome.destinationRelativePath });
               newDocuments.forget(key);
+              // Moved: the editor and caret stayed. Reopened or remounted: put the caret back.
+              if (outcome.kind !== "moved" && caretBefore !== null)
+                focusNewDocumentWhenOpen({ offset: caretBefore });
               return;
             }
-            if (outcome.kind === "failed") {
-              const cause = outcome.cause;
-              const taken =
-                typeof cause === "object" &&
-                cause !== null &&
-                "failure" in cause &&
-                cause.failure === "path_exists";
-              if (taken) continue;
-              break;
-            }
-            templateEdits.move(key, { ...key, relativePath: outcome.destinationRelativePath });
+            // Not renamed: the file keeps its name and stays renamable from the header.
             newDocuments.forget(key);
-            // Moved: the editor and caret stayed. Reopened or remounted: put the caret back.
-            if (outcome.kind !== "moved" && caretBefore !== null)
-              focusNewDocumentWhenOpen({ offset: caretBefore });
-            return;
-          }
-          // Not renamed: the file keeps its name and stays renamable from the header.
-          newDocuments.forget(key);
-        } finally {
-          renaming.current = false;
-        }
+          },
+          () => {
+            renaming.current = false;
+          },
+        );
       })();
       return;
     }
@@ -554,98 +578,101 @@ export function useNewDocument(input: {
   ): Promise<NonNullable<typeof key> | null> => {
     if (switching.current) return null;
     switching.current = true;
-    try {
-      // The title field publishes after a pause, and the editor takes outside
-      // changes only with nothing unpublished; switch once the title is in.
-      const field = document.querySelector<HTMLTextAreaElement>(
-        'textarea[aria-label="Document title"]',
-      );
-      const typed = field?.value ?? "";
-      const fromFolder = isFolderTemplate(entry.template);
-      const toFolder = isFolderTemplate(template);
-      const relocates = fromFolder !== toFolder;
-      const settledAt = await waitUntil(() => {
+    return settleAfter(
+      async () => {
+        // The title field publishes after a pause, and the editor takes outside
+        // changes only with nothing unpublished; switch once the title is in.
+        const field = document.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Document title"]',
+        );
+        const typed = field?.value ?? "";
+        const fromFolder = isFolderTemplate(entry.template);
+        const toFolder = isFolderTemplate(template);
+        const relocates = fromFolder !== toFolder;
+        const settledAt = await waitUntil(() => {
+          const current = lease.getSnapshot();
+          return (
+            lease.getPendingInput() === null &&
+            sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed) &&
+            // A document that moves is copied as saved, so it must be saved.
+            (!relocates ||
+              (!current.pending &&
+                !current.inFlight &&
+                current.draftSource === current.baselineSource))
+          );
+        }, 2_000);
+        if (!settledAt) return null;
         const current = lease.getSnapshot();
-        return (
-          lease.getPendingInput() === null &&
-          sameTitleText(newDocumentTitle(current.draftSource, "latex"), typed) &&
-          // A document that moves is copied as saved, so it must be saved.
-          (!relocates ||
-            (!current.pending &&
-              !current.inFlight &&
-              current.draftSource === current.baselineSource))
-        );
-      }, 2_000);
-      if (!settledAt) return null;
-      const current = lease.getSnapshot();
-      if (!isUntouchedNewLatexDocument(current.draftSource, entry.template, entry.language))
-        return null;
-      const commands = documentFiles.commandsFor(key);
-      // A file it made that was changed anywhere (a chapter, in Source or another
-      // program) ends the choice: nothing it made is moved or removed.
-      if (
-        companionsHaveUnsavedEdits(key, entry.companions) ||
-        !(await companionsUnchanged(commands, entry.companions))
-      ) {
-        newDocuments.update(key, { settled: true });
-        return null;
-      }
-      // A title and a name stand for each other across templates with and without one.
-      const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
-      const next = switchNewLatexDocument(current.draftSource, template, language, name);
-      if (relocates)
-        return await relocate(
-          { key, entry, lease },
-          { template, language, name, next, revision: current.baselineRevision },
-        );
-      // The files first, then the page: a switch whose files cannot all be
-      // written puts them back as they were and changes nothing.
-      const sync = (
-        files: ReturnType<typeof templateCompanions>,
-        created: typeof entry.companions,
-      ) =>
-        syncCompanionFiles({
-          folder: folderOf(key.relativePath),
-          files,
-          created,
-          create: commands.create,
-          ...(commands.replace ? { replace: commands.replace } : {}),
-          remove: commands.remove,
-        });
-      const synced = await sync(templateCompanions(template, next), entry.companions);
-      const undo = async () => {
-        const restored = await sync(
-          templateCompanions(entry.template, current.draftSource),
-          synced.companions,
-        );
-        // Files that could not all go back: the template choice ends here, so
-        // nothing switches over a document whose files no longer match it.
-        newDocuments.update(key, {
-          companions: restored.companions,
-          ...(restored.complete ? {} : { settled: true }),
-        });
-        if (!restored.complete)
-          toastManager.add({
-            type: "error",
-            title: "Some of the document's files could not be put back.",
+        if (!isUntouchedNewLatexDocument(current.draftSource, entry.template, entry.language))
+          return null;
+        const commands = documentFiles.commandsFor(key);
+        // A file it made that was changed anywhere (a chapter, in Source or another
+        // program) ends the choice: nothing it made is moved or removed.
+        if (
+          companionsHaveUnsavedEdits(key, entry.companions) ||
+          !(await companionsUnchanged(commands, entry.companions))
+        ) {
+          newDocuments.update(key, { settled: true });
+          return null;
+        }
+        // A title and a name stand for each other across templates with and without one.
+        const name = templateHasTitle(entry.template) ? typed.trim() : (entry.name ?? "");
+        const next = switchNewLatexDocument(current.draftSource, template, language, name);
+        if (relocates)
+          return await relocate(
+            { key, entry, lease },
+            { template, language, name, next, revision: current.baselineRevision },
+          );
+        // The files first, then the page: a switch whose files cannot all be
+        // written puts them back as they were and changes nothing.
+        const sync = (
+          files: ReturnType<typeof templateCompanions>,
+          created: typeof entry.companions,
+        ) =>
+          syncCompanionFiles({
+            folder: folderOf(key.relativePath),
+            files,
+            created,
+            create: commands.create,
+            ...(commands.replace ? { replace: commands.replace } : {}),
+            remove: commands.remove,
           });
-      };
-      if (!synced.complete) {
-        await undo();
-        toastManager.add({ type: "error", title: "The template could not be changed." });
-        return null;
-      }
-      if (next !== current.draftSource && !lease.change(next, current.editVersion)) {
-        await undo();
-        return null;
-      }
-      newDocuments.update(key, { template, language, name, companions: synced.companions });
-      // The page is drawn again; writing continues in the title or the name.
-      if (shown.current === key.relativePath) focusNewDocumentWhenOpen("title");
-      return key;
-    } finally {
-      switching.current = false;
-    }
+        const synced = await sync(templateCompanions(template, next), entry.companions);
+        const undo = async () => {
+          const restored = await sync(
+            templateCompanions(entry.template, current.draftSource),
+            synced.companions,
+          );
+          // Files that could not all go back: the template choice ends here, so
+          // nothing switches over a document whose files no longer match it.
+          newDocuments.update(key, {
+            companions: restored.companions,
+            ...(restored.complete ? {} : { settled: true }),
+          });
+          if (!restored.complete)
+            toastManager.add({
+              type: "error",
+              title: "Some of the document's files could not be put back.",
+            });
+        };
+        if (!synced.complete) {
+          await undo();
+          toastManager.add({ type: "error", title: "The template could not be changed." });
+          return null;
+        }
+        if (next !== current.draftSource && !lease.change(next, current.editVersion)) {
+          await undo();
+          return null;
+        }
+        newDocuments.update(key, { template, language, name, companions: synced.companions });
+        // The page is drawn again; writing continues in the title or the name.
+        if (shown.current === key.relativePath) focusNewDocumentWhenOpen("title");
+        return key;
+      },
+      () => {
+        switching.current = false;
+      },
+    );
   };
   // A folder document is named by its folder: `thesis/main.tex`.
   const base = newDocumentBase(key.relativePath, entry.template);

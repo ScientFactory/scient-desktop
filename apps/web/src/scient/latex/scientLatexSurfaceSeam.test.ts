@@ -67,14 +67,16 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
     expect(surfaceSource).toContain("setPreferredMode(request.mode)");
     expect(surfaceSource).toContain(
-      "props.onLatexPresentationRequestHandled(props.relativePath, request)",
+      "const acknowledgePresentation = props.onLatexPresentationRequestHandled;",
     );
+    expect(surfaceSource).toContain("acknowledgePresentation(props.relativePath, request)");
+    expect(surfaceSource).toContain("acknowledgePresentationRequest(");
     expect(surfaceSource).not.toMatch(/persist\([^)]*request\.mode/u);
   });
 
   it("finishes an active Visual transaction before a source reveal can unmount it", () => {
     expect(surfaceSource).toMatch(
-      /const visualRevealNeedsFinish =[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!visualRevealNeedsFinish\) return;\s*finishVisualEditingRef\.current\?\.\(\);\s*setFinishedVisualRevealRequestId\(revealRequestId\);/u,
+      /const visualRevealNeedsFinish =[\s\S]*?const finishVisualForReveal = useStableCallback\(\(requestId: number\) => \{\s*finishVisualEditingRef\.current\?\.\(\);\s*setFinishedVisualRevealRequestId\(requestId\);\s*\}\);\s*useLayoutEffect\(\(\) => \{\s*if \(!visualRevealNeedsFinish\) return;\s*finishVisualForReveal\(revealRequestId\);/u,
     );
     expect(surfaceSource).toContain(
       "const revealPending = revealRequested && !visualRevealNeedsFinish;",
@@ -162,7 +164,8 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("sourcePositionFromPointerEvent(event)");
     expect(surfaceSource).toContain("column: position.column");
     expect(surfaceSource).toContain("pageHint: pdfPageRef.current");
-    expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
+    expect(surfaceSource).toContain("const pdfPageChange = useStableCallback(handlePdfPageChange)");
+    expect(surfaceSource).toContain("onPageChange: pdfPageChange");
   });
 
   it("keeps PDF and Split navigation separate from writing", () => {
@@ -171,9 +174,8 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain(
       'const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";',
     );
-    expect(surfaceSource).toContain(
-      "inverseSyncEnabled ? { onInverseSearch: handleInverseSync } : {}",
-    );
+    expect(surfaceSource).toContain("inverseSyncEnabled ? { onInverseSearch: inverseSync } : {}");
+    expect(surfaceSource).toContain("const inverseSync = useStableCallback(handleInverseSync)");
     expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
     expect(surfaceSource).toContain('event.key.toLowerCase() === "s"');

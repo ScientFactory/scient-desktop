@@ -15,15 +15,21 @@ const componentFiles = [
 it("reproduces the real 109-file release failure and admits the corrected inventory under the original core budget", () => {
   assert.lengthOf(failedReleaseFiles, 109);
   const failed = analyzeWindowsPayloadInventory({ files: failedReleaseFiles, arch: "x64" });
-  assert.lengthOf(failed.unexpectedFiles, 4);
+  // That release shipped the upstream whisper.cpp archive, whose parakeet.dll
+  // and SDL2.dll the runtime built from source neither has nor needs.
+  const upstreamOnlyVoiceFiles = ["parakeet.dll", "SDL2.dll"].map(
+    (file) => `resources/whisper-runtime/${file}`,
+  );
+  assert.includeMembers(failed.unexpectedFiles, upstreamOnlyVoiceFiles);
+  assert.lengthOf(failed.unexpectedFiles, 4 + upstreamOnlyVoiceFiles.length);
   assert.lengthOf(failed.missingFiles, 0);
   const correctedFiles = failedReleaseFiles.filter(
     (file) => !failed.unexpectedFiles.includes(file),
   );
   const corrected = analyzeWindowsPayloadInventory({ files: correctedFiles, arch: "x64" });
-  assert.deepStrictEqual(corrected.counts, { voice: 17, cursor: 22, preview: 0, core: 66 });
+  assert.deepStrictEqual(corrected.counts, { voice: 15, cursor: 22, preview: 0, core: 66 });
   assert.lengthOf(corrected.unexpectedFiles, 0);
-  assert.equal(corrected.allowance, 39);
+  assert.equal(corrected.allowance, 37);
   assert.isAtMost(correctedFiles.length, 80 + corrected.allowance);
 });
 
@@ -56,7 +62,7 @@ it("admits only the explicitly staged preview inventory", () => {
   });
   assert.lengthOf(result.missingFiles, 0);
   assert.lengthOf(result.unexpectedFiles, 0);
-  assert.equal(result.allowance, 41);
+  assert.equal(result.allowance, 39);
 });
 
 it.each(["x64", "arm64"] as const)(
@@ -88,7 +94,7 @@ it("does not grant additional allowance to a large dependency spill", () => {
       files: [...componentFiles, ...spill],
       arch: "x64",
     });
-    assert.equal(result.allowance, 39);
+    assert.equal(result.allowance, 37);
     assert.equal(result.counts.core, 20_000);
   }
 });

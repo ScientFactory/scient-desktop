@@ -19,7 +19,14 @@ vi.mock("@shikijs/core", async (importOriginal) => {
         ...highlighter,
         codeToTokensBase: (...input: Parameters<typeof highlighter.codeToTokensBase>) => {
           tokenization.calls.push(input[0]);
-          const result = highlighter.codeToTokensBase(...input);
+          // SCIENT-FORK:START — grammar assertions must not depend on runner contention.
+          // Shiki's 500ms per-line timeout can return partial tokens and grammar state.
+          // Keep the real grammar; only disable its wall-clock cutoff in these tests.
+          const result = highlighter.codeToTokensBase(input[0], {
+            ...input[1],
+            tokenizeTimeLimit: 0,
+          });
+          // SCIENT-FORK:END
           tokenization.afterCall?.();
           return result;
         },

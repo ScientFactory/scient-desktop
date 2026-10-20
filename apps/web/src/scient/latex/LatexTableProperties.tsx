@@ -48,8 +48,8 @@ export function LatexTableProperties(props: {
   const [headerRows, setHeaderRows] = useState("1");
   const [continuation, setContinuation] = useState("");
   const float = /\\begin\{table\*?\}(?:\[([^\]]*)\])?/u.exec(props.source);
-  const action = (label: string, change: LatexTableAction, disabled = props.disabled) => (
-    <DockCommandItem disabled={disabled} onClick={() => props.apply(change)}>
+  const action = (label: string, change: LatexTableAction, disabled?: boolean) => (
+    <DockCommandItem disabled={disabled ?? props.disabled} onClick={() => props.apply(change)}>
       {label}
     </DockCommandItem>
   );

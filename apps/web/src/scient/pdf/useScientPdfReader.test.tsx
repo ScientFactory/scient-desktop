@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -87,7 +87,7 @@ function Probe({
   loadAttempt: number;
   candidateReady: boolean;
 }) {
-  reader = useScientPdfReader({
+  const current = useScientPdfReader({
     documentKey: "same-document",
     revisionId,
     sourceUrl: url,
@@ -96,6 +96,9 @@ function Probe({
     onSourceInvalidated: refresh,
     container,
     viewerElement,
+  });
+  useLayoutEffect(() => {
+    reader = current;
   });
   return <textarea defaultValue="persistent input" />;
 }

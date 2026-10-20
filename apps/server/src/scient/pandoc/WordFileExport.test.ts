@@ -33,6 +33,7 @@ import {
   PNG_BYTES,
   PNG_BYTES_ALT,
 } from "./pandocTestSupport.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const binary = pandocBinaryForTests();
 
@@ -78,6 +79,7 @@ const converterLayer = (
   );
 
 const WorkspaceLayer = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(layerKnownWorkspacesAllowAll),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),

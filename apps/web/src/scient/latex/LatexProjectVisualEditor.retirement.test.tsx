@@ -3,7 +3,7 @@ import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/m
 import type * as MarkdownCheckpointModule from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
-import { act, useMemo, useRef, useSyncExternalStore } from "react";
+import { act, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -164,16 +164,25 @@ describe("retiring the project's recovery copy", () => {
   /** The surface's wiring around the project editor: the open file's session and its pending flag. */
   function Surface(props: { lease: MarkdownPersistenceLease; echo?: LatexEditorSourceSnapshot }) {
     const snapshot = useSyncExternalStore(props.lease.subscribe, props.lease.getSnapshot);
-    const binding = useRef<{ version: number; snapshot: LatexEditorSourceSnapshot } | null>(null);
-    if (
-      binding.current === null ||
-      binding.current.version !== snapshot.editVersion ||
-      binding.current.snapshot.source !== snapshot.draftSource
-    )
-      binding.current = {
-        version: snapshot.editVersion,
-        snapshot: createLatexEditorSourceSnapshot(snapshot.draftSource),
-      };
+    const [stored, setStored] = useState<{
+      version: number;
+      snapshot: LatexEditorSourceSnapshot;
+    } | null>(null);
+    const rendered =
+      stored !== null &&
+      stored.version === snapshot.editVersion &&
+      stored.snapshot.source === snapshot.draftSource
+        ? stored
+        : {
+            version: snapshot.editVersion,
+            snapshot: createLatexEditorSourceSnapshot(snapshot.draftSource),
+          };
+    if (rendered !== stored) setStored(rendered);
+    // The binding an accepted edit made, before the render that shows it.
+    const binding = useRef(rendered);
+    useLayoutEffect(() => {
+      binding.current = rendered;
+    });
     return (
       <LatexProjectVisualEditor
         environmentId={environmentId}
@@ -181,7 +190,7 @@ describe("retiring the project's recovery copy", () => {
         relativePath={props.lease.target.relativePath}
         rootRelativePath={props.lease.target.relativePath}
         source={props.echo?.source ?? snapshot.draftSource}
-        sourceSnapshot={props.echo ?? binding.current.snapshot}
+        sourceSnapshot={props.echo ?? rendered.snapshot}
         fileRevision={snapshot.baselineRevision}
         fileTruncated={false}
         selectedPending={snapshot.pending}
@@ -205,6 +214,7 @@ describe("retiring the project's recovery copy", () => {
           const accepted = props.lease.getSnapshot();
           const nextSnapshot = createLatexEditorSourceSnapshot(accepted.draftSource);
           binding.current = { version: accepted.editVersion, snapshot: nextSnapshot };
+          setStored(binding.current);
           return {
             accepted: true,
             snapshot: nextSnapshot,
@@ -232,10 +242,11 @@ describe("retiring the project's recovery copy", () => {
     retry?: () => void;
     resolving?: boolean;
   }) {
-    const sourceSnapshot = useMemo(
-      () => createLatexEditorSourceSnapshot(props.source),
-      [props.source],
+    const [sourceSnapshot, setSourceSnapshot] = useState(() =>
+      createLatexEditorSourceSnapshot(props.source),
     );
+    if (sourceSnapshot.source !== props.source)
+      setSourceSnapshot(createLatexEditorSourceSnapshot(props.source));
     return (
       <LatexProjectVisualEditor
         environmentId={environmentId}

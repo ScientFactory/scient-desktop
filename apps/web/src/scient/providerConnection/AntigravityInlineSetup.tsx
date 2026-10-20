@@ -1,4 +1,9 @@
-import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import {
+  DEFAULT_PROVIDER_STARTING_MESSAGE,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   CheckIcon,
@@ -11,7 +16,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -51,6 +56,8 @@ import {
   ProviderAuthorizationCodeDisclosure,
   ProviderAuthorizationCodeForm,
 } from "./ProviderAuthorizationCodeForm";
+import { DiagnosticsSettingsLink } from "./DiagnosticsSettingsLink";
+import { providerSignInPageState, useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -69,15 +76,6 @@ type SignInInvocation = {
   operationId: string | null;
   operationObserved: boolean;
 };
-
-type BrowserOpening = {
-  readonly invocation: SignInInvocation;
-  readonly pending: boolean;
-  readonly error: string | null;
-};
-
-const BROWSER_OPENING_FAILURE =
-  "Scient could not open the sign-in page in your browser. Try opening it again.";
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -119,7 +117,6 @@ export function AntigravityInlineSetup(props: {
   const [copiedInstallCommand, setCopiedInstallCommand] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [authorizationResponseExpanded, setAuthorizationResponseExpanded] = useState(false);
-  const [browserOpening, setBrowserOpening] = useState<BrowserOpening | null>(null);
   const actionInvocation = useRef<object | null>(null);
   const signInInvocation = useRef<SignInInvocation | null>(null);
   const currentProvider = useRef(props.provider);
@@ -136,15 +133,22 @@ export function AntigravityInlineSetup(props: {
     [],
   );
 
-  useLayoutEffect(() => {
-    actionInvocation.current = null;
-    signInInvocation.current = null;
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
-    setBrowserOpening(null);
     setCopiedInstallCommand(false);
     setAuthorizationCode("");
     setAuthorizationResponseExpanded(false);
+  }
+
+  const invocationInstanceId = useRef(props.provider.instanceId);
+  useLayoutEffect(() => {
+    if (invocationInstanceId.current === props.provider.instanceId) return;
+    invocationInstanceId.current = props.provider.instanceId;
+    actionInvocation.current = null;
+    signInInvocation.current = null;
   }, [props.provider.instanceId]);
 
   const runtime = props.provider.connection?.runtime;
@@ -160,8 +164,13 @@ export function AntigravityInlineSetup(props: {
   const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
     ? connectionOperation
     : null;
+  const browser = useProviderSignInBrowser(
+    props.controller.signInKey,
+    activeConnectionOperation,
+    props.displayName,
+  );
 
-  const isCurrentSignIn = useCallback((invocation: SignInInvocation) => {
+  const isCurrentSignIn = useStableCallback((invocation: SignInInvocation) => {
     if (
       signInInvocation.current !== invocation ||
       currentProvider.current.instanceId !== invocation.instanceId
@@ -177,44 +186,45 @@ export function AntigravityInlineSetup(props: {
       !invocation.operationObserved &&
       (operation?.operationId ?? null) === invocation.previousOperationId
     );
-  }, []);
+  });
 
+  const observedConnection = {
+    operationId: connectionOperationId,
+    status: connectionOperation?.status,
+  };
   useLayoutEffect(() => {
     const invocation = signInInvocation.current;
     if (!invocation) return;
     if (
       invocation.operationId === null &&
-      connectionOperationId !== null &&
-      connectionOperationId !== invocation.previousOperationId
+      observedConnection.operationId !== null &&
+      observedConnection.operationId !== invocation.previousOperationId
     ) {
-      invocation.operationId = connectionOperationId;
+      invocation.operationId = observedConnection.operationId;
     }
-    if (invocation.operationId !== null && invocation.operationId === connectionOperationId) {
+    if (
+      invocation.operationId !== null &&
+      invocation.operationId === observedConnection.operationId
+    ) {
       invocation.operationObserved = true;
     }
     if (!isCurrentSignIn(invocation)) {
       signInInvocation.current = null;
-      setBrowserOpening(null);
       setPendingAction((action) => (action === "sign-in" ? null : action));
     }
-  }, [
-    props.provider.instanceId,
-    connectionOperationId,
-    connectionOperation?.status,
-    isCurrentSignIn,
-  ]);
+  }, [observedConnection, isCurrentSignIn]);
 
-  const currentBrowserOpening =
-    activeConnectionOperation?.status === "waiting_for_browser" &&
-    browserOpening?.invocation.instanceId === props.provider.instanceId &&
-    browserOpening.invocation.operationId === activeConnectionOperation?.operationId
-      ? browserOpening
-      : null;
+  const browserOpening =
+    activeConnectionOperation?.status === "waiting_for_browser" ? browser.opening : null;
 
-  useEffect(() => {
+  const [previousAuthorizationOperationId, setPreviousAuthorizationOperationId] = useState(
+    activeConnectionOperation?.operationId,
+  );
+  if (previousAuthorizationOperationId !== activeConnectionOperation?.operationId) {
+    setPreviousAuthorizationOperationId(activeConnectionOperation?.operationId);
     setAuthorizationCode("");
     setAuthorizationResponseExpanded(false);
-  }, [activeConnectionOperation?.operationId]);
+  }
 
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
@@ -239,34 +249,24 @@ export function AntigravityInlineSetup(props: {
     actionInvocation.current = invocation;
     setLocalError(null);
     setPendingAction(action);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await operation();
-    } catch (error) {
-      if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
-        setLocalError(
-          providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
-        );
+      try {
+        await operation();
+      } catch (error) {
+        if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
+          setLocalError(
+            providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
+          );
+        }
       }
-    } finally {
-      if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
-        setPendingAction(null);
-      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
-  };
-
-  const openAuthorizationPage = async (invocation: SignInInvocation, url: string) => {
-    if (!isCurrentSignIn(invocation)) return;
-    setBrowserOpening({ invocation, pending: true, error: null });
-    try {
-      await props.controller.openAuthorizationPage(url);
-      if (isCurrentSignIn(invocation)) {
-        setBrowserOpening({ invocation, pending: false, error: null });
-      }
-    } catch {
-      if (isCurrentSignIn(invocation)) {
-        setBrowserOpening({ invocation, pending: false, error: BROWSER_OPENING_FAILURE });
-      }
+    if (actionInvocation.current === invocation && (!signIn || isCurrentSignIn(signIn))) {
+      setPendingAction(null);
     }
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const startSignIn = () => {
@@ -277,37 +277,18 @@ export function AntigravityInlineSetup(props: {
       operationObserved: false,
     };
     signInInvocation.current = invocation;
-    setBrowserOpening(null);
     return run(
       "sign-in",
       async () => {
+        // The controller opens the Google page itself, so it opens even if this view is gone.
         const provider = await startAntigravitySignIn(props.controller, props.provider);
         if (!isCurrentSignIn(invocation) || provider.instanceId !== invocation.instanceId) return;
         const operation = provider.connection?.operation;
         if (!operation || !isActiveProviderConnectionOperation(operation)) return;
-        if (invocation.operationId !== null && invocation.operationId !== operation.operationId) {
-          return;
-        }
-        invocation.operationId = operation.operationId;
-        if (operation.authorizationUrl && operation.authorizationUrlKind === "primary") {
-          await openAuthorizationPage(invocation, operation.authorizationUrl);
-        }
+        if (invocation.operationId === null) invocation.operationId = operation.operationId;
       },
       invocation,
     );
-  };
-
-  const reopenAuthorizationPage = () => {
-    if (!activeConnectionOperation?.authorizationUrl) return Promise.resolve();
-    const invocation: SignInInvocation = {
-      instanceId: props.provider.instanceId,
-      previousOperationId: activeConnectionOperation.operationId,
-      operationId: activeConnectionOperation.operationId,
-      operationObserved: true,
-    };
-    signInInvocation.current = invocation;
-    setPendingAction((action) => (action === "sign-in" ? null : action));
-    return openAuthorizationPage(invocation, activeConnectionOperation.authorizationUrl);
   };
 
   const runtimeAction = async (action: "install" | "repair") => {
@@ -329,7 +310,6 @@ export function AntigravityInlineSetup(props: {
       : Promise.resolve();
   const cancelSignIn = () => {
     signInInvocation.current = null;
-    setBrowserOpening(null);
     return activeConnectionOperation
       ? run("cancel-sign-in", () =>
           cancelAntigravitySignIn(props.controller, activeConnectionOperation.operationId),
@@ -341,22 +321,27 @@ export function AntigravityInlineSetup(props: {
     if (!activeConnectionOperation || authorizationCode.trim().length === 0) return;
     setLocalError(null);
     setPendingAction("submit-code");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.submitAuthorizationCode(
-        activeConnectionOperation.operationId,
-        authorizationCode,
-      );
-      setAuthorizationCode("");
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(
-          error,
-          "Scient could not return the sign-in response to Antigravity.",
-        ),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.submitAuthorizationCode(
+          activeConnectionOperation.operationId,
+          authorizationCode,
+        );
+        setAuthorizationCode("");
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(
+            error,
+            "Scient could not return the sign-in response to Antigravity.",
+          ),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (
@@ -567,7 +552,26 @@ export function AntigravityInlineSetup(props: {
   }
 
   if (!isAuthenticated && (activeConnectionOperation || pendingAction === "sign-in")) {
-    const verifying = activeConnectionOperation?.status === "verifying" || usesCredentials;
+    const starting = !activeConnectionOperation || activeConnectionOperation.status === "starting";
+    const verifying =
+      !starting && (activeConnectionOperation?.status === "verifying" || usesCredentials);
+    const page = providerSignInPageState(browserOpening, browser.startedHere);
+    const openingFailure = !verifying ? page.failure : null;
+    const blocked = !verifying && page.blocked;
+    // Nothing is open here, or opening failed: the next step is the user's.
+    const userMustOpen =
+      !starting &&
+      !verifying &&
+      activeConnectionOperation?.authorizationUrlKind === "primary" &&
+      (page.notOpenedHere || openingFailure !== null);
+    const waitingBody = blocked
+      ? "Open Google sign-in to continue."
+      : (openingFailure ??
+        (page.opened
+          ? "Complete the official Antigravity sign-in in your browser."
+          : page.notOpenedHere
+            ? "Open the Google sign-in page to continue."
+            : "Opening Google sign-in in your browser…"));
     const waitingForAuthorizationCode =
       (activeConnectionOperation?.acceptsAuthorizationCode === true ||
         (activeConnectionOperation?.acceptsAuthorizationCode === undefined &&
@@ -578,25 +582,32 @@ export function AntigravityInlineSetup(props: {
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            currentBrowserOpening?.error ??
-            (verifying
-              ? "Finding the models available to your account…"
-              : "Complete the official Antigravity sign-in in your browser.")
+            starting
+              ? (props.provider.connection?.startingMessage ?? DEFAULT_PROVIDER_STARTING_MESSAGE)
+              : verifying
+                ? "Finding the models available to your account…"
+                : waitingBody
           }
           icon={
-            currentBrowserOpening?.error ? (
+            openingFailure ? (
               <TriangleAlertIcon className="size-5 text-warning" />
+            ) : userMustOpen ? (
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             ) : (
               <LoaderIcon className="size-5 animate-spin text-primary" />
             )
           }
-          role={currentBrowserOpening?.error ? "alert" : undefined}
+          role={openingFailure ? "alert" : undefined}
           title={
-            verifying
-              ? usesCredentials
-                ? "Checking credentials"
-                : "Checking your Google account"
-              : "Finish signing in"
+            usesCredentials
+              ? "Checking credentials"
+              : starting
+                ? "Starting Google sign-in"
+                : verifying
+                  ? "Checking your Google account"
+                  : blocked
+                    ? "Sign-in page blocked"
+                    : "Finish signing in"
           }
         />
         {waitingForAuthorizationCode &&
@@ -632,17 +643,19 @@ export function AntigravityInlineSetup(props: {
             {activeConnectionOperation?.authorizationUrl ? (
               <Button
                 disabled={
-                  currentBrowserOpening?.pending === true || pendingAction === "cancel-sign-in"
+                  browserOpening?.status === "opening" || pendingAction === "cancel-sign-in"
                 }
-                onClick={() => void reopenAuthorizationPage()}
+                onClick={() => void browser.reopen()}
                 size="sm"
                 type="button"
-                variant="ghost-muted"
+                variant={userMustOpen ? "ghost-primary" : "ghost-muted"}
               >
                 <ExternalLinkIcon aria-hidden />
                 {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
                   ? "Open sign-in help"
-                  : "Reopen Google sign-in"}
+                  : page.notOpenedHere || blocked
+                    ? "Open Google sign-in"
+                    : "Reopen Google sign-in"}
               </Button>
             ) : null}
             {activeConnectionOperation ? (
@@ -678,14 +691,27 @@ export function AntigravityInlineSetup(props: {
   }
 
   if (!isAuthenticated) {
-    const signInError =
-      localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+    const failedOperation = connectionOperation?.status === "failed" ? connectionOperation : null;
+    const signInError = localError ?? failedOperation?.message ?? null;
+    // The account sign-in finished; what failed was starting a session with it.
+    const failedAfterSignIn =
+      failedOperation?.failedAfterSignIn === true &&
+      (localError === null || localError === failedOperation.message);
     const configurationWarning =
       usesCredentials || props.provider.message?.includes("Gemini API-key mode")
         ? props.provider.message
         : null;
     const signInGuidance =
-      signInError ??
+      (failedAfterSignIn ? (
+        <>
+          {usesCredentials
+            ? "Your credentials were accepted. Try again, or check "
+            : "Your Google account is connected. Try again, or check "}
+          <DiagnosticsSettingsLink /> if it keeps failing.
+        </>
+      ) : (
+        signInError
+      )) ??
       configurationWarning ??
       (usesCredentials
         ? "Connect with the credentials in the provider settings."
@@ -706,9 +732,13 @@ export function AntigravityInlineSetup(props: {
           role={signInError ? "alert" : undefined}
           title={
             signInError
-              ? usesCredentials
-                ? "Connection didn’t finish"
-                : "Google sign-in didn’t finish"
+              ? failedAfterSignIn
+                ? usesCredentials
+                  ? "Connected, but Antigravity couldn’t start"
+                  : "Signed in, but Antigravity couldn’t start"
+                : usesCredentials
+                  ? "Connection didn’t finish"
+                  : "Google sign-in didn’t finish"
               : usesCredentials
                 ? "Connection required"
                 : "Sign in required"
@@ -716,13 +746,25 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            aria-label={signInError ? "Try again to sign in to Antigravity" : undefined}
+            aria-label={
+              failedAfterSignIn
+                ? "Try starting Antigravity again"
+                : signInError
+                  ? "Try again to sign in to Antigravity"
+                  : undefined
+            }
             onClick={() => void startSignIn()}
             size="sm"
             type="button"
             variant="ghost-primary"
           >
-            {usesCredentials ? <LogInIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}{" "}
+            {failedAfterSignIn ? (
+              <RefreshCwIcon aria-hidden />
+            ) : usesCredentials ? (
+              <LogInIcon aria-hidden />
+            ) : (
+              <ExternalLinkIcon aria-hidden />
+            )}{" "}
             {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
           </Button>
         </AssistedSetupActions>

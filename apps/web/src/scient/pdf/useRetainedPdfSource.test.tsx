@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
@@ -35,8 +35,11 @@ it("retains the reader through asset loading/failure, replaces it on success, an
   const root = createRoot(mount);
   let displayed: ReturnType<typeof useRetainedPdfSource> = null;
   function Probe({ identity, asset }: { identity: string; asset: PdfSourceResolution }) {
-    displayed = useRetainedPdfSource(identity, source, asset);
-    return displayed ? <textarea defaultValue="active input" /> : null;
+    const retained = useRetainedPdfSource(identity, source, asset);
+    useLayoutEffect(() => {
+      displayed = retained;
+    });
+    return retained ? <textarea defaultValue="active input" /> : null;
   }
   const render = async (identity: string, asset: PdfSourceResolution) => {
     await act(() => root.render(<Probe identity={identity} asset={asset} />));

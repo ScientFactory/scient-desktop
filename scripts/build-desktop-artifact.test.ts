@@ -521,7 +521,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(preview, "publish");
+      const previewChannel = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.41-preview.20260912.1589",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(preview.publish);
+      assert.isNull(previewChannel.publish);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -537,6 +548,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("disables electron-builder publish detection for local builds", () =>
+    Effect.gen(function* () {
+      const local = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(local.publish);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it("stages only the desktop main-process externals", () => {
@@ -2513,7 +2540,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has ten core files, plus the 39 approved component files.
+        // Fixture has ten core files, plus the 37 approved component files.
         for (let index = 0; index < 70; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
@@ -2526,13 +2553,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64" as const,
         };
         const valid = yield* validateWindowsPackagedPayload(options);
-        assert.equal(valid.fileCount, 119);
+        assert.equal(valid.fileCount, 117);
         yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
         const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
-        assert.equal(error.fileCount, 120);
-        assert.equal(error.fileLimit, 119);
+        assert.equal(error.fileCount, 118);
+        assert.equal(error.fileLimit, 117);
         assert.include(error.message, "core=81");
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),

@@ -8,7 +8,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useContext, useEffect, useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 
 import { ModelPickerOverlayContext } from "./ModelPickerOverlayContext";
 import { Button } from "../../components/ui/button";
@@ -73,12 +73,14 @@ export function DroidInlineSetup(props: {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
 
-  useEffect(() => {
+  const [previousInstanceId, setPreviousInstanceId] = useState(props.provider.instanceId);
+  if (previousInstanceId !== props.provider.instanceId) {
+    setPreviousInstanceId(props.provider.instanceId);
     setPendingAction(null);
     setLocalError(null);
     setCheckError(null);
     setLocalRuntime(null);
-  }, [props.provider.instanceId]);
+  }
 
   const serverRuntime = props.provider.connection?.runtime;
   const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
@@ -115,63 +117,79 @@ export function DroidInlineSetup(props: {
     <AssistedSetupActions key="connect-models">{modelsActions.secondary}</AssistedSetupActions>
   ) : null;
 
-  useEffect(() => {
-    const localOperation = localRuntime?.operation;
-    if (!localOperation || !serverRuntime) return;
+  const localOperation = localRuntime?.operation;
+  if (localOperation && serverRuntime) {
     const serverCaughtUp = serverRuntime.operation?.operationId === localOperation.operationId;
     const installFinished =
       localOperation.action === "install" && serverRuntime.source === "scient_managed";
     if (serverCaughtUp || installFinished) setLocalRuntime(null);
-  }, [localRuntime, serverRuntime]);
+  }
 
   const runRuntime = async (action: "install" | "repair") => {
     setLocalError(null);
     setPendingAction(action);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await startReviewedProviderRuntimeAction(props.controller, action);
-      setLocalRuntime(provider.connection?.runtime ?? null);
-      if (
-        action === "repair" &&
-        provider.connection?.runtime?.operation?.action === "repair" &&
-        provider.connection.runtime.operation.status === "succeeded"
-      ) {
-        props.onRepairSucceeded?.();
+      try {
+        const provider = await startReviewedProviderRuntimeAction(props.controller, action);
+        setLocalRuntime(provider.connection?.runtime ?? null);
+        if (
+          action === "repair" &&
+          provider.connection?.runtime?.operation?.action === "repair" &&
+          provider.connection.runtime.operation.status === "succeeded"
+        ) {
+          props.onRepairSucceeded?.();
+        }
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
       }
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
-    } finally {
-      setPendingAction(null);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const update = async () => {
     setLocalError(null);
     setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await updateManagedOrExternalProviderRuntime(
-        props.controller,
-        props.provider,
-        "No Droid update is currently available.",
-      );
-      setLocalRuntime(provider.connection?.runtime ?? null);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Droid."));
-    } finally {
-      setPendingAction(null);
+      try {
+        const provider = await updateManagedOrExternalProviderRuntime(
+          props.controller,
+          props.provider,
+          "No Droid update is currently available.",
+        );
+        setLocalRuntime(provider.connection?.runtime ?? null);
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Droid."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
     setPendingAction("cancel-runtime");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
-    } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, "Scient could not cancel Droid setup."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Droid setup."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const signIn = async () => {
@@ -179,15 +197,20 @@ export function DroidInlineSetup(props: {
     setLocalError(null);
     setCheckError(null);
     setPendingAction("sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.startConnection("droid_device_pairing");
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not start Droid sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.startConnection("droid_device_pairing");
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not start Droid sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   /** One full status check: Droid's start, account and models. */
@@ -195,13 +218,18 @@ export function DroidInlineSetup(props: {
     setLocalError(null);
     setCheckError(null);
     setPendingAction("check");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.refresh();
-    } catch (error) {
-      setCheckError(providerLifecycleFailureMessage(error, "Scient could not check Droid."));
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.refresh();
+      } catch (error) {
+        setCheckError(providerLifecycleFailureMessage(error, "Scient could not check Droid."));
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
   /** `quiet` beside the frame's own primary action. */
   const checkAgainButton = (label: string, quiet = false) => (
@@ -226,15 +254,20 @@ export function DroidInlineSetup(props: {
     if (!activeConnectionOperation) return;
     setLocalError(null);
     setPendingAction("cancel-sign-in");
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await props.controller.cancelConnection(activeConnectionOperation.operationId);
-    } catch (error) {
-      setLocalError(
-        providerLifecycleFailureMessage(error, "Scient could not cancel Droid sign in."),
-      );
-    } finally {
-      setPendingAction(null);
+      try {
+        await props.controller.cancelConnection(activeConnectionOperation.operationId);
+      } catch (error) {
+        setLocalError(
+          providerLifecycleFailureMessage(error, "Scient could not cancel Droid sign in."),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const runtimeDiagnostics = (

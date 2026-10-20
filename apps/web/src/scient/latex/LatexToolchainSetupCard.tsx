@@ -5,7 +5,6 @@
  */
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { Download, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
-import { useMemo } from "react";
 
 import { latexSetupCardModel } from "./latexToolchainSetupModel";
 import type { LatexDocumentCompiler } from "./latexCompiler";
@@ -22,25 +21,14 @@ export function LatexToolchainSetupCard(props: {
   readonly onInstall: () => void;
 }) {
   const { canInstallManaged, managedInstall, installRequesting, toolchainMissing } = props;
-  const model = useMemo(
-    () =>
-      latexSetupCardModel({
-        canInstallManaged,
-        install: managedInstall,
-        requesting: installRequesting,
-        toolchainMissing,
-        requiredCompiler: props.requiredCompiler ?? null,
-        downloadBytes: props.downloadBytes ?? null,
-      }),
-    [
-      canInstallManaged,
-      installRequesting,
-      managedInstall,
-      toolchainMissing,
-      props.requiredCompiler,
-      props.downloadBytes,
-    ],
-  );
+  const model = latexSetupCardModel({
+    canInstallManaged,
+    install: managedInstall,
+    requesting: installRequesting,
+    toolchainMissing,
+    requiredCompiler: props.requiredCompiler ?? null,
+    downloadBytes: props.downloadBytes ?? null,
+  });
 
   return (
     <div className="scient-latex-placeholder scient-latex-tools-notice" aria-live="polite">

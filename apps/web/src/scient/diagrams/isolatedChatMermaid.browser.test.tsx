@@ -288,6 +288,38 @@ describe("chat diagrams draw with no network access", () => {
     },
   );
 
+  it("preserves generated MathML in sequence labels and exports spaced math as an image", async () => {
+    const { svg } = await renderMermaidDiagram(
+      "sequenceDiagram\nAlice->>Bob: $$\\frac{d}{dx}\\mathbf{v} + \\sqrt{2} + \\text{total cost}$$",
+      "light",
+    );
+    const host = document.createElement("div");
+    host.innerHTML = svg;
+    const math = host.querySelector("math");
+    expect(math?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(math?.querySelector("mfrac")?.textContent).toContain("d");
+    expect(math?.querySelector("msqrt")?.textContent).toBe("2");
+    expect(math?.textContent).toContain("total");
+    expect((await mermaidSvgToPngBlob(svg, "light")).type).toBe("image/png");
+  });
+
+  it("does not return executable MathML label attributes or embedded resources", async () => {
+    const { svg } = await renderMermaidDiagram(
+      `flowchart LR\nA["<math href='javascript:alert(1)'><mi onclick='alert(1)'>x</mi><annotation-xml encoding='text/html'><img src='https://example.invalid/${PROBE}/math.png' onerror='alert(1)'></annotation-xml></math>"]`,
+      "light",
+    );
+    const host = document.createElement("div");
+    host.innerHTML = svg;
+    expect(host.querySelector("[onclick], [onerror], script, img, annotation-xml")).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll("[href]")).some((element) =>
+        element.getAttribute("href")?.startsWith("javascript:"),
+      ),
+    ).toBe(false);
+    await settle();
+    expect(await allProbeRequests()).toEqual([]);
+  });
+
   it("mirrors math styles and bundled fonts loaded after the frame opened", async () => {
     // The frame is open and has drawn; KaTeX's stylesheet and fonts arrive only now, as in chat.
     await renderMermaidDiagram("flowchart LR\nBefore --> Math", "light");

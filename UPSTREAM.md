@@ -1,5 +1,14 @@
 # Upstream maintenance
 
+Mobile diff grammar tests: `apps/mobile/src/features/diffs/nativeReviewDiffHighlighter.test.ts`
+disables Shiki's per-line wall-clock timeout in its real-highlighter test wrapper.
+The inherited 500ms cutoff can return partial tokens and incomplete grammar state
+under runner contention, so equivalent inputs can produce different highlighting.
+Keep this test-only override when syncing upstream: these tests cover grammar
+boundaries, line/character batching, and cancellation, not elapsed-time fallback.
+Production retains the timeout and its partial-highlighting behavior; changing
+that behavior needs a separate decision about responsiveness and grammar recovery.
+
 Scient owns desktop/web reader-position policy. The owners are Scient-only files in
 `apps/web/src/components/chat/`: `readerScrollPolicy.ts` (the reading end),
 `readerScrolling.ts` (reader input, the one position writer, per-frame bookkeeping and
@@ -166,12 +175,48 @@ sidebar and Settings. The notice and the shared install call live in
 carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
 callers; do not reintroduce the confirmation during alignment.
+The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
+and Scient-managed runtimes appear in a Scient-owned circle and card
+(`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
+`SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
+that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
+servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
+are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
+the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+where a server is left for later while its machine still updates a provider or runtime, and is
+admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
+In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
+available" toasts to the circle; the browser client keeps them.
+Because a server waits while a provider update is queued, a marked seam in
+`apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
+one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
+the same gap, so this fix is worth upstreaming.
+Server tests stay out of the source checkout. A marked seam in `ProviderReplayHarness.ts` makes
+`orchestration-v2/scient-fork/ReplayWorkspacePolicy.testkit.ts` the replay default: a local thread resolves to
+its project root, as in production, and a project-less test thread to its disposable replay profile.
+Upstream leaves that cwd null, and `Orchestrator.ts` then checkpoints `process.cwd()`, the checkout.
+A marked line in `apps/server/vite.config.ts` adds `src/testUtils/checkoutIsolation.setup.ts`, which
+sets `GIT_CEILING_DIRECTORIES` to the checkout root, so Git started below the root cannot find the
+repository.
+Upstream's harness has the same fallback, so this is worth upstreaming.
+A marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps a prompt that
+runtime teardown interrupts before its transport failure arrives as that failure, not as a
+successful `cancelled` response. Upstream converts every interrupt-only cause there, so this is
+worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
 The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
+
+Scient owns held-queue release in `orchestration-v2/scient-fork/QueuedRunSend.ts`. Upstream
+releases a held queue for any client send that starts or queues a run, except after worktree setup
+failed without a worktree. Scient releases it only for an ordinary direct send that starts its own
+run, including after such a failure, where the queue follows that checkout turn. A plain send that
+Stop turns into a queued message joins the held queue. Upstream's release block in `Orchestrator.ts`
+is not composed; marked expectations in `ThreadLaunchService.test.ts` and
+`SteeringCompletion.integration.test.ts` assert Scient's rule.
 
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
@@ -491,7 +536,7 @@ legacy database owners by process creation time, keeps archived and queued
 work out of storage cleanup, and routes text-generation fallback by provider
 instance. Release remains separate.
 
-The current alignment through
+The alignment through
 `a7025639c0e16aad3081106c935bf3025f601a1e` is recorded in
 [the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md)
 ([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)), which
@@ -506,6 +551,38 @@ write authority capped by the thread's current modes as upstream does (and, duri
 active run, additionally by the run's captured modes), and older clients' pull-request
 views by gating branch deletion until clients decode actions forward-compatibly.
 Release remains separate.
+
+The previous alignment through
+`d8e9fd267e26b7680f035edc0b40db09d2685dbb` is recorded in
+[the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-d8e9fd267e.md)
+([Scient PR #593](https://github.com/ScientFactory/scient-desktop/pull/593)).
+Literal merge `e0e4158af17cacba28c2abc9e39457b194a964c8` has exact owned base
+`2be0d794d09273a338aeaad74eae7fa733d6bf97` and the frozen official target as
+parents, retaining all 575 donor commits. Every web file, and now mobile, compiles
+with the React Compiler, and web React tests run in headless Chromium. Scient keeps
+its read-acknowledgement policy, its revert dialog, the original database (which
+`doctor` never offers to delete), the V1 tables its history import reads, full
+SQLite durability and Scient-only update repositories; upstream's workspace write
+authorization also covers Scient's own file writes. Release remains separate.
+
+The current alignment through
+`f34ba437a5dec23a205ef5f670f7b10439ae98eb` is recorded in
+[the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-f34ba437a5.md)
+([Scient PR #607](https://github.com/ScientFactory/scient-desktop/pull/607)).
+Literal merge `9ef3f49f0de3d380389e2e26d0ff9753ef37ff11` has exact owned base
+`129f4af07bc3b78cab506086fcad0c5f12d7105f` and the frozen official target as
+parents, retaining all 84 donor commits. Owned-main catch-up
+`667f48d7916020076ac97190ef84748566aaf06a` includes
+`7d6bd586a47220c44c880077fb64cf47e8fa9a78`; owned-main catch-up
+`a0e936c50f2dfebe362a2fa3707aaecac1399797` includes
+`17f7bfb2f47a4622f627b34d378bc33c1f43eb01`. Native V2 remains the queue and
+execution owner; current Stop matching and native-child readiness compose through
+existing Scient policies. Workspace/environment PDFs retain Scient's local
+reader, while attachment previews and browser tabs remain separate contexts.
+Scient's HTML-print export rejects a browser PDF fallback before printing or
+publishing it, and workspace image refresh reaches both inline and Scient-card
+renderers. SQLite durability, immutable migration history, analytics consent and
+allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 ## Receiving T3 updates
 
@@ -1045,6 +1122,59 @@ Legacy CLI owners are named explicitly and remain active for explicit `agy` path
 and targets outside the qualified native set; removing a fallback requires native
 replacement qualification, not merely an available Google archive.
 
+Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
+worth proposing to T3:
+
+- `linkAntigravityUserSkills` (`provider/antigravityAuthSupport.ts`) linked the private profile's
+  `config/skills` and `antigravity-cli/skills` to `~/.gemini` even when those directories did not
+  exist; on `session/new` the agent then fails every session with -32603. The seam calls
+  `scient/skills/antigravityUserSkillLinks.ts`: link only an existing directory, remove a dangling
+  link, and replace an empty directory the agent created once the target exists; a directory with
+  content is never touched. One marked fixture line in `antigravityAuthSupport.test.ts` creates
+  the CLI skill directory that upstream's test expected to be linked while missing.
+- `prepareAntigravityProfile`'s browser-helper preflight ran on every launch, and its
+  `timeoutOrElse` waited for the helper's teardown (`taskkill`, then an unbounded exit wait on
+  Windows). The seam (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`) keeps a
+  success per helper executable and Node/Electron startup variables for the server process, and
+  lets a timed-out teardown finish in the background, bounded by one forced kill of the helper,
+  which a second marked line records as it starts. Creating the helper process is synchronous in
+  Node on Windows and can still block the event loop once.
+- `removeAntigravitySessionFiles` (`provider/acp/AntigravitySessionFiles.ts`) could not clean up
+  after a failed `session/new`, which leaves `<session>.db-wal`/`-shm` and never reports the
+  session id. The seam sweeps SQLite sidecars without their database
+  (`scient/providerLifecycle/antigravityConversationSidecars.ts`).
+
+The fourth stays inside `AntigravityAuth.ts`'s existing marked failure block, which takes its
+post-authentication message from `scient/providerLifecycle/antigravityAuthDiagnostics.ts` so the
+lifecycle bridge can mark the failure `failedAfterSignIn`; the same module records the failed
+ACP request in the local trace. Opening sign-in pages for the client that started them, and the
+Settings row's one-click sign-in, live in Scient-owned web modules
+(`scient/providerConnection/providerSignIn*.ts` and `oneClickSignIn.ts`), with one marked mount of
+`ProviderSignInPageCoordinator` in each authenticated shell of `routes/__root.tsx`.
+The server-side claim of a sign-in page adds one Scient RPC,
+`server.claimProviderSignInPage`, declared in `contracts/src/scient/providerConnectionRpcs.ts` and
+imported in its existing marked block of `contracts/src/rpc.ts`; its group entry, scope
+(`server/src/auth/RpcAuthorization.ts`) and aggregate (`server/src/observability/RpcInstrumentation.ts`)
+are each one marked line beside the existing provider-connection entries. Those existing
+provider-connection entries in the three files are earlier unmarked Scient additions, to be marked in a follow-up.
+The web defines its command in `scient/providerConnection/providerSignInCommands.ts`.
+`components/settings/ProviderInstanceCard.tsx` carries three marked blocks: its lifecycle
+presentation comes from a Scient hook (its import and its call), so a sign-in started here reads
+as starting from the click, and a failed sign-in or setup takes the error status dot. See
+[provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
+
+One marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps an agent that owns
+its process tree attached on Windows: `ownDetachedProcessGroup` spawns detached only off Windows,
+where `taskkill /T` already stops the tree. A detached agent has no console, so every console
+program it starts opens a visible window; Antigravity's own inner process is one. This is an
+upstream bug (T3's Grok uses the same path) worth proposing. In Scient's retained
+`AntigravityInstallation.ts`, a runtime check that runs out of time reports that instead of the
+install's catch-all disk-space advice.
+The install check, model refresh (`AntigravityDriver.ts`) and sign-out (`AntigravityAuth.ts`)
+allow 5 minutes instead of T3's 90 seconds, each in a marked line: the
+official Windows agent unpacks about 7,300 files (320 MiB) into a fresh folder on every start, which
+took about 35 s on a development machine and can exceed 90 s on slower disks.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
@@ -1053,6 +1183,12 @@ and dispatch retain exact native IDs. Preserve this presentation seam in web
 and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
 already bypass grouping. See [provider architecture](docs/internals/providers.md).
+
+Claude's health-check commands, `claude --version` and Scient's `claude auth status` gate, use a
+20-second deadline instead of the shared 4-second probe deadline, in `SCIENT-FORK` regions of
+`ClaudeProvider.ts`. The native CLI needs 2-4 seconds to answer on Windows. Drop the version-check
+region once upstream gives that check an equivalent deadline. See
+[Claude health check](docs/internals/providers.md#claude-health-check).
 
 Desktop/web also reconciles historical Antigravity family selections in unstarted
 drafts against the instance's live native variants. Preserve its draft-store write,

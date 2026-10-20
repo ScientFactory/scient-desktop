@@ -39,6 +39,7 @@ import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { LatexToolchain, layer as toolchainLayer } from "./LatexToolchain.ts";
 import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const publicationHelper = await filePublicationTestHelper();
 
@@ -114,6 +115,7 @@ const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: st
         Layer.provideMerge(generatedStoreLayer),
         Layer.provideMerge(
           WorkspaceFileSystem.layer.pipe(
+            Layer.provide(layerKnownWorkspacesAllowAll),
             Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
             Layer.provide(WorkspacePaths.layer),
           ),

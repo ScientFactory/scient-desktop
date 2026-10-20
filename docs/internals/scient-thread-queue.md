@@ -54,7 +54,8 @@ Three things release a held queue, and each releases every queued run:
   in the same command (`scient-fork/QueuedRunSend.ts`). A Queue submission or a
   Steer that starts at once on an idle thread, Restart, a manual or scheduled
   continuation, automatic deliveries, notifications and scheduled tasks leave a
-  held queue held.
+  held queue held. A plain send that Stop turns into a queued message joins the
+  held queue too.
 - **Resume.** `queue.resume` without a run, from the composer's empty-draft
   Resume, still releases the whole queue.
 

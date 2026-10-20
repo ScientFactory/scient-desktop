@@ -1,5 +1,5 @@
 import { FilmIcon, ImageIcon } from "lucide-react";
-import { createContext, useCallback, useRef, useState, type ReactNode } from "react";
+import { createContext, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { MiddleTruncate } from "~/components/ui/middle-truncate";
@@ -17,7 +17,7 @@ export const ScientRemoteImageLoadedContext = createContext(false);
  */
 function useRemoteImagePermission(url: string) {
   const [allowedUrl, setAllowedUrl] = useState<string | null>(null);
-  const allow = useCallback(() => setAllowedUrl(url), [url]);
+  const allow = () => setAllowedUrl(url);
   return { allowed: allowedUrl === url, allow };
 }
 
@@ -45,11 +45,11 @@ export function ScientRemoteImageReference(props: {
 }) {
   const { allowed, allow } = useRemoteImagePermission(props.address.url);
   const moveFocusToMedia = useRef(false);
-  const focusLoadedMedia = useCallback((element: HTMLSpanElement | null) => {
+  const focusLoadedMedia = (element: HTMLSpanElement | null) => {
     if (!element || !moveFocusToMedia.current) return;
     moveFocusToMedia.current = false;
     element.focus({ preventScroll: true });
-  }, []);
+  };
 
   if (allowed) {
     // The button that had focus is gone; keep keyboard users where the image now is.

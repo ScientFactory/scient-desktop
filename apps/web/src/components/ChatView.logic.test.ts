@@ -18,11 +18,12 @@ import {
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { selectActiveRightPanel, selectThreadRightPanelState } from "../rightPanelStore";
 import {
   CommandId,
   EnvironmentId,
   ComposerContextId,
-  EventId,
   MessageId,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -30,6 +31,7 @@ import {
   ProviderThreadId,
   ThreadId,
   RunId,
+  type ScopedThreadRef,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type WorktreeSetupSnapshot,
@@ -37,7 +39,7 @@ import {
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -60,6 +62,7 @@ import {
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveDraftHeroState,
+  resolveExplicitDiffOpenOnActivate,
   resolveWorktreeSetupProgress,
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
@@ -2188,6 +2191,106 @@ describe("proactive completed diff guard", () => {
   });
 });
 
+describe("Diff scope across right-panel tab switches", () => {
+  const threadRef: ScopedThreadRef = { environmentId, threadId };
+  const otherThreadRef: ScopedThreadRef = { environmentId, threadId: ThreadId.make("thread-2") };
+  let explicitDiffOpen: ScopedThreadRef | null = null;
+
+  const diffIsActive = (ref: ScopedThreadRef) =>
+    selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, ref) === "diff";
+  const diffScope = (ref: ScopedThreadRef) =>
+    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref).kind;
+  const settle = (ref: ScopedThreadRef) => {
+    const explicit = explicitDiffOpen;
+    explicitDiffOpen = null;
+    if (diffIsActive(ref) && explicit !== ref) {
+      useDiffPanelStore.getState().selectGitScope(ref, "branch");
+    }
+  };
+  const clickTab = (ref: ScopedThreadRef, surfaceId: string) => {
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      ref,
+    ).surfaces.find((entry) => entry.id === surfaceId);
+    explicitDiffOpen = resolveExplicitDiffOpenOnActivate({
+      surfaceKind: surface!.kind,
+      diffOpen: diffIsActive(ref),
+      activeThreadRef: ref,
+    });
+    useRightPanelStore.getState().activateSurface(ref, surfaceId);
+    settle(ref);
+  };
+
+  beforeEach(() => {
+    explicitDiffOpen = null;
+    useRightPanelStore.setState({
+      byThreadKey: {},
+      userActionRevisionByThreadKey: {},
+      closeRevisionByThreadKey: {},
+    });
+    useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
+  });
+
+  it("keeps Uncommitted when the user clicks back to the Diff tab", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(threadRef, "diff");
+    settle(threadRef);
+    useDiffPanelStore.getState().selectGitScope(threadRef, "unstaged");
+
+    panels.open(threadRef, "files");
+    settle(threadRef);
+    clickTab(threadRef, "diff");
+
+    expect(diffScope(threadRef)).toBe("unstaged");
+  });
+
+  it("still opens on Changes for generic openings", () => {
+    const panels = useRightPanelStore.getState();
+    const diffStore = useDiffPanelStore.getState();
+
+    panels.open(threadRef, "diff");
+    settle(threadRef);
+    expect(diffScope(threadRef)).toBe("branch");
+
+    diffStore.selectGitScope(threadRef, "unstaged");
+    panels.open(threadRef, "files");
+    settle(threadRef);
+    panels.closeSurface(threadRef, "files");
+    settle(threadRef);
+    expect(diffScope(threadRef)).toBe("branch");
+
+    diffStore.selectGitScope(threadRef, "unstaged");
+    panels.open(otherThreadRef, "diff");
+    diffStore.selectGitScope(otherThreadRef, "unstaged");
+    settle(otherThreadRef);
+    expect(diffScope(otherThreadRef)).toBe("branch");
+  });
+
+  it("marks only a click that brings the Diff tab on screen", () => {
+    expect(
+      resolveExplicitDiffOpenOnActivate({
+        surfaceKind: "diff",
+        diffOpen: false,
+        activeThreadRef: threadRef,
+      }),
+    ).toBe(threadRef);
+    expect(
+      resolveExplicitDiffOpenOnActivate({
+        surfaceKind: "diff",
+        diffOpen: true,
+        activeThreadRef: threadRef,
+      }),
+    ).toBeNull();
+    expect(
+      resolveExplicitDiffOpenOnActivate({
+        surfaceKind: "files",
+        diffOpen: false,
+        activeThreadRef: threadRef,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("shouldRefocusComposerOnWindowFocus", () => {
   function element(
     tagName: string,
@@ -2231,6 +2334,12 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
 
   it.each(["IFRAME", "WEBVIEW"])("leaves a focused %s preview alone", (tagName) => {
     expect(shouldRefocusComposerOnWindowFocus(element(tagName))).toBe(false);
+  });
+
+  it("leaves a focused device screen alone", () => {
+    expect(shouldRefocusComposerOnWindowFocus(element("DIV", { within: "application" }))).toBe(
+      false,
+    );
   });
 
   it("leaves a focused terminal alone in the drawer and the right panel", () => {

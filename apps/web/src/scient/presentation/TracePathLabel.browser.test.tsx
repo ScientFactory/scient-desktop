@@ -168,7 +168,6 @@ it.each([false, true])(
         timestampFormat="locale"
         workspaceRoot="/work/project"
         runs={[]}
-        providerStatuses={[]}
         anchorMessageId={null}
         onAnchorReady={() => {}}
         onAnchorSizeChanged={() => {}}

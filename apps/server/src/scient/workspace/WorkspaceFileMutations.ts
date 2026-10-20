@@ -241,6 +241,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
   readonly retainedHooks?: RetainedMutationHooks;
+  /**
+   * The host's write denial for Git's own folders, checked at every resolution, including the
+   * one under the mutation lock, so a link swapped in after authorization cannot reach them.
+   */
+  readonly isProtectedPath?: (absolutePath: string) => Promise<boolean>;
 }) {
   const { workspacePaths, workspaceEntries } = deps;
   const errorFor = (
@@ -414,6 +419,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       catch: (cause) => errorFor(input, named.absolutePath, cause),
     });
     if (!within(resolved.root, resolved.target))
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: resolved.root,
+        resolvedPath: resolved.target,
+      });
+    // History reads may name Git's folders; only a mutation target is denied. The path as
+    // named is checked too: a `.git/config` link resolves away the `.git`.
+    const isProtectedPath = deps.isProtectedPath;
+    if (
+      !history &&
+      isProtectedPath !== undefined &&
+      (yield* Effect.tryPromise({
+        try: async () =>
+          (await isProtectedPath(resolved.target)) ||
+          (await isProtectedPath(resolved.requestedPath)),
+        catch: (cause) => errorFor(input, resolved.target, cause),
+      }))
+    )
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,

@@ -122,16 +122,21 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
     setDisconnecting(true);
     if (isManagement) props.onAccountActionPendingChange(true);
     setDisconnectError(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await controller.disconnect();
-    } catch (error) {
-      setDisconnectError(
-        providerLifecycleFailureMessage(error, `Scient could not sign out of ${displayName}.`),
-      );
-    } finally {
-      setDisconnecting(false);
-      if (isManagement) props.onAccountActionPendingChange(false);
+      try {
+        await controller.disconnect();
+      } catch (error) {
+        setDisconnectError(
+          providerLifecycleFailureMessage(error, `Scient could not sign out of ${displayName}.`),
+        );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setDisconnecting(false);
+    if (isManagement) props.onAccountActionPendingChange(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const accountAction =

@@ -9,6 +9,70 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.24",
+    publishedAt: "2026-10-19",
+    format: "paragraphs",
+    headline: "Voice on Windows. A faster, clearer workspace.",
+    highlights: [
+      {
+        id: "windows-local-dictation-0624",
+        title: "Set up offline dictation on Windows",
+        description:
+          "Choose the microphone in the composer, download a voice model, and dictate into your draft. Windows setup no longer requires extra system libraries. Speech recognition runs on your computer; optional AI correction sends transcript text, not your recording.",
+      },
+      {
+        id: "performance-reliability-0624",
+        title: "Work with a faster, steadier Scient",
+        description:
+          "Performance improvements make streaming answers, typing, and moving through conversations smoother. Startup is faster with large conversation histories, with reliability fixes across chat, model selection, file handling, and remote connections.",
+      },
+      {
+        id: "source-quotes-0624",
+        title: "Ask about code and document source",
+        description:
+          "Select text in code, Markdown, LaTeX, or compute source and choose Ask in chat. Your question keeps the exact quote and its file location. Click the quote to return to the source; Scient warns if it can no longer verify the passage’s location.",
+      },
+      {
+        id: "cross-computer-context-0624",
+        title: "Bring in a conversation from another computer",
+        description:
+          "Drag a conversation from another connected computer into your prompt to attach a saved transcript. Your agent can use it even after that computer disconnects. It’s a snapshot, not a live link; later messages and attached-file contents are not included.",
+      },
+      {
+        id: "answers-and-delegated-work-0624",
+        title: "See useful answers and delegated work more clearly",
+        description:
+          "Earlier substantial answers stay visible after a long turn, while short progress notes and tool activity fold away.\n\nExpand Scient Agent task groups to inspect each member’s assignment and available result. When Claude runs a team, each member’s work now streams into its own child conversation.",
+      },
+      {
+        id: "sidebar-updates-0624",
+        title: "Update your setup from the sidebar",
+        description:
+          "A new sidebar control brings updates for connected computers and supported AI providers together. Update one item or all available items, follow progress, and retry failures. Scient asks before server updates interrupt running work, and lets you postpone this app’s restart.",
+      },
+      {
+        id: "multi-computer-sections-0624",
+        title: "Clearer organization when you use several computers",
+        description:
+          "If you connect Scient on your laptop to an office computer or server, each computer now keeps its own conversation sections. They appear consistently wherever you connect to that computer. Matching names stay separate. Some remote conversations may move to General; file them again on their own computer. Update Scient on each computer.",
+      },
+      {
+        id: "muse-code-0624",
+        title: "Connect Muse Code (beta)",
+        description:
+          "Use Meta’s Muse Code agent directly in Scient. Install it and sign in from Settings → Providers, or connect an existing installation. Work with your project’s files and the models available to your Muse account.",
+      },
+      {
+        id: "review-guides-0624",
+        title: "Take a guided tour of a pull request (beta)",
+        description:
+          "Enable Review guides in Settings → Source Control, then choose Write guide in a pull request’s Guide tab. Claude or Codex prepares a tour of the changes, highlights decisions needing your attention, and lets you ask questions or collect review comments as you read.",
+      },
+    ],
+    alsoIncluded:
+      "Per-project agent controls; multilingual spell-checking; Antigravity subscription limits and Pi usage reports; improved conversation-fork recovery; and more time for Claude health checks on busy computers.",
+  },
+  {
     version: "0.6.23",
     publishedAt: "2026-10-10",
     format: "paragraphs",

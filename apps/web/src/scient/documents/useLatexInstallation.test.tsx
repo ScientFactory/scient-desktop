@@ -4,7 +4,7 @@ import {
   type ScientLatexManagedInstallState,
   type ScientLatexToolchainReport,
 } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -38,11 +38,13 @@ let install: () => void = () => undefined;
 let refresh: () => Promise<void> = async () => undefined;
 function Watch() {
   const controller = useLatexInstallation(EnvironmentId.make("local"));
-  kind = controller.view.kind;
-  summary = controller.view.summary;
-  lastReport = controller.report;
-  install = controller.act;
-  refresh = controller.refresh;
+  useLayoutEffect(() => {
+    kind = controller.view.kind;
+    summary = controller.view.summary;
+    lastReport = controller.report;
+    install = controller.act;
+    refresh = controller.refresh;
+  });
   return null;
 }
 

@@ -5,6 +5,7 @@ import {
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -199,6 +200,12 @@ function claudeAuthStatus(
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 const CLAUDE_SKILL_RELOAD_TIMEOUT_MS = 5_000;
+// SCIENT-FORK:START — Claude health-check command deadline.
+// The native Claude CLI takes 2-4 s just to answer `--version` or `auth status` on
+// Windows, so the shared 4 s probe deadline reported a healthy install as failing
+// whenever the machine was busy.
+const CLAUDE_CLI_CHECK_TIMEOUT_MS = 20_000;
+// SCIENT-FORK:END
 
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -249,7 +256,7 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
-type ClaudeCapabilitiesProbe = {
+export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -444,10 +451,13 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.result,
-    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
+    Effect.tapError((error) =>
+      Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
+    ),
   );
 };
+
+type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
@@ -475,7 +485,10 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
-  const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false);
+  const probeResult = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(
+    Effect.result,
+  );
+  const capabilities = Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {
     ...machineSnapshot,
     skills,
@@ -491,7 +504,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
     claudeSettings: ClaudeSettings,
-  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined, ClaudeCapabilitiesProbeError>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -527,12 +540,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  // SCIENT-FORK:START — Claude health-check command deadline.
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
     ["--version"],
     resolvedEnvironment,
     cwd,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(CLAUDE_CLI_CHECK_TIMEOUT_MS), Effect.result);
+  // SCIENT-FORK:END
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -605,12 +620,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     // the first-party readiness gate; installation alone must never expose
     // usable models. Explicit API/custom-backend configurations retain T3's
     // SDK-derived readiness path below.
+    // SCIENT-FORK:START — Claude health-check command deadline.
     const authStatusProbe = yield* runClaudeCommand(
       claudeSettings,
       ["auth", "status", "--json"],
       resolvedEnvironment,
       cwd,
-    ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+    ).pipe(Effect.timeoutOption(CLAUDE_CLI_CHECK_TIMEOUT_MS), Effect.result);
+    // SCIENT-FORK:END
     const authStatusResult = Result.isSuccess(authStatusProbe)
       ? Option.getOrUndefined(authStatusProbe.success)
       : undefined;
@@ -660,11 +677,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+  const probeResult = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
     : undefined;
+  const capabilities =
+    probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  const probeFailure =
+    probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
+  // SCIENT-FORK:START include provider-reported skills in the discovered inventory.
   const discoveredSkills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const skills = mergeClaudeReportedSkills(discoveredSkills, capabilities?.skills ?? []);
+  // SCIENT-FORK:END
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -686,7 +709,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           : { status: "unknown" },
         message: firstPartyAccountConfirmed
           ? "Claude is signed in, but Scient could not complete its readiness check."
-          : "Could not verify Claude authentication status from initialization result.",
+          : probeFailure
+            ? Cause.isTimeoutError(probeFailure)
+              ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+              : "Claude Agent CLI failed while checking account status."
+            : "Could not verify Claude authentication status from initialization result.",
       },
     });
   }

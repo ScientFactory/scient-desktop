@@ -1,10 +1,11 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   AuthFilesystemWriteScope,
   type EnvironmentId,
   type ProjectWriteFileResult,
   type ProjectFilePublicationAttention,
 } from "@t3tools/contracts";
-import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import {
@@ -111,17 +112,21 @@ export function useFileSaveCoordinator({
   onSaveResolutionApplied,
   saveResolution,
 }: FileSaveOptions): FileSaveSessionActions {
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
+  const writeFile = useProjectFileWriter();
   const latestRevision = useRef(revision);
   const latestSource = useRef(initialSource);
-  latestSource.current = initialSource;
+  useLayoutEffect(() => {
+    latestSource.current = initialSource;
+  }, [initialSource]);
   const [retainedAttention, setRetainedAttention] =
     useState<ProjectFilePublicationAttention | null>(publicationAttention ?? null);
   const [, setRenameIntent] = useState<DocumentRenameIntent | null>(null);
   const [reviewRequired, setReviewRequired] = useState(false);
   const [currentMissing, setCurrentMissing] = useState(false);
   const latestAttention = useRef(publicationAttention);
-  latestAttention.current = publicationAttention;
+  useLayoutEffect(() => {
+    latestAttention.current = publicationAttention;
+  }, [publicationAttention]);
   const latestCallbacks = useRef({
     onPendingChange,
     onSaveConfirmed,
@@ -139,132 +144,41 @@ export function useFileSaveCoordinator({
   useEffect(() => {
     latestRevision.current = revision;
   }, [revision]);
-  const session = useMemo(() => {
-    const leaseRef = createRef<WorkspaceFileSessionLease>();
-    const recovery = createMarkdownPersistenceTransport({ environmentId, cwd, relativePath });
-    return {
-      change: (contents: string) => leaseRef.current?.change(contents),
-      getDraftSource: () => leaseRef.current?.getDraftSource() ?? latestSource.current,
-      flush: () => leaseRef.current?.flush() ?? Promise.resolve(false),
-      ready: () => leaseRef.current?.ready() ?? Promise.resolve(false),
-      getRenameIntent: () => leaseRef.current?.getRenameIntent() ?? null,
-      isRenameCurrent: (intent: DocumentRenameIntent) =>
-        leaseRef.current?.isRenameCurrent(intent) ?? false,
-      beginRename: (from: MarkdownPersistenceTarget, destination: MarkdownPersistenceTarget) =>
-        leaseRef.current?.beginRename(from, destination) ?? Promise.resolve(null),
-      acknowledgeRename: (
-        intent: DocumentRenameIntent,
-        acknowledgement: NonNullable<DocumentRenameIntent["acknowledgement"]>,
-      ) => leaseRef.current?.acknowledgeRename(intent, acknowledgement) ?? Promise.resolve(false),
-      rejectRename: (intent: DocumentRenameIntent, error: unknown) =>
-        leaseRef.current?.rejectRename(intent, error) ?? Promise.resolve(false),
-      setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
-      syncRevision: (value: string, source: string) =>
-        leaseRef.current?.syncConfirmedFileRevision(value, source),
-      observeAttention: (value: ProjectFilePublicationAttention | undefined) =>
-        leaseRef.current?.observePublicationAttention(value),
-      resolveRetainedAttention: (recoveryId: string, currentRevision: string | null) =>
-        leaseRef.current?.resolveRetainedAttention(recoveryId, currentRevision) ??
-        Promise.resolve(false),
-      reviewUnchangedRefusal: (currentRevision: string | null) =>
-        leaseRef.current?.reviewUnchangedRefusal(currentRevision) ?? Promise.resolve(false),
-      recreateMissingCurrent: (contents?: string) =>
-        leaseRef.current?.recreateMissingCurrent(contents) ?? false,
-      noteMutationFailure: (error: unknown, mutationId: string) =>
-        leaseRef.current?.noteMutationFailure(error, mutationId),
-      resolve: (resolution: FileSaveResolution) => {
-        if (resolution.action === "discard") leaseRef.current?.discardPending(resolution.revision);
-        else leaseRef.current?.retryPending(resolution.revision);
-      },
-      setup: () => {
-        const lease = workspaceFileSessions.acquire({
-          key: projectFileOperationKey({ environmentId, cwd, relativePath }),
-          debounceMs,
-          canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
-          initialRevision: latestRevision.current,
-          initialSource: latestSource.current,
-          journalStore: indexedDbMarkdownDrafts,
-          ...(latestAttention.current === undefined
-            ? {}
-            : { initialAttention: latestAttention.current }),
-          classifyFailure: classifyMarkdownPersistenceFailure,
-          readForRecovery: recovery.readForReview ?? recovery.read,
-          describeAttention: describeDocumentPublicationAttention,
-          publicationOutcome: documentPublicationOutcome,
-          ...(recovery.resolve === undefined ? {} : { resolveRecovery: recovery.resolve }),
-          persist: (nextContents, expectedRevision, mutationId, createOnly) =>
-            writeFile({
-              environmentId,
-              input: {
-                cwd,
-                relativePath,
-                contents: nextContents,
-                mutationId,
-                ...(createOnly
-                  ? { createOnly: true }
-                  : expectedRevision === undefined
-                    ? {}
-                    : { expectedRevision }),
-              },
-            }),
-          revisionFromResult: (result) => result.revision,
-          onPersisted: (confirmedContents, result) => {
-            return confirmProjectFileQueryData(
-              environmentId,
-              cwd,
-              relativePath,
-              confirmedContents,
-              result.revision,
-            );
-          },
-          callbacks: {
-            onRestoredSource: (contents) =>
-              setProjectFileQueryData(environmentId, cwd, relativePath, contents),
-            onRenameIntentChange: setRenameIntent,
-            onPendingChange: (pending) =>
-              latestCallbacks.current.onPendingChange(relativePath, pending),
-            onConfirmed: (confirmedContents, result) =>
-              latestCallbacks.current.onSaveConfirmed(
-                relativePath,
-                confirmedContents,
-                result.revision,
-              ),
-            onFailure: (contents, result) => {
-              latestCallbacks.current.onSaveFailure(
-                relativePath,
-                squashAtomCommandFailure(result),
-                contents,
-              );
-            },
-            onAttentionChange: (attention) => {
-              setRetainedAttention(attention);
-              if (attention !== null) {
-                setReviewRequired(false);
-                latestCallbacks.current.onSaveFailure(relativePath, attention);
-              } else {
-                appAtomRegistry.refresh(getProjectFileQueryAtom(environmentId, cwd, relativePath));
-                latestCallbacks.current.onSaveResolutionApplied("retry");
-              }
-            },
-            onRecoveryFailure: (error) =>
-              latestCallbacks.current.onSaveFailure(relativePath, error),
-            onReviewRequiredChange: setReviewRequired,
-            onCurrentMissingChange: setCurrentMissing,
-            onResolutionApplied: (action) =>
-              latestCallbacks.current.onSaveResolutionApplied(action),
-          },
-        });
-        leaseRef.current = lease;
-        setRetainedAttention(lease.publicationAttention);
-        setCurrentMissing(lease.currentMissing);
-        setRenameIntent(lease.getRenameIntent());
-        return () => {
-          leaseRef.current = null;
-          lease.release();
-        };
-      },
-    };
-  }, [cwd, debounceMs, environmentId, relativePath, writeFile]);
+  // SCIENT-FORK:START — the shared revisioned lease outlives compiler cache eviction.
+  const readRevision = useStableCallback(() => latestRevision.current);
+  const readSource = useStableCallback(() => latestSource.current);
+  const readAttention = useStableCallback(() => latestAttention.current);
+  const readCallbacks = useStableCallback(() => latestCallbacks.current);
+  const inputs = {
+    environmentId,
+    cwd,
+    relativePath,
+    debounceMs,
+    writeFile,
+    readRevision,
+    readSource,
+    readAttention,
+    readCallbacks,
+    setRetainedAttention,
+    setRenameIntent,
+    setReviewRequired,
+    setCurrentMissing,
+  };
+  const [current, setCurrent] = useState(() => ({
+    inputs,
+    session: createFileSaveSession(inputs),
+  }));
+  if (
+    current.inputs.environmentId !== environmentId ||
+    current.inputs.cwd !== cwd ||
+    current.inputs.relativePath !== relativePath ||
+    current.inputs.debounceMs !== debounceMs ||
+    current.inputs.writeFile !== writeFile
+  ) {
+    setCurrent({ inputs, session: createFileSaveSession(inputs) });
+  }
+  const session = current.session;
+  // SCIENT-FORK:END
 
   // StrictMode replays effect setup. Retired leases stay inert, while deferred
   // final cleanup lets the replay rejoin the same live persistence session.
@@ -297,3 +211,152 @@ export function useFileSaveCoordinator({
     recreateMissingCurrent: session.recreateMissingCurrent,
   };
 }
+
+function useProjectFileWriter() {
+  return useAtomCommand(projectEnvironment.writeFile);
+}
+
+// SCIENT-FORK:START — share writes and revisions between mounted file surfaces.
+function createFileSaveSession({
+  environmentId,
+  cwd,
+  relativePath,
+  debounceMs,
+  writeFile,
+  readRevision,
+  readSource,
+  readAttention,
+  readCallbacks,
+  setRetainedAttention,
+  setRenameIntent,
+  setReviewRequired,
+  setCurrentMissing,
+}: Pick<FileSaveOptions, "environmentId" | "cwd" | "relativePath"> & {
+  debounceMs: number;
+  writeFile: ReturnType<typeof useProjectFileWriter>;
+  readRevision: () => string;
+  readSource: () => string;
+  readAttention: () => ProjectFilePublicationAttention | undefined;
+  readCallbacks: () => Pick<
+    FileSaveOptions,
+    "onPendingChange" | "onSaveConfirmed" | "onSaveFailure" | "onSaveResolutionApplied"
+  >;
+  setRetainedAttention: (value: ProjectFilePublicationAttention | null) => void;
+  setRenameIntent: (value: DocumentRenameIntent | null) => void;
+  setReviewRequired: (value: boolean) => void;
+  setCurrentMissing: (value: boolean) => void;
+}) {
+  const leaseRef = createRef<WorkspaceFileSessionLease>();
+  const recovery = createMarkdownPersistenceTransport({ environmentId, cwd, relativePath });
+  return {
+    change: (contents: string) => leaseRef.current?.change(contents),
+    getDraftSource: () => leaseRef.current?.getDraftSource() ?? readSource(),
+    flush: () => leaseRef.current?.flush() ?? Promise.resolve(false),
+    ready: () => leaseRef.current?.ready() ?? Promise.resolve(false),
+    getRenameIntent: () => leaseRef.current?.getRenameIntent() ?? null,
+    isRenameCurrent: (intent: DocumentRenameIntent) =>
+      leaseRef.current?.isRenameCurrent(intent) ?? false,
+    beginRename: (from: MarkdownPersistenceTarget, destination: MarkdownPersistenceTarget) =>
+      leaseRef.current?.beginRename(from, destination) ?? Promise.resolve(null),
+    acknowledgeRename: (
+      intent: DocumentRenameIntent,
+      acknowledgement: NonNullable<DocumentRenameIntent["acknowledgement"]>,
+    ) => leaseRef.current?.acknowledgeRename(intent, acknowledgement) ?? Promise.resolve(false),
+    rejectRename: (intent: DocumentRenameIntent, error: unknown) =>
+      leaseRef.current?.rejectRename(intent, error) ?? Promise.resolve(false),
+    setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
+    syncRevision: (value: string, source: string) =>
+      leaseRef.current?.syncConfirmedFileRevision(value, source),
+    observeAttention: (value: ProjectFilePublicationAttention | undefined) =>
+      leaseRef.current?.observePublicationAttention(value),
+    resolveRetainedAttention: (recoveryId: string, currentRevision: string | null) =>
+      leaseRef.current?.resolveRetainedAttention(recoveryId, currentRevision) ??
+      Promise.resolve(false),
+    reviewUnchangedRefusal: (currentRevision: string | null) =>
+      leaseRef.current?.reviewUnchangedRefusal(currentRevision) ?? Promise.resolve(false),
+    recreateMissingCurrent: (contents?: string) =>
+      leaseRef.current?.recreateMissingCurrent(contents) ?? false,
+    noteMutationFailure: (error: unknown, mutationId: string) =>
+      leaseRef.current?.noteMutationFailure(error, mutationId),
+    resolve: (resolution: FileSaveResolution) => {
+      if (resolution.action === "discard") leaseRef.current?.discardPending(resolution.revision);
+      else leaseRef.current?.retryPending(resolution.revision);
+    },
+    setup: () => {
+      const initialAttention = readAttention();
+      const lease = workspaceFileSessions.acquire({
+        key: projectFileOperationKey({ environmentId, cwd, relativePath }),
+        debounceMs,
+        canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
+        initialRevision: readRevision(),
+        initialSource: readSource(),
+        journalStore: indexedDbMarkdownDrafts,
+        ...(initialAttention === undefined ? {} : { initialAttention }),
+        classifyFailure: classifyMarkdownPersistenceFailure,
+        readForRecovery: recovery.readForReview ?? recovery.read,
+        describeAttention: describeDocumentPublicationAttention,
+        publicationOutcome: documentPublicationOutcome,
+        ...(recovery.resolve === undefined ? {} : { resolveRecovery: recovery.resolve }),
+        persist: (nextContents, expectedRevision, mutationId, createOnly) =>
+          writeFile({
+            environmentId,
+            input: {
+              cwd,
+              relativePath,
+              contents: nextContents,
+              mutationId,
+              ...(createOnly
+                ? { createOnly: true }
+                : expectedRevision === undefined
+                  ? {}
+                  : { expectedRevision }),
+            },
+          }),
+        revisionFromResult: (result) => result.revision,
+        onPersisted: (confirmedContents, result) => {
+          return confirmProjectFileQueryData(
+            environmentId,
+            cwd,
+            relativePath,
+            confirmedContents,
+            result.revision,
+          );
+        },
+        callbacks: {
+          onRestoredSource: (contents) =>
+            setProjectFileQueryData(environmentId, cwd, relativePath, contents),
+          onRenameIntentChange: setRenameIntent,
+          onPendingChange: (pending) => readCallbacks().onPendingChange(relativePath, pending),
+          onConfirmed: (confirmedContents, result) =>
+            readCallbacks().onSaveConfirmed(relativePath, confirmedContents, result.revision),
+          onFailure: (contents, result) => {
+            readCallbacks().onSaveFailure(relativePath, squashAtomCommandFailure(result), contents);
+          },
+          onAttentionChange: (attention) => {
+            setRetainedAttention(attention);
+            if (attention !== null) {
+              setReviewRequired(false);
+              readCallbacks().onSaveFailure(relativePath, attention);
+            } else {
+              appAtomRegistry.refresh(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+              readCallbacks().onSaveResolutionApplied("retry");
+            }
+          },
+          onRecoveryFailure: (error) => readCallbacks().onSaveFailure(relativePath, error),
+          onReviewRequiredChange: setReviewRequired,
+          onCurrentMissingChange: setCurrentMissing,
+          onResolutionApplied: (action) => readCallbacks().onSaveResolutionApplied(action),
+        },
+      });
+      leaseRef.current = lease;
+      setRetainedAttention(lease.publicationAttention);
+      setCurrentMissing(lease.currentMissing);
+      setRenameIntent(lease.getRenameIntent());
+      return () => {
+        leaseRef.current = null;
+        lease.release();
+      };
+    },
+  };
+}
+// SCIENT-FORK:END

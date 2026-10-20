@@ -7,7 +7,7 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -111,20 +111,20 @@ function ComputeRuntimeFigureSession(props: {
   );
   const executionData = executions.data;
   const refreshExecutions = executions.refresh;
-  const sessionExecutions = useMemo(() => {
+  const sessionExecutions = (() => {
     const byId = new Map<string, ComputeExecutionRecord>();
     for (const execution of executionData ?? []) byId.set(execution.request.executionId, execution);
     for (const execution of props.liveExecutions) {
       byId.set(execution.request.executionId, execution);
     }
     return [...byId.values()];
-  }, [executionData, props.liveExecutions]);
+  })();
 
   useEffect(() => {
     if (props.rehydrationToken !== null) refreshExecutions();
   }, [props.rehydrationToken, refreshExecutions]);
 
-  const runtimeCandidateGroups = useMemo<ReadonlyArray<RuntimeCandidateGroup>>(() => {
+  const runtimeCandidateGroups: ReadonlyArray<RuntimeCandidateGroup> = (() => {
     if (session === null) return [];
     const byExecutionId = new Map<string, RuntimeCandidateGroup>();
     for (const target of props.targets) {
@@ -142,7 +142,7 @@ function ComputeRuntimeFigureSession(props: {
       });
     }
     return [...byExecutionId.values()];
-  }, [props.targets, session, sessionExecutions]);
+  })();
 
   if (session === null) return null;
   return runtimeCandidateGroups.map((candidate) => (
@@ -169,7 +169,7 @@ export function ComputeFigureFollower(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
 }) {
-  const targets = useMemo<ReadonlyArray<FollowTarget>>(() => {
+  const targets: ReadonlyArray<FollowTarget> = (() => {
     const bySurfaceId = new Map<string, FollowTarget>();
     for (const artifact of props.artifacts) {
       const reference = parseComputeFigureSurfaceId(artifact.surfaceId);
@@ -177,7 +177,7 @@ export function ComputeFigureFollower(props: {
       bySurfaceId.set(artifact.surfaceId, { artifact, reference });
     }
     return [...bySurfaceId.values()];
-  }, [props.artifacts]);
+  })();
   const following = targets.length > 0;
   const followingProjectFiles = targets.some((target) => target.reference._tag === "project-file");
   const appliedRevisionsRef = useRef(new Map<string, ComputeFigureRevision>());
@@ -205,7 +205,7 @@ export function ComputeFigureFollower(props: {
         })
       : null,
   );
-  const latestSession = useMemo(() => {
+  const latestSession = (() => {
     if (!followingProjectFiles) return null;
     const byId = new Map<string, ComputeSessionRecord>();
     for (const session of sessions.data ?? []) byId.set(session.sessionId, session);
@@ -213,7 +213,7 @@ export function ComputeFigureFollower(props: {
       byId.set(session.sessionId, session);
     }
     return latestComputeFigureSession([...byId.values()]);
-  }, [events.data?.sessions, followingProjectFiles, sessions.data]);
+  })();
   const executions = useEnvironmentQuery(
     latestSession === null
       ? null
@@ -225,7 +225,7 @@ export function ComputeFigureFollower(props: {
   const refreshSessions = sessions.refresh;
   const refreshLatestExecutions = executions.refresh;
   const refreshEvents = events.refresh;
-  const latestSessionExecutions = useMemo(() => {
+  const latestSessionExecutions = (() => {
     if (latestSession === null) return [];
     const byId = new Map<string, ComputeExecutionRecord>();
     for (const execution of executions.data ?? []) {
@@ -235,8 +235,8 @@ export function ComputeFigureFollower(props: {
       byId.set(execution.request.executionId, execution);
     }
     return [...byId.values()];
-  }, [events.data?.executions, executions.data, latestSession]);
-  const runtimeSessionTargets = useMemo(() => {
+  })();
+  const runtimeSessionTargets = (() => {
     const bySessionId = new Map<ComputeSessionRecord["sessionId"], FollowTarget[]>();
     for (const target of targets) {
       if (target.reference._tag !== "runtime-display") {
@@ -251,7 +251,7 @@ export function ComputeFigureFollower(props: {
       sessionId,
       targets: sessionTargets,
     }));
-  }, [events.data?.executions, targets]);
+  })();
   const rehydrationToken = events.data?.observedGap
     ? `${events.data.observedGap.expected}:${events.data.observedGap.received}`
     : null;
@@ -263,28 +263,25 @@ export function ComputeFigureFollower(props: {
     refreshEvents();
   }, [events.data?.stale, refreshEvents, refreshLatestExecutions, refreshSessions]);
 
-  const applyCandidate = useCallback(
-    (
-      target: FollowTarget,
-      session: ComputeSessionRecord,
-      execution: ComputeExecutionRecord,
-      outputs: Parameters<typeof reconcileComputeFigureTarget>[0]["candidate"]["outputs"],
-    ) => {
-      const surfaceId = target.artifact.surfaceId;
-      const decision = reconcileComputeFigureTarget({
-        appliedRevision: appliedRevisionsRef.current.get(surfaceId) ?? null,
-        artifact: target.artifact,
-        cwd: props.cwd,
-        reference: target.reference,
-        candidate: { session, execution, outputs },
-      });
-      if (decision._tag === "unchanged") return;
-      appliedRevisionsRef.current.set(surfaceId, decision.revision);
-      useRightPanelStore.getState().updateScientArtifact(props.threadRef, decision.descriptor);
-      usePreviewMiniPlayerStore.getState().updateArtifact(props.threadRef, decision.descriptor);
-    },
-    [props.cwd, props.threadRef],
-  );
+  const applyCandidate = (
+    target: FollowTarget,
+    session: ComputeSessionRecord,
+    execution: ComputeExecutionRecord,
+    outputs: Parameters<typeof reconcileComputeFigureTarget>[0]["candidate"]["outputs"],
+  ) => {
+    const surfaceId = target.artifact.surfaceId;
+    const decision = reconcileComputeFigureTarget({
+      appliedRevision: appliedRevisionsRef.current.get(surfaceId) ?? null,
+      artifact: target.artifact,
+      cwd: props.cwd,
+      reference: target.reference,
+      candidate: { session, execution, outputs },
+    });
+    if (decision._tag === "unchanged") return;
+    appliedRevisionsRef.current.set(surfaceId, decision.revision);
+    useRightPanelStore.getState().updateScientArtifact(props.threadRef, decision.descriptor);
+    usePreviewMiniPlayerStore.getState().updateArtifact(props.threadRef, decision.descriptor);
+  };
 
   useEffect(() => {
     if (events.data?.stale || latestSession === null) return;

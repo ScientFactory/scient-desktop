@@ -50,12 +50,25 @@ const BACKGROUND_ENVIRONMENT_KEYS = [
   "SCIENT_DEV_CODESIGN_IDENTITY",
   "T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT",
   "TMPDIR",
+  // The standing stable app's launch (scripts/dev-app/controller.mjs).
+  "SCIENT_DEV_APP_CHECKOUT",
+  "SCIENT_DEV_STABLE_ROOT",
+  "SCIENT_NEXT_PROFILE_ROOT",
+  "SCIENT_DEV_LAUNCH_CONTROL",
+  "SCIENT_DEV_LAUNCH_TOKEN",
+  "SCIENT_DEV_BUNDLE_ID_SUFFIX",
+  "T3CODE_PORT_OFFSET",
   "USER",
   "npm_execpath",
 ];
 
-const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-export const repoRoot = NodePath.resolve(scriptDir, "..");
+const scriptPath = NodeURL.fileURLToPath(import.meta.url);
+const scriptDir = NodePath.dirname(scriptPath);
+// The stable app's installed controller runs this file from outside the
+// checkout it manages, and names that checkout.
+export const repoRoot = process.env.SCIENT_DEV_APP_CHECKOUT
+  ? NodePath.resolve(process.env.SCIENT_DEV_APP_CHECKOUT)
+  : NodePath.resolve(scriptDir, "..");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher CLI has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
@@ -179,7 +192,9 @@ export function makeLocalDevAppLaunchAgentPlist({
   environment = process.env,
   coldClaimPath,
 } = {}) {
-  const scriptPath = NodePath.join(paths.root, "scripts", "local-dev-app.mjs");
+  const servicePath = environment.SCIENT_DEV_APP_CHECKOUT
+    ? scriptPath
+    : NodePath.join(paths.root, "scripts", "local-dev-app.mjs");
   const pathParts = [
     NodePath.dirname(nodePath),
     environment.PATH,
@@ -217,7 +232,7 @@ export function makeLocalDevAppLaunchAgentPlist({
   <key>ProgramArguments</key>
   <array>
     <string>${plistXml(nodePath)}</string>
-    <string>${plistXml(scriptPath)}</string>
+    <string>${plistXml(servicePath)}</string>
     <string>run</string>${stableArgument}
   </array>
   <key>WorkingDirectory</key>
@@ -907,8 +922,9 @@ async function runApp() {
   shareDevelopmentVoiceRuntime({ root: paths.root });
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
-  if (paths.role === "stable") {
-    devDesktopArgs.push("--home-dir", paths.stateRoot);
+  const stableProfileRoot = process.env.SCIENT_NEXT_PROFILE_ROOT;
+  if (paths.role === "stable" && !stableProfileRoot) {
+    throw new Error("The stable dev app starts through its controller: pnpm dev:app:stable start.");
   }
   NodeFS.rmSync(paths.failurePath, { force: true });
   const childEnv = {
@@ -919,15 +935,32 @@ async function runApp() {
   };
   delete childEnv.SCIENT_DEV_COLD_CLAIM_PATH;
   if (coldApprovedPath) childEnv.SCIENT_DEV_COLD_APPROVED_PATH = coldApprovedPath;
-  const child = NodeChildProcess.spawn(
-    pnpmExecPath ? process.execPath : "pnpm",
-    pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
-    {
-      cwd: paths.root,
-      env: childEnv,
-      stdio: "inherit",
-    },
-  );
+  // The stable app runs the reviewed checkout's dev runner directly: its
+  // controller already installed dependencies, and pnpm would reinstall them.
+  if (paths.role === "stable") {
+    childEnv.PATH = `${NodePath.join(paths.root, "node_modules", ".bin")}:${childEnv.PATH ?? ""}`;
+  }
+  const child =
+    paths.role === "stable"
+      ? NodeChildProcess.spawn(
+          process.execPath,
+          [
+            NodePath.join(paths.root, "scripts", "dev-runner.ts"),
+            ...devDesktopArgs,
+            "--home-dir",
+            stableProfileRoot,
+          ],
+          { cwd: paths.root, env: childEnv, stdio: "inherit" },
+        )
+      : NodeChildProcess.spawn(
+          pnpmExecPath ? process.execPath : "pnpm",
+          pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
+          {
+            cwd: paths.root,
+            env: childEnv,
+            stdio: "inherit",
+          },
+        );
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {
@@ -977,8 +1010,13 @@ async function installApp({ replace }) {
     process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
   }
   process.env.VITE_DEV_SERVER_URL = "http://127.0.0.1:5733";
-  const { resolveDevProtocolClient } =
-    await import("../apps/desktop/scripts/electron-launcher.mjs");
+  // From the checkout, not beside this file: the stable app's installed
+  // controller runs a copy of this script outside any checkout.
+  const { resolveDevProtocolClient } = await import(
+    NodeURL.pathToFileURL(
+      NodePath.join(repoRoot, "apps", "desktop", "scripts", "electron-launcher.mjs"),
+    ).href
+  );
   const source = resolveDevProtocolClient();
   if (!source) throw new Error("Could not create the macOS development app bundle.");
   const paths = resolveLocalDevAppPaths();
@@ -1213,6 +1251,11 @@ async function main() {
   ) {
     throw new Error(
       `Unknown option: ${flags.find((flag) => flag !== "--replace" && flag !== "--stable")}`,
+    );
+  }
+  if (stable && !process.env.SCIENT_DEV_APP_CHECKOUT) {
+    throw new Error(
+      "Scient (Dev) Stable is managed by its controller: use pnpm dev:app:stable <start|stop|status|logs> or pnpm dev:app:review <ref>.",
     );
   }
   if (stable) {

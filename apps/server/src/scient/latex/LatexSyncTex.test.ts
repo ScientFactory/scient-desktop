@@ -33,6 +33,7 @@ import {
   encodePublishedLatexBuildEvidence,
 } from "./latexBuildEvidence.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const publicationHelper = await filePublicationTestHelper();
 
@@ -197,6 +198,7 @@ SyncTeX result end`);
       ).pipe(
         Layer.provide(
           WorkspaceFileSystem.layer.pipe(
+            Layer.provide(layerKnownWorkspacesAllowAll),
             Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
             Layer.provide(WorkspacePaths.layer),
           ),

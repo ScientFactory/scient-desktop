@@ -1,3 +1,4 @@
+import type { Dispatch, SetStateAction, RefObject } from "react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, Info } from "lucide-react";
 import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
@@ -153,31 +154,8 @@ export function ScientMarkdownPersistenceNotice({
                 ? refreshCopy.description
                 : "Your changes are still here.";
 
-  const run = async (operation: () => Promise<boolean>) => {
-    const focusWasInNotice = regionRef.current?.contains(document.activeElement) ?? false;
-    const surface = regionRef.current?.parentElement;
-    setBusy(true);
-    try {
-      await operation();
-    } finally {
-      setBusy(false);
-      setConfirmation(null);
-      // Only restore focus when the user's action removed its focused control.
-      if (focusWasInNotice)
-        requestAnimationFrame(() => {
-          if (document.activeElement !== document.body && document.activeElement?.isConnected)
-            return;
-          const editor =
-            surface?.querySelector<HTMLElement>(
-              ".scient-markdown-workspace [contenteditable='true']",
-            ) ??
-            surface
-              ?.querySelector("diffs-container")
-              ?.shadowRoot?.querySelector<HTMLElement>("[data-content][contenteditable]");
-          editor?.focus({ preventScroll: true });
-        });
-    }
-  };
+  const run = (operation: () => Promise<boolean>) =>
+    createPersistenceNoticeOperation({ regionRef, setBusy, setConfirmation })(operation);
 
   return (
     <>
@@ -458,4 +436,40 @@ export function ScientMarkdownPersistenceNotice({
       ) : null}
     </>
   );
+}
+
+function createPersistenceNoticeOperation({
+  regionRef,
+  setBusy,
+  setConfirmation,
+}: {
+  regionRef: RefObject<HTMLDivElement | null>;
+  setBusy: Dispatch<SetStateAction<boolean>>;
+  setConfirmation: Dispatch<SetStateAction<{ action: "local" | "disk"; revision: string } | null>>;
+}) {
+  return async (operation: () => Promise<boolean>) => {
+    const focusWasInNotice = regionRef.current?.contains(document.activeElement) ?? false;
+    const surface = regionRef.current?.parentElement;
+    setBusy(true);
+    try {
+      await operation();
+    } finally {
+      setBusy(false);
+      setConfirmation(null);
+      // Only restore focus when the user's action removed its focused control.
+      if (focusWasInNotice)
+        requestAnimationFrame(() => {
+          if (document.activeElement !== document.body && document.activeElement?.isConnected)
+            return;
+          const editor =
+            surface?.querySelector<HTMLElement>(
+              ".scient-markdown-workspace [contenteditable='true']",
+            ) ??
+            surface
+              ?.querySelector("diffs-container")
+              ?.shadowRoot?.querySelector<HTMLElement>("[data-content][contenteditable]");
+          editor?.focus({ preventScroll: true });
+        });
+    }
+  };
 }

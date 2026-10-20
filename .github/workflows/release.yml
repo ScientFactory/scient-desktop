@@ -1050,11 +1050,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$RELEASE_NOTES_BASE64" | base64 --decode > "$RUNNER_TEMP/scient-release-notes.md"
+          # The release body is what the app shows as release notes, so the unsigned-Windows
+          # exception is recorded in this run rather than there.
           if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" ]]; then
-            cat >> "$RUNNER_TEMP/scient-release-notes.md" <<'NOTICE'
-
-          > **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
-          NOTICE
+            echo "Windows installer published unsigned (allow_unsigned_windows=true)." >> "$GITHUB_STEP_SUMMARY"
           fi
           target="$SOURCE_SHA"
           release_args=(--draft --latest=false)

@@ -15,8 +15,6 @@ export const WINDOWS_VOICE_FILES = [
   ].map((cpu) => `ggml-cpu-${cpu}.dll`),
   "ggml.dll",
   "whisper.dll",
-  "parakeet.dll",
-  "SDL2.dll",
   "LICENSE.whisper.cpp",
   "provenance.json",
 ] as const;

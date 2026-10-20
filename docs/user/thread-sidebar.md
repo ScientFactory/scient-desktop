@@ -94,7 +94,7 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
+or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
 
@@ -137,12 +137,23 @@ position, below the upper group. Reopening it restarts that delay; new work canc
 it. Other newly inactive threads can subsequently land above it.
 
 You can still drag threads within or between sections, and move whole sections. A
-manual drop keeps the exact place you choose, including an inactive thread above
-working threads. Automatic updates do not undo the drop. Its next entry into or exit
-from the upper group resumes automatic placement. For example, if no thread is active
-and you drag X first, a newly working Y goes above X. If you deliberately drag X above
-an already working A, a later working B joins after A, preserving your explicit move.
-Movement pauses during a drag or native context menu.
+drop keeps the place you choose, with one limit: active work always gets the top back.
+
+| You drag                                     | It stays there                                                                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| An active thread within the upper group      | Until you move it again.                                                            |
+| An inactive thread among inactive threads    | Until you move it again.                                                            |
+| An inactive thread above active threads      | Until another thread becomes active; the upper group then forms above it again.     |
+| An active thread down among inactive threads | Until it stops being active. Meanwhile, newly active threads still join at the top. |
+
+For example, if you drag X above a working A, X stays there until B starts working;
+then A and B sit above X. If you drag a working A to the bottom, a later working B
+still goes to the top while A stays where you put it. Movement pauses during a drag
+or native context menu.
+
+When you are connected to several machines and one is offline or catching up, only
+that machine's threads hold their last known places; threads on the other machines
+keep moving. Its threads are rechecked when it is back.
 
 Turning the setting off reveals the saved manual order and cancels pending movements.
 Manual moves made while it was on remain saved. Turning it back on groups current
@@ -235,8 +246,9 @@ has its own sections:
 
 - A thread can join only sections of its own machine. The **Section** menu lists that machine's
   sections, and dragging a thread onto another machine's section does nothing.
-- While sections from more than one machine are listed, each header shows its machine's name. Two
-  machines' sections with the same name stay separate.
+- While sections from more than one machine are listed, each header shows its machine's icon
+  after the section name; hover it for the machine's name. Two machines' sections with the same
+  name stay separate.
 - **New section…** for threads on several machines creates a section of that name on each. A
   section started from **New section** goes to the machine of the selected project; when more than
   one machine can hold it, the form lets you choose.

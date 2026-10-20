@@ -430,6 +430,7 @@ import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerClaimProviderSignInPageRpc,
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,
@@ -1561,7 +1562,10 @@ const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
 });
 
 const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
-  payload: VcsCreateWorktreeInput,
+  // Clients cannot choose the folder: new worktrees go in the server's managed
+  // worktrees folder. `path` stays a required null because older servers
+  // require the key.
+  payload: Schema.Struct({ ...VcsCreateWorktreeInput.fields, path: Schema.Null }),
   success: VcsCreateWorktreeResult,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
@@ -2100,6 +2104,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  // SCIENT-FORK:START — the client that started a sign-in claims its page's one opening.
+  WsServerClaimProviderSignInPageRpc,
+  // SCIENT-FORK:END
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,

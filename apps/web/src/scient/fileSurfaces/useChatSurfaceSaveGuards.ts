@@ -1,6 +1,5 @@
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import { useDesktopReloadGuard } from "~/lib/desktopReload";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -28,13 +27,9 @@ export function useChatMarkdownSurfaceGuards(input: {
   readonly genericPendingIds: ReadonlySet<string>;
 }) {
   const { activeThreadRef, environmentId, cwd, genericPendingIds } = input;
-  const handleMarkdownAttention = useCallback(
-    (surfaceId: string) => {
-      if (activeThreadRef)
-        useRightPanelStore.getState().activateSurface(activeThreadRef, surfaceId);
-    },
-    [activeThreadRef],
-  );
+  const handleMarkdownAttention = (surfaceId: string) => {
+    if (activeThreadRef) useRightPanelStore.getState().activateSurface(activeThreadRef, surfaceId);
+  };
   const guards = useMarkdownPersistenceGuards({
     environmentId,
     cwd,

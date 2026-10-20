@@ -1,6 +1,6 @@
 import { observeResize } from "~/lib/observeResize";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogClose, DialogPopup, DialogTitle } from "~/components/ui/dialog";
@@ -18,13 +18,13 @@ export function TemplatePreviewDialog(props: {
   const viewport = useRef<HTMLDivElement | null>(null);
   const [pageWidth, setPageWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
-  const attachViewport = useCallback((element: HTMLDivElement | null) => {
+  const attachViewport = (element: HTMLDivElement | null) => {
     viewport.current = element;
     if (!element) return;
     const measure = () => setPageWidth(Math.max(1, Math.min(720, element.clientWidth - 8)));
     measure();
     return observeResize(element, measure);
-  }, []);
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogPopup

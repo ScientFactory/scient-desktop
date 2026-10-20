@@ -53,19 +53,24 @@ export function ComposerProviderUpdateFooter(props: {
     setHasError(false);
     setIsStarting(true);
     props.onPreparingChange(true);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      const provider = await startReviewedProviderRuntimeAction(controller, "update");
-      const startedRuntime = provider.connection?.runtime;
-      if (startedRuntime) {
-        setLocalRuntimeUpdate({ baseProvider: props.entry.snapshot, value: startedRuntime });
+      try {
+        const provider = await startReviewedProviderRuntimeAction(controller, "update");
+        const startedRuntime = provider.connection?.runtime;
+        if (startedRuntime) {
+          setLocalRuntimeUpdate({ baseProvider: props.entry.snapshot, value: startedRuntime });
+        }
+        props.onUpdateStarted(provider);
+      } catch {
+        setHasError(true);
       }
-      props.onUpdateStarted(provider);
-    } catch {
-      setHasError(true);
-    } finally {
-      props.onPreparingChange(false);
-      setIsStarting(false);
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    props.onPreparingChange(false);
+    setIsStarting(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   return (

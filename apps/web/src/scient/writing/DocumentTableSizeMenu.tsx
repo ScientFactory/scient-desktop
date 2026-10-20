@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -218,14 +219,15 @@ export function DocumentGridSizeMenu({
     visibleSizeRef.current = visibleSize;
   }, [visibleSize]);
 
-  useLayoutEffect(() => {
+  const focusExpandedTableCell = useEffectEvent((..._changes: readonly unknown[]) => {
     const pendingFocus = pendingFocusRef.current;
     if (!pendingFocus) return;
     const cell = cellRefs.current[tableSizePickerCellIndex(pendingFocus)];
     if (!cell) return;
     pendingFocusRef.current = null;
     cell.focus();
-  }, [visibleSize]);
+  });
+  useLayoutEffect(() => focusExpandedTableCell(visibleSize), [visibleSize]);
 
   useLayoutEffect(() => {
     const previousColumns = previousVisibleColumnsRef.current;

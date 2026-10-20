@@ -24,12 +24,20 @@ const transport = vi.hoisted(() => ({
   read: vi.fn(),
   sessions: new Map<EnvironmentId, SessionGrantInput>(),
 }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  createEnvironmentRpcCommand: () => Symbol("command"),
-  executeAtomQuery: transport.verify,
-  runAtomCommand: transport.command,
-  squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
-}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>();
+  return {
+    createEnvironmentRpcCommand: () => Symbol("command"),
+    executeAtomQuery: transport.verify,
+    runAtomCommand: transport.command,
+    // The upload worker settles its own promise into an AsyncResult; the transport mocks above
+    // still report failures as `{ error }`.
+    settlePromise: actual.settlePromise,
+    squashAtomCommandFailure: (
+      result: { readonly error: unknown } | Parameters<typeof actual.squashAtomCommandFailure>[0],
+    ) => ("cause" in result ? actual.squashAtomCommandFailure(result) : result.error),
+  };
+});
 vi.mock("../lib/composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: () => () => {},
 }));
@@ -64,22 +72,34 @@ vi.mock("./assets", () => ({ assetEnvironment: { createUrl: (input: unknown) => 
 vi.mock("./attachments", () => ({
   attachmentEnvironment: { createUploadUrl: Symbol("upload"), remove: Symbol("remove") },
 }));
-vi.mock("./use-composer-drafts", () => ({
-  composerDraftsAtom: Atom.make<
+vi.mock("./use-composer-drafts", () => {
+  const composerDraftsAtom = Atom.make<
     Readonly<
       Record<
         string,
         { readonly text: string; readonly attachments: ReadonlyArray<DraftComposerAttachment> }
       >
     >
-  >({}).pipe(Atom.keepAlive),
-  ensureComposerDraftsLoaded: () => {},
-  flushComposerDrafts: async () => {},
-  setComposerDraftAttachmentUpload: vi.fn(),
-  clearComposerDraft: () => {},
-  setComposerDraftContext: () => {},
-  setComposerDraftText: () => {},
-}));
+  >({}).pipe(Atom.keepAlive);
+  return {
+    composerDraftsAtom,
+    // The upload worker reads only attachments (and project) from each draft.
+    composerDraftUploadSourcesAtom: Atom.make((get) =>
+      Object.fromEntries(
+        Object.entries(get(composerDraftsAtom)).map(([key, draft]) => [
+          key,
+          { attachments: draft.attachments },
+        ]),
+      ),
+    ).pipe(Atom.keepAlive),
+    ensureComposerDraftsLoaded: () => {},
+    flushComposerDrafts: async () => {},
+    setComposerDraftAttachmentUpload: vi.fn(),
+    clearComposerDraft: () => {},
+    setComposerDraftContext: () => {},
+    setComposerDraftText: () => {},
+  };
+});
 vi.mock("./thread-outbox", () => ({
   threadOutboxManager: { queuedMessagesByThreadKeyAtom: Atom.make({}).pipe(Atom.keepAlive) },
   flattenQueuedThreadMessages: () => [],

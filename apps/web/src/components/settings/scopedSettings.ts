@@ -49,16 +49,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const MODEL_SELECTION_KEYS = new Set<string>([
-  "defaultModelSelection",
-  "textGenerationModelSelection",
-  "sourceControlWriterModelSelection",
-] satisfies ProjectScopedServerSettingKey[]);
-
-function isModelSelectionReplacement(value: unknown): boolean {
-  return isPlainObject(value) && (value.instanceId !== undefined || value.model !== undefined);
-}
-
 /** The representative supplies display values, never the set of write targets. */
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
@@ -237,7 +227,7 @@ export function planScopedSettingsPatch(
               // so complete the patch from the target's effective value.
               const effective = resolveProjectSettings(settings, projectId).settings;
               const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries(serverPatch)) {
+              for (const [key, value] of Object.entries<unknown>(serverPatch)) {
                 if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
                   next[key] = {
                     mode: "custom",
@@ -257,14 +247,20 @@ export function planScopedSettingsPatch(
                   delete next[key];
                   continue;
                 }
-                // A model selection naming its instance or model replaces the
-                // whole value, as environment-scope writes do on the server, so
-                // the previous model's options never ride along to the new one.
-                if (MODEL_SELECTION_KEYS.has(key) && isModelSelectionReplacement(value)) {
-                  next[key] = value;
+                const base: unknown = effective[key as keyof ServerSettings];
+                // A new model must not inherit the previous model's options.
+                if (
+                  isPlainObject(value) &&
+                  isPlainObject(base) &&
+                  (key === "defaultModelSelection" ||
+                    key === "sourceControlWriterModelSelection" ||
+                    key === "reviewGuideModelSelection" ||
+                    key === "textGenerationModelSelection") &&
+                  (value.instanceId !== undefined || value.model !== undefined)
+                ) {
+                  next[key] = { instanceId: base.instanceId, model: base.model, ...value };
                   continue;
                 }
-                const base = effective[key as keyof ServerSettings];
                 next[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }

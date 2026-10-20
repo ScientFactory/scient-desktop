@@ -231,6 +231,15 @@ If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
 running is left alone.
 
+Each desktop app keeps one session on the host for its SSH connection and reuses
+it when it reconnects. Revoke sessions you no longer use in **Settings →
+Connections** on the host, or on a headless host with `scient auth session list` and
+`scient auth session revoke <id>`. A desktop that can still sign in over SSH pairs
+again on its next connect.
+
+For Antigravity's Google callback on a remote host, see
+[remote sign-in](./providers-antigravity.md#sign-in-from-another-device).
+
 ## Use the desktop app only for remote environments
 
 If this computer should only control work running elsewhere, turn off **Local
@@ -282,8 +291,9 @@ The server shows the exact line for the installation that runs it, usually with
 the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
-any missing libraries with apt. It is safe to run again. Without `sudo`, it
-only reports what it would change.
+any missing libraries and system fonts with apt; pages that load without text
+can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
+reports what it would change.
 
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.

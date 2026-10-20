@@ -1,7 +1,8 @@
+import type { RefObject } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -35,14 +36,47 @@ export interface MarkdownPdfExportTarget {
  */
 export function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(target.environmentId);
-  const prepare = useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, {
-    reportFailure: false,
-  });
-  const publish = useAtomCommand(scientDocumentPdfEnvironment.publish, { reportFailure: false });
+  const prepare = usePrepareMarkdownPdf();
+  const publish = usePublishMarkdownPdf();
   const runningRef = useRef(false);
   const navigate = useNavigate();
 
-  return useCallback(async () => {
+  return () =>
+    createMarkdownPdfExport({ target, httpBaseUrl, prepare, publish, runningRef, navigate })();
+}
+
+/** Markdown editor → More actions → Export ▸ PDF / Word. */
+export function MarkdownPdfExportMenuItems(
+  props: MarkdownPdfExportTarget & { readonly onWordExport: () => void },
+) {
+  const exportPdf = useMarkdownPdfExport(props);
+  const availability = documentPdfAvailability();
+  return (
+    <DocumentExportMenuItems
+      onPdfExport={() => void exportPdf()}
+      onWordExport={props.onWordExport}
+      pdfDisabled={!availability.available}
+      {...(availability.available ? {} : { pdfUnavailableReason: availability.reason })}
+    />
+  );
+}
+
+function createMarkdownPdfExport({
+  target,
+  httpBaseUrl,
+  prepare,
+  publish,
+  runningRef,
+  navigate,
+}: {
+  target: MarkdownPdfExportTarget;
+  httpBaseUrl: ReturnType<typeof useEnvironmentHttpBaseUrl>;
+  prepare: ReturnType<typeof usePrepareMarkdownPdf>;
+  publish: ReturnType<typeof usePublishMarkdownPdf>;
+  runningRef: RefObject<boolean>;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  return async () => {
     if (runningRef.current) return;
     const availability = documentPdfAvailability();
     if (!availability.available) {
@@ -117,21 +151,12 @@ export function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
     } finally {
       runningRef.current = false;
     }
-  }, [httpBaseUrl, navigate, prepare, publish, target]);
+  };
 }
 
-/** Markdown editor → More actions → Export ▸ PDF / Word. */
-export function MarkdownPdfExportMenuItems(
-  props: MarkdownPdfExportTarget & { readonly onWordExport: () => void },
-) {
-  const exportPdf = useMarkdownPdfExport(props);
-  const availability = documentPdfAvailability();
-  return (
-    <DocumentExportMenuItems
-      onPdfExport={() => void exportPdf()}
-      onWordExport={props.onWordExport}
-      pdfDisabled={!availability.available}
-      {...(availability.available ? {} : { pdfUnavailableReason: availability.reason })}
-    />
-  );
+function usePrepareMarkdownPdf() {
+  return useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, { reportFailure: false });
+}
+function usePublishMarkdownPdf() {
+  return useAtomCommand(scientDocumentPdfEnvironment.publish, { reportFailure: false });
 }

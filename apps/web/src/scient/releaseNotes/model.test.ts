@@ -122,7 +122,8 @@ describe("validateScientReleaseNotesCatalog", () => {
   it.each(["0.6.22", "0.6.23", "2.5.0", "2.5.0-rc.1"])(
     "allows longer paragraph notes for %s without a version exception",
     (version) => {
-      const note = SCIENT_RELEASE_NOTES[0];
+      const note = SCIENT_RELEASE_NOTES.find((entry) => entry.version === "0.6.23");
+      if (!note) throw new Error("Expected the extended paragraph note.");
       expect(note.highlights).toHaveLength(9);
       expect(note.highlights[0].description.split("\n\n")).toHaveLength(2);
       expect(validateScientReleaseNotesCatalog([{ ...note, version }])).toEqual([]);
@@ -220,6 +221,27 @@ describe("validateScientReleaseNotesCatalog", () => {
         },
       ]),
     ).toEqual(["release[0].highlights must contain no more than five items."]);
+  });
+});
+
+describe("Scient 0.6.24 release-note decision", () => {
+  it("shows the approved note after upgrading and keeps earlier releases in history", () => {
+    const decision = resolveScientReleaseNotesDecision({
+      catalog: SCIENT_RELEASE_NOTES,
+      currentVersion: "0.6.24",
+      lastHandledVersion: "0.6.23",
+    });
+    expect(decision.kind).toBe("show");
+    if (decision.kind !== "show") throw new Error("Expected the new release note.");
+    expect(decision.current.version).toBe("0.6.24");
+    expect(decision.current.highlights).toHaveLength(9);
+    expect(decision.current.highlights.map(({ id }) => id)).toContain("muse-code-0624");
+    expect(decision.history.slice(0, 3).map(({ version }) => version)).toEqual([
+      "0.6.24",
+      "0.6.23",
+      "0.6.22",
+    ]);
+    expect(decision.nextLastHandledVersion).toBe("0.6.24");
   });
 });
 

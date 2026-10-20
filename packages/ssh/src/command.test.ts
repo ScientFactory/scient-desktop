@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   baseSshArgs,
@@ -100,6 +100,7 @@ describe("ssh command", () => {
     }),
   );
 
+  // SCIENT-FORK:START remote packages follow the Scient desktop release.
   it.effect("pins the remote server to this desktop's own Scient release", () =>
     Effect.sync(() => {
       assert.equal(
@@ -121,6 +122,29 @@ describe("ssh command", () => {
       assert.isUndefined(resolveRemoteT3CliPackageSpec({ appVersion: "local build" }));
     }),
   );
+  // SCIENT-FORK:END
+  it.effect("passes an option-shaped alias to ssh as the destination", () => {
+    const spawned: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command)) spawned.push(command.args);
+      return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "bad hostname\n" }));
+    });
+    return runSshCommand(
+      { alias: "-oProxyCommand=false", hostname: "devbox", username: null, port: null },
+      { remoteCommandArgs: ["sh", "-s"] },
+    ).pipe(
+      Effect.flip,
+      Effect.map(() => {
+        assert.deepEqual(spawned[0]?.slice(-4), ["--", "-oProxyCommand=false", "sh", "-s"]);
+      }),
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
 
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>

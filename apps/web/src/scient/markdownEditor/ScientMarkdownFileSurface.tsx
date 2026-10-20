@@ -1,3 +1,5 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect } from "react";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import type { FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "./markdownCitation";
@@ -5,7 +7,7 @@ import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -120,83 +122,62 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const resolveImageActionUrl = useMediaActionUrl();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
-  const workspaceResourceIndexKey = useMemo(
-    () =>
-      JSON.stringify([
-        httpBaseUrl,
-        entriesQuery.data?.truncated ?? true,
-        ...(entriesQuery.data?.entries ?? []).map((entry) => [entry.kind, entry.path]),
-      ]),
-    [entriesQuery.data?.entries, entriesQuery.data?.truncated, httpBaseUrl],
-  );
-  const allMarkdownPaths = useMemo(
-    () =>
-      (entriesQuery.data?.entries ?? [])
-        .filter((entry) => entry.kind === "file" && isScientMarkdownDocumentPath(entry.path))
-        .map((entry) => entry.path),
-    [entriesQuery.data?.entries],
-  );
-  const markdownPaths = useMemo(
-    () => allMarkdownPaths.filter((path) => path !== props.relativePath),
-    [allMarkdownPaths, props.relativePath],
-  );
-  const markdownPathSet = useMemo(() => new Set(allMarkdownPaths), [allMarkdownPaths]);
-  const wikiLinkCandidates = useMemo(
-    () =>
-      markdownPaths.flatMap((path) => {
-        const target = markdownWikiTargetForPath(props.relativePath, path);
-        return target === null ? [] : [{ path, target }];
-      }),
-    [markdownPaths, props.relativePath],
-  );
-  const wikiLinkCandidatePathSet = useMemo(
-    () => new Set(wikiLinkCandidates.map((candidate) => candidate.path)),
-    [wikiLinkCandidates],
-  );
+  const workspaceResourceIndexKey = JSON.stringify([
+    httpBaseUrl,
+    entriesQuery.data?.truncated ?? true,
+    ...(entriesQuery.data?.entries ?? []).map((entry) => [entry.kind, entry.path]),
+  ]);
+  const allMarkdownPaths = (entriesQuery.data?.entries ?? [])
+    .filter((entry) => entry.kind === "file" && isScientMarkdownDocumentPath(entry.path))
+    .map((entry) => entry.path);
+  const markdownPaths = allMarkdownPaths.filter((path) => path !== props.relativePath);
+  const markdownPathSet = new Set(allMarkdownPaths);
+  const wikiLinkCandidates = markdownPaths.flatMap((path) => {
+    const target = markdownWikiTargetForPath(props.relativePath, path);
+    return target === null ? [] : [{ path, target }];
+  });
+  const wikiLinkCandidatePathSet = new Set(wikiLinkCandidates.map((candidate) => candidate.path));
   const wikiLinkStorageKey = wikiLinkRecentsStorageKey(String(props.environmentId), props.cwd);
   const [storedRecentWikiLinkPaths, setStoredRecentWikiLinkPaths] = useLocalStorage(
     wikiLinkStorageKey,
     EMPTY_WIKI_LINK_RECENT_PATHS,
     WikiLinkRecentPaths,
   );
-  const recentWikiLinkPaths = useMemo(
-    () =>
-      sanitizeRecentWikiLinkPaths(storedRecentWikiLinkPaths).filter((path) =>
-        wikiLinkCandidatePathSet.has(path),
-      ),
-    [storedRecentWikiLinkPaths, wikiLinkCandidatePathSet],
+  const recentWikiLinkPaths = sanitizeRecentWikiLinkPaths(storedRecentWikiLinkPaths).filter(
+    (path) => wikiLinkCandidatePathSet.has(path),
   );
   const markdownPathSetRef = useRef<ReadonlySet<string>>(markdownPathSet);
   const entriesTruncatedRef = useRef(entriesQuery.data?.truncated ?? true);
   const mountedRef = useRef(true);
   const linkOpenRequestRef = useRef(0);
   const linkFeedbackToastRef = useRef<ReturnType<typeof anchoredToastManager.add> | null>(null);
-  markdownPathSetRef.current = markdownPathSet;
-  entriesTruncatedRef.current = entriesQuery.data?.truncated ?? true;
+  useLayoutEffect(() => {
+    markdownPathSetRef.current = markdownPathSet;
+  });
+  useLayoutEffect(() => {
+    entriesTruncatedRef.current = entriesQuery.data?.truncated ?? true;
+  });
 
-  const dismissLinkFeedback = useCallback(() => {
+  const dismissLinkFeedback = useStableCallback(() => {
     if (linkFeedbackToastRef.current === null) return;
     anchoredToastManager.close(linkFeedbackToastRef.current);
     linkFeedbackToastRef.current = null;
-  }, []);
-  const beginLinkOpen = useCallback(() => {
+  });
+  const beginLinkOpen = useStableCallback(() => {
     dismissLinkFeedback();
     linkOpenRequestRef.current += 1;
     return linkOpenRequestRef.current;
-  }, [dismissLinkFeedback]);
-  const showLinkFeedback = useCallback(
-    (anchor: HTMLElement, title: string) => {
-      if (!mountedRef.current || !anchor.isConnected) return;
-      dismissLinkFeedback();
-      linkFeedbackToastRef.current = anchoredToastManager.add({
-        data: { tooltipStyle: true },
-        positionerProps: { anchor, side: "top" },
-        timeout: LINK_FEEDBACK_TIMEOUT_MS,
-        title,
-      });
-    },
-    [dismissLinkFeedback],
-  );
+  });
+  const showLinkFeedback = useStableCallback((anchor: HTMLElement, title: string) => {
+    if (!mountedRef.current || !anchor.isConnected) return;
+    dismissLinkFeedback();
+    linkFeedbackToastRef.current = anchoredToastManager.add({
+      data: { tooltipStyle: true },
+      positionerProps: { anchor, side: "top" },
+      timeout: LINK_FEEDBACK_TIMEOUT_MS,
+      title,
+    });
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -206,57 +187,41 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       dismissLinkFeedback();
     };
   }, [dismissLinkFeedback]);
-  const wikiLinkTargetExists = useCallback(
-    (target: string): boolean | null => {
-      const resolved = resolveWikiLinkPath(props.relativePath, target);
-      if (resolved === null) return false;
-      if (markdownPathSetRef.current.has(resolved)) return true;
-      return entriesTruncatedRef.current ? null : false;
-    },
-    [props.relativePath],
-  );
-  const resolveImageSource = useCallback(
-    async (authoredSource: string): Promise<string | null> => {
-      const source = resolveMarkdownImageSource(authoredSource, {
-        cwd: props.cwd,
-        documentPath: props.relativePath,
-        threadRef: props.threadRef,
-      });
-      if (!source) return null;
-      if (source.kind === "direct") return source.url;
-      if (!httpBaseUrl) return null;
-      const result = await createAssetUrl({
-        environmentId: props.environmentId,
-        input: { resource: source.resource },
-      });
-      if (result._tag === "Failure") return null;
-      const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-      return url === null ? null : `${url}${source.suffix}`;
-    },
-    [
-      createAssetUrl,
-      httpBaseUrl,
-      props.cwd,
-      props.environmentId,
-      props.relativePath,
-      props.threadRef,
-    ],
-  );
-  const uploadImage = useCallback(
-    async (file: File) => {
-      const result = await uploadMarkdownImage(props.environmentId, {
-        cwd: props.cwd,
-        documentRelativePath: props.relativePath,
-        file,
-      });
-      refreshProjectEntriesQuery(props.environmentId, props.cwd);
-      return {
-        src: result.markdownSource,
-        alt: file.name.replace(/\.[^.]+$/u, ""),
-      };
-    },
-    [props.cwd, props.environmentId, props.relativePath],
-  );
+  const wikiLinkTargetExists = (target: string): boolean | null => {
+    const resolved = resolveWikiLinkPath(props.relativePath, target);
+    if (resolved === null) return false;
+    if (markdownPathSetRef.current.has(resolved)) return true;
+    return entriesTruncatedRef.current ? null : false;
+  };
+  const resolveImageSource = async (authoredSource: string): Promise<string | null> => {
+    const source = resolveMarkdownImageSource(authoredSource, {
+      cwd: props.cwd,
+      documentPath: props.relativePath,
+      threadRef: props.threadRef,
+    });
+    if (!source) return null;
+    if (source.kind === "direct") return source.url;
+    if (!httpBaseUrl) return null;
+    const result = await createAssetUrl({
+      environmentId: props.environmentId,
+      input: { resource: source.resource },
+    });
+    if (result._tag === "Failure") return null;
+    const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    return url === null ? null : `${url}${source.suffix}`;
+  };
+  const uploadImage = async (file: File) => {
+    const result = await uploadMarkdownImage(props.environmentId, {
+      cwd: props.cwd,
+      documentRelativePath: props.relativePath,
+      file,
+    });
+    refreshProjectEntriesQuery(props.environmentId, props.cwd);
+    return {
+      src: result.markdownSource,
+      alt: file.name.replace(/\.[^.]+$/u, ""),
+    };
+  };
   // Asks the environment that owns the files what a link means, exactly as a
   // chat link does, and acts on the answer: the file at the link's own
   // location opens; one workspace file the link meant opens instead;
@@ -264,329 +229,279 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   // the reader here with a plain explanation. `request` is the click this
   // belongs to: a newer click, an unmounted editor or a detached anchor drops
   // the answer, and a stalled environment answers as if it could not be asked.
-  const resolveAndOpenLink = useCallback(
-    async (input: {
-      readonly request: number;
-      readonly anchor: HTMLElement;
-      /** The link as the environment is asked about it. */
-      readonly askedPath: string;
-      /** Where the client itself places the link. */
-      readonly clientPath: string;
-      /** A complete listing already showed that nothing is at the link's location. */
-      readonly knownMissing: boolean;
-    }) => {
-      const { anchor, askedPath, clientPath, request } = input;
-      const resolveInput = chatFileLinkResolveInput({
-        linkPath: askedPath,
-        workspaceRoot: props.cwd,
-        changedPaths: [],
-      });
-      const resolution =
-        resolveInput === null
-          ? null
-          : await settleWithin(
-              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
-                (answer) => (answer._tag === "Success" ? answer.value : null),
-              ),
-              FILE_LINK_RESOLVE_WAIT_MS,
-              null,
-            );
-      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
-        return;
-      }
-      const location = linkOpenLocation({
-        resolution,
-        askedPath,
-        clientPath,
-        workspaceRoot: props.cwd,
-      });
-      switch (resolution?._tag) {
-        case "recovered":
-          onOpenFile(resolution.path);
-          return;
-        case "literal":
-        case "tie":
-          onOpenFile(location);
-          return;
-        case "none":
-        case "incomplete":
-          showLinkFeedback(anchor, "Linked file isn't available.");
-          return;
-        case undefined:
-          showLinkFeedback(
-            anchor,
-            input.knownMissing ? "Linked file isn't available." : "Couldn't check this link.",
+  const resolveAndOpenLink = async (input: {
+    readonly request: number;
+    readonly anchor: HTMLElement;
+    /** The link as the environment is asked about it. */
+    readonly askedPath: string;
+    /** Where the client itself places the link. */
+    readonly clientPath: string;
+    /** A complete listing already showed that nothing is at the link's location. */
+    readonly knownMissing: boolean;
+  }) => {
+    const { anchor, askedPath, clientPath, request } = input;
+    const resolveInput = chatFileLinkResolveInput({
+      linkPath: askedPath,
+      workspaceRoot: props.cwd,
+      changedPaths: [],
+    });
+    const resolution =
+      resolveInput === null
+        ? null
+        : await settleWithin(
+            resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
+              (answer) => (answer._tag === "Success" ? answer.value : null),
+            ),
+            FILE_LINK_RESOLVE_WAIT_MS,
+            null,
           );
-      }
-    },
-    [onOpenFile, props.cwd, props.environmentId, resolveFileLink, showLinkFeedback],
-  );
-  const openWorkspaceFile = useCallback(
-    async (relativePath: string, anchor: HTMLElement) => {
-      const request = beginLinkOpen();
-      const { directory, name } = workspacePathParent(relativePath);
-      const result = await listDirectory({
-        environmentId: props.environmentId,
-        input: {
-          cwd: props.cwd,
-          relativeDirectory: directory,
-          view: "with-internals",
-        },
-      });
-      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+    if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+      return;
+    }
+    const location = linkOpenLocation({
+      resolution,
+      askedPath,
+      clientPath,
+      workspaceRoot: props.cwd,
+    });
+    switch (resolution?._tag) {
+      case "recovered":
+        onOpenFile(resolution.path);
         return;
-      }
-      const entry =
-        result._tag === "Failure"
-          ? undefined
-          : result.value.entries.find(
-              (candidate) => candidate.name === name && candidate.relativePath === relativePath,
-            );
-      if (entry) {
-        if (entry.kind === "directory") showLinkFeedback(anchor, "Linked file isn't available.");
-        else onOpenFile(relativePath);
+      case "literal":
+      case "tie":
+        onOpenFile(location);
         return;
-      }
-      // Nothing was listed at the link's location, or its folder could not be
-      // listed at all, which is what a link into a moved folder looks like.
-      await resolveAndOpenLink({
-        request,
-        anchor,
-        // A resolved workspace location, never an authored home-relative link.
-        askedPath: workspaceLocatorAskPath(relativePath, props.cwd),
-        clientPath: relativePath,
-        knownMissing: result._tag === "Success" && result.value.complete,
-      });
-    },
-    [
-      beginLinkOpen,
-      listDirectory,
-      onOpenFile,
-      props.cwd,
-      props.environmentId,
-      resolveAndOpenLink,
-      showLinkFeedback,
-    ],
-  );
-  const openHomeRelativeFile = useCallback(
-    (homeRelativePath: string, anchor: HTMLElement) =>
-      resolveAndOpenLink({
-        request: beginLinkOpen(),
-        anchor,
-        askedPath: homeRelativePath,
-        clientPath: clientPlacedLinkPath(homeRelativePath, props.cwd),
-        knownMissing: false,
-      }),
-    [beginLinkOpen, props.cwd, resolveAndOpenLink],
-  );
-  const handleOpenLink = useCallback(
-    (target: string, anchor: HTMLElement) => {
-      if (/^(?:https?:|mailto:)/iu.test(target)) {
-        beginLinkOpen();
-        void readLocalApi()
-          ?.shell.openExternal(target)
-          .catch((error: unknown) => {
-            toastManager.add({
-              type: "error",
-              title: "Unable to open link",
-              description: error instanceof Error ? error.message : "The link could not open.",
-            });
+      case "none":
+      case "incomplete":
+        showLinkFeedback(anchor, "Linked file isn't available.");
+        return;
+      case undefined:
+        showLinkFeedback(
+          anchor,
+          input.knownMissing ? "Linked file isn't available." : "Couldn't check this link.",
+        );
+    }
+  };
+  const openWorkspaceFile = async (relativePath: string, anchor: HTMLElement) => {
+    const request = beginLinkOpen();
+    const { directory, name } = workspacePathParent(relativePath);
+    const result = await listDirectory({
+      environmentId: props.environmentId,
+      input: {
+        cwd: props.cwd,
+        relativeDirectory: directory,
+        view: "with-internals",
+      },
+    });
+    if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+      return;
+    }
+    const entry =
+      result._tag === "Failure"
+        ? undefined
+        : result.value.entries.find(
+            (candidate) => candidate.name === name && candidate.relativePath === relativePath,
+          );
+    if (entry) {
+      if (entry.kind === "directory") showLinkFeedback(anchor, "Linked file isn't available.");
+      else onOpenFile(relativePath);
+      return;
+    }
+    // Nothing was listed at the link's location, or its folder could not be
+    // listed at all, which is what a link into a moved folder looks like.
+    await resolveAndOpenLink({
+      request,
+      anchor,
+      // A resolved workspace location, never an authored home-relative link.
+      askedPath: workspaceLocatorAskPath(relativePath, props.cwd),
+      clientPath: relativePath,
+      knownMissing: result._tag === "Success" && result.value.complete,
+    });
+  };
+  const openHomeRelativeFile = (homeRelativePath: string, anchor: HTMLElement) =>
+    resolveAndOpenLink({
+      request: beginLinkOpen(),
+      anchor,
+      askedPath: homeRelativePath,
+      clientPath: clientPlacedLinkPath(homeRelativePath, props.cwd),
+      knownMissing: false,
+    });
+  const handleOpenLink = (target: string, anchor: HTMLElement) => {
+    if (/^(?:https?:|mailto:)/iu.test(target)) {
+      beginLinkOpen();
+      void readLocalApi()
+        ?.shell.openExternal(target)
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to open link",
+            description: error instanceof Error ? error.message : "The link could not open.",
           });
-        return;
-      }
-      if (target.startsWith("#")) {
-        beginLinkOpen();
-        showLinkFeedback(anchor, "Linked section wasn't found.");
-        return;
-      }
-      if (isHomeRelativeLink(target)) {
-        // Only the machine that owns the files knows its home folder. The
-        // destination is a URL: its fragment is not part of the file's name,
-        // and its escapes are decoded like any other link's.
-        const homeRelativePath = decodedLinkPath(target);
-        if (homeRelativePath === null) {
-          beginLinkOpen();
-          showLinkFeedback(anchor, "This link isn't available.");
-          return;
-        }
-        void openHomeRelativeFile(homeRelativePath, anchor);
-        return;
-      }
-      const path = resolveMarkdownUrlPath(props.relativePath, target);
-      if (!path) {
-        beginLinkOpen();
-        // A link that leaves the project still names a file on this machine;
-        // it opens read-only, and a missing one says so in the panel.
-        const hostPath = resolveMarkdownHostLinkPath(props.relativePath, props.cwd, target);
-        if (hostPath) {
-          // An absolute spelling of a workspace file stays an editable workspace file.
-          const workspacePath = workspaceRelativeFilePath(hostPath, props.cwd);
-          if (workspacePath !== null) {
-            void openWorkspaceFile(workspacePath, anchor);
-            return;
-          }
-          onOpenFile(hostPath);
-          return;
-        }
-        showLinkFeedback(anchor, "This link isn't available.");
-        return;
-      }
-      void openWorkspaceFile(path.relativePath, anchor);
-    },
-    [
-      beginLinkOpen,
-      onOpenFile,
-      openHomeRelativeFile,
-      openWorkspaceFile,
-      props.cwd,
-      props.relativePath,
-      showLinkFeedback,
-    ],
-  );
-  const handleOpenWikiLink = useCallback(
-    (target: string, anchor: HTMLElement) => {
-      const path = resolveWikiLinkPath(props.relativePath, target);
-      if (!path) {
+        });
+      return;
+    }
+    if (target.startsWith("#")) {
+      beginLinkOpen();
+      showLinkFeedback(anchor, "Linked section wasn't found.");
+      return;
+    }
+    if (isHomeRelativeLink(target)) {
+      // Only the machine that owns the files knows its home folder. The
+      // destination is a URL: its fragment is not part of the file's name,
+      // and its escapes are decoded like any other link's.
+      const homeRelativePath = decodedLinkPath(target);
+      if (homeRelativePath === null) {
         beginLinkOpen();
         showLinkFeedback(anchor, "This link isn't available.");
         return;
       }
-      void openWorkspaceFile(path, anchor);
-    },
-    [beginLinkOpen, openWorkspaceFile, props.relativePath, showLinkFeedback],
-  );
-  const resolveLinkFullPath = useCallback(
-    (kind: ScientMarkdownLinkKind, target: string): string | null => {
-      const relativePath =
-        kind === "wiki-link"
-          ? resolveWikiLinkPath(props.relativePath, target)
-          : target.startsWith("#")
-            ? props.relativePath
-            : resolveMarkdownUrlPath(props.relativePath, target)?.relativePath;
-      return relativePath ? resolvePathLinkTarget(relativePath, props.cwd) : null;
-    },
-    [props.cwd, props.relativePath],
-  );
-  const handleCopyLink = useCallback(
-    (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) => {
-      const requestId = beginLinkOpen();
-      const fullPath = request.format === "full-path";
-      void writeTextToClipboard(request.value, fullPath ? "full path" : "link").then(
-        (copied) => {
-          if (requestId !== linkOpenRequestRef.current) return;
-          if (copied) showLinkFeedback(anchor, fullPath ? "Full path copied." : "Link copied.");
+      void openHomeRelativeFile(homeRelativePath, anchor);
+      return;
+    }
+    const path = resolveMarkdownUrlPath(props.relativePath, target);
+    if (!path) {
+      beginLinkOpen();
+      // A link that leaves the project still names a file on this machine;
+      // it opens read-only, and a missing one says so in the panel.
+      const hostPath = resolveMarkdownHostLinkPath(props.relativePath, props.cwd, target);
+      if (hostPath) {
+        // An absolute spelling of a workspace file stays an editable workspace file.
+        const workspacePath = workspaceRelativeFilePath(hostPath, props.cwd);
+        if (workspacePath !== null) {
+          void openWorkspaceFile(workspacePath, anchor);
+          return;
+        }
+        onOpenFile(hostPath);
+        return;
+      }
+      showLinkFeedback(anchor, "This link isn't available.");
+      return;
+    }
+    void openWorkspaceFile(path.relativePath, anchor);
+  };
+  const handleOpenWikiLink = (target: string, anchor: HTMLElement) => {
+    const path = resolveWikiLinkPath(props.relativePath, target);
+    if (!path) {
+      beginLinkOpen();
+      showLinkFeedback(anchor, "This link isn't available.");
+      return;
+    }
+    void openWorkspaceFile(path, anchor);
+  };
+  const resolveLinkFullPath = (kind: ScientMarkdownLinkKind, target: string): string | null => {
+    const relativePath =
+      kind === "wiki-link"
+        ? resolveWikiLinkPath(props.relativePath, target)
+        : target.startsWith("#")
+          ? props.relativePath
+          : resolveMarkdownUrlPath(props.relativePath, target)?.relativePath;
+    return relativePath ? resolvePathLinkTarget(relativePath, props.cwd) : null;
+  };
+  const handleCopyLink = (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) => {
+    const requestId = beginLinkOpen();
+    const fullPath = request.format === "full-path";
+    void writeTextToClipboard(request.value, fullPath ? "full path" : "link").then(
+      (copied) => {
+        if (requestId !== linkOpenRequestRef.current) return;
+        if (copied) showLinkFeedback(anchor, fullPath ? "Full path copied." : "Link copied.");
+      },
+      () => {
+        if (requestId !== linkOpenRequestRef.current) return;
+        showLinkFeedback(
+          anchor,
+          fullPath ? "Couldn't copy the full path." : "Couldn't copy the link.",
+        );
+      },
+    );
+  };
+  const imageOptions = {
+    resolveImageActions: (authoredSource: string): readonly ScientImageAction[] => {
+      const source = resolveMarkdownImageSource(authoredSource, {
+        cwd: props.cwd,
+        documentPath: props.relativePath,
+        threadRef: props.threadRef,
+      });
+      const copyText = async (value: string) => {
+        if (!(await writeTextToClipboard(value, "image source"))) {
+          throw new Error("The image source could not be copied.");
+        }
+      };
+      const actions: ScientImageAction[] = [
+        { id: "copy-source", label: "Copy image source", run: () => copyText(authoredSource) },
+      ];
+      if (!source) return actions;
+      const location =
+        source.kind === "direct"
+          ? { src: source.url }
+          : {
+              src: null,
+              asset: { environmentId: props.environmentId, resource: source.resource },
+            };
+      actions.unshift(
+        {
+          id: "copy-image",
+          label: "Copy image",
+          run: () => copyStaticImage(resolveImageActionUrl(location)),
         },
-        () => {
-          if (requestId !== linkOpenRequestRef.current) return;
-          showLinkFeedback(
-            anchor,
-            fullPath ? "Couldn't copy the full path." : "Couldn't copy the link.",
-          );
+        {
+          id: "download",
+          label: "Download original",
+          run: async () =>
+            downloadStaticImage(await resolveImageActionUrl(location), source.fileName),
         },
       );
-    },
-    [beginLinkOpen, showLinkFeedback],
-  );
-  const imageOptions = useMemo(
-    () => ({
-      resolveImageActions: (authoredSource: string): readonly ScientImageAction[] => {
-        const source = resolveMarkdownImageSource(authoredSource, {
-          cwd: props.cwd,
-          documentPath: props.relativePath,
-          threadRef: props.threadRef,
-        });
-        const copyText = async (value: string) => {
-          if (!(await writeTextToClipboard(value, "image source"))) {
-            throw new Error("The image source could not be copied.");
-          }
-        };
-        const actions: ScientImageAction[] = [
-          { id: "copy-source", label: "Copy image source", run: () => copyText(authoredSource) },
-        ];
-        if (!source) return actions;
-        const location =
-          source.kind === "direct"
-            ? { src: source.url }
-            : {
-                src: null,
-                asset: { environmentId: props.environmentId, resource: source.resource },
-              };
-        actions.unshift(
+      if (source.kind === "workspace") {
+        actions.push(
           {
-            id: "copy-image",
-            label: "Copy image",
-            run: () => copyStaticImage(resolveImageActionUrl(location)),
+            id: "copy-relative-path",
+            label: "Copy relative path",
+            run: () => copyText(source.relativePath),
           },
           {
-            id: "download",
-            label: "Download original",
-            run: async () =>
-              downloadStaticImage(await resolveImageActionUrl(location), source.fileName),
+            id: "copy-full-path",
+            label: "Copy full path",
+            run: () => copyText(source.absolutePath),
+          },
+          {
+            id: "open-file",
+            label: "Open image file",
+            closeViewer: true,
+            run: async () => {
+              const request = beginLinkOpen();
+              // Resolve availability before switching files, matching ordinary workspace links.
+              const { directory, name } = workspacePathParent(source.relativePath);
+              const result = await listDirectory({
+                environmentId: props.environmentId,
+                input: { cwd: props.cwd, relativeDirectory: directory, view: "with-internals" },
+              });
+              if (!mountedRef.current || request !== linkOpenRequestRef.current) return;
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              if (
+                !result.value.entries.some(
+                  (entry) =>
+                    entry.name === name &&
+                    entry.relativePath === source.relativePath &&
+                    entry.kind !== "directory",
+                )
+              ) {
+                throw new Error("The image file is no longer available.");
+              }
+              onOpenFile(source.relativePath);
+            },
           },
         );
-        if (source.kind === "workspace") {
-          actions.push(
-            {
-              id: "copy-relative-path",
-              label: "Copy relative path",
-              run: () => copyText(source.relativePath),
-            },
-            {
-              id: "copy-full-path",
-              label: "Copy full path",
-              run: () => copyText(source.absolutePath),
-            },
-            {
-              id: "open-file",
-              label: "Open image file",
-              closeViewer: true,
-              run: async () => {
-                const request = beginLinkOpen();
-                // Resolve availability before switching files, matching ordinary workspace links.
-                const { directory, name } = workspacePathParent(source.relativePath);
-                const result = await listDirectory({
-                  environmentId: props.environmentId,
-                  input: { cwd: props.cwd, relativeDirectory: directory, view: "with-internals" },
-                });
-                if (!mountedRef.current || request !== linkOpenRequestRef.current) return;
-                if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                if (
-                  !result.value.entries.some(
-                    (entry) =>
-                      entry.name === name &&
-                      entry.relativePath === source.relativePath &&
-                      entry.kind !== "directory",
-                  )
-                ) {
-                  throw new Error("The image file is no longer available.");
-                }
-                onOpenFile(source.relativePath);
-              },
-            },
-          );
-        }
-        return actions;
-      },
-      onImageError: (error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: "Image action failed",
-          description:
-            error instanceof Error ? error.message : "The image action could not finish.",
-        });
-      },
-    }),
-    [
-      props.cwd,
-      props.relativePath,
-      props.threadRef,
-      props.environmentId,
-      onOpenFile,
-      resolveImageActionUrl,
-      listDirectory,
-      beginLinkOpen,
-    ],
-  );
+      }
+      return actions;
+    },
+    onImageError: (error: unknown) => {
+      toastManager.add({
+        type: "error",
+        title: "Image action failed",
+        description: error instanceof Error ? error.message : "The image action could not finish.",
+      });
+    },
+  };
   return (
     <>
       <ScientMarkdownWorkspaceSurface

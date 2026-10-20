@@ -33,12 +33,13 @@ export function TemplateNameDialog(props: {
   const submit = async () => {
     if (!trimmed || pending) return;
     setPending(true);
-    try {
-      await props.onSubmit(trimmed);
-      props.onOpenChange(false);
-    } finally {
-      setPending(false);
-    }
+    await settleTemplateName(
+      async () => {
+        await props.onSubmit(trimmed);
+        props.onOpenChange(false);
+      },
+      () => setPending(false),
+    );
   };
   return (
     <Dialog
@@ -88,4 +89,13 @@ export function TemplateNameDialog(props: {
       </DialogPopup>
     </Dialog>
   );
+}
+
+// Outside the component: the React Compiler does not compile try/finally.
+async function settleTemplateName(task: () => Promise<void>, settled: () => void) {
+  try {
+    await task();
+  } finally {
+    settled();
+  }
 }

@@ -991,6 +991,79 @@ effectIt.effect("does not swallow process probe interruption", () =>
   }),
 );
 
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips idle listener scans on %s and resumes when candidates exist",
+  (platform) => {
+    let processCalls = 0;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          // SCIENT-FORK: idle scans use the same protected endpoint registry.
+          TestOwnedLocalEndpointsLive,
+          Layer.succeed(HostProcess.Platform, platform),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              processCalls += 1;
+              return Effect.succeed({
+                stdout: `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                FetchHttpClient.Fetch,
+                // SCIENT-FORK: Scient's DOM types add `fetch.preconnect`.
+                ((_input: Parameters<typeof globalThis.fetch>[0]) =>
+                  Promise.resolve(
+                    new Response("hello", { headers: { "content-type": "text/html" } }),
+                  )) as typeof globalThis.fetch,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain;
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      // SCIENT-FORK: terminal ownership supplies metadata, never URL authority.
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/docs`])).toMatchObject([
+        { port: LSOF_TEST_PORT, url: `http://localhost:${LSOF_TEST_PORT}/docs` },
+      ]);
+      expect(processCalls).toBe(1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 effectIt.effect(
   "parses Windows netstat listeners, names them via tasklist with retry, and skips spawns when idle",
   () => {

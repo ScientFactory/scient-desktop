@@ -299,3 +299,32 @@ describe("provider sign-in lists", () => {
     }
   });
 });
+
+describe("sign-in request ids", () => {
+  const decodeStart = Schema.decodeUnknownSync(ProviderConnectionStartInput);
+  const start = { instanceId: "antigravity", method: "antigravity_google" };
+
+  it("accepts a short opaque id on the start input and the operation", () => {
+    const id = "0b9d6c8e-2f1a-4c3b-9d7e-5a6f8b1c2d3e";
+    expect(decodeStart({ ...start, signInRequestId: id }).signInRequestId).toBe(id);
+    expect(
+      decodeConnectionOperation({
+        operationId: "connect-1",
+        method: "antigravity_google",
+        status: "starting",
+        startedAt: "2026-10-18T00:00:00.000Z",
+        finishedAt: null,
+        message: "Starting.",
+        signInRequestId: id,
+      }).signInRequestId,
+    ).toBe(id);
+    expect(decodeStart(start).signInRequestId).toBeUndefined();
+  });
+
+  it.each(["short", "x".repeat(65), "has spaces in it", "id/with/slashes", "line\nbreak"])(
+    "rejects %j",
+    (signInRequestId) => {
+      expect(() => decodeStart({ ...start, signInRequestId })).toThrow();
+    },
+  );
+});

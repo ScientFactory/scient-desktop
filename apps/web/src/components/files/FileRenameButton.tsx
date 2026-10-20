@@ -2,7 +2,14 @@ import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { FilePenLine } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -118,6 +125,15 @@ interface FileRenameButtonProps {
   readonly moveInPlace?: (destinationRelativePath: string) => Promise<RenameOpenDocumentResult>;
 }
 
+// Outside the component: the React Compiler does not compile `finally`.
+async function settleAfter(run: () => Promise<void>, settle: () => void): Promise<void> {
+  try {
+    await run();
+  } finally {
+    settle();
+  }
+}
+
 /** The open file's name, which renames the file when clicked. */
 export function FileRenameButton(props: FileRenameButtonProps) {
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
@@ -143,15 +159,34 @@ export function FileRenameButton(props: FileRenameButtonProps) {
   const [metadataIntent, setMetadataIntent] = useState<MetadataFileRenameIntent | null>(null);
   const [metadataReady, setMetadataReady] = useState(false);
   const metadataOwner = useRef<object | null>(null);
-  useLayoutEffect(() => {
+  // A new owner for each file and enablement; answers for an earlier one are void.
+  const claimMetadataOwner = useEffectEvent((..._changes: readonly unknown[]) => {
     const owner = {};
     metadataOwner.current = owner;
     return () => {
       if (metadataOwner.current === owner) metadataOwner.current = null;
     };
-  }, [props.environmentId, props.cwd, props.relativePath, props.disabled]);
-  useEffect(() => {
+  });
+  useLayoutEffect(
+    () => claimMetadataOwner(props.environmentId, props.cwd, props.relativePath, props.disabled),
+    [props.environmentId, props.cwd, props.relativePath, props.disabled],
+  );
+  const metadataInputs = [
+    props.metadataOnly,
+    props.metadataStore,
+    props.environmentId,
+    props.cwd,
+    props.relativePath,
+    props.disabled,
+  ] as const;
+  const [previousMetadataInputs, setPreviousMetadataInputs] = useState<readonly unknown[]>(
+    () => metadataInputs,
+  );
+  if (metadataInputs.some((value, index) => value !== previousMetadataInputs[index])) {
+    setPreviousMetadataInputs(metadataInputs);
     setMetadataReady(false);
+  }
+  const readMetadataIntent = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!props.metadataOnly) return;
     const owner = metadataOwner.current;
     void readMetadataRenameIntent(
@@ -171,127 +206,157 @@ export function FileRenameButton(props: FileRenameButtonProps) {
         if (metadataOwner.current === owner) setError(renameFailureMessage(cause));
       },
     );
-  }, [
-    props.metadataOnly,
-    props.metadataStore,
-    props.environmentId,
-    props.cwd,
-    props.relativePath,
-    props.disabled,
-  ]);
+  });
+  useEffect(
+    () =>
+      readMetadataIntent(
+        props.metadataOnly,
+        props.metadataStore,
+        props.environmentId,
+        props.cwd,
+        props.relativePath,
+        props.disabled,
+      ),
+    [
+      props.metadataOnly,
+      props.metadataStore,
+      props.environmentId,
+      props.cwd,
+      props.relativePath,
+      props.disabled,
+    ],
+  );
   const pendingRename = props.metadataOnly
     ? metadataIntent
     : (props.pendingRename ?? props.renameJournal?.pendingRename ?? null);
   const reviewCurrent = async () => {
     setSubmitting(true);
-    try {
-      const result = await readFile(request);
-      const current =
-        result._tag === "Failure"
-          ? documentCurrentMissingReview(result.cause, request.input)
-          : result.value;
-      if (!current || current.truncated || current.readOnly) {
-        setError(
-          "The current source path could not be reviewed completely. Open the actual source, destination, and retained versions read-only.",
-        );
-        return;
-      }
-      setReview(current);
-    } catch {
-      setError("The current source path could not be read. No recovery choice was accepted.");
-    } finally {
-      setSubmitting(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const result = await readFile(request);
+          const current =
+            result._tag === "Failure"
+              ? documentCurrentMissingReview(result.cause, request.input)
+              : result.value;
+          if (!current || current.truncated || current.readOnly) {
+            setError(
+              "The current source path could not be reviewed completely. Open the actual source, destination, and retained versions read-only.",
+            );
+            return;
+          }
+          setReview(current);
+        } catch {
+          setError("The current source path could not be read. No recovery choice was accepted.");
+        }
+      },
+      () => {
+        setSubmitting(false);
+      },
+    );
   };
   const acceptReview = async () => {
     if (!review || !attention) return;
     setSubmitting(true);
-    try {
-      const read = await readFile(request);
-      const current =
-        read._tag === "Failure"
-          ? documentCurrentMissingReview(read.cause, request.input)
-          : read.value;
-      if (
-        !current ||
-        current.truncated ||
-        current.readOnly ||
-        current.revision !== review.revision
-      ) {
-        setError("The reviewed source path changed. Review it again before accepting.");
-        return;
-      }
-      const evidence = current.publicationAttention ?? retainedFileEvidence(attention.cause);
-      let accepted = false;
-      if (evidence.recoveryId !== null) {
-        if (props.resolveAttention && !props.metadataOnly)
-          accepted = await props.resolveAttention(evidence.recoveryId, review.revision);
-        else {
-          const result = await resolveMutation({
-            ...request,
-            input: {
-              ...request.input,
-              recoveryId: evidence.recoveryId,
-              currentRevision: review.revision,
-              choice: "accept-current",
-            },
-          });
-          if (result._tag === "Success" && result.value.revision === review.revision) {
-            const read = await readFile(request);
-            const verified =
-              read._tag === "Failure"
-                ? documentCurrentMissingReview(read.cause, request.input)
-                : read.value;
-            accepted =
-              verified !== null &&
-              verified.revision === review.revision &&
-              !verified.truncated &&
-              !verified.readOnly &&
-              verified.publicationAttention === undefined;
+    await settleAfter(
+      async () => {
+        try {
+          const read = await readFile(request);
+          const current =
+            read._tag === "Failure"
+              ? documentCurrentMissingReview(read.cause, request.input)
+              : read.value;
+          if (
+            !current ||
+            current.truncated ||
+            current.readOnly ||
+            current.revision !== review.revision
+          ) {
+            setError("The reviewed source path changed. Review it again before accepting.");
+            return;
           }
+          const evidence = current.publicationAttention ?? retainedFileEvidence(attention.cause);
+          let accepted = false;
+          if (evidence.recoveryId !== null) {
+            if (props.resolveAttention && !props.metadataOnly)
+              accepted = await props.resolveAttention(evidence.recoveryId, review.revision);
+            else {
+              const result = await resolveMutation({
+                ...request,
+                input: {
+                  ...request.input,
+                  recoveryId: evidence.recoveryId,
+                  currentRevision: review.revision,
+                  choice: "accept-current",
+                },
+              });
+              if (result._tag === "Success" && result.value.revision === review.revision) {
+                const read = await readFile(request);
+                const verified =
+                  read._tag === "Failure"
+                    ? documentCurrentMissingReview(read.cause, request.input)
+                    : read.value;
+                accepted =
+                  verified !== null &&
+                  verified.revision === review.revision &&
+                  !verified.truncated &&
+                  !verified.readOnly &&
+                  verified.publicationAttention === undefined;
+              }
+            }
+          } else if (
+            documentPublicationOutcome(attention.cause) === "unchanged" &&
+            current.publicationAttention === undefined
+          ) {
+            accepted =
+              props.acknowledgeRefusal && !props.metadataOnly
+                ? await props.acknowledgeRefusal(review.revision)
+                : true;
+          }
+          if (accepted && props.metadataOnly && metadataIntent) {
+            accepted = await settleMetadataRenameIntent(
+              {
+                environmentId: props.environmentId,
+                cwd: props.cwd,
+                relativePath: props.relativePath,
+              },
+              metadataIntent.mutationId,
+              props.metadataStore,
+            );
+            if (accepted) setMetadataIntent(null);
+          }
+          if (accepted) {
+            setAttention(null);
+            setReview(null);
+            setError(null);
+          } else
+            setError(
+              "This rename remains unresolved. The open path was not moved; local input and retained versions are preserved.",
+            );
+        } catch {
+          setError(
+            "Recovery confirmation could not finish. Review the current source path again; the rename has not been acknowledged.",
+          );
         }
-      } else if (
-        documentPublicationOutcome(attention.cause) === "unchanged" &&
-        current.publicationAttention === undefined
-      ) {
-        accepted =
-          props.acknowledgeRefusal && !props.metadataOnly
-            ? await props.acknowledgeRefusal(review.revision)
-            : true;
-      }
-      if (accepted && props.metadataOnly && metadataIntent) {
-        accepted = await settleMetadataRenameIntent(
-          {
-            environmentId: props.environmentId,
-            cwd: props.cwd,
-            relativePath: props.relativePath,
-          },
-          metadataIntent.mutationId,
-          props.metadataStore,
-        );
-        if (accepted) setMetadataIntent(null);
-      }
-      if (accepted) {
-        setAttention(null);
-        setReview(null);
-        setError(null);
-      } else
-        setError(
-          "This rename remains unresolved. The open path was not moved; local input and retained versions are preserved.",
-        );
-    } catch {
-      setError(
-        "Recovery confirmation could not finish. Review the current source path again; the rename has not been acknowledged.",
-      );
-    } finally {
-      setSubmitting(false);
-    }
+      },
+      () => {
+        setSubmitting(false);
+      },
+    );
   };
 
-  useEffect(() => {
+  // Opening, or a new file or pending rename while open, starts the field afresh.
+  const fieldInputs = [open, props.relativePath, pendingRename?.mutationId] as const;
+  const [previousFieldInputs, setPreviousFieldInputs] = useState<readonly unknown[]>(() => [false]);
+  if (fieldInputs.some((value, index) => value !== previousFieldInputs[index])) {
+    setPreviousFieldInputs(fieldInputs);
+    if (open) {
+      setPath(pendingRename?.destination.relativePath ?? props.relativePath);
+      setError(null);
+    }
+  }
+  const selectFileName = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!open) return;
-    setPath(pendingRename?.destination.relativePath ?? props.relativePath);
-    setError(null);
     queueMicrotask(() => {
       const input = inputRef.current;
       if (!input) return;
@@ -300,7 +365,11 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       const dot = props.relativePath.lastIndexOf(".");
       input.setSelectionRange(slash + 1, dot > slash + 1 ? dot : props.relativePath.length);
     });
-  }, [open, props.relativePath, pendingRename?.mutationId]);
+  });
+  useEffect(
+    () => selectFileName(open, props.relativePath, pendingRename?.mutationId),
+    [open, props.relativePath, pendingRename?.mutationId],
+  );
 
   const submit = async () => {
     if ((props.disabled && !pendingRename) || submitting || (attention !== null && !pendingRename))
@@ -335,77 +404,82 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       }
       setSubmitting(true);
       setError(null);
-      try {
-        const outcome = await renameMetadataFile({
-          from: {
-            environmentId: props.environmentId,
-            cwd: props.cwd,
-            relativePath: props.relativePath,
-          },
-          destination: {
-            environmentId: props.environmentId,
-            cwd: props.cwd,
-            relativePath: destinationRelativePath,
-          },
-          ...(props.revision === null ? {} : { expectedRevision: props.revision }),
-          ...(props.metadataStore ? { store: props.metadataStore } : {}),
-          isActive: () => owner !== null && metadataOwner.current === owner,
-          rename: async (intent) => {
-            const result = await renameFile({
-              environmentId: intent.from.environmentId,
-              input: {
-                cwd: intent.from.cwd,
-                relativePath: intent.from.relativePath,
-                destinationRelativePath: intent.destination.relativePath,
-                mutationId: intent.mutationId,
-                ...(intent.expectedRevision === undefined
-                  ? {}
-                  : { expectedRevision: intent.expectedRevision }),
-                ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
+      await settleAfter(
+        async () => {
+          try {
+            const outcome = await renameMetadataFile({
+              from: {
+                environmentId: props.environmentId,
+                cwd: props.cwd,
+                relativePath: props.relativePath,
+              },
+              destination: {
+                environmentId: props.environmentId,
+                cwd: props.cwd,
+                relativePath: destinationRelativePath,
+              },
+              ...(props.revision === null ? {} : { expectedRevision: props.revision }),
+              ...(props.metadataStore ? { store: props.metadataStore } : {}),
+              isActive: () => owner !== null && metadataOwner.current === owner,
+              rename: async (intent) => {
+                const result = await renameFile({
+                  environmentId: intent.from.environmentId,
+                  input: {
+                    cwd: intent.from.cwd,
+                    relativePath: intent.from.relativePath,
+                    destinationRelativePath: intent.destination.relativePath,
+                    mutationId: intent.mutationId,
+                    ...(intent.expectedRevision === undefined
+                      ? {}
+                      : { expectedRevision: intent.expectedRevision }),
+                    ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
+                  },
+                });
+                return result._tag === "Success"
+                  ? {
+                      ok: true,
+                      destinationRelativePath: result.value.destinationRelativePath,
+                      revision: result.value.revision,
+                    }
+                  : {
+                      ok: false,
+                      cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
+                    };
               },
             });
-            return result._tag === "Success"
-              ? {
-                  ok: true,
-                  destinationRelativePath: result.value.destinationRelativePath,
-                  revision: result.value.revision,
-                }
-              : {
-                  ok: false,
-                  cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
-                };
-          },
-        });
-        if (metadataOwner.current !== owner) return;
-        if (outcome.kind === "renamed") {
-          setMetadataIntent(null);
-          setOpen(false);
-          props.onRenamed(outcome.destinationRelativePath, outcome.revision);
-        } else {
-          const retained = await readMetadataRenameIntent(
-            {
-              environmentId: props.environmentId,
-              cwd: props.cwd,
-              relativePath: props.relativePath,
-            },
-            props.metadataStore,
-          ).catch(() => metadataIntent);
-          if (metadataOwner.current !== owner) return;
-          setMetadataIntent(retained);
-          if (outcome.kind === "attention")
-            setAttention({
-              kind: outcome.attention,
-              cause: outcome.cause,
-              destination: destinationRelativePath,
-            });
-          else setError(renameFailureMessage(outcome.cause));
-        }
-      } catch (cause) {
-        if (metadataOwner.current === owner) setError(renameFailureMessage(cause));
-      } finally {
-        release?.();
-        if (metadataOwner.current === owner) setSubmitting(false);
-      }
+            if (metadataOwner.current !== owner) return;
+            if (outcome.kind === "renamed") {
+              setMetadataIntent(null);
+              setOpen(false);
+              props.onRenamed(outcome.destinationRelativePath, outcome.revision);
+            } else {
+              const retained = await readMetadataRenameIntent(
+                {
+                  environmentId: props.environmentId,
+                  cwd: props.cwd,
+                  relativePath: props.relativePath,
+                },
+                props.metadataStore,
+              ).catch(() => metadataIntent);
+              if (metadataOwner.current !== owner) return;
+              setMetadataIntent(retained);
+              if (outcome.kind === "attention")
+                setAttention({
+                  kind: outcome.attention,
+                  cause: outcome.cause,
+                  destination: destinationRelativePath,
+                });
+              else setError(renameFailureMessage(outcome.cause));
+            }
+          } catch (cause) {
+            if (metadataOwner.current === owner) setError(renameFailureMessage(cause));
+          }
+        },
+        () => {
+          release?.();
+          if (metadataOwner.current === owner) setSubmitting(false);
+        },
+      );
       return;
     }
     if (props.moveInPlace) {
@@ -416,9 +490,8 @@ export function FileRenameButton(props: FileRenameButtonProps) {
         outcome = await props.moveInPlace(destinationRelativePath);
       } catch (cause) {
         outcome = { kind: "attention", attention: "outcome_unknown", cause };
-      } finally {
-        setSubmitting(false);
       }
+      setSubmitting(false);
       if (outcome.kind === "attention") {
         setAttention({
           kind: outcome.attention,
@@ -453,18 +526,25 @@ export function FileRenameButton(props: FileRenameButtonProps) {
     }
     setSubmitting(true);
     setError(null);
-    let intent: DocumentRenameIntent | null;
-    try {
-      intent = await props.renameJournal.beginRename(destinationRelativePath);
-      if (!intent) throw new Error(RECOVERY_COPY_UNSETTLED);
-    } catch (cause) {
-      setError(renameFailureMessage(cause));
+    const journal = props.renameJournal;
+    const begun = await Promise.resolve()
+      .then(() => journal.beginRename(destinationRelativePath))
+      .then(
+        (intent): { intent: DocumentRenameIntent | null; cause: unknown } => ({
+          intent,
+          cause: new Error(RECOVERY_COPY_UNSETTLED),
+        }),
+        (cause: unknown) => ({ intent: null, cause }),
+      );
+    const intent = begun.intent;
+    if (!intent) {
+      setError(renameFailureMessage(begun.cause));
       release?.();
       setSubmitting(false);
       return;
     }
     const mutationId = intent.mutationId;
-    if (!props.renameJournal.isCurrent(intent)) {
+    if (!journal.isCurrent(intent)) {
       setError(
         "The rename owner retired before transport dispatch. The original intent remains preserved.",
       );
@@ -472,65 +552,74 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       setSubmitting(false);
       return;
     }
-    try {
-      const result = intent.acknowledgement
-        ? { _tag: "Success" as const, value: intent.acknowledgement }
-        : await renameFile({
-            environmentId: intent.from.environmentId,
-            input: {
-              cwd: intent.from.cwd,
-              relativePath: intent.from.relativePath,
-              destinationRelativePath: intent.destination.relativePath,
-              expectedRevision: intent.expectedRevision,
-              mutationId,
-              ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
-            },
-          });
-      if (result._tag === "Success") {
-        if (!(await props.renameJournal.acknowledgeRename(intent, result.value))) {
-          const cause = new Error(
-            "The rename receipt could not be committed. Local input and the original intent remain preserved.",
-          );
+    await settleAfter(
+      async () => {
+        try {
+          const result = intent.acknowledgement
+            ? { _tag: "Success" as const, value: intent.acknowledgement }
+            : await renameFile({
+                environmentId: intent.from.environmentId,
+                input: {
+                  cwd: intent.from.cwd,
+                  relativePath: intent.from.relativePath,
+                  destinationRelativePath: intent.destination.relativePath,
+                  expectedRevision: intent.expectedRevision,
+                  mutationId,
+                  ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
+                },
+              });
+          if (result._tag === "Success") {
+            if (!(await journal.acknowledgeRename(intent, result.value))) {
+              const cause = new Error(
+                "The rename receipt could not be committed. Local input and the original intent remain preserved.",
+              );
+              setAttention({
+                kind: "outcome_unknown",
+                cause,
+                destination: destinationRelativePath,
+              });
+              return;
+            }
+            setOpen(false);
+            props.onRenamed(result.value.destinationRelativePath, result.value.revision);
+            return;
+          }
+          if (result._tag !== "Failure") {
+            const cause = new Error("The rename outcome could not be confirmed.");
+            await journal.rejectRename(intent, cause);
+            props.onMutationFailure?.(cause, mutationId);
+            setAttention({ kind: "outcome_unknown", cause, destination: destinationRelativePath });
+            return;
+          }
+          const cause = squashAtomCommandFailure(result);
+          if (!(await journal.rejectRename(intent, cause))) {
+            setAttention({
+              kind: "outcome_unknown",
+              cause: new Error(
+                "The refusal could not be durably settled. The original rename intent remains preserved.",
+              ),
+              destination: destinationRelativePath,
+            });
+            return;
+          }
+          const kind = renameOutcomeAttention(cause);
+          if (kind !== null) {
+            props.onMutationFailure?.(cause, mutationId);
+            setAttention({ kind, cause, destination: destinationRelativePath });
+            return;
+          }
+          setError(renameFailureMessage(cause));
+        } catch (cause) {
+          await journal.rejectRename(intent, cause);
+          props.onMutationFailure?.(cause, mutationId);
           setAttention({ kind: "outcome_unknown", cause, destination: destinationRelativePath });
-          return;
         }
-        setOpen(false);
-        props.onRenamed(result.value.destinationRelativePath, result.value.revision);
-        return;
-      }
-      if (result._tag !== "Failure") {
-        const cause = new Error("The rename outcome could not be confirmed.");
-        await props.renameJournal.rejectRename(intent, cause);
-        props.onMutationFailure?.(cause, mutationId);
-        setAttention({ kind: "outcome_unknown", cause, destination: destinationRelativePath });
-        return;
-      }
-      const cause = squashAtomCommandFailure(result);
-      if (!(await props.renameJournal.rejectRename(intent, cause))) {
-        setAttention({
-          kind: "outcome_unknown",
-          cause: new Error(
-            "The refusal could not be durably settled. The original rename intent remains preserved.",
-          ),
-          destination: destinationRelativePath,
-        });
-        return;
-      }
-      const kind = renameOutcomeAttention(cause);
-      if (kind !== null) {
-        props.onMutationFailure?.(cause, mutationId);
-        setAttention({ kind, cause, destination: destinationRelativePath });
-        return;
-      }
-      setError(renameFailureMessage(cause));
-    } catch (cause) {
-      await props.renameJournal.rejectRename(intent, cause);
-      props.onMutationFailure?.(cause, mutationId);
-      setAttention({ kind: "outcome_unknown", cause, destination: destinationRelativePath });
-    } finally {
-      release?.();
-      setSubmitting(false);
-    }
+      },
+      () => {
+        release?.();
+        setSubmitting(false);
+      },
+    );
   };
 
   return (

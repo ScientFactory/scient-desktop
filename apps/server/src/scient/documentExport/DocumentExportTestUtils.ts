@@ -31,6 +31,7 @@ import {
   type GeneratedDocumentStoreError,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const publicationHelper = await filePublicationTestHelper();
 
@@ -52,6 +53,7 @@ export const documentExportTestLayer = (prefix: string) => {
     configLayer,
     WorkspacePaths.layer,
     WorkspaceFileSystem.layer.pipe(
+      Layer.provide(layerKnownWorkspacesAllowAll),
       Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),

@@ -8,7 +8,8 @@ import {
   type ScientThreadQueueItem,
 } from "@t3tools/contracts";
 import { DateTime } from "effect";
-import { useMemo } from "react";
+import { useState } from "react";
+
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -127,10 +128,20 @@ function PreviewWitness({
   threadKey: string;
   attachmentUrls: ReadonlyMap<string, string> | undefined;
 }) {
-  const acknowledged = useMemo(
-    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
-    [serverProjection],
-  );
+  const projectionMessages = serverProjection?.messages;
+  const [selection, setSelection] = useState(() => ({
+    source: projectionMessages,
+    acknowledged: deriveQueueAcknowledgedUserMessages(projectionMessages ?? []),
+  }));
+  let acknowledged = selection.acknowledged;
+  if (selection.source !== projectionMessages) {
+    const next = {
+      source: projectionMessages,
+      acknowledged: deriveQueueAcknowledgedUserMessages(projectionMessages ?? []),
+    };
+    setSelection(next);
+    acknowledged = next.acknowledged;
+  }
   onAcknowledged(acknowledged);
   const serverMessages = serverProjection?.messages ?? [];
   const pending = pendingQueueAdmissionPreviews(messages, threadKey, items, acknowledged);

@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   type EnvironmentId,
   type ProviderManagedRuntimeAction,
@@ -15,14 +16,13 @@ import {
   DownloadIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   Trash2Icon,
   TriangleAlertIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -204,14 +204,18 @@ export function ProviderRuntimeSection(props: {
   const initialPlanRequestRef = useRef<string | null>(null);
   const reportedOperationIdRef = useRef<ProviderRuntimeOperation["operationId"] | null>(null);
 
-  useEffect(() => {
-    if (providerInstanceIdRef.current === provider.instanceId) return;
-    providerInstanceIdRef.current = provider.instanceId;
+  const [previousInstanceId, setPreviousInstanceId] = useState(provider.instanceId);
+  if (previousInstanceId !== provider.instanceId) {
+    setPreviousInstanceId(provider.instanceId);
     setPendingAction(null);
     setPreparedPlan(null);
     setLocalRuntimeSnapshot(null);
     setLocalFailure(null);
     setStartedOperation(null);
+  }
+  useEffect(() => {
+    if (providerInstanceIdRef.current === provider.instanceId) return;
+    providerInstanceIdRef.current = provider.instanceId;
     initialPlanRequestRef.current = null;
     reportedOperationIdRef.current = null;
   }, [provider.instanceId]);
@@ -225,23 +229,27 @@ export function ProviderRuntimeSection(props: {
   const startedOperationId = startedOperation?.operationId;
   const startedOperationAction = startedOperation?.action;
 
+  const settleStartedOperation = useStableCallback(
+    (
+      settledOperation: ProviderRuntimeOperation,
+      action: ProviderManagedRuntimeAction | undefined,
+    ) => {
+      setStartedOperation(null);
+      if (
+        settledOperation.status === "succeeded" &&
+        reportedOperationIdRef.current !== settledOperation.operationId
+      ) {
+        reportedOperationIdRef.current = settledOperation.operationId;
+        if (action) onActionSucceeded?.(action);
+      }
+    },
+  );
   useEffect(() => {
     if (!startedOperationId || serverOperation?.operationId !== startedOperationId) return;
     if (isActiveProviderRuntimeOperation(serverOperation)) return;
-
-    setStartedOperation(null);
-    if (
-      serverOperation.status === "succeeded" &&
-      reportedOperationIdRef.current !== serverOperation.operationId
-    ) {
-      reportedOperationIdRef.current = serverOperation.operationId;
-      if (startedOperationAction) onActionSucceeded?.(startedOperationAction);
-    }
-  }, [onActionSucceeded, serverOperation, startedOperationAction, startedOperationId]);
-  const runtime = useMemo(
-    () => resolveProviderRuntimeForPresentation(serverRuntime, localRuntime),
-    [localRuntime, serverRuntime],
-  );
+    settleStartedOperation(serverOperation, startedOperationAction);
+  }, [settleStartedOperation, serverOperation, startedOperationAction, startedOperationId]);
+  const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
 
   const operation = runtime?.operation ?? null;
   const runtimeActions = runtime?.actions;
@@ -263,10 +271,11 @@ export function ProviderRuntimeSection(props: {
   /** Padding of a settings row; a card frames itself instead. */
   const frame = (card: string) => (row ? "px-3 py-3 sm:px-4" : card);
 
-  const startPlan = useCallback(
-    async (nextPlan: ProviderRuntimePlan) => {
-      if (startingRuntimeRef.current || !runtimeActions?.includes(nextPlan.action)) return;
-      startingRuntimeRef.current = true;
+  const startPlan = async (nextPlan: ProviderRuntimePlan) => {
+    if (startingRuntimeRef.current || !runtimeActions?.includes(nextPlan.action)) return;
+    startingRuntimeRef.current = true;
+    let actionFailure: { readonly cause: unknown } | undefined;
+    finishAction: {
       try {
         const operationId = operation?.operationId ?? null;
         setLocalFailure(null);
@@ -318,7 +327,9 @@ export function ProviderRuntimeSection(props: {
               ),
             });
           }
-          return;
+          {
+            break finishAction;
+          }
         }
         const nextRuntime = runtimeFromResult(result.value.providers, provider.instanceId);
         const nextOperation = nextRuntime?.operation;
@@ -342,34 +353,28 @@ export function ProviderRuntimeSection(props: {
         setPreparedPlan(null);
         onPlanOpenChange?.(false);
         setPendingAction(null);
-      } finally {
-        startingRuntimeRef.current = false;
+      } catch (cause) {
+        actionFailure = { cause };
       }
-    },
-    [
-      planRuntime,
-      startRuntime,
-      runtimeDisplayName,
-      environmentId,
-      onActionSucceeded,
-      onPlanOpenChange,
-      provider,
-      operation?.operationId,
-      runtimeActions,
-    ],
-  );
+    }
+    startingRuntimeRef.current = false;
+    if (actionFailure) throw actionFailure.cause;
+  };
 
-  const requestPlan = useCallback(
-    async (action: ProviderManagedRuntimeAction) => {
-      if (requestingRuntimeRef.current) return;
-      requestingRuntimeRef.current = true;
+  const requestPlan = useStableCallback(async (action: ProviderManagedRuntimeAction) => {
+    if (requestingRuntimeRef.current) return;
+    requestingRuntimeRef.current = true;
+    let actionFailure: { readonly cause: unknown } | undefined;
+    finishAction: {
       try {
         if (isActiveProviderRuntimeOperation(operation) || !runtimeActions?.includes(action)) {
           setPendingAction(null);
           setPreparedPlan(null);
           setLocalFailure(null);
           onPlanOpenChange?.(false);
-          return;
+          {
+            break finishAction;
+          }
         }
         const needsDecision = action === "remove";
         setLocalFailure(null);
@@ -392,29 +397,25 @@ export function ProviderRuntimeSection(props: {
               ),
             });
           }
-          return;
+          {
+            break finishAction;
+          }
         }
         if (!needsDecision) {
           await startPlan(result.value);
-          return;
+          {
+            break finishAction;
+          }
         }
         setPendingAction(null);
         setPreparedPlan(result.value);
-      } finally {
-        requestingRuntimeRef.current = false;
+      } catch (cause) {
+        actionFailure = { cause };
       }
-    },
-    [
-      planRuntime,
-      runtimeDisplayName,
-      environmentId,
-      onPlanOpenChange,
-      provider.instanceId,
-      runtimeActions,
-      operation,
-      startPlan,
-    ],
-  );
+    }
+    requestingRuntimeRef.current = false;
+    if (actionFailure) throw actionFailure.cause;
+  });
 
   useEffect(() => {
     if (!props.initialAction || !runtimeActions) return;
@@ -424,16 +425,16 @@ export function ProviderRuntimeSection(props: {
     void requestPlan(props.initialAction);
   }, [props.initialAction, provider.instanceId, requestPlan, runtimeActions]);
 
-  useEffect(() => {
-    if (!preparedPlan || plan) return;
+  const discardPlan = useStableCallback(() => {
     setPreparedPlan(null);
     onPlanOpenChange?.(false);
-  }, [plan, preparedPlan, onPlanOpenChange]);
-
+  });
   useEffect(() => {
-    if (!localFailure || localError) return;
-    setLocalFailure(null);
-  }, [localError, localFailure]);
+    if (!preparedPlan || plan) return;
+    discardPlan();
+  }, [plan, preparedPlan, discardPlan]);
+
+  if (localFailure && !localError) setLocalFailure(null);
 
   if (!runtime) return null;
 

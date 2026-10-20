@@ -172,9 +172,11 @@ export function LatexDocumentSettings(props: {
     value: LatexVisualLayoutUpdate[K],
     now: LatexVisualLayoutUpdate[K],
   ) => {
-    setChanges(({ [key]: _previous, ...rest }) =>
-      value === now ? rest : ({ ...rest, [key]: value } as Partial<LatexVisualLayoutUpdate>),
-    );
+    setChanges((current) => {
+      const rest: Partial<LatexVisualLayoutUpdate> = { ...current };
+      delete rest[key];
+      return value === now ? rest : ({ ...rest, [key]: value } as Partial<LatexVisualLayoutUpdate>);
+    });
     setError(null);
   };
   const chooseMargin = (choice: MarginChoice) => {

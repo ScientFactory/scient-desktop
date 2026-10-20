@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientLatexToolchainReport } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { readLatexToolchain, requestLatexToolchainInstall } from "../latex/client";
 import { isActiveLatexInstall } from "../latex/latexToolchainSetupModel";
@@ -14,6 +14,22 @@ const LATEX_INSTALL_POLL_MS = 1_500;
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+// Outside the hook: the React Compiler does not compile try/finally in a component.
+async function settleLatexRequest<A>(
+  request: () => Promise<A>,
+  accept: (value: A) => void,
+  fail: (cause: unknown) => void,
+  settle: () => void = () => {},
+): Promise<void> {
+  try {
+    accept(await request());
+  } catch (cause) {
+    fail(cause);
+  } finally {
+    settle();
+  }
 }
 
 export interface LatexInstallationController {
@@ -45,26 +61,26 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   const installRef = useRef<number | null>(null);
   const installsRef = useRef(0);
 
-  const read = useCallback(
-    async (refresh: boolean) => {
-      const request = ++latestReadRef.current;
-      const current = () =>
-        request === latestReadRef.current &&
-        request > staleUpToRef.current &&
-        installRef.current === null;
-      try {
-        const next = await readLatexToolchain(environmentId, { refresh });
+  const read = (refresh: boolean) => {
+    const request = ++latestReadRef.current;
+    const current = () =>
+      request === latestReadRef.current &&
+      request > staleUpToRef.current &&
+      installRef.current === null;
+    return settleLatexRequest(
+      () => readLatexToolchain(environmentId, { refresh }),
+      (next) => {
         if (!current()) return;
         setReport(next);
         setError(null);
         setInstallError(null);
-      } catch (cause) {
+      },
+      (cause) => {
         if (!current()) return;
         setError(errorMessage(cause, "Scient could not check LaTeX on this server."));
-      }
-    },
-    [environmentId],
-  );
+      },
+    );
+  };
 
   useEffect(() => {
     void read(false);
@@ -80,12 +96,12 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
 
   const active = isActiveLatexInstall(report?.managedInstall ?? null);
   useEffect(() => {
-    if (!active || error !== null) return;
+    if (!isActiveLatexInstall(report?.managedInstall ?? null) || error !== null) return;
     const timer = setTimeout(() => void read(false), LATEX_INSTALL_POLL_MS);
     return () => clearTimeout(timer);
-  }, [active, error, read, report]);
+  }, [error, read, report]);
 
-  const act = useCallback(() => {
+  const act = () => {
     if (error !== null || report === null) {
       void read(false);
       return;
@@ -97,33 +113,38 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
     setError(null);
     setInstallError(null);
     const current = () => installRef.current === request;
-    void (async () => {
-      try {
-        const managedInstall = await requestLatexToolchainInstall(environmentId);
+    void settleLatexRequest(
+      () => requestLatexToolchainInstall(environmentId),
+      (managedInstall) => {
         if (!current()) return;
         staleUpToRef.current = latestReadRef.current;
         setReport((report) => (report === null ? report : { ...report, managedInstall }));
-      } catch (cause) {
+      },
+      (cause) => {
         if (!current()) return;
         staleUpToRef.current = latestReadRef.current;
         setInstallError(errorMessage(cause, "Scient could not start installing TinyTeX."));
-      } finally {
+      },
+      () => {
         if (current()) {
           installRef.current = null;
           setRequesting(false);
         }
-      }
-    })();
-  }, [active, environmentId, error, read, refreshing, report, requesting]);
+      },
+    );
+  };
 
-  const refresh = useCallback(async () => {
+  const refresh = () => {
     setRefreshing(true);
-    try {
-      await read(true);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [read]);
+    return settleLatexRequest(
+      () => read(true),
+      () => {},
+      (cause) => {
+        throw cause;
+      },
+      () => setRefreshing(false),
+    );
+  };
 
   return {
     view: latexInstallationView({ report, requesting, error, installError }),

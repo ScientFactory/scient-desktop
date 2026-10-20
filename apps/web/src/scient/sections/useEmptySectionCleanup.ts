@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -42,23 +42,19 @@ export function useEmptySectionCleanup(input: {
     .map((catalog) => catalog.environmentId)
     .toSorted()
     .join("\n");
-  const occupancyKey = useMemo(
-    () =>
-      [
-        ...new Set(
-          input.threads.flatMap((thread) =>
-            thread.archivedAt === null && thread.sectionId != null
-              ? [`${thread.environmentId}\t${thread.sectionId}`]
-              : [],
-          ),
-        ),
-      ]
-        .toSorted()
-        .join("\n"),
-    [input.threads],
-  );
+  const occupancyKey = [
+    ...new Set(
+      input.threads.flatMap((thread) =>
+        thread.archivedAt === null && thread.sectionId != null
+          ? [`${thread.environmentId}\t${thread.sectionId}`]
+          : [],
+      ),
+    ),
+  ]
+    .toSorted()
+    .join("\n");
   /** Environment → its catalog's occupancy. */
-  const occupancyByEnvironment = useMemo(() => {
+  const occupancyByEnvironment = (() => {
     const map = new Map<string, Map<string, Set<string>>>();
     for (const line of occupancyKey.length > 0 ? occupancyKey.split("\n") : []) {
       const [environmentId, sectionId] = line.split("\t") as [string, string];
@@ -67,7 +63,7 @@ export function useEmptySectionCleanup(input: {
       map.set(environmentId, occupancy);
     }
     return map as ReadonlyMap<string, SectionOccupancy>;
-  }, [occupancyKey]);
+  })();
   /** Each environment's cleanup age in days, when it has cleanup on: `${id}\t${days}` lines. */
   const cleanupKey = (environmentsKey.length > 0 ? environmentsKey.split("\n") : [])
     .flatMap((environmentId) => {

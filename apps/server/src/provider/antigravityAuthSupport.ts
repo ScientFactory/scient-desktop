@@ -24,6 +24,13 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 // SCIENT-FORK:START — plugin skills are projected without their other components.
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
+import {
+  recordAntigravityPreflightChild,
+  verifyAntigravityBrowserHelperOnce,
+} from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
+import { prepareAntigravitySkillLink } from "../scient/skills/antigravityUserSkillLinks.ts";
+// SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
@@ -368,6 +375,9 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      // SCIENT-FORK:START — link only an existing directory; never leave a dangling link.
+      if (yield* prepareAntigravitySkillLink({ link, target })) return;
+      // SCIENT-FORK:END
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
@@ -460,6 +470,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         shell: false,
       }),
     );
+    // SCIENT-FORK:START — a timed-out preflight can force-kill this helper.
+    yield* recordAntigravityPreflightChild(child);
+    // SCIENT-FORK:END
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectUint8StreamText({ stream: child.stdout, maxBytes: 4_096 }),
@@ -478,12 +491,15 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       return yield* authSupportError("Antigravity browser suppression could not be verified.");
     }
   }).pipe(
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: "5 seconds",
-      orElse: () =>
-        Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
+    // SCIENT-FORK:START — verified once per helper; a timeout does not wait for its teardown.
+    verifyAntigravityBrowserHelperOnce({
+      spawner,
+      helperExecutable,
+      environment,
+      timeout: "5 seconds",
+      onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
+    // SCIENT-FORK:END
     Effect.mapError((error) =>
       error._tag === "AcpTransportError"
         ? error

@@ -105,7 +105,8 @@ function disabledRuntime(outboxPath: string): AnalyticsRuntime {
 
 function packagedAnalyticsWorkerUrl(): URL {
   const moduleUrl = new URL(import.meta.url);
-  return moduleUrl.pathname.endsWith("/dist/bin.mjs")
+  // Lazy CLI chunks and the entry bundle share the emitted worker's directory.
+  return moduleUrl.pathname.endsWith(".mjs")
     ? new URL("./analytics-worker.mjs", moduleUrl)
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
 }

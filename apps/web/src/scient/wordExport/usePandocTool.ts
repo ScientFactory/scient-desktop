@@ -1,5 +1,6 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EnvironmentId, ScientPandocToolStatus } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { installPandocTool, readPandocTool } from "./client";
 import { isActivePandocInstall, pandocToolView, type PandocToolView } from "./pandocToolModel";
@@ -9,6 +10,22 @@ const PANDOC_INSTALL_POLL_MS = 1_500;
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+// Outside the hook: the React Compiler does not compile try/finally in a component.
+async function settlePandocRequest(
+  request: () => Promise<ScientPandocToolStatus>,
+  accept: (status: ScientPandocToolStatus) => void,
+  fail: (cause: unknown) => void,
+  settle: () => void,
+): Promise<void> {
+  try {
+    accept(await request());
+  } catch (cause) {
+    fail(cause);
+  } finally {
+    settle();
+  }
 }
 
 export interface PandocToolController {
@@ -43,7 +60,9 @@ export function usePandocTool(
   const [requesting, setRequesting] = useState(false);
   const [checks, setChecks] = useState(0);
   const onInstalledRef = useRef(onInstalled);
-  onInstalledRef.current = onInstalled;
+  useLayoutEffect(() => {
+    onInstalledRef.current = onInstalled;
+  });
   const wasInstalledRef = useRef<boolean | null>(null);
   // Status reads take a number and only the most recently started one may
   // change what is shown. While an install request waits for its answer, that
@@ -54,38 +73,42 @@ export function usePandocTool(
   const installRef = useRef<number | null>(null);
   const installsRef = useRef(0);
 
-  const accept = useCallback((next: ScientPandocToolStatus) => {
+  const accept = useStableCallback((next: ScientPandocToolStatus) => {
     // Pandoc became installed after a state that was not: missing, or not
     // known because a check failed. Callers recheck what depends on it.
     if (wasInstalledRef.current !== true && wasInstalledRef.current !== null && next.installed)
       onInstalledRef.current?.();
     wasInstalledRef.current = next.installed;
     setStatus(next);
-  }, []);
+  });
 
-  const read = useCallback(async () => {
+  const read = () => {
     const request = ++latestReadRef.current;
     const current = () =>
       request === latestReadRef.current &&
       request > staleUpToRef.current &&
       installRef.current === null;
-    setChecks((count) => count + 1);
-    try {
-      const next = await readPandocTool(environmentId);
-      if (!current()) return;
-      accept(next);
-      setError(null);
-    } catch (cause) {
-      if (!current()) return;
-      if (wasInstalledRef.current !== true) wasInstalledRef.current = false;
-      setError({
-        message: errorMessage(cause, "Scient could not check Word export on this server."),
-        fromCheck: true,
-      });
-    } finally {
-      setChecks((count) => count - 1);
-    }
-  }, [accept, environmentId]);
+    // Counted from the next microtask, so the read that mounting starts does
+    // not re-render the effect that started it; it settles later still.
+    queueMicrotask(() => setChecks((count) => count + 1));
+    return settlePandocRequest(
+      () => readPandocTool(environmentId),
+      (next) => {
+        if (!current()) return;
+        accept(next);
+        setError(null);
+      },
+      (cause) => {
+        if (!current()) return;
+        if (wasInstalledRef.current !== true) wasInstalledRef.current = false;
+        setError({
+          message: errorMessage(cause, "Scient could not check Word export on this server."),
+          fromCheck: true,
+        });
+      },
+      () => setChecks((count) => count - 1),
+    );
+  };
 
   useEffect(() => {
     void read();
@@ -98,15 +121,14 @@ export function usePandocTool(
     };
   }, [read]);
 
-  const active = isActivePandocInstall(status);
   useEffect(() => {
-    if (!active || error !== null) return;
+    if (!isActivePandocInstall(status) || error !== null) return;
     const timer = setTimeout(() => void read(), PANDOC_INSTALL_POLL_MS);
     return () => clearTimeout(timer);
-  }, [active, error, read, status]);
+  }, [error, read, status]);
 
   const checking = checks > 0;
-  const act = useCallback(() => {
+  const act = () => {
     if (error !== null || status === null) {
       void read();
       return;
@@ -124,29 +146,31 @@ export function usePandocTool(
     setRequesting(true);
     setError(null);
     const current = () => installRef.current === request;
-    void (async () => {
-      try {
-        const next = await installPandocTool(environmentId);
+    void settlePandocRequest(
+      () => installPandocTool(environmentId),
+      (next) => {
         if (!current()) return;
         staleUpToRef.current = latestReadRef.current;
         accept(next);
-      } catch (cause) {
+      },
+      (cause) => {
         if (!current()) return;
         staleUpToRef.current = latestReadRef.current;
         setError({
           message: errorMessage(cause, "Scient could not start installing Pandoc."),
           fromCheck: false,
         });
-      } finally {
+      },
+      () => {
         if (current()) {
           installRef.current = null;
           setRequesting(false);
         }
-      }
-    })();
-  }, [accept, checking, environmentId, error, read, requesting, status]);
+      },
+    );
+  };
 
-  const refresh = useCallback(() => void read(), [read]);
+  const refresh = () => void read();
 
   return {
     status,

@@ -453,15 +453,20 @@ function DocumentsSection(props: {
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const targetFormat =
     target === null || target === openedFor ? null : (SEARCH_TARGET_FORMATS[target] ?? null);
-  useEffect(() => {
-    if (target === null) setOpenedFor(null);
-    if (targetFormat === null || target === null) return;
-    setStored(targetFormat);
+  // The jumped-to tab shows at once; storing it as the person's choice waits for the commit.
+  const [jumpedFormat, setJumpedFormat] = useState<DocumentFormat | null>(null);
+  if (target === null && openedFor !== null) setOpenedFor(null);
+  if (targetFormat !== null && target !== null) {
     setCollapsed(false);
     setOpenedFor(target);
-  }, [setStored, target, targetFormat]);
+    setJumpedFormat(targetFormat);
+  }
+  if (jumpedFormat !== null && jumpedFormat === stored) setJumpedFormat(null);
+  useEffect(() => {
+    if (jumpedFormat !== null) setStored(jumpedFormat);
+  }, [jumpedFormat, setStored]);
   const selected: DocumentFormat =
-    targetFormat ?? DOCUMENT_FORMATS.find((format) => format === stored) ?? "latex";
+    targetFormat ?? jumpedFormat ?? DOCUMENT_FORMATS.find((format) => format === stored) ?? "latex";
   const isCollapsed = targetFormat === null && collapsed;
   const items: ReadonlyArray<{
     readonly id: DocumentFormat;

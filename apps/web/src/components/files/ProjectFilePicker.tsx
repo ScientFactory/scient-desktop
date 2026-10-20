@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -84,39 +84,33 @@ export function ProjectFilePickerForTarget(
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const matches = useMemo(
-    () => getProjectFilePickerMatches(result.entries, result.matchedQuery),
-    [result.entries, result.matchedQuery],
-  );
+  const matches = getProjectFilePickerMatches(result.entries, result.matchedQuery);
   const hasMatchedQuery = /\S/.test(result.matchedQuery);
-  const items = useMemo<CommandPaletteActionItem[]>(
-    () =>
-      matches.map((match) => ({
-        kind: "action",
-        value: `file:${match.path}`,
-        searchTerms: [match.name, match.path],
-        title: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.name}
-            indices={match.nameMatchIndices}
-          />
-        ),
-        description: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.path}
-            indices={match.pathMatchIndices}
-          />
-        ),
-        icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
-        run: async () => {
-          if (props.onSelectFile) props.onSelectFile(match.path);
-          else useRightPanelStore.getState().openFile(target.threadRef, match.path);
-        },
-      })),
-    [hasMatchedQuery, matches, resolvedTheme, target.threadRef, props.onSelectFile],
-  );
+  const items: CommandPaletteActionItem[] = matches.map((match) => ({
+    kind: "action",
+    value: `file:${match.path}`,
+    searchTerms: [match.name, match.path],
+    title: (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.name}
+        indices={match.nameMatchIndices}
+      />
+    ),
+    description: (
+      <HighlightedFuzzyText
+        active={hasMatchedQuery}
+        value={match.path}
+        indices={match.pathMatchIndices}
+      />
+    ),
+    icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+    run: async () => {
+      // SCIENT-FORK: allow the owning surface to select the file.
+      if (props.onSelectFile) props.onSelectFile(match.path);
+      else useRightPanelStore.getState().openFile(target.threadRef, match.path);
+    },
+  }));
 
   const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
 
