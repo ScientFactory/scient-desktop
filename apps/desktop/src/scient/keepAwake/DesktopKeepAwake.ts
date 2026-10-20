@@ -25,6 +25,11 @@ import {
   selectKeepAwakeSession,
   type KeepAwakeCompletion,
 } from "./keepAwakeSession.ts";
+import {
+  executionKeepsAwake,
+  observeKeepAwakeExecution,
+  type KeepAwakeExecutionLease,
+} from "./keepAwakeExecution.ts";
 
 export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
 const decodeDocument = Schema.decodeUnknownEffect(KeepAwakeDocument);
@@ -67,6 +72,7 @@ export const layer = Layer.effect(
       }),
     );
     const observations = new Map<string, KeepAwakeObservation>();
+    const execution = new Map<string, readonly KeepAwakeExecutionLease[]>();
     const finishing = new Map<string, KeepAwakeCompletion>();
     let blocker: number | null = null;
     let lastError: string | null = null;
@@ -89,6 +95,10 @@ export const layer = Layer.effect(
         blocker = null;
       }
     };
+    const needsAwake = (observation: KeepAwakeObservation | undefined, now: number) =>
+      observation?.needsAwake === true &&
+      (observation.execution === undefined ||
+        executionKeepsAwake(execution.get(observation.key) ?? [], now));
     const reconcile = () => {
       const now = clock.currentTimeMillisUnsafe();
       const wanted =
@@ -98,7 +108,7 @@ export const layer = Layer.effect(
           return (
             wantsAwake(thread) &&
             fresh(observation, now) &&
-            (observation?.needsAwake === true || finishing.has(thread.key))
+            (needsAwake(observation, now) || finishing.has(thread.key))
           );
         });
       try {
@@ -126,7 +136,7 @@ export const layer = Layer.effect(
                 : "unknown"
               : !observation?.unfinished && !finishing.has(thread.key)
                 ? "idle"
-                : observation?.needsAwake || finishing.has(thread.key)
+                : needsAwake(observation, now) || finishing.has(thread.key)
                   ? "awake"
                   : "paused";
           return {
@@ -135,7 +145,9 @@ export const layer = Layer.effect(
             reason:
               status === "unknown"
                 ? "Waiting for a fresh execution update"
-                : (observation?.reason ?? "No current work"),
+                : status === "paused" && observation?.needsAwake
+                  ? "Execution has no live owner or recent progress"
+                  : (observation?.reason ?? "No current work"),
           };
         }),
       };
@@ -184,6 +196,16 @@ export const layer = Layer.effect(
               // Re-rendering a cached result is not proof that the backend is alive.
               if (last !== undefined && observation.observedAt <= last.observedAt) continue;
               observations.set(observation.key, observation);
+              if (observation.execution !== undefined) {
+                execution.set(
+                  observation.key,
+                  observeKeepAwakeExecution(
+                    execution.get(observation.key) ?? [],
+                    observation.execution,
+                    observation.observedAt,
+                  ),
+                );
+              }
               let thread = threads.get(observation.key);
               if (!thread) {
                 if (!observation.unfinished || document.settings.mode !== "running") continue;

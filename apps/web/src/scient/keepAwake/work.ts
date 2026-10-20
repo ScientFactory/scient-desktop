@@ -8,7 +8,11 @@ import {
   type ThreadId,
   type KeepAwakeObservation,
 } from "@t3tools/contracts";
-import { deriveKeepAwakeWork, hasKeepAwakeShellWork } from "@t3tools/shared/scientKeepAwake";
+import {
+  deriveKeepAwakeWork,
+  hasKeepAwakeShellWork,
+  keepAwakeProgressToken,
+} from "@t3tools/shared/scientKeepAwake";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -23,10 +27,15 @@ const workQuery = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
   staleTimeMs: 0,
   idleTtlMs: 0,
   execute: (input: { threadId: ThreadId }) =>
-    request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, input).pipe(
+    request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+      ...input,
+      includeKeepAwakeHealth: true,
+    }).pipe(
       Effect.timeout("10 seconds"),
       Effect.map((projection) => ({
         ...deriveKeepAwakeWork(projection),
+        health: projection.keepAwakeHealth ?? "unknown",
+        progressToken: keepAwakeProgressToken(projection),
         threadId: projection.thread.id,
         observedAt: Date.now(),
         title: projection.thread.title,
@@ -134,6 +143,22 @@ export const keepAwakeObservationsAtom = Atom.make((get): readonly KeepAwakeObse
         latestRunId: known.find((state) => state.threadId === root.id)?.latestRunId,
         unfinished,
         needsAwake,
+        execution: known.flatMap((state) => [
+          {
+            key: keepAwakeThreadKey(environmentId, state.threadId),
+            progressToken: state.progressToken,
+            health: state.health,
+            needsAwake: state.needsAwakeWithoutChildren,
+          },
+          ...state.childThreadIds
+            .filter((id) => !knownIds.has(id))
+            .map((id) => ({
+              key: keepAwakeThreadKey(environmentId, id),
+              progressToken: "unresolved-child",
+              health: "unknown" as const,
+              needsAwake: true,
+            })),
+        ]),
         reason:
           known.find((state) => state.needsAwake)?.reason ??
           known.find((state) => state.unfinished)?.reason ??

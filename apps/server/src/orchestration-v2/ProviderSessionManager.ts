@@ -210,6 +210,12 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     ProviderSessionManagerV2Error
   >;
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  /** Inspect current ownership without touching idle timers or starting provider work. */
+  readonly inspectExecution?: (input: {
+    readonly threadId: ThreadId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly runOrdinal?: number;
+  }) => Effect.Effect<"connected" | "unowned" | "unknown">;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -2912,6 +2918,33 @@ export const layerWithOptions = (
               return current.has(key);
             }),
           ),
+        inspectExecution: (input) =>
+          Effect.gen(function* () {
+            const sessionId = input.providerThread.providerSessionId;
+            const absent =
+              input.runOrdinal === undefined ? ("unknown" as const) : ("unowned" as const);
+            if (sessionId === null) return absent;
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(sessionId));
+            if (
+              entry === undefined ||
+              releasingRuntimes.has(entry.runtime) ||
+              entry.eventPump.ended ||
+              (input.runOrdinal !== undefined && !entry.attachedThreadIds.has(input.threadId)) ||
+              entry.runtime.providerSession.status === "error" ||
+              entry.runtime.providerSession.status === "stopped"
+            )
+              return absent;
+            if (input.runOrdinal !== undefined) {
+              return entry.busyTurns.has(busyTurnKey(input.providerThread.id, input.runOrdinal))
+                ? ("connected" as const)
+                : ("unowned" as const);
+            }
+            const probe = entry.runtime.hasPendingBackgroundWorkForThread?.(input.providerThread);
+            if (probe !== undefined)
+              return (yield* probe) ? ("connected" as const) : ("unknown" as const);
+            // A live transport alone cannot establish ownership of a background task.
+            return "unknown" as const;
+          }),
         get: (providerSessionId) =>
           Effect.gen(function* () {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));

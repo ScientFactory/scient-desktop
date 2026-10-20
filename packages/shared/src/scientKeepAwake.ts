@@ -5,6 +5,28 @@ import type {
 import { isOrchestrationV2WorkActive, isProviderNativeSubagentThread } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "./orchestrationV2PendingBackgroundWork.ts";
 import { copySorted } from "./Array.ts";
+import * as DateTime from "effect/DateTime";
+
+export function keepAwakeProgressToken(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "runs" | "attempts" | "nodes" | "turnItems" | "messages"
+  >,
+) {
+  // Poll times, session timestamps, and thread metadata do not establish execution progress.
+  return JSON.stringify([
+    projection.runs.map((run) => [run.id, run.status, run.activeAttemptId]),
+    projection.attempts.map((attempt) => [attempt.id, attempt.status]),
+    projection.nodes.map((node) => [node.id, node.status]),
+    Math.max(0, ...projection.turnItems.map((item) => DateTime.toEpochMillis(item.updatedAt))),
+    Math.max(
+      0,
+      ...projection.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => DateTime.toEpochMillis(message.updatedAt)),
+    ),
+  ]);
+}
 
 export function hasKeepAwakeShellWork(shell: OrchestrationV2ThreadShell): boolean {
   return (
@@ -27,6 +49,7 @@ export function deriveKeepAwakeWork(projection: OrchestrationV2ThreadProjection)
       needsAwake: false,
       needsAwakeWithoutChildren: false,
       childThreadIds: [],
+      hasRunnableQueue: false,
       latestRunId: latest?.id ?? null,
       reason: "Thread closed",
     };
@@ -85,6 +108,7 @@ export function deriveKeepAwakeWork(projection: OrchestrationV2ThreadProjection)
     needsAwake: canAdvance || backgroundWork,
     needsAwakeWithoutChildren: canAdvance || independentBackground,
     childThreadIds,
+    hasRunnableQueue: runnableQueue,
     latestRunId: latest?.id ?? null,
     reason: backgroundWork
       ? "Subagents or monitoring"

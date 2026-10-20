@@ -17,6 +17,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -44,6 +45,46 @@ const providerThreadId = ProviderThreadId.make("provider-thread:effect-worker-re
 const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart");
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
+
+it.effect("tracks concurrent execution ownership until completion or interruption", () =>
+  Effect.gen(function* () {
+    const entered = yield* Queue.unbounded<string>();
+    const firstDone = yield* Deferred.make<void>();
+    const secondDone = yield* Deferred.make<void>();
+    const now = yield* DateTime.now;
+    const first = { ...restartEffect(now, { type: "detach" }), id: "health:first" };
+    const second = { ...first, id: "health:second" };
+    const pending = [first, second];
+    const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () => Effect.sync(() => Option.fromNullishOr(pending.shift())),
+      get: (id) => Effect.succeed(Option.some(id === first.id ? first : second)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      succeed: () => Effect.succeed(true),
+    });
+    const executor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+      execute: (effect) =>
+        Queue.offer(entered, effect.id).pipe(
+          Effect.andThen(Deferred.await(effect.id === first.id ? firstDone : secondDone)),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      assert.isFalse(yield* worker.isExecutingThread!(threadId));
+      const firstRun = yield* worker.runOnce.pipe(Effect.forkChild);
+      assert.equal(yield* Queue.take(entered), first.id);
+      const secondRun = yield* worker.runOnce.pipe(Effect.forkChild);
+      assert.equal(yield* Queue.take(entered), second.id);
+      assert.isTrue(yield* worker.isExecutingThread!(threadId));
+      assert.isFalse(yield* worker.isExecutingThread!(ThreadId.make("other-thread")));
+      yield* Deferred.succeed(firstDone, undefined);
+      yield* Fiber.join(firstRun);
+      assert.isTrue(yield* worker.isExecutingThread!(threadId));
+      yield* Fiber.interrupt(secondRun);
+      assert.isFalse(yield* worker.isExecutingThread!(threadId));
+    }).pipe(Effect.provide(EffectWorker.layer.pipe(Layer.provide(Layer.merge(outbox, executor)))));
+  }),
+);
 
 function restartEffect(
   now: DateTime.Utc,

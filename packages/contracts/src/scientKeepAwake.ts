@@ -8,6 +8,15 @@ export const KeepAwakeSettings = Schema.Struct({
 });
 export type KeepAwakeSettings = typeof KeepAwakeSettings.Type;
 export const DEFAULT_KEEP_AWAKE_SETTINGS: KeepAwakeSettings = { mode: "system" };
+export const KeepAwakeExecutionHealth = Schema.Literals(["connected", "unowned", "unknown"]);
+export type KeepAwakeExecutionHealth = typeof KeepAwakeExecutionHealth.Type;
+export const KeepAwakeExecution = Schema.Struct({
+  key: Schema.String,
+  progressToken: Schema.String,
+  health: KeepAwakeExecutionHealth,
+  needsAwake: Schema.Boolean,
+});
+export type KeepAwakeExecution = typeof KeepAwakeExecution.Type;
 export const KeepAwakeThread = Schema.Struct({
   key: Schema.String,
   title: Schema.String,
@@ -28,6 +37,7 @@ export const KeepAwakeObservation = Schema.Struct({
   latestRunId: Schema.optional(Schema.NullOr(Schema.String)),
   unfinished: Schema.Boolean,
   needsAwake: Schema.Boolean,
+  execution: Schema.optional(Schema.Array(KeepAwakeExecution).check(Schema.isMaxLength(2000))),
   reason: Schema.String,
 });
 export type KeepAwakeObservation = typeof KeepAwakeObservation.Type;

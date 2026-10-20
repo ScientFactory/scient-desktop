@@ -1450,7 +1450,15 @@ it.effect("ProviderSessionManagerV2 releases an idle session whose turn start wa
         .pipe(Effect.forkChild);
       yield* Deferred.await(startTurnReached);
 
+      const ownership = {
+        threadId,
+        providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+        runOrdinal: 1,
+      };
+      assert.equal(yield* manager.inspectExecution!(ownership), "connected");
+      assert.equal(yield* manager.inspectExecution!({ ...ownership, runOrdinal: 2 }), "unowned");
       yield* Fiber.interrupt(starting);
+      assert.equal(yield* manager.inspectExecution!(ownership), "unowned");
       yield* TestClock.adjust("2 seconds");
       yield* Effect.yieldNow;
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
@@ -3055,11 +3063,18 @@ it.effect("ProviderSessionManagerV2 checks liveness without delaying idle releas
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const { providerSessionId } = yield* openSessionWithBackgroundCommand(
-        "provider-session-manager-is-live",
-      );
+      const { threadId, providerSessionId, providerThreads } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-is-live");
       yield* TestClock.adjust("600 millis");
       assert.isTrue(yield* manager.isLive(providerSessionId));
+      assert.equal(
+        yield* manager.inspectExecution!({
+          threadId,
+          providerThread: providerThreads[0]!,
+          runOrdinal: 1,
+        }),
+        "unowned",
+      );
       yield* TestClock.adjust("600 millis");
       yield* Effect.yieldNow;
       assert.isFalse(yield* manager.isLive(providerSessionId));

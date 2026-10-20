@@ -75,9 +75,18 @@ Keep-awake has no maximum session duration and no configurable timeout.
 
 Scient releases protection after 120 seconds without a fresh execution update,
 without cancelling the work. Fresh updates can restore protection while work
-continues. Completion is confirmed across fresh updates, with a short grace period
-to avoid dropping protection
-between queued runs. Closing Scient releases its request. Preferences are
+continues. A repeated "running" status does not by itself establish execution
+health: Scient also checks live provider ownership and active server operations.
+If execution has no live owner and no progress for 120 seconds, its protection is
+released while the temporary choice remains selected. New progress or a recovered
+owner can restore protection. Connected silent work has no duration limit.
+Inconclusive checks, older servers without health observations, and background work
+whose ownership cannot be established remain protected while updates continue;
+a silent deadlock in a connected operation cannot be reliably distinguished from
+legitimate silent work.
+
+Completion is confirmed across fresh updates, with a short grace period to avoid
+dropping protection between queued runs. Closing Scient releases its request. Preferences are
 stored in the desktop profile, independently of project settings.
 
 Keep-awake is subject to operating-system power policies, including Windows
