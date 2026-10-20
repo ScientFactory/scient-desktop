@@ -37,6 +37,9 @@ vi.mock("~/state/projects", () => ({
 }));
 vi.mock("~/components/files/projectFilesQueryState", () => ({
   clearProjectFileQueryData: mocks.clearFile,
+  // Markdown persistence, which the refresh hook reaches, also imports these.
+  confirmProjectFileQueryData: vi.fn(),
+  setProjectFileQueryData: vi.fn(),
   useProjectFileQuery: () => ({
     ...mocks.file,
     refresh: mocks.refreshFile,
