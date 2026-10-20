@@ -321,6 +321,16 @@ The web acknowledgement is owned by `scient/chat/useStopGeneration.ts` and
 the captured environment/thread/run/attempt and the durable interrupt request,
 clears when that target settles or changes, and keeps Stop available for retry.
 
+`RunStartDecisions.ts` owns the shared current-execution Stop predicate for native
+steering and continuation decisions. Match the active attempt's root and native
+thread/turn; an old interrupt for the same run is not a Stop on its new execution.
+`QueuedRunSend.ts` remains the direct-user-Send queue-release policy, separate from
+`scient/orchestration/TerminalQueueHold.ts` and its attempt/release-receipt fences.
+`DelegatedChildSettlements.ts` only triggers the existing parent-locked app-owned
+task finalizer after native children settle. Keep the result-readiness guard for
+older untagged runs too; neither that subscription nor a failed root owns a second
+task result or queue release.
+
 ### Extracted owners and host mounts
 
 The separation map below describes the adopted source, not a proposed move or a qualification
@@ -432,6 +442,12 @@ not a requirement to relocate the whole host.
 | Command palette/sidebar mounts                                  | `commandPalette/scientCommandPalette.tsx`, `sidebar/` and `sections/`; retain the complete await → currentness check → side-effect continuation in the owning callback                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Settings mounts                                                 | `settings/` navigation/visibility and feature-owned settings rows under `skills/`, `providerConnection/`, `analytics/`, `bidi/`, `keyboard/`, `typography/`, `wordExport/` and `onboarding/`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Desktop settings/backend/window mounts                          | [`settings/scientDesktopSettings.ts`](../../apps/desktop/src/settings/scientDesktopSettings.ts), `backend/scientAnalyticsMetadata.ts`, `backend/scientBackendLaunch.ts`, `window/scientMainWindowSizing.ts`; native launch and window lifecycle stay in their desktop hosts                                                                                                                                                                                                                                                                                                                                                         |
+
+`images/useWorkspaceImageRefresh.ts` is the shared pending-edit invalidation policy
+for upstream inline assets and Scient standalone image cards. Keep ordinary chat
+cached and file-preview retained pixels stable across mere capability refreshes.
+Explicit workspace revisions invalidate that retained identity; a still-waiting
+asset must not become the retained pixels of the new revision.
 
 Prompt-link identity and copy policy live in `packages/shared/src/scientPromptLinks.ts`; the
 upstream parser retains generic mechanics. Desktop/web producers use registered Scient links

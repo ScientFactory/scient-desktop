@@ -751,6 +751,67 @@ const send = (
     dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
   });
 
+it.live(
+  "queues automatic input after current Stop without releasing held work or accepting explicit Steer",
+  () =>
+    withNativeQueue(
+      "stopping-auto-input",
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        waitFor,
+        interruptEntered,
+        releaseInterrupt,
+        steers,
+      }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+            ),
+          );
+          yield* send(orchestrator, threadId, "held-tail", true);
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            threadId,
+            runId: foreground.input.runId,
+            commandId: CommandId.make(`${threadId}:stop`),
+            holdQueue: true,
+          });
+          yield* interruptEntered;
+          const dispatch = (intent: "auto" | "steer") =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId,
+              commandId: CommandId.make(`${threadId}:${intent}`),
+              messageId: MessageId.make(`${threadId}:message:${intent}`),
+              text: intent,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              deliveryIntent: intent,
+              dispatchMode: { type: "steer_active", targetRunId: foreground.input.runId },
+            });
+          yield* dispatch("auto");
+          const queued = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            queued.runs.filter((run) => run.status === "queued" && run.queueHeld).length,
+            2,
+          );
+          assert.equal((yield* Effect.result(dispatch("steer")))._tag, "Failure");
+          assert.lengthOf(steers, 0);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(after.messages.some((message) => message.text === "steer"));
+          yield* releaseInterrupt;
+        }),
+      { holdInterrupt: true },
+    ),
+);
+
 it.live.each(
   [
     { bytes: false, refused: true },

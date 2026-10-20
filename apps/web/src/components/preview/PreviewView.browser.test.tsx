@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   // SCIENT-FORK:START
   pdfOwner: "desktop" as "desktop" | "server" | null,
   exportDisabled: null as boolean | null,
+  runtime: undefined as "server" | undefined,
+  sourceUrl: "http://example.com/",
   controller: "none" as "human" | "agent" | "none",
   // SCIENT-FORK:END
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
@@ -120,9 +122,10 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
       ? {}
       : {
           "tab-1": {
+            runtime: mocks.runtime,
             threadId: "thread-1",
             tabId: "tab-1",
-            navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+            navStatus: { _tag: "Success", url: mocks.sourceUrl, title: "Example" },
             canGoBack: false,
             canGoForward: false,
             updatedAt: "2026-07-13T00:00:00.000Z",
@@ -152,6 +155,9 @@ vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
 vi.mock(import("./usePreviewSession"), async (original) => ({
   ...(await original()),
   usePreviewSession: () => {},
+}));
+vi.mock(import("~/browser/ServerBrowserSurface"), () => ({
+  ServerBrowserSurface: () => <></>,
 }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -223,6 +229,8 @@ describe("PreviewView", () => {
     mocks.pdfOwner = "desktop";
     mocks.controller = "none";
     mocks.exportDisabled = null;
+    mocks.runtime = undefined;
+    mocks.sourceUrl = "http://example.com/";
     // SCIENT-FORK:END
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
@@ -257,6 +265,16 @@ describe("PreviewView", () => {
     mocks.pdfOwner = null;
     await render(<PreviewView threadRef={TEST_THREAD_REF} visible />);
     expect(mocks.exportDisabled).toBe(true);
+  });
+  it("disables HTML export while a remote server tab embeds an existing PDF", async () => {
+    mocks.pdfOwner = "server";
+    mocks.runtime = "server";
+    mocks.sourceUrl = "http://localhost/api/assets/synthetic-token/paper.PDF";
+    await render(<PreviewView threadRef={TEST_THREAD_REF} visible />);
+    expect(mocks.exportDisabled).toBe(true);
+    mocks.sourceUrl = "https://example.com/document.html";
+    await render(<PreviewView threadRef={TEST_THREAD_REF} visible />);
+    expect(mocks.exportDisabled).toBe(false);
   });
   it("only shows control status while the agent is controlling the browser", async () => {
     mocks.controller = "human";

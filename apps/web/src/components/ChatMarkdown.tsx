@@ -211,9 +211,8 @@ import { assetEnvironment } from "../state/assets";
 import {
   readEnvironmentScope,
   readPreparedConnection,
-  // SCIENT-FORK: environment HTML preview consumes the reactive connection.
-  usePreparedConnection,
   useEnvironmentScope,
+  usePreparedConnection,
 } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -258,6 +257,7 @@ import {
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
+import { useWorkspaceImageRefresh } from "../scient/images/useWorkspaceImageRefresh";
 import {
   ScientMarkdownSource,
   scientWorkspaceImageCard,
@@ -317,6 +317,7 @@ interface ChatMarkdownProps {
   /** File previews share the rich editor's standalone title-as-caption presentation. */
   imageCaptions?: boolean | undefined;
   // SCIENT-FORK:END
+  workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
@@ -1194,13 +1195,22 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly failureFallback?: ReactNode | undefined;
   // SCIENT-FORK:END
   readonly workspaceRoot?: string | undefined;
+  readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
-  // SCIENT-FORK:START — a workspace image card's resource may carry an absolute path or its own
-  // cwd and relative path (scient/images/inlineWorkspaceImage.ts).
+  // SCIENT-FORK:START — standalone cards and inline assets share pending-edit invalidation.
+  useWorkspaceImageRefresh({
+    environmentId: props.environmentId,
+    resource,
+    workspaceMutationId: props.kind === "video" ? undefined : props.workspaceMutationId,
+    loading: assetUrl._tag === "Loading" || assetUrl.waiting === true,
+    requestRefresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
   const path =
     resource._tag === "media-file"
       ? resource.path
@@ -1954,6 +1964,7 @@ function useChatMarkdownState({
   // SCIENT-FORK:START — file previews caption standalone images.
   imageCaptions = false,
   // SCIENT-FORK:END
+  workspaceMutationId,
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
@@ -2425,6 +2436,7 @@ function useChatMarkdownState({
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
+    workspaceMutationId,
     inlineCodeFileLinkMetaByText,
     isStreaming,
     linkTargetPreference,
@@ -2941,6 +2953,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       githubMedia,
       imageBaseDir,
       threadRef,
+      workspaceMutationId,
       renderContextReference,
       // SCIENT-FORK:START — image cards wait for the settled message; file previews caption them.
       imageCaptions,
@@ -3004,6 +3017,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       authoredTitle,
       altText,
       srcString,
+      workspaceMutationId,
     });
     if (workspaceImageCard !== null) return workspaceImageCard;
     // SCIENT-FORK:END
@@ -3117,6 +3131,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           standalone={standalone}
           style={authoredSizeStyle}
           workspaceRoot={cwd}
+          workspaceMutationId={workspaceMutationId}
           onImageExpand={imageExpand}
         />
       );

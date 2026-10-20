@@ -10332,6 +10332,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
+        // Inherited feature usage; Scient's analytics contract drops this name.
+        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10360,6 +10362,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
         },
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );

@@ -81,6 +81,9 @@ import Migration0066 from "./Migrations/066_ThreadFailureLookupIndex.ts";
 // T3 migration 63 follows the immutable Scient ledger. Scient keeps the V1 tables its history
 // import reads; see the migration.
 import Migration0067 from "./Migrations/067_DropUnusedV1Projections.ts";
+// SCIENT-FORK:START — incoming T3 migration 64 follows the immutable Scient ledger.
+import Migration0068 from "./Migrations/068_CanonicalizeThreadPullRequestLinks.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
 // SCIENT-FORK:END
@@ -165,6 +168,9 @@ export const migrationEntries = [
   [65, "PullRequestReviewGuides", Migration0065],
   [66, "ThreadFailureLookupIndex", Migration0066],
   [67, "DropUnusedV1Projections", Migration0067],
+  // SCIENT-FORK:START — immutable migration numbering.
+  [68, "CanonicalizeThreadPullRequestLinks", Migration0068],
+  // SCIENT-FORK:END
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

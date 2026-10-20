@@ -56,7 +56,6 @@ const ThreadOrganizeTool = Tool.make("scient_thread_organize", {
   dependencies: [
     ProviderSessionManagerV2,
     McpInvocationContext.McpInvocationContext,
-    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
@@ -72,7 +71,6 @@ const commandTool = {
   dependencies: [
     ProviderSessionManagerV2,
     McpInvocationContext.McpInvocationContext,
-    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],

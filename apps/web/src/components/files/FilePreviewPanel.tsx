@@ -33,7 +33,6 @@ import {
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
 // SCIENT-FORK:END
-import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
@@ -51,6 +50,7 @@ import {
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
+import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_TOKENIZE_MAX_LENGTH,
   getFiletypeFromFileName,
@@ -210,6 +210,7 @@ interface FilePreviewPanelProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
   htmlPresentationRequest: HtmlFilePresentationRequest | null;
@@ -1329,6 +1330,7 @@ function RenderedMarkdownSurface({
   contents,
   revision,
   truncated,
+  workspaceMutationId,
   readOnly,
   threadRef,
   onPendingChange,
@@ -1348,6 +1350,7 @@ function RenderedMarkdownSurface({
   truncated: boolean;
   readOnly: boolean;
   threadRef: ScopedThreadRef;
+  workspaceMutationId: string | null;
 }) {
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
@@ -1368,6 +1371,7 @@ function RenderedMarkdownSurface({
         cwd={cwd}
         relativePath={relativePath}
         threadRef={threadRef}
+        workspaceMutationId={workspaceMutationId}
         onTaskListChange={
           truncated || readOnly
             ? undefined
@@ -1420,6 +1424,7 @@ export default function FilePreviewPanel({
   composerDraftTarget,
   keybindings,
   availableEditors,
+  openInShortcutEnabled,
   revealLine,
   revealRequestId,
   htmlPresentationRequest,
@@ -1444,6 +1449,7 @@ export default function FilePreviewPanel({
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1544,6 +1550,12 @@ export default function FilePreviewPanel({
     (queriedFile.isNotFile ||
       (folderTrail !== undefined && queriedFile.data === null && queriedFile.error === null));
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
+  // A chat-linked folder reads as a file until its read settles, and revealing a
+  // folder selects it in its parent instead of opening it, so reveal waits.
+  const revealsInFileManager =
+    !isFolder &&
+    (queriedFile.data !== null || queriedFile.error !== null) &&
+    serverConfig?.shellRevealInFileManager === true;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
   // SCIENT-FORK:START — a workspace file's crumbs are Scient's picker; see the subheader
@@ -1963,8 +1975,10 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
+              enableShortcut={openInShortcutEnabled}
               openInCwd={absolutePath}
               compact
+              revealFileManager={revealsInFileManager}
             />
           ) : null}
           {canToggleRenderedForSurface ? (
@@ -2192,6 +2206,7 @@ export default function FilePreviewPanel({
                   contents={file.data.contents}
                   revision={file.data.revision}
                   truncated={file.data.truncated}
+                  workspaceMutationId={workspaceMutationId}
                   readOnly
                   onPendingChange={handlePendingChange}
                   onSaveFailure={handleSaveFailure}
@@ -2319,6 +2334,7 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 revision={file.data.revision}
                 truncated={file.data.truncated}
+                workspaceMutationId={workspaceMutationId}
                 readOnly={isHostFile || !canWriteFiles}
                 onPendingChange={handlePendingChange}
                 onSaveFailure={handleSaveFailure}

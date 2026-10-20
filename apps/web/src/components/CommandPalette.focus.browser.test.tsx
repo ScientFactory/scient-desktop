@@ -1,9 +1,7 @@
-// @vitest-environment jsdom
-
 import { act, useImperativeHandle, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { DEFAULT_RESOLVED_KEYBINDINGS, isMacPlatform } from "@t3tools/shared/keybindings";
 import { CommandPalette } from "./CommandPalette";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -84,18 +82,6 @@ let container: HTMLDivElement;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
-  Object.defineProperty(Element.prototype, "getAnimations", {
-    configurable: true,
-    value: () => [],
-  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -174,7 +160,8 @@ describe("command palette focus restoration", () => {
       field.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "p",
-          ctrlKey: true,
+          ctrlKey: !isMacPlatform(navigator.platform),
+          metaKey: isMacPlatform(navigator.platform),
           bubbles: true,
           cancelable: true,
         }),

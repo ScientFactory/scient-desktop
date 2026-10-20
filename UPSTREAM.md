@@ -210,6 +210,14 @@ The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
 
+Scient owns held-queue release in `orchestration-v2/scient-fork/QueuedRunSend.ts`. Upstream
+releases a held queue for any client send that starts or queues a run, except after worktree setup
+failed without a worktree. Scient releases it only for an ordinary direct send that starts its own
+run, including after such a failure, where the queue follows that checkout turn. A plain send that
+Stop turns into a queued message joins the held queue. Upstream's release block in `Orchestrator.ts`
+is not composed; marked expectations in `ThreadLaunchService.test.ts` and
+`SteeringCompletion.integration.test.ts` assert Scient's rule.
+
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
 `SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
@@ -544,7 +552,7 @@ active run, additionally by the run's captured modes), and older clients' pull-r
 views by gating branch deletion until clients decode actions forward-compatibly.
 Release remains separate.
 
-The current alignment through
+The previous alignment through
 `d8e9fd267e26b7680f035edc0b40db09d2685dbb` is recorded in
 [the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-d8e9fd267e.md)
 ([Scient PR #593](https://github.com/ScientFactory/scient-desktop/pull/593)).
@@ -556,6 +564,25 @@ its read-acknowledgement policy, its revert dialog, the original database (which
 `doctor` never offers to delete), the V1 tables its history import reads, full
 SQLite durability and Scient-only update repositories; upstream's workspace write
 authorization also covers Scient's own file writes. Release remains separate.
+
+The current alignment through
+`f34ba437a5dec23a205ef5f670f7b10439ae98eb` is recorded in
+[the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-f34ba437a5.md)
+([Scient PR #607](https://github.com/ScientFactory/scient-desktop/pull/607)).
+Literal merge `9ef3f49f0de3d380389e2e26d0ff9753ef37ff11` has exact owned base
+`129f4af07bc3b78cab506086fcad0c5f12d7105f` and the frozen official target as
+parents, retaining all 84 donor commits. Owned-main catch-up
+`667f48d7916020076ac97190ef84748566aaf06a` includes
+`7d6bd586a47220c44c880077fb64cf47e8fa9a78`; owned-main catch-up
+`a0e936c50f2dfebe362a2fa3707aaecac1399797` includes
+`17f7bfb2f47a4622f627b34d378bc33c1f43eb01`. Native V2 remains the queue and
+execution owner; current Stop matching and native-child readiness compose through
+existing Scient policies. Workspace/environment PDFs retain Scient's local
+reader, while attachment previews and browser tabs remain separate contexts.
+Scient's HTML-print export rejects a browser PDF fallback before printing or
+publishing it, and workspace image refresh reaches both inline and Scient-card
+renderers. SQLite durability, immutable migration history, analytics consent and
+allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 ## Receiving T3 updates
 

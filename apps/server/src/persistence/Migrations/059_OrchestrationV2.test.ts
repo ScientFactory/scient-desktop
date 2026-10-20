@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 67 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 68 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -39,6 +39,7 @@ layer("059_OrchestrationV2", (it) => {
         [65, "PullRequestReviewGuides"],
         [66, "ThreadFailureLookupIndex"],
         [67, "DropUnusedV1Projections"],
+        [68, "CanonicalizeThreadPullRequestLinks"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -71,6 +72,7 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 65, name: "PullRequestReviewGuides" },
         { migration_id: 66, name: "ThreadFailureLookupIndex" },
         { migration_id: 67, name: "DropUnusedV1Projections" },
+        { migration_id: 68, name: "CanonicalizeThreadPullRequestLinks" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

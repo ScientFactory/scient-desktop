@@ -93,6 +93,7 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
+import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 const RENDER_SCALE = 2;
@@ -762,6 +763,7 @@ const make = Effect.gen(function* () {
     if (!desktop) await prepareContext(context);
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     const cdp = await context.newCDPSession(page);
+    await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -911,11 +913,17 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
-    // A popup is already loading its own URL, and the desktop loads its tab's.
-    if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
-      tab.initialNavigation = page
-        .goto(snapshot.navStatus.url, { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS })
-        .then(constVoid);
+    // Existing desktop and popup PDFs can start loading before interception attaches.
+    if (
+      snapshot.navStatus._tag === "Loading" &&
+      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+    ) {
+      const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
+      tab.initialNavigation = (
+        (desktop || adopted) && page.url() === snapshot.navStatus.url
+          ? page.reload(options)
+          : page.goto(snapshot.navStatus.url, options)
+      ).then(constVoid);
 
       void tab.initialNavigation.catch(constVoid);
     }
@@ -1281,10 +1289,17 @@ const make = Effect.gen(function* () {
       );
   };
 
+  // Desktop browsing bypasses streamed viewers and server input tracking,
+  // so these idle signals only apply to headless tabs.
   const closeIdleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     for (const tab of tabs.values()) {
-      if (tab.control.agentId !== null && tab.viewers.size === 0 && tab.usedAt < cutoff)
+      if (
+        tab.control.agentId !== null &&
+        tab.desktop === null &&
+        tab.viewers.size === 0 &&
+        tab.usedAt < cutoff
+      )
         dropTab(tab, true);
     }
   };
@@ -2196,23 +2211,26 @@ const make = Effect.gen(function* () {
         await applySetting(tab, setting);
         return;
       }
+      // A stalled navigation must not block a corrected URL or further viewer input.
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
-          await tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS);
+          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
-        await (num(message.delta) < 0
-          ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
-          : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS));
+        tab.control.trackUntilHandoff(
+          num(message.delta) < 0
+            ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
+            : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+        );
         return;
       case "reload":
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
-        await tab.page.reload(VIEWER_NAVIGATION_OPTIONS);
+        tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
       case "probe": {
         const x = num(message.x);
@@ -2562,6 +2580,14 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const tab = yield* documentLease(input);
+      // SCIENT-FORK:START — HTML printing must never publish a PDF fallback placeholder.
+      if (isPdfAssetUrl(input.expectedSourceUrl)) {
+        return yield* new BrowserPdfExportError({
+          reason: "failed",
+          detail: "This tab displays an existing PDF. Open or save its original document instead.",
+        });
+      }
+      // SCIENT-FORK:END
       return yield* Effect.tryPromise({
         try: () =>
           tab.control.system(() =>

@@ -1124,6 +1124,7 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readEnvironmentScope } from "../../state/session";
@@ -2544,6 +2545,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // SCIENT-FORK:END
 
   const isMobileViewport = useMediaQuery("max-sm");
+  const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const {
     isComposerFocused,
     setIsComposerFocused,
@@ -4117,7 +4119,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const blurMobileComposerAfterSend = () => {
-    if (!isMobileViewport) return;
+    if (!isSoftwareKeyboardOpen) return;
     if (composerBlurFrameRef.current !== null) {
       window.cancelAnimationFrame(composerBlurFrameRef.current);
       composerBlurFrameRef.current = null;
@@ -4130,7 +4132,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const shouldBlurMobileComposerOnSubmit = () => {
-    if (!isMobileViewport) return false;
+    if (!isSoftwareKeyboardOpen) return false;
     if (
       isSendBusy ||
       isSendDisabled ||
@@ -4392,7 +4394,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const submissionIntent = composerSubmissionIntentForKey({
       event,
       keybindings,
-      isMobileViewport,
+      isSoftwareKeyboardOpen,
       isDraftThread: routeKind === "draft",
       isRunning: phase === "running",
       sendShortcut: settings.sendShortcut,
@@ -5136,8 +5138,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {image.previewUrl ? (
               <ComposerImageThumbnail
                 file={image.file}
+                mode={image.source?.kind === "snap-shot" ? "snapshot" : "square"}
                 alt=""
-                className="size-full object-cover"
+                className="size-full"
                 fallback={
                   isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
                     <AttachmentImage
@@ -6107,11 +6110,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  // Stable callbacks, not useEffectEvent: ChatComposer is memoized, and React
-  // 19.2 never refreshes an effect event's impl on memo fibers — stale closures
-  // here would import the dropped thread into the first mounted thread's draft.
-  const attachDroppedThreadFile = useStableCallback((file: File) => addComposerAttachments([file]));
-  const importDroppedThread = useStableCallback(
+  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
+  const importDroppedThread = useEffectEvent(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
       const targetKey = attachmentTargetKey;
       pendingDraftWork.begin(targetKey);
@@ -7017,8 +7017,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               >
                                 <ComposerImageThumbnail
                                   file={image.file}
+                                  mode={image.source?.kind === "snap-shot" ? "snapshot" : "square"}
                                   alt={image.name}
-                                  className="h-full w-full object-cover"
+                                  className="h-full w-full"
                                   fallback={
                                     isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
                                       <AttachmentImage

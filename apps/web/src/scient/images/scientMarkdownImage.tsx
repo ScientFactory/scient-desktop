@@ -65,6 +65,7 @@ export function scientWorkspaceImageCard(input: {
   readonly authoredTitle: string | undefined;
   readonly altText: string;
   readonly srcString: string;
+  readonly workspaceMutationId: string | null | undefined;
 }): ReactNode | null {
   const {
     useScientImageCard,
@@ -89,6 +90,7 @@ export function scientWorkspaceImageCard(input: {
         caption={imageCaptions ? authoredTitle : undefined}
         authoredAlt={altText}
         authoredSource={srcString}
+        workspaceMutationId={input.workspaceMutationId}
       />
     );
   }

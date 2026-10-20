@@ -150,6 +150,7 @@ export function ServerBrowserSurface(props: {
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
+  readonly pdfUrl?: string | null;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -165,6 +166,7 @@ export function ServerBrowserSurface(props: {
     onControl,
     onPopup,
     className,
+    pdfUrl = null,
     ref,
   } = props;
   const access = usePreviewStreamAccess(environmentId);
@@ -312,9 +314,9 @@ export function ServerBrowserSurface(props: {
       reload: (options) =>
         send({ type: "reload", ...(options?.ignoreCache ? { ignoreCache: true } : {}) }),
       viewport: (setting) => send({ type: "viewport", setting }),
-      canvas: () => (hasFrameRef.current ? canvasRef.current : null),
+      canvas: () => (!pdfUrl && hasFrameRef.current ? canvasRef.current : null),
     }),
-    [send],
+    [pdfUrl, send],
   );
 
   useEffect(() => {
@@ -758,6 +760,14 @@ export function ServerBrowserSurface(props: {
         ) : null}
       </div>
       <div className="relative min-h-0 flex-1">
+        {pdfUrl ? (
+          <embed
+            src={pdfUrl}
+            type="application/pdf"
+            title="PDF document"
+            className="absolute inset-0 z-10 size-full border-0"
+          />
+        ) : null}
         <canvas
           ref={canvasRef}
           className="block size-full touch-none object-contain"
@@ -768,7 +778,7 @@ export function ServerBrowserSurface(props: {
           onMouseDown={(event) => event.preventDefault()}
           onContextMenu={(event) => event.preventDefault()}
         />
-        {agentCursor && control?.controller !== "you" ? (
+        {!pdfUrl && agentCursor && control?.controller !== "you" ? (
           <AgentCursorMark
             {...agentCursor}
             controller={control?.controller === "agent" ? "agent" : "none"}
@@ -784,7 +794,7 @@ export function ServerBrowserSurface(props: {
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          disabled={control?.controller !== "you"}
+          disabled={pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
           // The caret must sit after the sentinel for a deletion to have something to delete.
           onFocus={(event) => resetInput(event.currentTarget)}

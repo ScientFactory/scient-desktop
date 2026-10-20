@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AssetImageDimensions, ScopedThreadRef } from "@t3tools/contracts";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
+import { useWorkspaceImageRefresh } from "./useWorkspaceImageRefresh";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
 import { useMediaActionUrl } from "~/components/media/MediaActions";
 import { Button } from "~/components/ui/button";
@@ -322,6 +323,7 @@ export function ScientInlineWorkspaceImage(props: {
   readonly caption?: string | undefined;
   readonly authoredAlt?: string | undefined;
   readonly authoredSource?: string | undefined;
+  readonly workspaceMutationId?: string | null | undefined;
 }) {
   const resolveActionUrl = useMediaActionUrl();
   const controlsRef = useRef<ScientImageControlsHandle>(null);
@@ -338,9 +340,17 @@ export function ScientInlineWorkspaceImage(props: {
     props.image.workspaceRoot,
     props.image.relativePath,
     props.srcFragment ?? "",
+    props.workspaceMutationId,
   ]);
   const resource = inlineWorkspaceImageResource(props.image, props.threadRef);
   const asset = useAssetUrlState(props.threadRef.environmentId, resource);
+  useWorkspaceImageRefresh({
+    environmentId: props.threadRef.environmentId,
+    resource,
+    workspaceMutationId: props.workspaceMutationId,
+    loading: asset._tag === "Loading" || asset.waiting === true,
+    requestRefresh: asset.refresh,
+  });
   const retryKey = props.filePresentation
     ? displayIdentity
     : `${props.image.workspaceRoot}\u0000${props.image.relativePath}`;
@@ -669,7 +679,7 @@ export function ScientInlineWorkspaceImage(props: {
                 autoRetriedRef.current = null;
                 setFailedUrl(null);
                 setLoadedUrl(url);
-                if (props.filePresentation)
+                if (props.filePresentation && asset.waiting !== true)
                   setRetainedDisplay({ identity: displayIdentity, url, dimensions });
               }}
               src={url}

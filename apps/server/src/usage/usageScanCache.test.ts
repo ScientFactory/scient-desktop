@@ -66,7 +66,23 @@ describe("scan cache round trip", () => {
         100,
         [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
       ],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({
+            sessionId: "session-b",
+            reportedCostUsd: 1.5,
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 0,
+              reasoningTokens: 0,
+            },
+          }),
+        ],
+      ],
     ]);
     original.set("/grok.jsonl", {
       size: 40,
@@ -74,8 +90,9 @@ describe("scan cache round trip", () => {
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+        record({ provider: "grok", model: "<synthetic>", dedupeKey: "s:p:<synthetic>" }),
       ],
-      tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
+      tailRecords: [record({ provider: "grok", model: "<synthetic>", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
     original.set("/codex.jsonl", {
@@ -122,7 +139,21 @@ describe("scan cache round trip", () => {
       position: position({ state: { sessionId: "session-pi" } }),
     });
 
-    const encoded = encodeScanCache(original);
+    original.set("/a.jsonl", {
+      ...original.get("/a.jsonl")!,
+      tailRecords: [record({ dedupeKey: "msg_tail:" })],
+    });
+    const claude = original.get("/a.jsonl")!;
+    const cached = new Map(original);
+    cached.set("/a.jsonl", {
+      ...claude,
+      records: [...claude.records, record({ model: "<synthetic>" })],
+      tailRecords: [
+        ...claude.tailRecords,
+        record({ model: "<synthetic>", dedupeKey: "msg_tail:" }),
+      ],
+    });
+    const encoded = encodeScanCache(cached);
     for (const version of [encoded.version, 5]) {
       // Earlier v5 writers omitted the optional pricing-model column.
       const files = Object.fromEntries(

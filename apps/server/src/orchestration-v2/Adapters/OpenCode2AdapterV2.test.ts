@@ -3642,6 +3642,66 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        capabilities: new Set(),
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const add = out("mcp.add", {
+        server,
+        "location[directory]": WORK,
+        config: {
+          type: "remote",
+          url: "http://127.0.0.1:3773/mcp",
+          headers: { Authorization: "Bearer thread-credential" },
+          oauth: false,
+        },
+      });
+      const turn = [
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ];
+      // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
+      const { runtime, thread } = yield* resumed([
+        add,
+        reply("mcp.add", null),
+        ...turn,
+        add,
+        reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: [
+            buildOpenCodeRuntimeGuidance(undefined),
+            buildScientRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+            buildScientOrchestrationSystemPrompt(false),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        }),
+        reply("session.instructions.entry.put", null),
+        ...turn,
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      for (let index = 0; index < 2; index++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
       const child = ThreadId.make(

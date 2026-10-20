@@ -291,8 +291,9 @@ The server shows the exact line for the installation that runs it, usually with
 the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
-any missing libraries with apt. It is safe to run again. Without `sudo`, it
-only reports what it would change.
+any missing libraries and system fonts with apt; pages that load without text
+can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
+reports what it would change.
 
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
