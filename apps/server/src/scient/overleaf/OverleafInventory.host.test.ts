@@ -44,12 +44,14 @@ const layer = WorkspaceFileSystem.layer.pipe(
 const hostRefuses = (cwd: string, relativePath: string) =>
   Effect.gen(function* () {
     const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-    return yield* files
-      .writeFile({ cwd, relativePath, contents: "x" })
-      .pipe(
-        Effect.as(false),
-        Effect.catchTags({ WorkspaceFilePathEscapeError: () => Effect.succeed(true) }),
-      );
+    return yield* files.writeFile({ cwd, relativePath, contents: "x" }).pipe(
+      Effect.as(false),
+      Effect.catchTags({
+        WorkspaceFilePathEscapeError: () => Effect.succeed(true),
+        // Without native publication (Linux CI) an allowed path fails later, at the write.
+        WorkspaceFileMutationUnavailableError: () => Effect.succeed(false),
+      }),
+    );
   });
 
 const tempFolder = Effect.gen(function* () {
