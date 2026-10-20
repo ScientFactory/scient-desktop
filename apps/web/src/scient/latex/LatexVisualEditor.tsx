@@ -9020,13 +9020,13 @@ function LatexVisualEditorReady(
     readerAction.current = runReaderAction;
   });
   // The zoomed paper is scaled by a transform, which does not size its frame.
-  const syncZoomFrame = useStableCallback(() => {
+  const syncZoomFrame = useStableCallback((scale: number = zoom) => {
     const frame = zoomFrame.current;
     const stage = paperStage.current;
     if (!frame || !stage) return;
     if (measuredStage.current?.element !== stage)
       measuredStage.current = { element: stage, height: stage.offsetHeight };
-    const height = `${measuredStage.current.height * zoom}px`;
+    const height = `${measuredStage.current.height * scale}px`;
     if (frame.style.height !== height) frame.style.height = height;
   });
   useLayoutEffect(() => {
@@ -9045,6 +9045,8 @@ function LatexVisualEditorReady(
       editor?.view.dom.dispatchEvent(new Event("scient-latex-layout"));
     });
   }, [syncZoomFrame, editor]);
+  // The resize observer cannot see a zoom change: the transform leaves the stage's size alone.
+  useLayoutEffect(() => syncZoomFrame(zoom), [syncZoomFrame, zoom]);
 
   // Load the rest of the document around its first blocks.
   useLayoutEffect(() => {
