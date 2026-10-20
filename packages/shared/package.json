@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientKeepAwake": {
+      "types": "./src/scientKeepAwake.ts",
+      "import": "./src/scientKeepAwake.ts"
+    },
     "./scientTextGenerationSelection": {
       "types": "./src/scientTextGenerationSelection.ts",
       "import": "./src/scientTextGenerationSelection.ts"

@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import type { KeepAwakeChoice } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
@@ -24,6 +25,8 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  | "keep-awake"
+  | `keep-awake:${KeepAwakeChoice}`
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -76,6 +79,7 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
+  readonly keepAwakeChoice?: KeepAwakeChoice;
   readonly canOperate: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -105,6 +109,7 @@ export interface ThreadActionMenuState {
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  if (action === "keep-awake" || action.startsWith("keep-awake:")) return false;
   return ![
     "new-thread-on-branch",
     "project-settings",
@@ -211,6 +216,24 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.keepAwakeChoice === undefined
+      ? []
+      : [
+          {
+            id: "keep-awake" as const,
+            label: "Keep computer awake",
+            children: (
+              [
+                ["app", "Use app setting"],
+                ["once", "Until work finishes"],
+              ] as const
+            ).map(([choice, label]) => ({
+              id: `keep-awake:${choice}` as const,
+              label,
+              checked: state.keepAwakeChoice === choice,
+            })),
+          },
+        ]),
     {
       id: "copy",
       label: "Copy",

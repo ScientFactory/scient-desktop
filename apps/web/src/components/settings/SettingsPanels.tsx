@@ -1,5 +1,6 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
 import { SettingsGroup } from "./SettingsGroup";
+import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -2707,6 +2708,7 @@ export function GeneralSettingsPanel() {
             </>
           }
         />
+        <KeepAwakeSettings />
       </SettingsSection>
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">

@@ -11,6 +11,7 @@ import {
 } from "../scient/conversationImport/openedConversationFiles.ts";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
+import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -100,6 +101,7 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* ipc.handle(keepAwake);
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 

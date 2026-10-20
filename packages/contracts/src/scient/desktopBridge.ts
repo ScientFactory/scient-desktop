@@ -17,6 +17,7 @@ import type {
   DesktopDocumentPageRenderOutcome,
 } from "../scientDocumentExport.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
+import type { KeepAwakeRequest, KeepAwakeState } from "../scientKeepAwake.ts";
 
 export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
 export type DesktopAssetCopyRequest = AssetCopyRequestType;
@@ -25,6 +26,7 @@ export type DesktopAssetCopyResult = AssetCopyResultType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
+  keepAwake?: (request: KeepAwakeRequest) => Promise<KeepAwakeState>;
   /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
   setUnreadAnswerCount?: (count: number) => Promise<boolean>;
   // Conversation files the OS opened with Scient.

@@ -131,3 +131,4 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
+export * from "./scientKeepAwake.ts";

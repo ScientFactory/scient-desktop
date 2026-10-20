@@ -139,6 +139,13 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "keep-computer-awake",
+    title: "Keep computer awake",
+    to: "/settings/general",
+    searchTerms: ["sleep", "awake", "power", "queue", "keep awake"],
+    desktopOnly: true,
+  },
+  {
     id: "desktop-update-track",
     title: "Update track",
     to: "/settings/general",

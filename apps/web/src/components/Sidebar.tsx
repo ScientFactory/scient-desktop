@@ -1,4 +1,7 @@
 import { type EnvironmentId, type ScopedProjectRef, type ServerConfig } from "@t3tools/contracts";
+import { keepAwakeThreadKey } from "@t3tools/contracts";
+import { requestKeepAwake } from "../scient/keepAwake/state";
+import { hasKeepAwakeShellWork } from "@t3tools/shared/scientKeepAwake";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { ThreadTerminalStatusButton } from "./ThreadStatusIndicators";
@@ -4372,9 +4375,19 @@ export default function Sidebar() {
         // SCIENT-FORK:START
         onSectionInteractionChange(true);
         // SCIENT-FORK:END
+        const powerKey = keepAwakeThreadKey(thread.environmentId, thread.id);
+        const powerState = window.desktopBridge?.keepAwake
+          ? await requestKeepAwake({ type: "get" })
+          : null;
+        const powerThread = powerState?.threads.find((entry) => entry.key === powerKey);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              ...(powerState === null
+                ? {}
+                : {
+                    keepAwakeChoice: powerThread?.once ? ("once" as const) : ("app" as const),
+                  }),
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -4412,6 +4425,23 @@ export default function Sidebar() {
         onSectionInteractionChange(false);
         // SCIENT-FORK:END
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (clicked.value.startsWith("keep-awake:")) {
+          const choice = clicked.value.slice("keep-awake:".length);
+          if (choice === "app" || choice === "once") {
+            const current = threadByKeyRef.current.get(threadKey) ?? thread;
+            await requestKeepAwake({
+              type: "choose",
+              key: powerKey,
+              title: current.title,
+              choice,
+              work: {
+                latestRunId: current.source.latestRunId,
+                unfinished: hasKeepAwakeShellWork(current.source),
+              },
+            });
+          }
+          return;
+        }
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
