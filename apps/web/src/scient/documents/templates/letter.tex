@@ -1,0 +1,34 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+
+\pagestyle{empty}
+% A letter with nothing written yet still makes its (blank) page; once
+% anything is printed, this does nothing.
+\AtEndDocument{\ifnum\ReadonlyShipoutCounter=0 \ifdim\pagetotal=0pt \null\fi\fi}
+
+\begin{document}
+
+% Guide: Your name, position, institution, address, and email.
+\par
+
+% Guide: The date.
+\par
+
+% Guide: The recipient's name, position, institution, and address.
+\par
+
+% Guide: Dear …,
+\par
+
+% Guide: Your letter: why you are writing, the details, and what you would like to happen next.
+\par
+
+% Guide: Sincerely, and your name.
+\par
+
+\end{document}

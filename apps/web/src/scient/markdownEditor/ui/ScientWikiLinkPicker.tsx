@@ -1,5 +1,6 @@
+import { useEffectEvent } from "react";
 import { Brackets, FileText, Search, Unlink } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
@@ -14,7 +15,7 @@ import {
   wikiLinkCandidateName,
   wikiLinkTargetForSelection,
 } from "../wikiLinkPicker";
-import { dockButtonClass } from "./dockChrome";
+import { dockButtonClass } from "../../writing/dockChrome";
 
 interface ScientWikiLinkPickerProps {
   readonly candidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
@@ -79,19 +80,12 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
   const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
-  const sections = useMemo(
-    () =>
-      buildWikiLinkPickerSections({
-        candidates: props.candidates,
-        query,
-        recentPaths: props.recentPaths,
-      }),
-    [props.candidates, props.recentPaths, query],
-  );
-  const visibleCandidates = useMemo(
-    () => [...sections.recent, ...sections.results],
-    [sections.recent, sections.results],
-  );
+  const sections = buildWikiLinkPickerSections({
+    candidates: props.candidates,
+    query,
+    recentPaths: props.recentPaths,
+  });
+  const visibleCandidates = [...sections.recent, ...sections.results];
   const safeActiveIndex = Math.min(activeIndex, Math.max(0, visibleCandidates.length - 1));
 
   useEffect(() => {
@@ -103,24 +97,49 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
     return () => window.clearTimeout(timeout);
   }, [editingTarget, open]);
 
-  useEffect(() => {
-    if (props.openRequest === 0) return;
-    if (!props.disabled && props.selectedTarget !== null) {
+  const requestInputs = [
+    props.candidates,
+    props.controller,
+    props.disabled,
+    props.openRequest,
+    props.selectedTarget,
+  ] as const;
+  const [previousRequestInputs, setPreviousRequestInputs] = useState<readonly unknown[] | null>(
+    null,
+  );
+  if (
+    previousRequestInputs === null ||
+    requestInputs.some((value, index) => value !== previousRequestInputs[index])
+  ) {
+    setPreviousRequestInputs(requestInputs);
+    if (props.openRequest !== 0 && !props.disabled && props.selectedTarget !== null) {
       setEditingTarget(props.selectedTarget);
       setQuery(editQueryForTarget(props.selectedTarget, props.candidates));
       setActiveIndex(0);
       setOpen(true);
     }
-    props.controller.acknowledgeWikiLinkEditRequest(props.openRequest);
-  }, [props.candidates, props.controller, props.disabled, props.openRequest, props.selectedTarget]);
+  }
+  const acknowledgeWikiLinkRequest = useEffectEvent((..._changes: readonly unknown[]) => {
+    if (props.openRequest !== 0) props.controller.acknowledgeWikiLinkEditRequest(props.openRequest);
+  });
+  useEffect(
+    () =>
+      acknowledgeWikiLinkRequest(
+        props.candidates,
+        props.controller,
+        props.disabled,
+        props.openRequest,
+        props.selectedTarget,
+      ),
+    [props.candidates, props.controller, props.disabled, props.openRequest, props.selectedTarget],
+  );
 
-  useEffect(() => {
-    if (!props.disabled || !open) return;
+  if (props.disabled && open) {
     setOpen(false);
     setQuery("");
     setActiveIndex(0);
     setEditingTarget(null);
-  }, [open, props.disabled]);
+  }
 
   const changeOpen = (nextOpen: boolean) => {
     if (nextOpen && props.disabled) return;

@@ -101,6 +101,37 @@ is eligible; same-workspace conversation forks also work in non-Git projects.
 Explicitly addressed archived origins remain readable for this decision;
 deleted origins do not.
 
+## Owner decisions on upstream behavior
+
+Alignments keep these as recorded. Changing one needs the owner's decision, not a
+merge resolution.
+
+- **`doctor` keeps the original database (decided 2026-10-19).** Upstream's repair
+  that deletes `state.sqlite` stays in the code but is never offered:
+  `scientOriginalDatabaseDeletable` in `apps/server/src/persistence/DatabaseMaintenance.ts`
+  is `false`, and its test fails if the repair is offered. Enabling it needs a
+  staleness check under the deletion lock and a Windows-safe removal.
+- **Old V1 tables are kept (decided 2026-10-19).** Scient migration 067 drops only
+  `projection_state` and `checkpoint_diff_blobs`. `projection_thread_activities`,
+  `projection_pending_approvals`, `projection_thread_proposed_plans` and
+  `projection_turns` stay: the legacy history import and its per-start refresh read
+  them, and Scient migration 016 reads `projection_turns`. Open follow-up, a separate
+  PR after measuring the space they take on a synthetic database: a cleanup step after
+  the startup import that drops them only once every legacy import is complete at
+  `LEGACY_HISTORY_REPAIR_VERSION`, plus an end to the refresh from `state.sqlite`.
+  Never drop them unconditionally. v0.6.21 (2026-10-02) is the last release that
+  stored conversations only in `state.sqlite`; the import shipped in v0.6.22
+  (2026-10-10).
+- **Workspace write authorization stays active (decided 2026-10-19).** Upstream's
+  `KnownWorkspaces` check and the `.git` write denial cover Scient's saves, creates,
+  renames, image uploads and plan saves. They do not affect agents, which write with
+  their own tools. Known cases it refuses, to fix by registering the folder rather
+  than by loosening the check: a scheduled task's "Use a specific checkout" path that
+  is not one of the project's Git worktrees; a draft thread on a hand-made worktree
+  outside the managed folders and the project, before its first message; and any
+  thread worktree outside the managed folders when `git worktree list` fails. A
+  refused Markdown image upload reports a generic internal error.
+
 ## Native V2 reliability model
 
 The message-boundary RPC enters
@@ -290,6 +321,16 @@ The web acknowledgement is owned by `scient/chat/useStopGeneration.ts` and
 the captured environment/thread/run/attempt and the durable interrupt request,
 clears when that target settles or changes, and keeps Stop available for retry.
 
+`RunStartDecisions.ts` owns the shared current-execution Stop predicate for native
+steering and continuation decisions. Match the active attempt's root and native
+thread/turn; an old interrupt for the same run is not a Stop on its new execution.
+`QueuedRunSend.ts` remains the direct-user-Send queue-release policy, separate from
+`scient/orchestration/TerminalQueueHold.ts` and its attempt/release-receipt fences.
+`DelegatedChildSettlements.ts` only triggers the existing parent-locked app-owned
+task finalizer after native children settle. Keep the result-readiness guard for
+older untagged runs too; neither that subscription nor a failed root owns a second
+task result or queue release.
+
 ### Extracted owners and host mounts
 
 The separation map below describes the adopted source, not a proposed move or a qualification
@@ -364,6 +405,13 @@ formatting to the shared provider package. Native shutdown and OMP remain the ph
 owners described in [provider lifecycle](./provider-lifecycle.md) and [providers](./providers.md);
 relocating a helper does not certify cleanup.
 
+Accounting credentials compose through `usage/usageAccountingSettingsSecrets.ts` in the shared
+`settingsSecrets.ts` visitor. Preserve the shipped `usage-accounting-source-<base64url-id>` key,
+redaction, and atomic settings/secret rollback. `ScientProviderCredentialAvailability.ts` checks
+only schema-declared secrets after config decoding and before provider factory scope creation;
+failed materialization still reconciles the authoritative stored snapshot and removes revoked
+instances. These owners do not replace native session lifetime or caller authority checks.
+
 #### Contracts, transport and composition
 
 | Host mount                                                           | Current Scient-owned modules                                                                                                                                                                                                       |
@@ -395,11 +443,41 @@ not a requirement to relocate the whole host.
 | Settings mounts                                                 | `settings/` navigation/visibility and feature-owned settings rows under `skills/`, `providerConnection/`, `analytics/`, `bidi/`, `keyboard/`, `typography/`, `wordExport/` and `onboarding/`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Desktop settings/backend/window mounts                          | [`settings/scientDesktopSettings.ts`](../../apps/desktop/src/settings/scientDesktopSettings.ts), `backend/scientAnalyticsMetadata.ts`, `backend/scientBackendLaunch.ts`, `window/scientMainWindowSizing.ts`; native launch and window lifecycle stay in their desktop hosts                                                                                                                                                                                                                                                                                                                                                         |
 
+`images/useWorkspaceImageRefresh.ts` is the shared pending-edit invalidation policy
+for upstream inline assets and Scient standalone image cards. Keep ordinary chat
+cached and file-preview retained pixels stable across mere capability refreshes.
+Explicit workspace revisions invalidate that retained identity; a still-waiting
+asset must not become the retained pixels of the new revision.
+
+Prompt-link identity and copy policy live in `packages/shared/src/scientPromptLinks.ts`; the
+upstream parser retains generic mechanics. Desktop/web producers use registered Scient links
+without a hosted prompt authority. Mobile producers retain the actual binary's Expo scheme.
+Default-browser, cloud, and mobile publication holds remain independent. Sidebar bulk updates
+compose through the existing `scient/desktopUpdate/updateReadyNotice.tsx` singleton; exact service
+versions require current owned GitHub artifact availability from `serverReleaseAvailability.ts`,
+while the backend retains update permission, preflight, and installation authority.
+
+Mobile's generic `lib/markdownDocument.ts` retains its parser, HTML transform and
+entity decoder. A paired, module-level mount binds those existing tools to
+[`ScientMarkdownProjection.ts`](../../apps/mobile/src/native/ScientMarkdownProjection.ts),
+which owns canonical file/mention sources, native link occurrence mapping and
+entity projection. The existing `nativeMarkdownProjection` import remains the
+consumer surface. `native/EnrichedMarkdownText.tsx` supplies that projection to
+the native renderer; the reviewed Enriched dependency patch owns platform
+selection and clipboard handling. Stored message text remains authoritative.
+
 The map is source ownership evidence only. It does not replace public-codec, SQL/rollback, provider
 lifetime, packaging or manual UI acceptance evidence, and it does not turn source-text seam guards
 into behavior tests.
 
 ### Live Scient migration preflight
+
+The upstream migration host [`Migrations.ts`](../../apps/server/src/persistence/Migrations.ts)
+mounts [`scientMigrationLedger.ts`](../../apps/server/src/persistence/scientMigrationLedger.ts)
+after preview reconciliation and before any migration runs. This Scient owner validates the
+entire recorded ledger even for a partial migration request: shipped names and defined steps
+are immutable; intentionally retired IDs remain accepted. Keep the validation at this exact
+host boundary so an incompatible ledger cannot silently skip a shipped migration.
 
 [`Sqlite.ts`](../../apps/server/src/persistence/Sqlite.ts) still invokes the independent
 [`scientMigrator.ts`](../../apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.

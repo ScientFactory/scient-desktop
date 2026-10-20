@@ -15,9 +15,8 @@ import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts"
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
- * The `rpc.aggregate` span attribute of every WebSocket RPC. Trace queries and dashboards group by
- * these labels, so they keep their historical values even where they differ from the method
- * prefix. Adding an RPC to `WsRpcGroup` without a label is a type error.
+ * Trace queries and dashboards group by these labels, so they keep their historical values
+ * even where they differ from the method prefix.
  */
 const RPC_AGGREGATES = {
   [ORCHESTRATION_WS_METHODS.getForkOptions]: "orchestration",
@@ -36,6 +35,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: "orchestrationV2",
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: "orchestrationV2",
   [WS_METHODS.projectsMutate]: "orchestration",
   [WS_METHODS.serverProbe]: "server",
   [WS_METHODS.serverGetConfig]: "server",
@@ -63,6 +63,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRemoveKeybinding]: "server",
   [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
+  [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.serverGetSettings]: "server",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",
@@ -216,6 +217,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeBackgroundPolicy]: "server",
   [WS_METHODS.projectsListDirectory]: "projects",
   [WS_METHODS.projectsRenameFile]: "projects",
+  [WS_METHODS.projectsDeleteFile]: "projects",
+  [WS_METHODS.projectsListFileVersions]: "projects",
+  [WS_METHODS.projectsDiscardFileVersion]: "projects",
+  [WS_METHODS.projectsResolveFileMutation]: "projects",
   [WS_METHODS.analysisInspectRuntimes]: "analysis",
   [WS_METHODS.analysisConfigureRuntime]: "analysis",
   [WS_METHODS.analysisVerifyRuntime]: "analysis",
@@ -264,6 +269,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.documentsReleaseDocumentPdf]: "documents",
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",
+  // SCIENT-FORK:START — sign-in page claims count with the other server RPCs.
+  [WS_METHODS.serverClaimProviderSignInPage]: "server",
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: "server",
   [WS_METHODS.serverDisconnectProvider]: "server",
   [WS_METHODS.serverPlanProviderRuntime]: "server",
@@ -291,19 +299,13 @@ const RPC_METHODS_WITH_TRACING_DISABLED: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Records each WebSocket RPC's span and request metrics. `ws.ts` adds it to the server's group
- * after `RpcScopeAuthorization`, so it wraps authorization and also records rejected calls.
+ * `ws.ts` adds it to the server's group after `RpcScopeAuthorization`, so it wraps
+ * authorization and also records rejected calls.
  */
 export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation>()(
   "t3/server/RpcInstrumentation",
 ) {}
 
-/**
- * Wraps each WebSocket RPC call in its `ws.rpc.<method>` span and records its request counter and
- * duration. For a stream RPC, the middleware receives the whole stream run, so the span and the
- * metrics cover the subscription until it ends, fails, or is interrupted. Methods in
- * `RPC_METHODS_WITH_TRACING_DISABLED` record metrics but no spans, for the call or anything it runs.
- */
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
   const measured = effect.pipe(

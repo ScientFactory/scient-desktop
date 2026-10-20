@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   CheckIcon,
   CopyIcon,
@@ -10,7 +11,7 @@ import {
   RefreshCwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
@@ -18,7 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   RichFenceSourceMenuItem,
   type ScientRichFenceAuthoringActions,
-  useRichFenceContextMenu,
+  createRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
 import {
   VisualCardDetails,
@@ -28,7 +29,7 @@ import {
 } from "../presentation/VisualCardToolbar";
 
 import { PlotlyChartDialog } from "./PlotlyChartDialog";
-import { PlotlyInteractionToolbar } from "./PlotlyInteractionToolbar";
+import { PlotlyInteractionToolbar, readPlotlyInteractionMode } from "./PlotlyInteractionToolbar";
 import {
   copyPlotlyPng,
   downloadPlotlyPng,
@@ -92,6 +93,16 @@ function parseSource(
   }
 }
 
+function chartSource(source: string) {
+  const result = parseSource(source);
+  const parsed = result.parsed;
+  return {
+    ...result,
+    figureTitle: parsed == null ? null : plotlyFigureTitle(parsed.figure),
+    description: parsed == null ? null : plotlyFigureDescription(parsed.figure),
+  };
+}
+
 function ChartActionButton({
   children,
   disabled,
@@ -132,11 +143,20 @@ export function PlotlyChartCard({
   theme,
   title,
 }: PlotlyChartCardProps) {
+  const parsedSource = chartSource(source);
+  const parsed = parsedSource.parsed;
+  const fileTitle = title || parsedSource.figureTitle;
+  const displayTitle = fileTitle || "Plotly figure";
+  const description = parsedSource.description;
+  const hasWebGl = parsed?.hasWebGl ?? false;
+  const markdownCopy = plotlyMarkdownCopySource(source, language, fenceMeta);
   const descriptionId = useId();
   const controllerRef = useRef<PlotlyViewController | null>(null);
+  const [controller, setController] = useState<PlotlyViewController | null>(null);
+  const [initialInteractionMode, setInitialInteractionMode] = useState<
+    import("./plotlyRuntime").PlotlyInteractionMode | null
+  >(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const parsedSource = useMemo(() => parseSource(source), [source]);
-  const parsed = parsedSource.parsed;
   const [status, setStatus] = useState<ChartStatus>({ kind: "idle", source });
   const [retryVersion, setRetryVersion] = useState(0);
   const [sourceVisible, setSourceVisible] = useState(false);
@@ -147,27 +167,40 @@ export function PlotlyChartCard({
   } | null>(null);
   const [activeAction, setActiveAction] = useState<ChartAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const captureState = useCallback(() => {
+  const captureState = useStableCallback(() => {
     const state = controllerRef.current?.getState();
     if (state != null) setTransferredView({ source, state });
-  }, [source]);
-  const viewport = usePlotlyViewportActivity(
-    parsed?.hasWebGl ?? false,
+  });
+  const { active: viewportActive, ref: viewportRef } = usePlotlyViewportActivity(
+    hasWebGl,
     captureState,
     false,
     expanded,
   );
-  const fileTitle = title || (parsed == null ? null : plotlyFigureTitle(parsed.figure));
-  const displayTitle = fileTitle || "Plotly figure";
-  const description = parsed == null ? null : plotlyFigureDescription(parsed.figure);
-  const markdownCopy = useMemo(
-    () => plotlyMarkdownCopySource(source, language, fenceMeta),
-    [fenceMeta, language, source],
-  );
 
-  useEffect(() => {
-    if (viewport.active && parsed != null && !expanded) setStatus({ kind: "loading", source });
-  }, [expanded, parsed, retryVersion, source, viewport.active]);
+  const [previousMount, setPreviousMount] = useState({
+    expanded: expanded,
+    parsed: parsed,
+    retryVersion: retryVersion,
+    source: source,
+    active: viewportActive,
+  });
+  if (
+    previousMount.expanded !== expanded ||
+    previousMount.parsed !== parsed ||
+    previousMount.retryVersion !== retryVersion ||
+    previousMount.source !== source ||
+    previousMount.active !== viewportActive
+  ) {
+    setPreviousMount({
+      expanded: expanded,
+      parsed: parsed,
+      retryVersion: retryVersion,
+      source: source,
+      active: viewportActive,
+    });
+    if (viewportActive && parsed != null && !expanded) setStatus({ kind: "loading", source });
+  }
 
   useEffect(
     () => () => {
@@ -176,49 +209,46 @@ export function PlotlyChartCard({
     [],
   );
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
     }, 1_500);
-  }, []);
+  };
 
-  const showPersistentMessage = useCallback((message: string) => {
+  const showPersistentMessage = (message: string) => {
     if (messageTimerRef.current != null) {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
     setActionMessage(message);
-  }, []);
+  };
 
-  const runControllerAction = useCallback(
-    (
-      action: Exclude<ChartAction, "copy-source" | null>,
-      operation: (controller: PlotlyViewController) => Promise<void>,
-      successMessage: string | null,
-      failureMessage: string,
-    ) => {
-      const controller = controllerRef.current;
-      if (controller == null || activeAction != null) return;
-      setActiveAction(action);
-      void operation(controller).then(
-        () => {
-          setActiveAction(null);
-          if (successMessage != null) showTransientMessage(successMessage);
-        },
-        (cause: unknown) => {
-          console.error("[scient-visualizations] Plotly action failed", action, cause);
-          setActiveAction(null);
-          showPersistentMessage(failureMessage);
-        },
-      );
-    },
-    [activeAction, showPersistentMessage, showTransientMessage],
-  );
+  const runControllerAction = (
+    action: Exclude<ChartAction, "copy-source" | null>,
+    operation: (controller: PlotlyViewController) => Promise<void>,
+    successMessage: string | null,
+    failureMessage: string,
+  ) => {
+    const controller = controllerRef.current;
+    if (controller == null || activeAction != null) return;
+    setActiveAction(action);
+    void operation(controller).then(
+      () => {
+        setActiveAction(null);
+        if (successMessage != null) showTransientMessage(successMessage);
+      },
+      (cause: unknown) => {
+        console.error("[scient-visualizations] Plotly action failed", action, cause);
+        setActiveAction(null);
+        showPersistentMessage(failureMessage);
+      },
+    );
+  };
 
-  const handleCopySource = useCallback(() => {
+  const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
@@ -235,35 +265,32 @@ export function PlotlyChartCard({
         showPersistentMessage("Unable to copy the Plotly source.");
       },
     );
-  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
+  });
 
-  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
-  const handleToggleSource = useCallback(() => {
+  const handleContextMenu = createRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleToggleSource = () => {
     setSourceVisible((visible) => !visible);
-  }, []);
+  };
 
-  const handleExpand = useCallback(() => {
+  const handleExpand = () => {
     captureState();
     setExpanded(true);
-  }, [captureState]);
+  };
 
-  const handleReady = useCallback(
-    (mounted: MountedPlotlyView) => {
-      setStatus({ kind: "ready", source, warnings: mounted.warnings });
-    },
-    [source],
-  );
+  const handleReady = (mounted: MountedPlotlyView) => {
+    setController(controllerRef.current);
+    setInitialInteractionMode(readPlotlyInteractionMode(controllerRef.current));
+    setStatus({ kind: "ready", source, warnings: mounted.warnings });
+  };
 
   const parseError = parsedSource.error;
   const currentStatus: ChartStatus =
-    status.source === source ? status : { kind: viewport.active ? "loading" : "idle", source };
+    status.source === source ? status : { kind: viewportActive ? "loading" : "idle", source };
   const visibleStatus: ChartStatus =
     parseError == null
-      ? plotlySlotStatus(currentStatus, {
-          active: viewport.active,
-          expanded,
-          hasWebGl: parsed?.hasWebGl ?? false,
-        })
+      ? currentStatus.kind === "ready" && hasWebGl && !viewportActive && !expanded
+        ? { ...currentStatus, kind: "waiting-for-slot" }
+        : currentStatus
       : { kind: "error", message: parseError.message, source };
   const ready = visibleStatus.kind === "ready";
   const waitingForSlot = visibleStatus.kind === "waiting-for-slot";
@@ -274,7 +301,7 @@ export function PlotlyChartCard({
 
   return (
     <div
-      ref={viewport.ref}
+      ref={viewportRef}
       aria-describedby={description == null ? undefined : descriptionId}
       aria-label={displayTitle}
       className="scient-plotly-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
@@ -303,7 +330,8 @@ export function PlotlyChartCard({
         {parsed != null && visibleStatus.kind !== "error" ? (
           <PlotlyInteractionToolbar
             compact
-            controller={ready ? controllerRef.current : null}
+            controller={ready ? controller : null}
+            initialMode={ready ? initialInteractionMode : null}
             disabled={!ready || activeAction != null}
             hasCartesian={parsed.hasCartesian}
             onError={showPersistentMessage}
@@ -453,7 +481,7 @@ export function PlotlyChartCard({
                 : "Rendering interactive Plotly figure…"}
             </div>
           ) : null}
-          {viewport.active && parsed != null && !expanded ? (
+          {viewportActive && parsed != null && !expanded ? (
             <PlotlyView
               key={retryVersion}
               ref={controllerRef}

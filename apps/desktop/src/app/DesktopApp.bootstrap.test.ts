@@ -129,7 +129,10 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         Crypto.Crypto,
         Effect.map(Crypto.Crypto, (crypto) => ({
           ...crypto,
-          randomUUIDv4: Effect.succeed("00000000-0000-4000-8000-000000000000"),
+          randomUUIDv4: (() =>
+            Effect.succeed(
+              "00000000-0000-4000-8000-000000000000",
+            )) as Crypto.Crypto["randomUUIDv4"],
         })),
       ).pipe(Layer.provide(NodeServices.layer)),
       DesktopAppSettings.layerTest(environment.defaultDesktopSettings),
@@ -203,7 +206,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),
       Layer.mock(DesktopWslBackend.DesktopWslBackend, { reconcile: Effect.void }),
       Layer.mock(DesktopShellEnvironment.DesktopShellEnvironment, {
-        installIntoProcess: Effect.void,
+        installIntoProcess: Effect.succeed(true),
       }),
       Layer.mock(DesktopLifecycle.DesktopLifecycle, { register: Effect.void }),
       Layer.mock(DesktopClerk.DesktopClerk, {

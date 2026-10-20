@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type {
   ComputeExecutionRecord,
   ComputeLanguageRuntimeInspection,
@@ -32,7 +33,7 @@ import {
   Square,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverDescription, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
@@ -279,24 +280,24 @@ function ComputeExecutionCard(props: {
     props.execution.result !== null &&
     TERMINAL_COMPUTE_EXECUTION_STATUSES.has(props.execution.result.status);
   const persisted = persistedOutputs.data;
-  const outputs = useMemo(
-    () => mergeComputeOutputs(persisted?.outputs ?? [], props.liveOutputs),
-    [persisted?.outputs, props.liveOutputs],
-  );
-  const fallbackOutputs = useMemo(
-    () =>
-      mergeComputeOutputs(
-        persistedFallbackOutputs.data?.outputs ?? [],
-        props.fallbackLiveOutputs,
-      ).filter((output) => output._tag === "image"),
-    [persistedFallbackOutputs.data?.outputs, props.fallbackLiveOutputs],
-  );
+  const outputs = mergeComputeOutputs(persisted?.outputs ?? [], props.liveOutputs);
+  const fallbackOutputs = mergeComputeOutputs(
+    persistedFallbackOutputs.data?.outputs ?? [],
+    props.fallbackLiveOutputs,
+  ).filter((output) => output._tag === "image");
   const terminalRefreshRequestedRef = useRef(false);
+  const refreshOutputs = useStableCallback(() => persistedOutputs.refresh());
+  const refreshFallbackOutputs = useStableCallback(() => persistedFallbackOutputs.refresh());
+  const hasFigureFallback = props.figureFallback !== null;
 
+  const focusRequest = {
+    executionId: props.execution.request.executionId,
+    focused: props.focused,
+    onFocusConsumed: props.onFocusConsumed,
+  };
   useEffect(() => {
-    if (!props.focused) return;
-    props.onFocusConsumed?.(props.execution.request.executionId);
-  }, [props.execution.request.executionId, props.focused, props.onFocusConsumed]);
+    if (focusRequest.focused) focusRequest.onFocusConsumed?.(focusRequest.executionId);
+  }, [focusRequest]);
 
   useEffect(() => {
     if (!terminal) {
@@ -305,16 +306,19 @@ function ComputeExecutionCard(props: {
     }
     if (terminalRefreshRequestedRef.current) return;
     terminalRefreshRequestedRef.current = true;
-    persistedOutputs.refresh();
+    refreshOutputs();
     // Confirm durable truth once for a terminal run, including one first mounted after completion.
-  }, [terminal]);
+  }, [terminal, refreshOutputs]);
 
+  const refreshRehydratedOutputs = useStableCallback((token: string | null) => {
+    if (token === null) return;
+    refreshOutputs();
+    if (hasFigureFallback) refreshFallbackOutputs();
+  });
   useEffect(() => {
-    if (props.rehydrationToken === null) return;
-    persistedOutputs.refresh();
-    if (props.figureFallback !== null) persistedFallbackOutputs.refresh();
     // One durable reread per observed gap token; the stream is only notification authority.
-  }, [props.rehydrationToken]);
+    refreshRehydratedOutputs(props.rehydrationToken);
+  }, [props.rehydrationToken, refreshRehydratedOutputs]);
 
   const source = props.execution.request.source;
   const sourceFreshness = computeSourceFreshnessLabel(
@@ -489,15 +493,13 @@ function ComputeSessionMessages(props: {
     : null;
   const persistedOutputs = useEnvironmentQuery(outputsAtom);
   const persisted = persistedOutputs.data;
-  const outputs = useMemo(
-    () => mergeComputeOutputs(persisted?.outputs ?? [], props.liveOutputs),
-    [persisted?.outputs, props.liveOutputs],
-  );
+  const outputs = mergeComputeOutputs(persisted?.outputs ?? [], props.liveOutputs);
 
+  const refreshSessionOutputs = useStableCallback(() => persistedOutputs.refresh());
   useEffect(() => {
-    if (expanded && props.rehydrationToken !== null) persistedOutputs.refresh();
+    if (expanded && props.rehydrationToken !== null) refreshSessionOutputs();
     // One durable reread per observed gap token.
-  }, [expanded, props.rehydrationToken]);
+  }, [expanded, props.rehydrationToken, refreshSessionOutputs]);
 
   return (
     <article className="rounded-lg border border-border/70 bg-card/30">
@@ -726,8 +728,8 @@ export function ComputePanel(props: {
     props.contextId === undefined ? null : (state.bindings[props.contextId] ?? null),
   );
   const observedTerminalExecutionsRef = useRef<Set<string> | null>(null);
-  const newestExecutionRef = useRef<string | null>(null);
-  const variableRequestRef = useRef(0);
+  const [newestExecutionId, setNewestExecutionId] = useState<string | null>(null);
+  const variableRequestRef = useRef<symbol | null>(null);
 
   const runtimes = useEnvironmentQuery(
     computeEnvironment.runtimes({
@@ -777,25 +779,22 @@ export function ComputePanel(props: {
     reportFailure: false,
   });
 
-  const readyRuntimes = useMemo<ReadonlyArray<ReadyRuntime>>(
-    () =>
-      (runtimes.data?.languages ?? []).flatMap((language) =>
-        language.runtimes.flatMap((candidate) =>
-          language.enabled &&
-          candidate.verification.readiness === "ready" &&
-          (props.sourceLanguageId === undefined ||
-            language.descriptor.languageId === props.sourceLanguageId)
-            ? [
-                {
-                  language,
-                  candidate,
-                  key: `${language.descriptor.languageId}:${candidate.profile.executable}`,
-                },
-              ]
-            : [],
-        ),
+  const readyRuntimes: ReadonlyArray<ReadyRuntime> = (runtimes.data?.languages ?? []).flatMap(
+    (language) =>
+      language.runtimes.flatMap((candidate) =>
+        language.enabled &&
+        candidate.verification.readiness === "ready" &&
+        (props.sourceLanguageId === undefined ||
+          language.descriptor.languageId === props.sourceLanguageId)
+          ? [
+              {
+                language,
+                candidate,
+                key: `${language.descriptor.languageId}:${candidate.profile.executable}`,
+              },
+            ]
+          : [],
       ),
-    [runtimes.data, props.sourceLanguageId],
   );
   const defaultRuntime = defaultComputeRuntime(
     (runtimes.data?.languages ?? []).filter(
@@ -809,7 +808,7 @@ export function ComputePanel(props: {
       ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
       : (readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? null);
 
-  const allSessions = useMemo(() => {
+  const allSessions = (() => {
     return mergeComputeSessionRecords(
       sessions.data ?? [],
       exactSession.data === null ? [] : [exactSession.data],
@@ -819,7 +818,7 @@ export function ComputePanel(props: {
         right.createdAt.localeCompare(left.createdAt) ||
         right.sessionId.localeCompare(left.sessionId),
     );
-  }, [events.data?.sessions, exactSession.data, sessions.data]);
+  })();
   const ownedSession = allSessions.find(
     (session) => session.sessionId === contextBinding?.sessionId,
   );
@@ -830,19 +829,15 @@ export function ComputePanel(props: {
   }, [props.contextId, ownedSession]);
   const canRetryStart =
     startRetryAvailable || (contextBinding?.lifecycle === "starting" && operation === null);
-  const contextSessions = useMemo(() => {
+  const contextSessions = (() => {
     if (props.contextId === undefined) return allSessions;
     if (contextBinding?.sessionId === null || contextBinding?.sessionId === undefined) return [];
     return allSessions.filter((session) => session.sessionId === contextBinding.sessionId);
-  }, [allSessions, contextBinding, props.contextId]);
-  const capacitySessions = useMemo(
-    () =>
-      allSessions.filter(
-        (session) =>
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) &&
-          session.sessionId !== contextBinding?.sessionId,
-      ),
-    [allSessions, contextBinding?.sessionId],
+  })();
+  const capacitySessions = allSessions.filter(
+    (session) =>
+      !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) &&
+      session.sessionId !== contextBinding?.sessionId,
   );
   const selectedOverviewSession =
     props.contextId === undefined
@@ -877,7 +872,7 @@ export function ComputePanel(props: {
           input: { cwd: props.cwd, sessionId: selectedSession.sessionId, limit: 100 },
         }),
   );
-  const selectedExecutions = useMemo(() => {
+  const selectedExecutions = (() => {
     if (selectedSession === null) return [];
     const byId = new Map<string, ComputeExecutionRecord>();
     for (const execution of executions.data ?? []) {
@@ -899,7 +894,7 @@ export function ComputePanel(props: {
           right.request.submittedAt.localeCompare(left.request.submittedAt) ||
           right.request.executionId.localeCompare(left.request.executionId),
       );
-  }, [events.data?.executions, executions.data, props.sourcePath, selectedSession]);
+  })();
   const selectedExecution =
     selectedExecutions.find((execution) => execution.request.executionId === selectedExecutionId) ??
     selectedExecutions[0] ??
@@ -935,7 +930,7 @@ export function ComputePanel(props: {
     focusExecutionPending: props.focusExecutionId !== undefined && props.focusExecutionId !== null,
     sourceFile: props.sourcePath !== undefined,
   });
-  const variablesRefreshToken = useMemo(() => {
+  const variablesRefreshToken = (() => {
     if (liveSession === null) return null;
     const latest = [...(events.data?.executions.get(liveSession.sessionId)?.values() ?? [])]
       .filter(
@@ -946,9 +941,9 @@ export function ComputePanel(props: {
       .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt))
       .at(-1);
     return `${liveSession.sessionId}:${liveSession.generation}:${latest?.request.executionId ?? "empty"}:${latest?.result?.finishedAt ?? ""}`;
-  }, [events.data?.executions, liveSession]);
+  })();
 
-  const refreshVariables = useCallback(async () => {
+  const refreshVariables = useStableCallback(async () => {
     if (
       panelView !== "variables" ||
       liveSession === null ||
@@ -959,7 +954,7 @@ export function ComputePanel(props: {
     ) {
       return;
     }
-    const request = variableRequestRef.current + 1;
+    const request = Symbol();
     variableRequestRef.current = request;
     setVariablesLoading(true);
     setVariableError(null);
@@ -982,150 +977,192 @@ export function ComputePanel(props: {
     setVariableError(
       error instanceof Error ? error.message : "Unable to inspect the current variables.",
     );
-  }, [
-    inspectVariables,
-    liveSession,
-    panelView,
-    props.cwd,
-    props.environmentId,
-    selectedIsLive,
-    variablesAvailable,
-  ]);
+  });
 
-  useEffect(() => {
-    if (selectedSession !== null && selectedSession.sessionId !== selectedSessionId) {
-      setSelectedSessionId(selectedSession.sessionId);
-    }
-  }, [selectedSession, selectedSessionId]);
+  if (selectedSession !== null && selectedSession.sessionId !== selectedSessionId) {
+    setSelectedSessionId(selectedSession.sessionId);
+  }
 
-  useEffect(() => {
+  const [previousFocus, setPreviousFocus] = useState<{
+    sessionId: typeof props.focusSessionId;
+    executionId: typeof props.focusExecutionId;
+  } | null>(null);
+  if (
+    previousFocus?.sessionId !== props.focusSessionId ||
+    previousFocus?.executionId !== props.focusExecutionId
+  ) {
+    setPreviousFocus({ sessionId: props.focusSessionId, executionId: props.focusExecutionId });
     if (props.focusSessionId) setSelectedSessionId(props.focusSessionId);
     if (props.focusExecutionId) setSelectedExecutionId(props.focusExecutionId);
-  }, [props.focusExecutionId, props.focusSessionId]);
+  }
 
-  useEffect(() => {
-    variableRequestRef.current += 1;
+  const [previousVariablesSession, setPreviousVariablesSession] = useState({
+    generation: liveSession?.generation,
+    sessionId: liveSession?.sessionId,
+  });
+  if (
+    previousVariablesSession.generation !== liveSession?.generation ||
+    previousVariablesSession.sessionId !== liveSession?.sessionId
+  ) {
+    setPreviousVariablesSession({
+      generation: liveSession?.generation,
+      sessionId: liveSession?.sessionId,
+    });
     setVariableSnapshot(null);
     setVariableError(null);
     setVariablesLoading(false);
-  }, [liveSession?.generation, liveSession?.sessionId]);
+  }
 
   useEffect(() => {
-    void refreshVariables();
-  }, [refreshVariables, variablesRefreshToken]);
-
+    variableRequestRef.current = Symbol(
+      `${previousVariablesSession.sessionId}:${previousVariablesSession.generation}`,
+    );
+  }, [previousVariablesSession]);
+  const variableRefresh = {
+    token: variablesRefreshToken,
+    panelView,
+    liveSession,
+    selectedIsLive,
+    variablesAvailable,
+    inspectVariables,
+    cwd: props.cwd,
+    environmentId: props.environmentId,
+  };
   useEffect(() => {
-    const newestId = selectedExecutions[0]?.request.executionId ?? null;
-    if (newestId !== null && newestId !== newestExecutionRef.current) {
-      setSelectedExecutionId(newestId);
-    }
-    newestExecutionRef.current = newestId;
-  }, [selectedExecutions]);
+    if (variableRefresh.token !== null) void refreshVariables();
+  }, [refreshVariables, variableRefresh]);
 
-  useEffect(() => {
-    if (!events.data?.stale) return;
+  const newestId = selectedExecutions[0]?.request.executionId ?? null;
+  if (newestId !== newestExecutionId) {
+    setNewestExecutionId(newestId);
+    if (newestId !== null) setSelectedExecutionId(newestId);
+  }
+
+  const refreshStaleQueries = useStableCallback(() => {
     sessions.refresh();
     executions.refresh();
     events.refresh();
-    // Query refresh functions are stable; the stale boundary is the trigger.
-  }, [events.data?.stale]);
-
+  });
   useEffect(() => {
-    const terminalIds = new Set(
-      selectedExecutions.flatMap((execution) =>
-        execution.result !== null &&
-        TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
-          ? [execution.request.executionId]
-          : [],
-      ),
-    );
-    const observed = observedTerminalExecutionsRef.current;
-    observedTerminalExecutionsRef.current = terminalIds;
-    if (observed === null || [...terminalIds].every((id) => observed.has(id))) return;
-    sessions.refresh();
-    executions.refresh();
-    refreshProjectFiles(props.environmentId, props.cwd);
-    // Refresh ordinary workspace state once after a newly terminal execution.
-  }, [props.cwd, props.environmentId, selectedExecutions]);
+    if (!events.data?.stale) return;
+    refreshStaleQueries();
+    // Query refresh functions are stable; the stale boundary is the trigger.
+  }, [events.data?.stale, refreshStaleQueries]);
 
-  const stopUnusedSession = useCallback(
-    async (session: ComputeSessionRecord) => {
-      if (stoppingUnusedSession !== null) return;
-      setStoppingUnusedSession(session.sessionId);
-      let result: Awaited<ReturnType<typeof stopSession>>;
-      try {
-        result = await stopSession({
-          environmentId: props.environmentId,
-          input: {
-            cwd: props.cwd,
-            sessionId: session.sessionId,
-            expectedGeneration: session.generation,
-          },
-        });
-      } catch (error) {
-        setStoppingUnusedSession(null);
-        toastManager.add({
-          type: "error",
-          title: `Unable to stop ${session.label}`,
-          description: error instanceof Error ? error.message : "The stop request failed.",
-        });
-        return;
-      }
+  const observeTerminalExecutions = useStableCallback(
+    (_observation: {
+      readonly cwd: string;
+      readonly environmentId: EnvironmentId;
+      readonly requestInputs: ReadonlyArray<unknown>;
+    }) => {
+      const terminalIds = new Set(
+        selectedExecutions.flatMap((execution) =>
+          execution.result !== null &&
+          TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
+            ? [execution.request.executionId]
+            : [],
+        ),
+      );
+      const observed = observedTerminalExecutionsRef.current;
+      observedTerminalExecutionsRef.current = terminalIds;
+      if (observed === null || [...terminalIds].every((id) => observed.has(id))) return;
+      sessions.refresh();
+      executions.refresh();
+      refreshProjectFiles(props.environmentId, props.cwd);
+      // Refresh ordinary workspace state once after a newly terminal execution.
+    },
+  );
+  useEffect(() => {
+    observeTerminalExecutions({
+      cwd: props.cwd,
+      environmentId: props.environmentId,
+      requestInputs: [events.data?.executions, executions.data, props.sourcePath, selectedSession],
+    });
+  }, [
+    props.cwd,
+    props.environmentId,
+    events.data?.executions,
+    executions.data,
+    props.sourcePath,
+    selectedSession,
+    observeTerminalExecutions,
+  ]);
+
+  const stopUnusedSession = async (session: ComputeSessionRecord) => {
+    if (stoppingUnusedSession !== null) return;
+    setStoppingUnusedSession(session.sessionId);
+    let result: Awaited<ReturnType<typeof stopSession>>;
+    try {
+      result = await stopSession({
+        environmentId: props.environmentId,
+        input: {
+          cwd: props.cwd,
+          sessionId: session.sessionId,
+          expectedGeneration: session.generation,
+        },
+      });
+    } catch (error) {
       setStoppingUnusedSession(null);
-      if (result._tag === "Success") {
-        for (const binding of Object.values(useComputeContextStore.getState().bindings)) {
-          if (
-            binding.environmentId === props.environmentId &&
-            binding.cwd === props.cwd &&
-            binding.sessionId === session.sessionId &&
-            binding.generation === session.generation
-          ) {
-            useComputeContextStore.getState().markSessionTerminal({
-              contextId: binding.contextId,
-              sessionId: result.value.sessionId,
-              generation: result.value.generation,
-            });
-          }
+      toastManager.add({
+        type: "error",
+        title: `Unable to stop ${session.label}`,
+        description: error instanceof Error ? error.message : "The stop request failed.",
+      });
+      return;
+    }
+    setStoppingUnusedSession(null);
+    if (result._tag === "Success") {
+      for (const binding of Object.values(useComputeContextStore.getState().bindings)) {
+        if (
+          binding.environmentId === props.environmentId &&
+          binding.cwd === props.cwd &&
+          binding.sessionId === session.sessionId &&
+          binding.generation === session.generation
+        ) {
+          useComputeContextStore.getState().markSessionTerminal({
+            contextId: binding.contextId,
+            sessionId: result.value.sessionId,
+            generation: result.value.generation,
+          });
         }
-        sessions.refresh();
-        events.refresh();
+      }
+      sessions.refresh();
+      events.refresh();
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      operationFailure(`Unable to stop ${session.label}`, result);
+    }
+  };
+
+  const confirmFailedStart = async (
+    sessionId: ComputeSessionId,
+    generation: ComputeSessionRecord["generation"],
+  ) => {
+    if (props.contextId === undefined) return;
+    try {
+      const observed = await getSession({
+        environmentId: props.environmentId,
+        input: { cwd: props.cwd, sessionId },
+      });
+      if (
+        observed._tag !== "Success" ||
+        observed.value === null ||
+        observed.value.sessionId !== sessionId ||
+        observed.value.generation !== generation ||
+        !TERMINAL_COMPUTE_SESSION_STATUSES.has(observed.value.status)
+      ) {
         return;
       }
-      if (!isAtomCommandInterrupted(result)) {
-        operationFailure(`Unable to stop ${session.label}`, result);
-      }
-    },
-    [events, props.cwd, props.environmentId, sessions, stopSession, stoppingUnusedSession],
-  );
-
-  const confirmFailedStart = useCallback(
-    async (sessionId: ComputeSessionId, generation: ComputeSessionRecord["generation"]) => {
-      if (props.contextId === undefined) return;
-      try {
-        const observed = await getSession({
-          environmentId: props.environmentId,
-          input: { cwd: props.cwd, sessionId },
-        });
-        if (
-          observed._tag !== "Success" ||
-          observed.value === null ||
-          observed.value.sessionId !== sessionId ||
-          observed.value.generation !== generation ||
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(observed.value.status)
-        ) {
-          return;
-        }
-        useComputeContextStore.getState().markSessionTerminal({
-          contextId: props.contextId,
-          sessionId,
-          generation,
-        });
-      } catch {
-        // A rejected read is not proof that the independent server startup stopped.
-      }
-    },
-    [getSession, props.contextId, props.cwd, props.environmentId],
-  );
+      useComputeContextStore.getState().markSessionTerminal({
+        contextId: props.contextId,
+        sessionId,
+        generation,
+      });
+    } catch {
+      // A rejected read is not proof that the independent server startup stopped.
+    }
+  };
 
   const handleStart = async () => {
     if (selectedRuntime === null) return;
@@ -1305,7 +1342,7 @@ export function ComputePanel(props: {
     void runSessionCommand(confirmation.kind, confirmation.session);
   };
 
-  const sessionConfirmationAnchor = useMemo(() => {
+  const sessionConfirmationAnchor = (() => {
     if (sessionConfirmation === null) return undefined;
     const { x, y, width, height } = sessionConfirmation.anchorRect;
     return {
@@ -1320,7 +1357,7 @@ export function ComputePanel(props: {
         height,
       }),
     };
-  }, [sessionConfirmation]);
+  })();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">

@@ -21,7 +21,7 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
       if (epoch !== currentEpoch || context === undefined) {
         epoch = currentEpoch;
         const crypto = yield* Crypto.Crypto;
-        context = yield* crypto.randomUUIDv4.pipe(Effect.orElseSucceed(() => undefined));
+        context = yield* crypto.randomUUIDv4().pipe(Effect.orElseSucceed(() => undefined));
       }
       return context === undefined ? current : { ...current, collectionContext: context };
     },

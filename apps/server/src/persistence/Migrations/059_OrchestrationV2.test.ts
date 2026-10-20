@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 65 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 68 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -37,6 +37,9 @@ layer("059_OrchestrationV2", (it) => {
         [63, "McpAppModelContext"],
         [64, "ThreadSnapshotWindowIndexes"],
         [65, "PullRequestReviewGuides"],
+        [66, "ThreadFailureLookupIndex"],
+        [67, "DropUnusedV1Projections"],
+        [68, "CanonicalizeThreadPullRequestLinks"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -67,6 +70,9 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 63, name: "McpAppModelContext" },
         { migration_id: 64, name: "ThreadSnapshotWindowIndexes" },
         { migration_id: 65, name: "PullRequestReviewGuides" },
+        { migration_id: 66, name: "ThreadFailureLookupIndex" },
+        { migration_id: 67, name: "DropUnusedV1Projections" },
+        { migration_id: 68, name: "CanonicalizeThreadPullRequestLinks" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -198,7 +204,9 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("065_PullRequestRevie
       const before =
         yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
       const webhookColumns = yield* sql`PRAGMA table_info(scheduled_tasks)`;
-      assert.deepStrictEqual(yield* runMigrations(), [[65, "PullRequestReviewGuides"]]);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 65 }), [
+        [65, "PullRequestReviewGuides"],
+      ]);
       assert.deepStrictEqual(
         yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 64 ORDER BY migration_id`,
         before,
@@ -223,7 +231,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("065_PullRequestRevie
         yield* repository.put(key, { ...guide, headSha: "updated-head" });
         assert.equal(Option.getOrNull(yield* repository.get(key))?.headSha, "updated-head");
       }).pipe(Effect.provide(ReviewGuides.layer));
-      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 65 }), []);
     }),
   );
 });

@@ -17,13 +17,17 @@ import {
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
+  readonly readerWorker?: boolean;
+  readonly checkpointWorker?: boolean;
   readonly spanAttributes?: Record<string, unknown>;
+  // SCIENT-FORK:START — open options for the Overleaf state store's own SQLite file.
   /**
    * Applied while the Bun client opens the file. The Node client sets no busy
    * timeout and no journal mode on open, so it needs neither.
    */
   readonly busyTimeout?: Duration.Input;
   readonly disableWAL?: boolean;
+  // SCIENT-FORK:END
 };
 
 type Loader = {
@@ -34,8 +38,7 @@ const defaultSqliteClientLoaders = {
   node: () => import("@t3tools/shared/nodeSqliteClient"),
 } satisfies Record<string, () => Promise<Loader>>;
 
-/** A client for any SQLite file on the running runtime (Bun or Node), without V2 setup. */
-export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
+const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   config: RuntimeSqliteLayerConfig,
 ) {
   const runtime = process.versions.bun !== undefined ? "bun" : "node";
@@ -43,12 +46,14 @@ export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(functi
   const clientModule = yield* Effect.promise<Loader>(loader);
   return clientModule.layer(config);
 }, Layer.unwrap);
+// SCIENT-FORK:START — the Overleaf state store opens its own SQLite file, without V2 setup.
+export { makeRuntimeSqliteLayer };
+// SCIENT-FORK:END
 
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
 import * as ServerConfig from "../config.ts";
 
-// Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
@@ -58,11 +63,34 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
       yield* sql`PRAGMA busy_timeout = 5000;`;
       yield* sql`PRAGMA foreign_keys = ON;`;
+      // Only an empty file can switch modes here; an existing database needs the
+      // offline VACUUM that `t3 doctor` runs, which rebuilds it with pointer maps.
+      const tables = yield* sql<{
+        readonly count: number;
+      }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'`;
+      if (tables[0]?.count === 0) yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
       yield* sql`PRAGMA journal_mode = WAL;`;
+      // SCIENT-FORK:START — preserve committed scientific work across power loss.
+      yield* sql`PRAGMA synchronous = FULL;`;
+      // SCIENT-FORK:END
+      // macOS fsync() does not flush the drive cache. F_FULLFSYNC makes checkpoints
+      // reach disk; other platforms ignore it. Per-commit fullfsync stays off.
+      yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
       // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* runMigrations();
+      // No planner statistics. Collecting them reads every page of the large
+      // tables, and stats taken while a table was small make the planner scan it
+      // once it grows. Without them SQLite assumes large tables and uses indexes;
+      // the few queries that still pick a worse index name theirs with INDEXED BY.
+      // Older builds collected stats, so clear them. A connection loads stats
+      // when it opens, so this one must reload them after the delete.
+      const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
+      if (statTables.length > 0) {
+        yield* sql`DELETE FROM sqlite_stat1;`;
+        yield* sql`ANALYZE sqlite_schema;`;
+      }
       // SCIENT-FORK:START
       yield* runScientMigrations(sql);
       // SCIENT-FORK:END
@@ -87,6 +115,10 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     }),
     makeRuntimeSqliteLayer({
       filename: dbPath,
+      readerWorker: true,
+      // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
+      // the event loop so a slow flush cannot stall clients.
+      checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

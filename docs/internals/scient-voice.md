@@ -182,16 +182,32 @@ writes a per-file provenance receipt.
 macOS is built from pinned source with Accelerate and embedded Metal support,
 with macOS 12 as the explicit helper deployment target. On macOS 11 the voice
 runtime fails closed before launch rather than invoking unavailable Metal APIs.
-Linux arm64/x64 and Windows x64 use verified upstream archives. There is no
-verified Windows arm64 runtime, so that artifact fails closed instead of
-silently shipping voice without a helper. Desktop packaging stages the runtime
-as an external resource; native executables are never stored in Git.
+Linux arm64/x64 use verified upstream archives. There is no verified Windows
+arm64 runtime, so that artifact fails closed instead of silently shipping voice
+without a helper. Desktop packaging stages the runtime as an external resource;
+native executables are never stored in Git.
+
+Windows x64 is built from pinned source with MSVC so that it needs nothing
+Windows lacks. The upstream Windows archive needed the Visual C++
+Redistributable, including its OpenMP library (`vcomp140.dll`), which many
+machines do not have; voice then failed to start. The build uses ggml's own
+thread pool instead of OpenMP, links the C and C++ runtime into each file, and
+keeps one CPU backend per instruction-set level so each machine loads the
+fastest one it supports. Staging reads every staged executable and DLL and
+fails if one needs a library that is neither part of Windows nor staged beside
+it. Windows packaging CI then transcribes a reference recording with the
+installed runtime through the app's own runtime owner
+(`scripts/qualify-whisper-runtime.mjs`).
 
 For a development checkout, run:
 
 ```text
 pnpm voice:runtime:stage
 ```
+
+On Windows this needs Visual Studio 2022 or later with the C++ desktop workload
+(Build Tools are enough). Without them, staging stops with that message; a
+runtime another checkout on the machine has staged is still used.
 
 ### Development apps on one machine
 

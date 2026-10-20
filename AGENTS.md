@@ -30,7 +30,7 @@ Terminology: `docs/internals/glossary.md`.
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
 - `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
 - Inferred types over annotations. `any` is the enemy.
-- Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
+- Comments say why: a constraint, an external quirk, or an invariant the code can't show. Don't restate names or signatures, narrate steps, or record history. `t3code/no-low-value-comments` catches the mechanical cases.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
 
@@ -65,8 +65,10 @@ Terminology: `docs/internals/glossary.md`.
   Preserve unrelated working-tree and staged changes. Commit only the changes
   intended for the requested commit.
 - Follow `docs/operations/local-dev-app.md` for desktop lifecycle operations.
-  Stable and feature candidates have separate identities and state; never
-  repoint the stable launcher to a feature checkout as a shortcut.
+  Stable and feature candidates have separate identities and state. Switch the
+  stable app only with `pnpm dev:app:review <ref>`
+  (`docs/operations/dev-app-review.md`); never edit its review checkout,
+  profiles or launchers by hand.
   The shared `.scient/skills/scient-dev-app/SKILL.md` routes agent-assisted
   lifecycle work to that guide and its Windows instructions. Read it when
   launching, verifying, restarting, or stopping a candidate; it does not grant

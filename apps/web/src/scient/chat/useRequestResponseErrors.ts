@@ -1,12 +1,5 @@
 import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useMemo, useState } from "react";
-
-import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  type PendingApproval,
-  type PendingUserInput,
-} from "~/session-logic";
+import { useState } from "react";
 
 /**
  * A failed response stays visible on the request it belongs to, so the
@@ -17,36 +10,24 @@ import {
 export function useRequestResponseErrors(input: {
   readonly environmentId: EnvironmentId;
   readonly activeThreadId: ThreadId | null;
-  readonly pendingRequestModel: {
-    readonly approvals: ReadonlyArray<PendingApproval>;
-    readonly userInputs: ReadonlyArray<PendingUserInput>;
-  };
 }) {
-  const { environmentId, activeThreadId, pendingRequestModel } = input;
+  const { environmentId, activeThreadId } = input;
   const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
-  const setRequestResponseError = useCallback(
-    (requestId: RuntimeRequestId, message: string) => {
-      const key = JSON.stringify([environmentId, activeThreadId, requestId]);
-      setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
-    },
-    [activeThreadId, environmentId],
-  );
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(() => {
-    const withLocalError = <T extends { requestId: RuntimeRequestId }>(request: T) => {
-      const responseError =
-        requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
+  const setRequestResponseError = (requestId: RuntimeRequestId, message: string) => {
+    const key = JSON.stringify([environmentId, activeThreadId, requestId]);
+    setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
+  };
+  /** The requests with their failed-response message; the same array when none failed. */
+  const withResponseErrors = <T extends { readonly requestId: RuntimeRequestId }>(
+    requests: T[],
+  ): Array<T & { readonly responseError?: string }> => {
+    const errorFor = (request: T) =>
+      requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
+    if (!requests.some((request) => errorFor(request) !== undefined)) return requests;
+    return requests.map((request) => {
+      const responseError = errorFor(request);
       return responseError ? { ...request, responseError } : request;
-    };
-    return {
-      approvals: derivePendingApprovals(pendingRequestModel.approvals).map(withLocalError),
-      userInputs: derivePendingUserInputs(pendingRequestModel.userInputs).map(withLocalError),
-    };
-  }, [
-    pendingRequestModel.approvals,
-    pendingRequestModel.userInputs,
-    requestResponseErrors,
-    environmentId,
-    activeThreadId,
-  ]);
-  return { setRequestResponseError, pendingApprovals, pendingUserInputs };
+    });
+  };
+  return { setRequestResponseError, withResponseErrors };
 }

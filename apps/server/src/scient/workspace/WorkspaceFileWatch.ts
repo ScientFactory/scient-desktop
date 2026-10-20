@@ -35,6 +35,9 @@ export interface WorkspaceFileWatchMethods {
 export function makeWorkspaceFileWatch(deps: {
   readonly path: Path.Path;
   readonly workspacePaths: WorkspacePaths.WorkspacePaths["Service"];
+  readonly waitForSettlement?: (
+    input: ProjectReadFileInput,
+  ) => Effect.Effect<void, WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError>;
 }) {
   const { path, workspacePaths } = deps;
 
@@ -96,14 +99,24 @@ export function makeWorkspaceFileWatch(deps: {
       // not merely the directory containing the link. Missing files already
       // resolve through their canonical parent above.
       const watchDirectory = path.dirname(realTargetPath);
-      return { realTargetPath, target, watchDirectory };
+      const root = yield* Effect.promise(() => NodeFSP.realpath(input.cwd).catch(() => null));
+      const relative = root === null ? null : path.relative(root, realTargetPath);
+      const settlementInput =
+        root !== null &&
+        relative !== null &&
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+          ? { cwd: root, relativePath: relative }
+          : null;
+      return { realTargetPath, target, watchDirectory, settlementInput };
     },
   );
 
   const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
     Stream.unwrap(
       resolveRealFileWatchTarget(input).pipe(
-        Effect.map(({ realTargetPath, target, watchDirectory }) => {
+        Effect.map(({ realTargetPath, target, watchDirectory, settlementInput }) => {
           return Stream.callback<ProjectFileWatchEvent, WorkspaceFileSystemOperationError>(
             (queue) =>
               Effect.acquireRelease(
@@ -159,9 +172,8 @@ export function makeWorkspaceFileWatch(deps: {
                 (watcher) => Effect.sync(() => watcher.close()),
               ),
           ).pipe(
-            // Editors and atomic writers commonly produce several events for
-            // one save. Batch them after the write settles, but preserve the
-            // explicit readiness signal used by clients and deterministic tests.
+            // Batching coalesces hints, not native retirement. Readiness remains
+            // independent; changed-file hints join publication settlement below.
             Stream.groupedWithin(256, "100 millis"),
             Stream.flatMap((events) => {
               const coalesced: ProjectFileWatchEvent[] = [];
@@ -173,6 +185,13 @@ export function makeWorkspaceFileWatch(deps: {
               }
               return Stream.fromIterable(coalesced);
             }),
+            Stream.mapEffect((event) =>
+              event._tag === "file-changed" &&
+              settlementInput !== null &&
+              deps.waitForSettlement !== undefined
+                ? deps.waitForSettlement(settlementInput).pipe(Effect.as(event))
+                : Effect.succeed(event),
+            ),
           );
         }),
       ),

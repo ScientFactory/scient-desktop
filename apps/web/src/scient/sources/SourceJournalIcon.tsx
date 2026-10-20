@@ -32,9 +32,19 @@ export function SourceJournalIcon(props: {
   const resolveIcon = props.resolveIcon ?? readScientSourceJournalIcon;
   const eligible = canResolveJournalIcon(props.record);
 
-  useEffect(() => {
+  const [previousVisibility, setPreviousVisibility] = useState({
+    eligible: eligible,
+    sourceId: props.record.sourceId,
+  });
+  if (
+    previousVisibility.eligible !== eligible ||
+    previousVisibility.sourceId !== props.record.sourceId
+  ) {
+    setPreviousVisibility({ eligible: eligible, sourceId: props.record.sourceId });
     setShouldResolve(typeof IntersectionObserver === "undefined");
-    if (!eligible || typeof IntersectionObserver === "undefined") return;
+  }
+  useEffect(() => {
+    if (!previousVisibility.eligible || typeof IntersectionObserver === "undefined") return;
     const element = containerRef.current;
     if (!element) return;
     const observer = new IntersectionObserver(
@@ -47,16 +57,46 @@ export function SourceJournalIcon(props: {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [eligible, props.record.sourceId]);
+  }, [previousVisibility]);
 
-  useEffect(() => {
-    let active = true;
+  const [previousIconInput, setPreviousIconInput] = useState({
+    eligible: eligible,
+    environmentId: props.environmentId,
+    revision: props.record.revision,
+    sourceId: props.record.sourceId,
+    root: props.root,
+    resolveIcon: resolveIcon,
+    shouldResolve: shouldResolve,
+  });
+  if (
+    previousIconInput.eligible !== eligible ||
+    previousIconInput.environmentId !== props.environmentId ||
+    previousIconInput.revision !== props.record.revision ||
+    previousIconInput.sourceId !== props.record.sourceId ||
+    previousIconInput.root !== props.root ||
+    previousIconInput.resolveIcon !== resolveIcon ||
+    previousIconInput.shouldResolve !== shouldResolve
+  ) {
+    setPreviousIconInput({
+      eligible: eligible,
+      environmentId: props.environmentId,
+      revision: props.record.revision,
+      sourceId: props.record.sourceId,
+      root: props.root,
+      resolveIcon: resolveIcon,
+      shouldResolve: shouldResolve,
+    });
     setIcon(null);
     setImageFailed(false);
+  }
+  useEffect(() => {
+    let active = true;
+    const { eligible, shouldResolve, resolveIcon, environmentId, root, sourceId } =
+      previousIconInput;
     if (!eligible || !shouldResolve) return () => undefined;
-    void resolveIcon(props.environmentId, {
-      root: props.root,
-      sourceId: props.record.sourceId,
+    void resolveIcon(environmentId, {
+      root,
+      sourceId,
     })
       .then((result) => {
         if (active) setIcon(result);
@@ -67,15 +107,7 @@ export function SourceJournalIcon(props: {
     return () => {
       active = false;
     };
-  }, [
-    eligible,
-    props.environmentId,
-    props.record.revision,
-    props.record.sourceId,
-    props.root,
-    resolveIcon,
-    shouldResolve,
-  ]);
+  }, [previousIconInput]);
 
   const journalIcon = (
     <span

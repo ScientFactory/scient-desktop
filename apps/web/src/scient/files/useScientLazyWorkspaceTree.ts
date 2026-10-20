@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import type { FileTree, FileTreeRowDecorationRenderer } from "@pierre/trees";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -5,7 +6,7 @@ import type {
   ProjectDirectoryEntry,
   ProjectDirectoryView,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { PIERRE_TREE_UNSAFE_CSS } from "~/pierre-tree-theme";
 import { projectEnvironment } from "~/state/projects";
@@ -63,27 +64,23 @@ export function useScientLazyWorkspaceTree(directoryView: ProjectDirectoryView) 
   const [treeSnapshot, setTreeSnapshot] =
     useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
   const directoryViewRef = useRef(directoryView);
-  directoryViewRef.current = directoryView;
-  const entryKinds = useMemo(
-    () =>
-      new Map(
-        [...treeSnapshot.entries.values()].map(
-          (entry) => [entry.relativePath, entry.kind] as const,
-        ),
-      ),
-    [treeSnapshot.entries],
+  useLayoutEffect(() => {
+    directoryViewRef.current = directoryView;
+  });
+  const entryKinds = new Map(
+    [...treeSnapshot.entries.values()].map((entry) => [entry.relativePath, entry.kind] as const),
   );
-  const loadedDirectoryPaths = useMemo(
-    () =>
-      [...treeSnapshot.entries.values()]
-        .filter((entry) => entry.kind === "directory")
-        .map((entry) => `${entry.relativePath}/`),
-    [treeSnapshot.entries],
-  );
+  const loadedDirectoryPaths = [...treeSnapshot.entries.values()]
+    .filter((entry) => entry.kind === "directory")
+    .map((entry) => `${entry.relativePath}/`);
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectDirectoryEntry["kind"]>>(entryKinds);
-  entryKindsRef.current = entryKinds;
+  useLayoutEffect(() => {
+    entryKindsRef.current = entryKinds;
+  });
   const treeEntriesRef = useRef(treeSnapshot.entries);
-  treeEntriesRef.current = treeSnapshot.entries;
+  useLayoutEffect(() => {
+    treeEntriesRef.current = treeSnapshot.entries;
+  });
   const treeControllerRef = useRef<LazyWorkspaceTreeController | null>(null);
   return {
     runListDirectory,
@@ -137,17 +134,14 @@ export function useScientLazyWorkspaceTreeLoading({
     hasCurrentSearch && !pathSearch.isPending
       ? JSON.stringify([directoryView, normalizedSearchValue, pathSearch.entries])
       : null;
-  const loadDirectory = useCallback(
-    async (relativeDirectory: string, view: ProjectDirectoryView) => {
-      const result = await runListDirectory({
-        environmentId,
-        input: { cwd, relativeDirectory, view },
-      });
-      if (result._tag === "Success") return result.value;
-      throw squashAtomCommandFailure(result);
-    },
-    [cwd, environmentId, runListDirectory],
-  );
+  const loadDirectory = async (relativeDirectory: string, view: ProjectDirectoryView) => {
+    const result = await runListDirectory({
+      environmentId,
+      input: { cwd, relativeDirectory, view },
+    });
+    if (result._tag === "Success") return result.value;
+    throw squashAtomCommandFailure(result);
+  };
 
   useEffect(() => {
     setTreeSnapshot(INITIAL_TREE_SNAPSHOT);
@@ -174,10 +168,7 @@ export function useScientLazyWorkspaceTreeLoading({
 
   useEffect(() => {
     if (!isSearching || searchResultKey === null) return;
-    if (pathSearch.entries.length === 0) {
-      setPrimedSearchKey(searchResultKey);
-      return;
-    }
+    if (pathSearch.entries.length === 0) return;
 
     const controller = treeControllerRef.current;
     if (!controller) return;
@@ -193,6 +184,8 @@ export function useScientLazyWorkspaceTreeLoading({
 
   const isSearchPending =
     isSearching &&
-    (!hasCurrentSearch || pathSearch.isPending || searchResultKey !== primedSearchKey);
+    (!hasCurrentSearch ||
+      pathSearch.isPending ||
+      (pathSearch.entries.length > 0 && searchResultKey !== primedSearchKey));
   return { isSearchPending };
 }

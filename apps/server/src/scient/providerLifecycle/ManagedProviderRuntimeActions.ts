@@ -380,7 +380,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         extendEnv: true,
       }).pipe(
         Effect.provide(NodeServices.layer),
-        Effect.orElseSucceed(() => input.configuredBinaryPath),
+        Effect.map((resolved) => resolved ?? input.configuredBinaryPath),
       )
     : input.configuredBinaryPath;
   const inspection = yield* inspectManaged(artifact).pipe(Effect.orElseSucceed(() => undefined));
@@ -468,6 +468,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         ? (availableArtifact?.version ?? null)
         : null,
       previousManagedVersion: latest?.previousVersion ?? null,
+      qualifiedVersion: currentArtifact?.version ?? null,
+      catalog: yield* catalogService.freshness,
       operation: null,
       message,
       diagnostics: makeManagedProviderRuntimeDiagnostics({

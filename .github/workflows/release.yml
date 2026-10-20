@@ -472,7 +472,7 @@ jobs:
         id: resource_monitor_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/scient-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
           key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Cache Linux capture helpers
@@ -481,8 +481,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
-            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/t3-kde-snap-shot
-            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/t3-hyprland-snap-shot
+            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/scient-kde-snap-shot
+            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/scient-hyprland-snap-shot
           key: linux-capture-helpers-${{ matrix.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
 
       - name: Setup Rust
@@ -547,6 +547,21 @@ jobs:
           if ($null -eq $process -or $process.ExitCode -ne 0) {
             $code = if ($null -ne $process) { $process.ExitCode } else { 1 }
             throw "Visual Studio Installer failed with exit code $code"
+          }
+
+      - name: Initialize the MSVC compiler environment
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$installPath) { throw "Visual Studio C++ tools are unavailable" }
+          & "$installPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          Get-Command cl.exe -ErrorAction Stop | Out-Null
+          foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if (!$value) { throw "Missing compiler environment variable: $name" }
+            "$name=$value" >> $env:GITHUB_ENV
           }
 
       - uses: ./.github/actions/setup-apt-mirrors
@@ -722,8 +737,8 @@ jobs:
       - name: Collect resource monitor
         shell: bash
         run: |
-          binary=t3-resource-monitor
-          [[ "${{ matrix.platform }}" == "win" ]] && binary=t3-resource-monitor.exe
+          binary=scient-resource-monitor
+          [[ "${{ matrix.platform }}" == "win" ]] && binary=scient-resource-monitor.exe
           source="native/resource-monitor/target/${{ matrix.rust_target }}/release/$binary"
           mkdir -p "resource-monitor/${{ matrix.resource_key }}"
           cp "$source" "resource-monitor/${{ matrix.resource_key }}/$binary"
@@ -785,8 +800,8 @@ jobs:
           for dir in resource-monitors/resource-monitor-*; do
             key="${dir##*/resource-monitor-}"
             mkdir -p "apps/server/dist/resource-monitor/$key"
-            cp "$dir"/t3-resource-monitor* "apps/server/dist/resource-monitor/$key/"
-            chmod +x "apps/server/dist/resource-monitor/$key/t3-resource-monitor" 2>/dev/null || true
+            cp "$dir"/scient-resource-monitor* "apps/server/dist/resource-monitor/$key/"
+            chmod +x "apps/server/dist/resource-monitor/$key/scient-resource-monitor" 2>/dev/null || true
           done
           for dir in synctex-runtimes/synctex-runtime-*; do
             key="${dir##*/synctex-runtime-}"
@@ -1035,11 +1050,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$RELEASE_NOTES_BASE64" | base64 --decode > "$RUNNER_TEMP/scient-release-notes.md"
+          # The release body is what the app shows as release notes, so the unsigned-Windows
+          # exception is recorded in this run rather than there.
           if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" ]]; then
-            cat >> "$RUNNER_TEMP/scient-release-notes.md" <<'NOTICE'
-
-          > **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
-          NOTICE
+            echo "Windows installer published unsigned (allow_unsigned_windows=true)." >> "$GITHUB_STEP_SUMMARY"
           fi
           target="$SOURCE_SHA"
           release_args=(--draft --latest=false)

@@ -60,16 +60,14 @@ export function markdownLinkLookupKey(href: string): string {
 
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
-  const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
+  // SCIENT-FORK:START — Chromium on Windows can parse d:alert as a file URL.
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  if (!/^file:/i.test(normalizedHref)) return null;
+  const target = parseFileUrlHref(normalizedHref);
+  // SCIENT-FORK:END
   return target ? `${target.path}${target.hash}` : null;
 }
 
-/**
- * Inline code spans mostly hold identifiers, commands, and refs (`node.meta`,
- * `origin/main`) rather than deliberate link destinations, so auto-linking
- * them demands stronger path evidence than an explicit markdown link does:
- * an unambiguous path prefix, a file extension, or a :line suffix.
- */
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
@@ -101,11 +99,6 @@ export function resolveInlineCodeFileLinkMeta(
   // SCIENT-FORK:END
 }
 
-/**
- * Prose in a workspace file names other files from the repo root (`docs/ai/design.md`),
- * unlike an explicit link. Single-segment names (`design.md:12`) and `./`, `../`
- * paths still read as siblings, and files outside the workspace keep their own base.
- */
 function inlineCodePathNamesFromWorkspaceRoot(
   candidate: string,
   cwd: string | undefined,

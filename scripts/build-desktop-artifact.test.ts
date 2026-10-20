@@ -26,6 +26,7 @@ import {
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
+  readWorkspaceConfig,
   createBuildConfig,
   DesktopBuildPackageVersionMismatchError,
   DESKTOP_ELECTRON_LANGUAGES,
@@ -122,6 +123,23 @@ const stagePackageExtensions = {
   "@electron-webauthn/macos": { peerDependenciesMeta: { typescript: { optional: true } } },
 };
 
+/** The patch suffix belongs to pnpm's approval identity, not the tarball filename. */
+function workspaceAllowBuildTarballPath(key: string): string | undefined {
+  const identity = /(?:^|@)file:(.*)$/u.exec(key)?.[1];
+  if (identity === undefined) return undefined;
+  const patchStart = identity.indexOf("(patch_hash");
+  const tarball = patchStart < 0 ? identity : identity.slice(0, patchStart);
+  if (patchStart >= 0) {
+    assert.match(
+      identity.slice(patchStart),
+      /^\(patch_hash=[a-f0-9]{64}\)$/u,
+      `allowBuilds names a malformed patch identity: ${key}`,
+    );
+  }
+  assert.isNotEmpty(tarball, `allowBuilds names an empty tarball: ${key}`);
+  return tarball;
+}
+
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
   root: string,
@@ -213,6 +231,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
   const resourcesDir = path.join(packagedAppDir, "resources");
   yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
+  yield* fs.makeDirectory(path.join(resourcesDir, "file-exchange"), { recursive: true });
   yield* fs.makeDirectory(path.join(resourcesDir, "synctex-runtime"), { recursive: true });
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   if (input.copyUnpackedNatives) {
@@ -222,8 +241,12 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     );
   }
   yield* fs.writeFileString(
-    path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
+    path.join(resourcesDir, "resource-monitor/scient-resource-monitor.exe"),
     "monitor",
+  );
+  yield* fs.writeFileString(
+    path.join(resourcesDir, "file-exchange/scient-file-publication.exe"),
+    "publication",
   );
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
@@ -498,7 +521,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(preview, "publish");
+      const previewChannel = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.41-preview.20260912.1589",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(preview.publish);
+      assert.isNull(previewChannel.publish);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -514,6 +548,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("disables electron-builder publish detection for local builds", () =>
+    Effect.gen(function* () {
+      const local = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(local.publish);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it("stages only the desktop main-process externals", () => {
@@ -670,6 +720,54 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
+  // pnpm writes "set this to true or false" placeholders into allowBuilds when a
+  // tarball changes. pnpm ignores them, but the release build decode rejects them.
+  it("distinguishes file tarballs from exact pnpm patch approval suffixes", () => {
+    const hash = "a".repeat(64);
+    for (const key of [
+      "file:deps/native.tgz",
+      "native@file:deps/native.tgz",
+      "@scope/native@file:deps/native.tgz",
+      `native@file:deps/native.tgz(patch_hash=${hash})`,
+      `@scope/native@file:deps/native.tgz(patch_hash=${hash})`,
+    ]) {
+      assert.equal(workspaceAllowBuildTarballPath(key), "deps/native.tgz");
+    }
+    assert.equal(workspaceAllowBuildTarballPath("native@1.2.3"), undefined);
+    assert.equal(workspaceAllowBuildTarballPath("native"), undefined);
+    assert.equal(
+      workspaceAllowBuildTarballPath("file:deps/native(stable).tgz"),
+      "deps/native(stable).tgz",
+    );
+    for (const key of [
+      "native@file:",
+      "native@file:deps/native.tgz(patch_hash=)",
+      "native@file:deps/native.tgz(patch_hash=invalid)",
+      "native@file:deps/native.tgz(patch_hash",
+      `native@file:deps/native.tgz(patch_hash=${hash}`,
+      `native@file:deps/native.tgz(patch_hash=${hash})(peer@1.2.3)`,
+    ]) {
+      assert.throws(() => workspaceAllowBuildTarballPath(key));
+    }
+  });
+
+  it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { allowBuilds = {} } = yield* readWorkspaceConfig();
+      const repoRoot = path.join(import.meta.dirname, "..");
+      for (const key of Object.keys(allowBuilds)) {
+        const tarball = workspaceAllowBuildTarballPath(key);
+        if (tarball === undefined) continue;
+        assert.isTrue(
+          yield* fs.exists(path.join(repoRoot, tarball)),
+          `allowBuilds names a missing tarball: ${key}`,
+        );
+      }
+    }),
+  );
+
   it("stages pnpm 11 allowBuilds and patchedDependencies in the workspace yaml", () => {
     assert.deepStrictEqual(
       createStageWorkspaceConfig({
@@ -708,9 +806,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
 
-    // Empty maps must not be written — pnpm would still require reviewed
-    // packages if allowBuilds is present but incomplete, and omitting empty
-    // patchedDependencies keeps the stage yaml minimal.
     assert.deepStrictEqual(
       createStageWorkspaceConfig({
         platform: "mac",
@@ -731,11 +826,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("limits Electron locales and excludes separately packaged resources", () => {
     assert.deepStrictEqual(DESKTOP_ELECTRON_LANGUAGES, ["en-US"]);
-    // Every platform staging input is emitted once at resources/, so adding one
-    // without its exclusion silently packs a second copy into app.asar. The
-    // snapshot below cannot catch that on its own: adding a resource and
-    // forgetting the exclusion leaves the exclusion list untouched, so it still
-    // matches. Assert the invariant first, where the failure names the culprit.
     for (const resource of [
       ...WSL_RUNTIME_EXTRA_RESOURCES,
       ...LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
@@ -755,6 +845,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!**/node_modules/@cursor/sdk-*/**/*",
       "!apps/desktop/prod-resources/cursor-sdk",
       "!apps/desktop/prod-resources/cursor-sdk/**/*",
+      "!apps/server/dist/file-exchange",
+      "!apps/server/dist/file-exchange/**/*",
       "!apps/desktop/prod-resources/resource-monitor",
       "!apps/desktop/prod-resources/resource-monitor/**/*",
       "!apps/desktop/prod-resources/whisper-runtime",
@@ -826,8 +918,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
       );
 
-      // Windows unpacks native files explicitly so their JavaScript and metadata
-      // stay archived. Other platforms retain electron-builder's defaults.
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
       assert.deepStrictEqual(mac.asarUnpack, [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`]);
@@ -839,13 +929,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, [
-        ...DESKTOP_EXTRA_RESOURCES,
-        {
-          from: "apps/desktop/prod-resources/file-exchange",
-          to: "file-exchange",
-        },
-      ]);
+      assert.deepStrictEqual(mac.extraResources, [...DESKTOP_EXTRA_RESOURCES]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
@@ -866,7 +950,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         differentialPackage: true,
         include: WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
       });
-      // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@cursor/sdk-*",
         "**/node_modules/@cursor/sdk-*/**",
@@ -911,6 +994,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // Windows uses a custom OpenWith ProgID to preserve the user's default.
       assert.deepStrictEqual(win.fileAssociations, []);
 
+      const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
+      assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
       // Scient has not activated default-browser OS registration.
       assert.deepStrictEqual((mac.mac as Record<string, unknown>).protocols, [
         { name: "Scient", schemes: ["scient"] },
@@ -1045,6 +1130,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }
 
     assert.deepStrictEqual(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, [
+      "!apps/desktop/resources/file-exchange",
+      "!apps/desktop/resources/file-exchange/**/*",
+      "!apps/desktop/prod-resources/file-exchange",
+      "!apps/desktop/prod-resources/file-exchange/**/*",
       "!apps/desktop/resources/resource-monitor",
       "!apps/desktop/resources/resource-monitor/**/*",
       "!apps/desktop/resources/whisper-runtime",
@@ -1082,11 +1171,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             ...(platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
           ];
           const binaryNames: Record<string, string> = {
-            "resource-monitor": "t3-resource-monitor",
+            "resource-monitor": "scient-resource-monitor",
             "whisper-runtime": "whisper-server",
             "synctex-runtime": "synctex",
-            "kde-capture": "t3-kde-snap-shot",
-            "hyprland-capture": "t3-hyprland-snap-shot",
+            "kde-capture": "scient-kde-snap-shot",
+            "hyprland-capture": "scient-hyprland-snap-shot",
           };
           for (const tree of trees) {
             const directory = path.join(stageResourcesDir, tree);
@@ -1635,7 +1724,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
         const binaryPath = path.join(
           repoRoot,
-          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/scient-resource-monitor",
         );
         const stageResourcesDir = path.join(repoRoot, "stage");
         yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
@@ -1659,7 +1748,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.equal(
           yield* fs.readFileString(
-            path.join(stageResourcesDir, "resource-monitor/t3-resource-monitor"),
+            path.join(stageResourcesDir, "resource-monitor/scient-resource-monitor"),
           ),
           "cached monitor",
         );
@@ -1891,7 +1980,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               repoRoot,
               `native/${backend}-snap-shot/target`,
               target,
-              `release/t3-${backend}-snap-shot`,
+              `release/scient-${backend}-snap-shot`,
             );
             const stageResourcesDir = path.join(repoRoot, "stage", backend, arch);
             const spawner = Layer.succeed(
@@ -1925,7 +2014,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             }).pipe(Effect.provide(spawner));
             const installed = path.join(
               stageResourcesDir,
-              `${backend}-capture/t3-${backend}-snap-shot`,
+              `${backend}-capture/scient-${backend}-snap-shot`,
             );
             assert.equal(yield* fs.readFileString(installed), `helper-${arch}`);
             assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
@@ -2181,9 +2270,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
 
     return Effect.gen(function* () {
-      // `universal` is a mac-only arch the option type still admits. The helper
-      // script only knows x64 and arm64, so the request maps to x64, the same
-      // concrete target the Linux resource monitor resolves it to.
       yield* stageBrowserSecret({
         repoRoot: "/repo",
         stageResourcesDir: "/stage/resources",
@@ -2200,7 +2286,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "--arch",
         "x64",
         "--output",
-        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
+        path.join("/stage/resources", "browser-secret", "scient-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
@@ -2224,9 +2310,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
 
     return Effect.gen(function* () {
-      // The helper links against the host's libsecret and its build script is
-      // a no-op elsewhere, so a Linux artifact built on macOS would ship
-      // without it and report the keyring as unavailable on every import.
       const error = yield* stageBrowserSecret({
         repoRoot: "/repo",
         stageResourcesDir: "/stage/resources",
@@ -2378,7 +2461,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* fs.writeFileString(nativePath, "native-binary");
         const resourceMonitorPath = path.join(
           fixture.packagedAppDir,
-          "resources/resource-monitor/t3-resource-monitor.exe",
+          "resources/resource-monitor/scient-resource-monitor.exe",
         );
         yield* fs.remove(resourceMonitorPath);
         yield* fs.makeDirectory(resourceMonitorPath);
@@ -2391,11 +2474,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(resourceMonitorError, WindowsPackagedPayloadValidationError);
         assert.equal(resourceMonitorError.reason, "resource-monitor-missing");
         assert.deepStrictEqual(resourceMonitorError.missingFiles, [
-          "resource-monitor/t3-resource-monitor.exe",
+          "resource-monitor/scient-resource-monitor.exe",
         ]);
 
         yield* fs.remove(resourceMonitorPath, { recursive: true });
         yield* fs.writeFileString(resourceMonitorPath, "monitor");
+        const publicationPath = path.join(
+          fixture.packagedAppDir,
+          "resources/file-exchange/scient-file-publication.exe",
+        );
+        yield* fs.remove(publicationPath);
+        yield* fs.makeDirectory(publicationPath);
+        const publicationError = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(publicationError, WindowsPackagedPayloadValidationError);
+        assert.equal(publicationError.reason, "file-publication-missing");
+        assert.deepStrictEqual(publicationError.missingFiles, [
+          "file-exchange/scient-file-publication.exe",
+        ]);
+        yield* fs.remove(publicationPath, { recursive: true });
+        yield* fs.writeFileString(publicationPath, "publication");
         const syncTexPath = path.join(
           fixture.packagedAppDir,
           "resources/synctex-runtime/synctex.exe",
@@ -2439,8 +2540,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has nine core files, plus the 39 approved component files.
-        for (let index = 0; index < 71; index += 1) {
+        // Fixture has ten core files, plus the 37 approved component files.
+        for (let index = 0; index < 70; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
             "core",
@@ -2452,13 +2553,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64" as const,
         };
         const valid = yield* validateWindowsPackagedPayload(options);
-        assert.equal(valid.fileCount, 119);
+        assert.equal(valid.fileCount, 117);
         yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
         const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
-        assert.equal(error.fileCount, 120);
-        assert.equal(error.fileLimit, 119);
+        assert.equal(error.fileCount, 118);
+        assert.equal(error.fileLimit, 117);
         assert.include(error.message, "core=81");
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
@@ -2667,7 +2768,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
     const configuration = { appId: "com.scientfactory.scient", teamId: "ABC1234567" };
-    // Profiles are CMS envelopes around a plain XML plist.
     const profile = (entitlements: string, outside = "") =>
       `0\x82\x1f\x9a\x06\t*\x86H<?xml version="1.0"?><plist version="1.0"><dict>${outside}<key>Entitlements</key><dict>${entitlements}</dict></dict></plist>\x00\x01`;
     const teamWildcardGroups = `<key>keychain-access-groups</key>
@@ -2687,8 +2787,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
       { touchIdKeychainAccessGroup: undefined, browserPasskeys: false },
     );
-    // Only real values inside the Entitlements dict count: not comments, not
-    // explicit false, not keys elsewhere in the profile.
     assert.deepStrictEqual(
       resolveMacWebAuthnEntitlements(
         profile(
@@ -2931,24 +3029,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it("stages the resource monitor as an external executable resource", () => {
-    assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
-      {
-        from: "apps/desktop/prod-resources/cursor-sdk",
-        to: "node_modules/@cursor",
-      },
-      {
-        from: "apps/desktop/prod-resources/resource-monitor",
-        to: "resource-monitor",
-      },
-      {
-        from: "apps/desktop/prod-resources/whisper-runtime",
-        to: "whisper-runtime",
-      },
-      {
-        from: "apps/desktop/prod-resources/synctex-runtime",
-        to: "synctex-runtime",
-      },
-    ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",
@@ -2959,8 +3039,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "arm64"), [
       "aarch64-pc-windows-msvc",
     ]);
-    assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
-    assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
+    assert.equal(resourceMonitorExecutableName("mac"), "scient-resource-monitor");
+    assert.equal(resourceMonitorExecutableName("win"), "scient-resource-monitor.exe");
   });
 
   it("packages the WSL server and production dependencies as one compressed runtime", () => {
@@ -3438,10 +3518,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 });
 
-// The self-containment check runs the packaged tree in a scratch directory. Its
-// own node_modules holds the sidecar externals and must be ignored, but any
-// node_modules *above* it would let Node's parent walk satisfy an import that is
-// missing from the package, so the probe refuses to run in that case.
 it("lists ancestor node_modules, nearest first, excluding the start directory", () => {
   assert.deepStrictEqual(ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"), [
     "C:\\tmp\\probe\\node_modules",
@@ -3457,9 +3533,6 @@ it("includes the filesystem root for posix paths", () => {
   ]);
 });
 
-// A UNC root must keep its \\server\share prefix. Rebuilding it from segments
-// produced relative paths, which fs.exists resolves against the build cwd, so
-// the guard checked directories that do not exist and silently passed.
 it("keeps the prefix of a UNC path instead of going relative", () => {
   const paths = ancestorNodeModulesPaths("\\\\server\\share\\tmp\\app", "\\");
   for (const candidate of paths) {

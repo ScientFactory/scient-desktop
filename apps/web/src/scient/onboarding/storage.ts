@@ -1,5 +1,3 @@
-import { useCallback, useMemo } from "react";
-
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   completeScientOnboarding,
@@ -29,38 +27,26 @@ export function useScientOnboardingStorage() {
     ScientPersonalizationProfileSchema,
   );
 
-  const start = useCallback(
-    (step: Parameters<typeof startScientOnboarding>[1]) => {
-      setState((current) => startScientOnboarding(current, step, nowIso()));
-    },
-    [setState],
-  );
-  const move = useCallback(
-    (step: Parameters<typeof moveScientOnboarding>[1]) => {
-      setState((current) => moveScientOnboarding(current, step, nowIso()));
-    },
-    [setState],
-  );
-  const dismiss = useCallback(() => {
+  const start = (step: Parameters<typeof startScientOnboarding>[1]) => {
+    setState((current) => startScientOnboarding(current, step, nowIso()));
+  };
+  const move = (step: Parameters<typeof moveScientOnboarding>[1]) => {
+    setState((current) => moveScientOnboarding(current, step, nowIso()));
+  };
+  const dismiss = () => {
     setState((current) => dismissScientOnboarding(current, nowIso()));
-  }, [setState]);
-  const complete = useCallback(() => {
+  };
+  const complete = () => {
     setState((current) => completeScientOnboarding(current, nowIso()));
-  }, [setState]);
-  const saveProfile = useCallback(
-    (next: Pick<ScientPersonalizationProfile, "workKinds" | "fieldOrTopic">) => {
-      setProfile({
-        schemaVersion: 1,
-        workKinds: next.workKinds,
-        fieldOrTopic: next.fieldOrTopic.trim(),
-        updatedAt: nowIso(),
-      });
-    },
-    [setProfile],
-  );
+  };
+  const saveProfile = (next: Pick<ScientPersonalizationProfile, "workKinds" | "fieldOrTopic">) => {
+    setProfile({
+      schemaVersion: 1,
+      workKinds: next.workKinds,
+      fieldOrTopic: next.fieldOrTopic.trim(),
+      updatedAt: nowIso(),
+    });
+  };
 
-  return useMemo(
-    () => ({ state, profile, start, move, dismiss, complete, saveProfile }),
-    [complete, dismiss, move, profile, saveProfile, start, state],
-  );
+  return { state, profile, start, move, dismiss, complete, saveProfile };
 }

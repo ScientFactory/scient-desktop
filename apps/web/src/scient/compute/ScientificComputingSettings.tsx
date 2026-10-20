@@ -7,7 +7,7 @@ import {
   SigmaIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Schema from "effect/Schema";
 import type {
   ComputeLanguageRuntimeInventory,
@@ -105,7 +105,6 @@ const UPCOMING_LANGUAGES = [
   { id: "stata", label: "Stata" },
 ] as const;
 
-import { WordExportSettingsSection } from "../wordExport/WordExportSettingsSection";
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
 import { ComputeInstallationRow } from "./ComputeInstallationRow";
 import { useComputeInstallationSelection } from "./useComputeInstallationSelection";
@@ -880,7 +879,7 @@ function EnvironmentScientificComputingSettings({
     return true;
   };
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     if (environmentId === null) return;
     // Refresh is a new observation, not proof that an earlier Test still holds.
     setRefreshVersion((current) => current + 1);
@@ -901,7 +900,7 @@ function EnvironmentScientificComputingSettings({
       return;
     }
     setRefreshFailure(null);
-  }, [environmentId, refreshRuntimes]);
+  };
 
   const selectedPreference = selectedLanguage
     ? {
@@ -1059,7 +1058,6 @@ function EnvironmentScientificComputingSettings({
           </p>
         ) : null}
       </SettingsSection>
-      <WordExportSettingsSection environmentId={environmentId} />
     </SettingsPageContainer>
   );
 }

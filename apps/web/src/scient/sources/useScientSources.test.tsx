@@ -9,7 +9,7 @@ import type {
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
 } from "@t3tools/contracts";
-import { act } from "react";
+import { useEffect, act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useScientSources } from "./useScientSources";
@@ -143,15 +143,12 @@ async function withMountedHook(
   const document = installTestDom();
   const appRoot = createRoot(document.createElement("div") as unknown as Element);
   const probe = { current: { overview: null } as HookProbe };
-  let lastError: unknown = null;
 
   function Harness(props: { readonly projectRoot: string }) {
-    try {
-      const sources = useScientSources({ environmentId, root: props.projectRoot });
+    const sources = useScientSources({ environmentId, root: props.projectRoot });
+    useEffect(() => {
       probe.current = sources;
-    } catch (error) {
-      lastError = error;
-    }
+    }, [sources]);
     return null;
   }
   const flush = async () => {
@@ -174,7 +171,6 @@ async function withMountedHook(
         });
       },
     });
-    expect(lastError).toBeNull();
   } finally {
     await act(() => appRoot.unmount());
     vi.unstubAllGlobals();

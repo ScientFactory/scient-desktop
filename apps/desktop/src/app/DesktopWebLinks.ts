@@ -21,16 +21,15 @@ export const isWebPageFile = (path: string) => /\.x?html?$/i.test(path);
 
 /**
  * Web links and HTML files macOS opens with Scient once it is the default
- * browser. Files arrive as file:// URLs. They can
+ * browser, plus Scient prompt and thread links on every platform. Files
+ * arrive as file:// URLs. They can
  * arrive before the app is ready (the link that launched it) or while the web
  * app reloads, so they wait until the renderer says it is listening.
  */
 export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,
   {
-    /** Queues a link and delivers it as soon as the renderer is listening. */
     readonly receive: (url: string) => Effect.Effect<void>;
-    /** The renderer started or stopped listening; listening flushes queued links. */
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopWebLinks") {}
@@ -38,7 +37,6 @@ export class DesktopWebLinks extends Context.Service<
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const pending: Array<string> = [];
-  /** The page that said it is listening; a reload or crash replaces it, and it must say so again. */
   let listening: Electron.WebContents | null = null;
   let detachListening: (() => void) | null = null;
 
@@ -67,7 +65,6 @@ const make = Effect.gen(function* () {
     if (listening === webContents) return;
     stopListening();
     listening = webContents;
-    // Links that arrive while a new page loads wait for it to listen again.
     const onNavigation = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {

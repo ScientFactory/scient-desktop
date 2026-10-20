@@ -32,6 +32,7 @@ import {
   BUNDLED_MANAGED_RUNTIME_CATALOG,
   ManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
+  UNCHECKED_CATALOG_FRESHNESS,
 } from "./ManagedRuntimeCatalog.ts";
 import { makeAntigravityManagedRuntimeResolution } from "./LegacyAntigravityManagedRuntimeActions.ts";
 import { makeClaudeManagedRuntimeResolution } from "./ClaudeManagedRuntimeActions.ts";
@@ -320,6 +321,7 @@ describe("switching from a system runtime to the Scient-managed one", () => {
             current: Effect.succeed(published),
             refresh: Effect.succeed(captured),
             refreshNow: Effect.succeed(published),
+            freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
             subscribeChanges: Effect.succeed(Stream.empty),
           }),
         );

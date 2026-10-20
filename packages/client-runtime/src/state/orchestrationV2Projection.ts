@@ -1,3 +1,4 @@
+import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -194,7 +195,6 @@ function upsertVisibleTurnItem(
   return renumberVisibleItems(updated);
 }
 
-/** Applies one committed event to a matching thread projection. */
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
@@ -206,6 +206,11 @@ export function applyOrchestrationV2ProjectionEvent(
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
+    case "thread.pull-request-link-updated":
+      return {
+        ...base,
+        thread: applyThreadPullRequestLinkUpdate(projection.thread, event.payload),
+      };
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":

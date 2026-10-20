@@ -28,6 +28,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import type * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
@@ -55,6 +56,7 @@ import * as ProviderContinuationService from "../ProviderContinuationService.ts"
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
+import * as CommandOutputRecorder from "./CommandOutputRecorder.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
@@ -64,6 +66,9 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+// SCIENT-FORK:START — replay workspaces resolve like production, never to the checkout.
+import * as ScientReplayWorkspacePolicy from "../scient-fork/ReplayWorkspacePolicy.testkit.ts";
+// SCIENT-FORK:END
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
@@ -229,11 +234,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly responseStreamingMode?: ResponseStreamingMode;
     /** Inject an external Git process failure while retaining native checkpoint services. */
     readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
-    // Start continuation runs for provider wake turns, as the live runtime does.
-    // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
-    // Reconcile a previous runtime's state before the effect worker starts,
-    // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
@@ -263,7 +264,11 @@ export function runOrchestratorV2ProviderReplayScenario<
     replayGate,
   });
 
-  return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
+  return Effect.gen(function* () {
+    const result = yield* runOrchestratorV2Scenario(scenario, { replayGate });
+    const recorder = yield* CommandOutputRecorder.CommandOutputRecorder;
+    return { ...result, commandOutput: yield* recorder.snapshot };
+  }).pipe(Effect.provide(layer));
 }
 
 export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
@@ -285,11 +290,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
-    // Start continuation runs for provider wake turns, as the live runtime does.
-    // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
-    // Reconcile a previous runtime's state before the effect worker starts,
-    // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
@@ -311,6 +312,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
+  | CommandOutputRecorder.CommandOutputRecorder
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -382,11 +384,7 @@ export function layerWithRegistry<Error>(
     readonly responseStreamingMode?: ResponseStreamingMode;
     /** Inject an external Git process failure while retaining native checkpoint services. */
     readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
-    // Start continuation runs for provider wake turns, as the live runtime does.
-    // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
-    // Reconcile a previous runtime's state before the effect worker starts,
-    // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
@@ -408,6 +406,7 @@ export function layerWithRegistry<Error>(
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
+  | CommandOutputRecorder.CommandOutputRecorder
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -423,13 +422,21 @@ export function layerWithRegistry<Error>(
       ServerConfig.ServerConfig,
       makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
     ).pipe(Layer.provide(NodeServices.layer));
+  // SCIENT-FORK:START — a local thread checkpoints its project, not process.cwd() (the checkout).
+  // Suspended: the stores it reads are built below.
+  const layerReplayPolicy = Layer.suspend(() =>
+    ScientReplayWorkspacePolicy.layer.pipe(
+      Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+    ),
+  );
   const layerRuntime =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
+      ? layerReplayPolicy
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
+          Layer.provide(layerReplayPolicy),
         ));
+  // SCIENT-FORK:END
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like
@@ -492,6 +499,10 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         attachmentReconciliationProvided,
+        GitVcsDriver.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provide(NodeServices.layer),
+        ),
       ),
     ),
   );
@@ -526,6 +537,10 @@ export function layerWithRegistry<Error>(
       setProviderAuthenticationFailure: () =>
         Effect.die("Unexpected authentication invalidation in recorded provider replay."),
     });
+  // The real hub, recording what each command streamed so fixtures can assert it.
+  const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
+    Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
+  );
   const layerProviderSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: options.configureMcp ?? false,
     ...(options.providerSessionIdleTimeoutMs === undefined
@@ -534,6 +549,7 @@ export function layerWithRegistry<Error>(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerCommandOutputHubProvided,
         layerProvidedRegistry,
         snapshotRegistryLayer,
         layerEventSinkProvided,
@@ -556,6 +572,7 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
+        layerStores,
       ),
     ),
   );
@@ -595,6 +612,8 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerProviderSessionManagerProvided,
         layerRuntime,
+        layerServerConfig,
+        layerServerSettings,
       ),
     ),
   );
@@ -734,6 +753,7 @@ export function layerWithRegistry<Error>(
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
+    layerCommandOutputHubProvided,
   ).pipe(
     Layer.provide(
       Layer.merge(
@@ -746,9 +766,6 @@ export function layerWithRegistry<Error>(
     Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
 
-  // Build the daemon from the exact worker instance exposed alongside the
-  // orchestrator. Keeping this acquisition in the replay layer makes the
-  // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
     return layerReplayRuntime;
   }
@@ -783,7 +800,6 @@ export function layerWithRegistry<Error>(
     Orchestrator.OrchestratorV2,
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      // As in serverRuntimeStartup: after runtime recovery, before the worker.
       yield* orchestrator.recoverDelegatedTasks;
       yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
       return orchestrator;

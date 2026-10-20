@@ -25,6 +25,7 @@ const unreachableBootService = BootService.BootService.of({
   install: () => Effect.die("D4 service guard was bypassed"),
   uninstall: Effect.die("D4 service guard was bypassed"),
   restart: Effect.die("D4 service guard was bypassed"),
+  withStopped: () => Effect.die("D4 service guard was bypassed"),
   status: Effect.die("D4 service guard was bypassed"),
 });
 
@@ -220,3 +221,68 @@ it.effect("keeps disconnect causes in structured logs and out of console warning
     ),
   );
 });
+
+/** Captures console lines from a successful local disconnect report. */
+const captureDisconnectReport = (input: {
+  readonly clearAuthorization: boolean;
+  readonly liveResult: {
+    readonly status: "succeeded";
+  };
+  readonly relayResult: Exit.Exit<
+    { readonly status: "not-authenticated" } | { readonly status: "revoked" },
+    unknown
+  >;
+}) => {
+  const lines: Array<{ readonly stream: "log" | "warn"; readonly text: string }> = [];
+  const testConsole = {
+    ...globalThis.console,
+    log: (...args: ReadonlyArray<unknown>) => {
+      lines.push({ stream: "log", text: args.map(String).join(" ") });
+    },
+    warn: (...args: ReadonlyArray<unknown>) => {
+      lines.push({ stream: "warn", text: args.map(String).join(" ") });
+    },
+  } satisfies Console.Console;
+
+  return reportCloudDisconnectResults(input).pipe(
+    Effect.provideService(Console.Console, testConsole),
+    Effect.provide(Logger.layer([Logger.make(() => undefined)], { mergeWithExisting: false })),
+    Effect.as(lines),
+  );
+};
+
+it.effect("warns to deregister when unlink has no stored CLI authorization", () =>
+  Effect.gen(function* () {
+    const lines = yield* captureDisconnectReport({
+      clearAuthorization: false,
+      liveResult: { status: "succeeded" },
+      relayResult: Exit.succeed({ status: "not-authenticated" }),
+    });
+
+    assert.deepEqual(
+      lines.map((line) => line.stream),
+      ["log", "warn"],
+    );
+    assert.equal(lines[0]?.text, "T3 Connect is disabled locally.");
+    assert.include(lines[1]?.text, "The relay-side environment record was not revoked.");
+    assert.include(lines[1]?.text, "T3 Connect page of your T3 account");
+    assert.include(lines[1]?.text, "`t3 connect login`");
+    assert.notInclude(lines.map((line) => line.text).join("\n"), "Revoked the relay-side");
+  }),
+);
+
+it.effect("points a failed relay unlink at retry and account deregistration", () =>
+  Effect.gen(function* () {
+    const lines = yield* captureDisconnectReport({
+      clearAuthorization: false,
+      liveResult: { status: "succeeded" },
+      relayResult: Exit.fail("relay unreachable"),
+    });
+    const warning = lines.find((line) => line.stream === "warn")?.text ?? "";
+
+    assert.equal(lines[0]?.text, "T3 Connect is disabled locally.");
+    assert.include(warning, "Run `t3 connect unlink` again when the relay is reachable");
+    assert.include(warning, "deregister it from the T3 Connect page of your T3 account");
+    assert.notInclude(warning, "relay unreachable");
+  }),
+);

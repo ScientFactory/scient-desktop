@@ -16,12 +16,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("file exchange
   it.each(["arm64", "x64", "universal"] as const)("stages the exact %s slices", async (arch) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-exchange-stage-"));
     try {
+      const publication = NodePath.join(root, "file-exchange/scient-file-publication");
+      await NodeFSP.mkdir(NodePath.dirname(publication), { recursive: true });
+      await NodeFSP.writeFile(publication, "separately staged publication helper");
       await stageFileExchangeForDesktopBuild({
         repoRoot,
         stageResourcesDir: root,
         platform: "mac",
         arch,
       });
+      expect(await NodeFSP.readFile(publication, "utf8")).toBe(
+        "separately staged publication helper",
+      );
       const helper = NodePath.join(root, "file-exchange/scient-file-exchange");
       const actual = NodeChildProcess.execFileSync("lipo", ["-archs", helper], { encoding: "utf8" })
         .trim()
@@ -30,7 +36,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("file exchange
       expect(actual).toEqual(
         (arch === "universal" ? ["arm64", "x86_64"] : [arch === "x64" ? "x86_64" : "arm64"]).sort(),
       );
-      if (arch === "arm64" || arch === "universal")
+      if (arch === "universal" || arch === HostProcess.Architecture.defaultValue())
         expect(
           NodeChildProcess.execFileSync(helper, ["--version"], { encoding: "utf8" }).trim(),
         ).toBe("scient-file-exchange/1");
@@ -55,6 +61,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("file exchange
         platform: "win",
         arch,
       });
+      expect(await NodeFSP.readFile(publication, "utf8")).toBe(
+        "separately staged publication helper",
+      );
       expect(
         await NodeFSP.access(helper).then(
           () => true,

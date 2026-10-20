@@ -48,3 +48,25 @@ it("only unread successful answers and unread wake events qualify idle threads",
   expect(placementEligible(woke, earlier, now)).toBe(true);
   expect(placementEligible(woke, now, now)).toBe(false);
 });
+it("reads visits as the sidebar rows do: the server's when it tracks them", () => {
+  const done = {
+    ...base,
+    latestCompletedAnswer: {
+      turnId: TurnId.make("turn"),
+      messageId: MessageId.make("answer"),
+      completedAt: now,
+    },
+  };
+  // Read on another client: this device's older visit no longer counts.
+  expect(placementEligible({ ...done, lastVisitedAt: now }, earlier, now)).toBe(false);
+  // Marked unread on the server, even though this device visited later.
+  expect(placementEligible({ ...done, lastVisitedAt: earlier }, now, now)).toBe(true);
+  // A server that tracks visits but holds none ignores this device's history.
+  expect(placementEligible({ ...done, lastVisitedAt: null }, earlier, now)).toBe(false);
+  // Servers without visit tracking keep using this device's visit.
+  expect(placementEligible(done, now, now)).toBe(false);
+  expect(placementEligible(done, earlier, now)).toBe(true);
+  // Same for wake events.
+  const woke = { ...base, snoozedUntil: now };
+  expect(placementEligible({ ...woke, lastVisitedAt: now }, earlier, now)).toBe(false);
+});

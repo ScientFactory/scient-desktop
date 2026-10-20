@@ -1,4 +1,5 @@
 import {
+  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -6,7 +7,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
 import type { ChatAttachment, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
-import { useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection, useThreadShell } from "../../state/entities";
@@ -23,6 +24,19 @@ export interface EditQueuedRunRequest {
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
   editLatest: (repeat: boolean) => boolean;
+}
+
+type ThreadQueueProjection = Parameters<typeof deriveThreadQueueWorkflowState>[0];
+
+function queuedImageResources(projection: ThreadQueueProjection | undefined) {
+  if (!projection) return [];
+  return deriveThreadQueueWorkflowState(projection).queuedRuns.flatMap(({ attachments }) =>
+    attachments.flatMap((attachment) =>
+      attachment.type === "image"
+        ? [{ _tag: "attachment" as const, attachmentId: attachment.id }]
+        : [],
+    ),
+  );
 }
 
 /** Native queue state and commands, presented once in Scient's composer strip. */
@@ -57,10 +71,8 @@ export function QueuedRunsControl({
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const workflow = useMemo(
-    () => (projection ? deriveThreadQueueWorkflowState(projection) : null),
-    [projection],
-  );
+  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
+  const queuedImageAttachmentResources = queuedImageResources(projection);
   const queued = workflow?.queuedRuns ?? [];
   const failedHead =
     workflow?.isHeld === true &&
@@ -89,22 +101,16 @@ export function QueuedRunsControl({
     text,
     attachments,
   }));
-  const imageIds = queued.flatMap(({ attachments }) =>
-    attachments.filter((item) => item.type === "image").map((item) => item.id),
-  );
-  const imageUrls = useAssetUrls(
-    props.environmentId,
-    imageIds.map((attachmentId) => ({ _tag: "attachment" as const, attachmentId })),
-  );
+  const imageUrls = useAssetUrls(props.environmentId, queuedImageAttachmentResources);
   const attachmentUrls = new Map(
-    imageIds.flatMap((id, index) => {
+    queuedImageAttachmentResources.flatMap((resource, index) => {
       const url = imageUrls[index];
-      return url ? [[id, url] as const] : [];
+      return url ? [[resource.attachmentId, url] as const] : [];
     }),
   );
   // Acknowledged messages retire their optimistic copies even after their run
   // has left the queue; filtering only by queued IDs would resurrect them.
-  const acknowledged = new Set((projection?.messages ?? []).map((item) => item.id));
+  const acknowledged = new Set((projection?.messages ?? []).map((message) => message.id));
   const pendingMessages = props.optimisticMessages
     .filter(
       (message) =>
@@ -126,17 +132,16 @@ export function QueuedRunsControl({
     busyRef.current = true;
     setBusyId(id);
     setActionError(null);
-    try {
-      const result = await action();
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    } catch (cause) {
+    const settled = await settlePromise(action);
+    const result = settled._tag === "Success" ? settled.value : settled;
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
       setActionError(
         cause instanceof Error ? cause.message : "The queued message action failed. Try again.",
       );
-    } finally {
-      busyRef.current = false;
-      setBusyId(null);
     }
+    busyRef.current = false;
+    setBusyId(null);
   };
   const edit = (item: (typeof items)[number]) =>
     props.onEditQueuedRun({

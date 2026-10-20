@@ -27,7 +27,7 @@ describe("Document session", () => {
       editVersion: 1,
       confirmedEditVersion: 0,
     });
-    expect(beginDocumentSave(session)).toEqual({
+    expect(beginDocumentSave(session)).toMatchObject({
       source: "Local draft",
       expectedRevision: "r1",
       editVersion: 1,
@@ -53,7 +53,7 @@ describe("Document session", () => {
     expect(applyUserDocumentSource(initial, "before\n")).toBe(initial);
 
     const changed = applyUserDocumentSource(initial, "after\n");
-    expect(beginDocumentSave(changed)).toEqual({
+    expect(beginDocumentSave(changed)).toMatchObject({
       source: "after\n",
       expectedRevision: "r1",
       editVersion: 1,
@@ -69,11 +69,47 @@ describe("Document session", () => {
 
     expect(confirmed.baselineSource).toBe("one");
     expect(confirmed.draftSource).toBe("two");
-    expect(beginDocumentSave(confirmed)).toEqual({
+    expect(beginDocumentSave(confirmed)).toMatchObject({
       source: "two",
       expectedRevision: "r1",
       editVersion: 2,
     });
+  });
+
+  it("confirms exclusive recreation without manufacturing a new edit and never replays it once present", () => {
+    const missing = {
+      ...createDocumentSession({ source: "A", revision: "rA" }),
+      currentMissing: true,
+    };
+    const intent = beginDocumentSave(missing)!;
+    const newer = applyUserDocumentSource(missing, "B");
+    const present = confirmDocumentSave(newer, intent, "rA");
+    expect(present).toMatchObject({
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "B",
+      editVersion: 1,
+      confirmedEditVersion: 0,
+      currentMissing: false,
+    });
+    expect(beginDocumentSave(present)).toMatchObject({
+      source: "B",
+      expectedRevision: "rA",
+      editVersion: 1,
+    });
+    expect(confirmDocumentSave(present, intent, "rA")).toBe(present);
+    expect(
+      confirmDocumentSave(
+        missing,
+        {
+          mutationId: intent.mutationId,
+          source: intent.source,
+          expectedRevision: intent.expectedRevision,
+          editVersion: intent.editVersion,
+        },
+        "rA",
+      ),
+    ).toBe(missing);
   });
 
   it("adopts external edits when clean and exposes conflicts when dirty", () => {
@@ -100,7 +136,7 @@ describe("Document session", () => {
 
     const keepLocal = resolveDocumentConflictWithLocal(conflicted);
     expect(keepLocal.draftSource).toBe("local three");
-    expect(beginDocumentSave(keepLocal)).toEqual({
+    expect(beginDocumentSave(keepLocal)).toMatchObject({
       source: "local three",
       expectedRevision: "r3",
       editVersion: 1,
@@ -119,7 +155,7 @@ describe("Document session", () => {
     expect(rebased.baselineSource).toBe("agent one");
     expect(rebased.baselineRevision).toBe("r1");
     expect(rebased.conflict).toBeNull();
-    expect(beginDocumentSave(rebased)).toEqual({
+    expect(beginDocumentSave(rebased)).toMatchObject({
       source: "local one",
       expectedRevision: "r1",
       editVersion: 1,

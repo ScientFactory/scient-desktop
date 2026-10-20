@@ -7,7 +7,7 @@ import {
   LoaderCircle,
   RotateCw,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
@@ -84,11 +84,8 @@ function FileBreadcrumbPickerMenu(props: {
   const [directoryPath, setDirectoryPath] = useState(props.initialDirectoryPath);
   const [visibleEntryLimit, setVisibleEntryLimit] = useState(FILE_BREADCRUMB_PICKER_PAGE_SIZE);
   const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
-  const index = useMemo(
-    () =>
-      entriesQuery.data === null ? null : getFileBreadcrumbEntryIndex(entriesQuery.data.entries),
-    [entriesQuery.data],
-  );
+  const index =
+    entriesQuery.data === null ? null : getFileBreadcrumbEntryIndex(entriesQuery.data.entries);
   const listing = resolveFileBreadcrumbPickerListing({
     index,
     directoryPath,
@@ -201,14 +198,13 @@ export function FileBreadcrumbNavigator({
   currentFileControl,
 }: FileBreadcrumbNavigatorProps) {
   const [openCrumbPath, setOpenCrumbPath] = useState<string | null>(null);
-  const breadcrumbs = useMemo(
-    () => fileBreadcrumbs(projectName, relativePath),
-    [projectName, relativePath],
-  );
+  const breadcrumbs = fileBreadcrumbs(projectName, relativePath);
 
-  useEffect(() => {
+  const [previousPath, setPreviousPath] = useState(relativePath);
+  if (previousPath !== relativePath) {
+    setPreviousPath(relativePath);
     setOpenCrumbPath(null);
-  }, [relativePath]);
+  }
 
   return (
     <div className="flex h-full w-max min-w-full items-center scient-reading-ui text-xs">

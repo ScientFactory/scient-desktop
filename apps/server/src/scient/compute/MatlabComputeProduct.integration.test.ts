@@ -35,6 +35,7 @@ import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts"
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 import { ComputeRecipeNetwork } from "./ComputeRecipeSource.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const TEST_MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
 const TEST_HELPER = NodeProcess.env.SCIENT_TEST_MATLAB_HELPER === "1";
@@ -135,8 +136,10 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
           Layer.provide(NodeServices.layer),
         );
         const workspaceLayer = WorkspaceFileSystem.layer.pipe(
+          Layer.provide(layerKnownWorkspacesAllowAll),
           Layer.provide(WorkspacePaths.layer),
           Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+          Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),
           Layer.provide(NodeServices.layer),
         );
 

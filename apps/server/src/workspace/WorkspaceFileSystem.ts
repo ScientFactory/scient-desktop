@@ -1,18 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * WorkspaceFileSystem - Effect service contract for workspace file mutations.
- *
- * Owns workspace-root-relative file read/write operations and their associated
- * safety checks and cache invalidation hooks. Reads also accept absolute host
- * paths so clients can show files an agent left outside the workspace; writes
- * never leave the root.
- *
- * @module WorkspaceFileSystem
- */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import type {
+  ProjectFilePublicationAttention,
   FilesystemEntryMetadata,
   FilesystemGetMetadataInput,
   FilesystemGetMetadataResult,
@@ -24,26 +16,36 @@ import type {
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Option from "effect/Option";
-import { ServerConfig } from "../config.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
+import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 // SCIENT-FORK:START — saves, creates, renames and the open-file watch.
 import {
+  isNodeError,
   WorkspaceFileExistsError,
   WorkspaceFileRevisionConflictError,
+  WorkspaceFileTargetChangedError,
+  WorkspaceFileRecoveryRequiredError,
+  WorkspaceFileMutationUnavailableError,
+  WorkspaceFileMutationIntentConflictError,
 } from "../scient/workspace/WorkspaceFileErrors.ts";
 import {
   makeWorkspaceFileMutations,
   revisionForBytes,
   type WorkspaceFileMutationMethods,
 } from "../scient/workspace/WorkspaceFileMutations.ts";
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "../scient/workspace/NativeFilePublication.ts";
+import { RetainedMutationError } from "../scient/workspace/RetainedFileMutation.ts";
 import {
   makeWorkspaceFileWatch,
   type WorkspaceFileWatchMethods,
@@ -52,6 +54,13 @@ import {
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
+
+// Windows also reaches `.git` through trailing dots or spaces, a `:` stream
+// suffix, or the 8.3 short name `GIT~1`. Names compare upcased, as NTFS does.
+const isGitMetadataName = (segment: string) => {
+  const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
+  return name === ".GIT" || name === "GIT~1";
+};
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
@@ -71,11 +80,17 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
       "make-directory",
       "write-file",
       "atomic-write-file",
+      "retained-publication",
       "link",
       "unlink",
       "watch",
     ]),
     cause: Schema.Defect(),
+    currentMissing: Schema.optional(Schema.Literal(true)),
+    publicationOutcome: Schema.optional(Schema.Literals(["unchanged", "retained-attention"])),
+    mutationId: Schema.optional(Schema.String),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
   },
 ) {
   override get message(): string {
@@ -138,10 +153,19 @@ export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceBinaryFileError,
   WorkspaceFileRevisionConflictError,
   WorkspaceFileExistsError,
+  WorkspaceFileTargetChangedError,
+  WorkspaceFileRecoveryRequiredError,
+  WorkspaceFileMutationUnavailableError,
+  WorkspaceFileMutationIntentConflictError,
+  WorkspacePaths.WorkspaceRootNotExistsError,
+  WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
+  WorkspacePaths.WorkspaceRootNotDirectoryError,
+  // SCIENT-FORK: mutation methods share the known-workspace boundary.
+  KnownWorkspaces.UnknownWorkspaceError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
-/** Service tag for workspace file operations. */
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
   {
@@ -161,6 +185,7 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
+    // SCIENT-FORK:START viewer-only reads outside the workspace.
     /**
      * Read a file to show it. Viewing never depends on the project boundary: a
      * relative path that climbs out of the root and a symlink that leads out of
@@ -174,20 +199,18 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
-    /**
-     * Write a file relative to the workspace root.
-     *
-     * Creates parent directories as needed and rejects paths that escape the
-     * workspace root.
-     */
+    // SCIENT-FORK:END
+    /** Writes inside a known workspace only. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
-      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
     >;
   } &
-    // SCIENT-FORK:START — save, create, rename and watch methods.
+    // SCIENT-FORK:START — save, create, rename, delete and watch methods.
     WorkspaceFileMutationMethods &
     WorkspaceFileWatchMethods
   // SCIENT-FORK:END
@@ -195,11 +218,43 @@ export class WorkspaceFileSystem extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const config = yield* Effect.serviceOption(ServerConfig);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const config = yield* ServerConfig.ServerConfig;
+  const nativePublicationHelper = yield* Effect.promise(() =>
+    resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+  );
+  const retentionStorageDirectory =
+    config.filePublicationRetentionRoot ??
+    path.join(NodeOS.homedir(), ".scient-next", "file-publications");
+  const retentionDirectoryFor = async (_canonicalRoot: string, parentPath: string) => {
+    const parent = await NodeFSP.lstat(parentPath, { bigint: true });
+    if (!parent.isDirectory() || parent.isSymbolicLink()) {
+      throw new Error("Publication parent binding changed.");
+    }
+    if (nativePublicationHelper === undefined) {
+      throw new RetainedMutationError(
+        "unavailable",
+        "Native publication helper is unavailable.",
+        "storage",
+      );
+    }
+    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, retentionStorageDirectory);
+    const directory = path.join(retentionStorageDirectory, `${parent.dev}-${parent.ino}`);
+    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, directory);
+    const storage = await NodeFSP.lstat(directory, { bigint: true });
+    if (storage.dev !== parent.dev) {
+      throw new RetainedMutationError(
+        "unavailable",
+        "Retained publication storage must share the source filesystem. Configure SCIENT_FILE_PUBLICATION_RETENTION_ROOT on that filesystem.",
+        "storage-volume",
+      );
+    }
+    return directory;
+  };
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
@@ -209,8 +264,6 @@ export const make = Effect.gen(function* () {
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
-    // Named extensions already choose the icon without a content read. For an
-    // extensionless regular file, read at most 512 bytes, never the whole file.
     if (path.extname(expandedPath) === "" && stat.value.size > 0) {
       mimeType = yield* Effect.tryPromise({
         try: async () => {
@@ -245,6 +298,42 @@ export const make = Effect.gen(function* () {
     const byPath = new Map(paths.map((value, index) => [value, entries[index] ?? null]));
     return { entries: input.paths.map((value) => byPath.get(value) ?? null) };
   });
+
+  /** Both paths must already be real paths. */
+  const isInsideRealRoot = (realWorkspaceRoot: string, realPath: string) => {
+    const relative = path.relative(realWorkspaceRoot, realPath);
+    return !(
+      relative.startsWith(`..${path.sep}`) ||
+      relative === ".." ||
+      path.isAbsolute(relative)
+    );
+  };
+
+  /**
+   * Git runs config and hooks from its own folders, so a write never lands in one:
+   * a `.git` entry, or a repository folder under another name such as `.bare`.
+   * Folders are checked upward to a linked worktree's top, which holds a `.git`
+   * file, since worktrees can sit inside a bare repository. `absolutePath` must
+   * be normalized.
+   */
+  const isInGitFolder = async (absolutePath: string) => {
+    if (absolutePath.split(path.sep).some(isGitMetadataName)) return true;
+    for (let folder = path.dirname(absolutePath); ; folder = path.dirname(folder)) {
+      const [head, commondir, objects, refs, dotGit] = await Promise.all(
+        ["HEAD", "commondir", "objects", "refs", ".git"].map((name) =>
+          NodeFSP.lstat(path.join(folder, name)).catch((error: NodeJS.ErrnoException) => {
+            // Any other failure leaves the folder unknown, so the write is refused.
+            if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+            throw error;
+          }),
+        ),
+      );
+      // What git reads as a repository: HEAD, plus objects and refs here or in
+      // the folder a `commondir` file names, as in a linked worktree's git folder.
+      if (head && (commondir || (objects && refs))) return true;
+      if (dotGit?.isFile() || path.dirname(folder) === folder) return false;
+    }
+  };
 
   /**
    * Resolves the file a read targets, for one of two purposes.
@@ -308,7 +397,7 @@ export const make = Effect.gen(function* () {
     }
     const target = yield* resolveWithinRoot;
     const realWorkspaceRoot = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(input.cwd),
+      try: () => NodeFSP.realpath(path.resolve(input.cwd)),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -331,7 +420,7 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    if (isOutside(realWorkspaceRoot, realTargetPath)) {
+    if (!isInsideRealRoot(realWorkspaceRoot, realTargetPath)) {
       if (purpose === "contained") {
         return yield* new WorkspaceFilePathEscapeError({
           workspaceRoot: input.cwd,
@@ -367,7 +456,7 @@ export const make = Effect.gen(function* () {
     const target = yield* resolveReadTarget(input, purpose);
     const realTargetPath = target.realTargetPath;
 
-    return yield* Effect.acquireUseRelease(
+    const currentRead = Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
         // it. Regular files ignore the flag. The target was already resolved,
@@ -461,39 +550,265 @@ export const make = Effect.gen(function* () {
             }),
         }),
     );
+    return yield* currentRead;
+  });
+  const settledReadFailure = (
+    error: WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError,
+    attention: ProjectFilePublicationAttention | null,
+    currentMissing: boolean,
+  ) => {
+    if (error._tag !== "WorkspaceFileSystemOperationError") return error;
+    const missing =
+      currentMissing && error.operation === "realpath-target" && isNodeError(error.cause, "ENOENT");
+    if (!missing && attention === null) return error;
+    return new WorkspaceFileSystemOperationError({
+      workspaceRoot: error.workspaceRoot,
+      relativePath: error.relativePath,
+      resolvedPath: error.resolvedPath,
+      operationPath: error.operationPath,
+      operation: error.operation,
+      cause: error.cause,
+      ...(missing ? { currentMissing: true as const } : {}),
+      ...(attention === null
+        ? {}
+        : {
+            publicationOutcome: "retained-attention" as const,
+            mutationId: attention.mutationId,
+            recoveryId: attention.recoveryId,
+            retainedPaths: attention.retainedPaths,
+          }),
+    });
+  };
+
+  // SCIENT-FORK:START separate contained and viewer read authorities.
+  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
+    "WorkspaceFileSystem.readFile",
+  )(function* (input) {
+    if (!path.isAbsolute(input.relativePath)) {
+      yield* workspacePaths.resolveRelativePathWithinRoot({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    return yield* (
+      path.isAbsolute(input.relativePath) ? withSettledWorkspaceRead : withSettledFileRead
+    )(input, (attention, settlement) =>
+      readResolvedFile(input, "contained").pipe(
+        Effect.map((result) =>
+          attention === null ? result : { ...result, publicationAttention: attention },
+        ),
+        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
+      ),
+    );
+  });
+  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = Effect.fn(
+    "WorkspaceFileSystem.viewFile",
+  )(function* (input) {
+    const rootExists = yield* fileSystem.exists(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: path.resolve(input.cwd, input.relativePath),
+            operationPath: input.cwd,
+            operation: "stat",
+            cause,
+          }),
+      ),
+    );
+    if (!rootExists) return yield* readResolvedFile(input, "view");
+    return yield* withSettledWorkspaceRead(input, (attention, settlement) =>
+      readResolvedFile(input, "view").pipe(
+        Effect.map((result) =>
+          attention === null ? result : { ...result, publicationAttention: attention },
+        ),
+        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
+      ),
+    );
+  });
+  // SCIENT-FORK:END
+
+  /**
+   * Resolves the file a write targets. The deepest existing ancestor resolves to
+   * its real path before the root check, so neither the file nor the directories
+   * created for it can follow a symlink out of the root. A dangling symlink is
+   * rejected rather than written through.
+   */
+  const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+  ) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const realWorkspaceRoot = yield* Effect.tryPromise({
+      // Resolve `..` in cwd the way the relative path was resolved, before following links.
+      try: () => NodeFSP.realpath(path.resolve(input.cwd)),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: input.cwd,
+          operation: "realpath-workspace-root",
+          cause,
+        }),
+    });
+
+    // Split the host path, not the display relativePath: on POSIX `\` is a file name character.
+    const segments = path.relative(input.cwd, target.absolutePath).split(path.sep);
+    const realTargetPath = yield* Effect.tryPromise({
+      try: async () => {
+        for (let depth = segments.length; depth > 0; depth--) {
+          const candidate = path.join(realWorkspaceRoot, ...segments.slice(0, depth));
+          try {
+            return path.join(await NodeFSP.realpath(candidate), ...segments.slice(depth));
+          } catch (error) {
+            // Only a missing entry is skipped; one that exists but cannot resolve is a dangling link.
+            const exists = await NodeFSP.lstat(candidate).then(
+              () => true,
+              () => false,
+            );
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT" || exists) throw error;
+          }
+        }
+        return path.join(realWorkspaceRoot, ...segments);
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+    // The path as named is checked too: a `.git/config` symlink resolves away the `.git`.
+    const namedTargetPath = path.join(realWorkspaceRoot, ...segments);
+    const inGitFolder = Effect.fn("WorkspaceFileSystem.inGitFolder")((checkedPath: string) =>
+      Effect.tryPromise({
+        try: () => isInGitFolder(checkedPath),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: realTargetPath,
+            operationPath: checkedPath,
+            operation: "stat",
+            cause,
+          }),
+      }),
+    );
+    if (
+      !isInsideRealRoot(realWorkspaceRoot, realTargetPath) ||
+      (yield* inGitFolder(realTargetPath)) ||
+      (yield* inGitFolder(namedTargetPath))
+    ) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath,
+      });
+    }
+    return { relativePath: target.relativePath, realTargetPath };
   });
 
-  const readFile: WorkspaceFileSystem["Service"]["readFile"] = (input) =>
-    readResolvedFile(input, "contained");
-  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
-    readResolvedFile(input, "view");
-  // SCIENT-FORK:START — revision-checked saves, exclusive creates and renames.
-  const {
-    createBinaryFile,
-    inspectWriteTarget,
-    renameFile,
-    writeFile,
-    replaceFileRetained,
-    removeFileRetained,
-  } = yield* makeWorkspaceFileMutations({
+  // SCIENT-FORK:START — revision-checked saves, exclusive creates, renames and deletes.
+  const mutations = yield* makeWorkspaceFileMutations({
     fileSystem,
     path,
     workspacePaths,
     workspaceEntries,
-    readFile,
-    exchangeHelper: Option.isSome(config) ? config.value.fileExchangePath : undefined,
+    readFile: (input) => readResolvedFile(input, "contained"),
+    ...(nativePublicationHelper === undefined ? {} : { nativePublicationHelper }),
+    retentionStorageDirectory,
+    retentionDirectoryFor,
+    retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
+    isProtectedPath: isInGitFolder,
   });
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START authorize upstream write targets before Scient atomic mutations.
+  const assertWritableTarget = Effect.fnUntraced(function* (
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+  ) {
+    const normalized = { ...input, cwd: path.resolve(input.cwd) };
+    yield* knownWorkspaces.assertContains(normalized.cwd);
+    yield* resolveWriteTarget(normalized);
+    return normalized;
+  });
+  const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.writeFile({ ...input, ...target })),
+    );
+  const createBinaryFile: WorkspaceFileSystem["Service"]["createBinaryFile"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.createBinaryFile({ ...input, ...target })),
+    );
+  const writeBinaryFile: WorkspaceFileSystem["Service"]["writeBinaryFile"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.writeBinaryFile({ ...input, ...target })),
+    );
+  const deleteFile: WorkspaceFileSystem["Service"]["deleteFile"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.deleteFile({ ...input, ...target })),
+    );
+  const inspectWriteTarget: WorkspaceFileSystem["Service"]["inspectWriteTarget"] = (input) =>
+    assertWritableTarget(input).pipe(Effect.flatMap(mutations.inspectWriteTarget));
+  const renameFile: WorkspaceFileSystem["Service"]["renameFile"] = (input) =>
+    Effect.gen(function* () {
+      const source = yield* assertWritableTarget(input);
+      yield* assertWritableTarget({ ...source, relativePath: input.destinationRelativePath });
+      return yield* mutations.renameFile({ ...input, ...source });
+    });
+  const replaceFileRetained: WorkspaceFileSystem["Service"]["replaceFileRetained"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.replaceFileRetained({ ...input, ...target })),
+    );
+  const removeFileRetained: WorkspaceFileSystem["Service"]["removeFileRetained"] = (input) =>
+    assertWritableTarget(input).pipe(
+      Effect.flatMap((target) => mutations.removeFileRetained({ ...input, ...target })),
+    );
+  const {
+    registerRetainedFileHistory,
+    prepareRetainedDirectory,
+    listFileVersions,
+    discardFileVersion,
+    withSettledFileRead,
+    getMutationEpoch,
+    withWorkspacePublicationFence,
+    withSettledWorkspaceRead,
+    resolveFileMutation,
+  } = mutations;
+  // SCIENT-FORK:END
+
   // SCIENT-FORK:START — open-file watch.
-  const { watchFile } = makeWorkspaceFileWatch({ path, workspacePaths });
+  const { watchFile } = makeWorkspaceFileWatch({
+    path,
+    workspacePaths,
+    waitForSettlement: (input) => withSettledFileRead(input, () => Effect.void),
+  });
   // SCIENT-FORK:END
 
   return WorkspaceFileSystem.of({
     getMetadata,
     replaceFileRetained,
     removeFileRetained,
+    registerRetainedFileHistory,
+    prepareRetainedDirectory,
+    listFileVersions,
+    discardFileVersion,
+    withSettledFileRead,
+    getMutationEpoch,
+    withWorkspacePublicationFence,
+    withSettledWorkspaceRead,
+    resolveFileMutation,
     createBinaryFile,
+    writeBinaryFile,
+    deleteFile,
     inspectWriteTarget,
     readFile,
     renameFile,

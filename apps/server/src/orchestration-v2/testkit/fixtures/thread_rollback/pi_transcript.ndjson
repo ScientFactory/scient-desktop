@@ -16,7 +16,7 @@
 {"type":"expect_outbound","label":"set_session_name","frame":{"type":"set_session_name","name":"Replay fixture: thread_rollback","id":"t3-5"}}
 {"type":"emit_inbound","label":"session_info_changed","frame":{"type":"session_info_changed","name":"Replay fixture: thread_rollback"}}
 {"type":"emit_inbound","label":"response:set_session_name","frame":{"id":"t3-5","type":"response","command":"set_session_name","success":true}}
-{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: rollback fixture first turn complete"}}
+{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: rollback fixture first turn complete","streamingBehavior":"steer"}}
 {"type":"emit_inbound","label":"response:prompt","frame":{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}}
 {"type":"emit_inbound","label":"agent_start","frame":{"type":"agent_start"}}
 {"type":"emit_inbound","label":"turn_start","frame":{"type":"turn_start"}}
@@ -62,7 +62,7 @@
 {"type":"emit_inbound","label":"response:get_available_thinking_levels","frame":{"type":"response","id":"t3-900004","command":"get_available_thinking_levels","success":true,"data":{"levels":["off","high","xhigh"]}}}
 {"type":"expect_outbound","label":"get_state","frame":{"type":"get_state","id":"t3-900005"}}
 {"type":"emit_inbound","label":"response:get_state","frame":{"type":"response","id":"t3-900005","command":"get_state","success":true,"data":{"model":{"type":"chat","id":"deepseek/deepseek-v4-flash","name":"DeepSeek: DeepSeek V4 Flash 0423","api":"openai-completions","baseUrl":"https://openrouter.ai/api/v1","provider":"openrouter","reasoning":true,"thinkingLevelMap":{"off":"none","minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh","max":null},"input":["text"],"cost":{"input":0.04186,"output":0.08372,"cacheRead":0.008372,"cacheWrite":0},"contextWindow":1048576,"maxTokens":131072,"compat":{"supportsDeveloperRole":false,"thinkingFormat":"openrouter","supportsStrictMode":true,"sendSessionAffinityHeaders":true,"requiresReasoningContentOnAssistantMessages":true}},"thinkingLevel":"high","isStreaming":false,"isCompacting":false,"steeringMode":"one-at-a-time","followUpMode":"one-at-a-time","sessionFile":"/pi-sessions/session-1.jsonl","sessionId":"00000000-0000-4000-8000-000000000002","sessionName":"Replay fixture: thread_rollback","autoCompactionEnabled":true,"messageCount":3,"pendingMessageCount":0}}}
-{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: rollback fixture second turn complete"}}
+{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Respond with exactly: rollback fixture second turn complete","streamingBehavior":"steer"}}
 {"type":"emit_inbound","label":"response:prompt","frame":{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}}
 {"type":"emit_inbound","label":"agent_start","frame":{"type":"agent_start"}}
 {"type":"emit_inbound","label":"turn_start","frame":{"type":"turn_start"}}
@@ -114,7 +114,7 @@
 {"type":"expect_outbound","label":"set_session_name","frame":{"type":"set_session_name","name":"Replay fixture: thread_rollback","id":"t3-19"}}
 {"type":"emit_inbound","label":"session_info_changed","frame":{"type":"session_info_changed","name":"Replay fixture: thread_rollback"}}
 {"type":"emit_inbound","label":"response:set_session_name","frame":{"id":"t3-19","type":"response","command":"set_session_name","success":true}}
-{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Repeat the conversation verbatim."}}
+{"type":"expect_outbound","label":"prompt","frame":{"type":"prompt","message":"Repeat the conversation verbatim.","streamingBehavior":"steer"}}
 {"type":"emit_inbound","label":"response:prompt","frame":{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}}
 {"type":"emit_inbound","label":"agent_start","frame":{"type":"agent_start"}}
 {"type":"emit_inbound","label":"turn_start","frame":{"type":"turn_start"}}

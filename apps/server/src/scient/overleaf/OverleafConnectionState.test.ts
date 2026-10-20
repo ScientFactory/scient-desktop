@@ -289,6 +289,43 @@ describe("overleafTransitionViolation", () => {
     expect(violation(applying, { activeApply: null })).toBeNull();
   });
 
+  it("refuses a fresh vault while the connection still references the recorded one", () => {
+    const freshVault = {
+      ...synced.retention,
+      vaultIdentity: { ...synced.retention.vaultIdentity, fileId: "99" },
+    };
+    const copy: OverleafConnectionDocument["retention"]["copies"][number] = {
+      applyId: "apply-1",
+      relativePath: "main.tex",
+      revision: "r1",
+      state: "changed",
+      retainedAt: "2026-10-12T12:00:00.000Z",
+      retainedAtSyncCount: 1,
+    };
+    const holding = next(synced, { retention: { ...synced.retention, copies: [copy] } });
+    expect(violation(holding, { retention: { ...freshVault, copies: [copy] } })).toBe(
+      "vault-replaced-while-referenced",
+    );
+
+    const applying = next(synced, {
+      activeApply: {
+        applyId: "apply-1",
+        kind: "sync-apply",
+        operationId: "operation-1",
+        planDigest: "a".repeat(64),
+        baseGeneration: 1,
+        intentTree: oid("5"),
+      },
+    });
+    expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");
+    expect(violation(applying, { retention: freshVault, activeApply: null })).toBe(
+      "vault-replaced-while-referenced",
+    );
+
+    // Nothing lives in the recorded vault, so a missing one may be replaced.
+    expect(violation(synced, { retention: freshVault })).toBeNull();
+  });
+
   it("keeps retained copies until seven days and a later completed sync, and never rewrites them", () => {
     const copy: OverleafConnectionDocument["retention"]["copies"][number] = {
       applyId: "apply-1",

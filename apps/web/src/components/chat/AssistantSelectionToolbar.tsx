@@ -4,7 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -73,13 +73,22 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
         clear();
         return;
       }
+      const pointerOnText =
+        pointer !== null &&
+        rects.some(
+          (line) =>
+            pointer.x >= line.left - 8 &&
+            pointer.x <= line.right + 8 &&
+            pointer.y >= line.top - 8 &&
+            pointer.y <= line.bottom + 8,
+        );
       setSelection({
         sourceAnchor: captured.sourceAnchor,
         citation: captured.citation,
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.at(-1) ?? rect,
-          pointer,
+          pointer: pointerOnText ? pointer : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
       });
@@ -172,7 +181,7 @@ export function AssistantSelectionToolbar({
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
-  const capture = useCallback(() => {
+  const capture = () => {
     if (!viewport) return null;
     const captured = captureAssistantTextSelection(viewport, window.getSelection());
     const messageId = captured?.source.dataset.assistantCitationSource;
@@ -186,6 +195,6 @@ export function AssistantSelectionToolbar({
       },
       sourceAnchor: { source: captured.source, range: captured.range, viewport },
     };
-  }, [threadRef, viewport]);
+  };
   return <SelectionCitationToolbar viewport={viewport} capture={capture} onCite={onCite} />;
 }

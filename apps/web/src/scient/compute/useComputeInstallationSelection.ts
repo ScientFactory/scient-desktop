@@ -31,7 +31,7 @@ export function useComputeInstallationSelection({
     lock.current = true;
     setSelecting(true);
     setError(null);
-    try {
+    return await (async () => {
       const managed = language.installations.find(
         (installation) => installation.source === "managed",
       );
@@ -55,13 +55,17 @@ export function useComputeInstallationSelection({
       }
       await onRefresh();
       return true;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The installation could not be selected.");
-      return false;
-    } finally {
-      lock.current = false;
-      setSelecting(false);
-    }
+    })()
+      .catch(async (cause) => {
+        setError(
+          cause instanceof Error ? cause.message : "The installation could not be selected.",
+        );
+        return false;
+      })
+      .finally(() => {
+        lock.current = false;
+        setSelecting(false);
+      });
   };
   return { select, selecting, error, disabled: unavailable || selecting || removing };
 }

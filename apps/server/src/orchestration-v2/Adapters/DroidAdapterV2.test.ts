@@ -117,15 +117,15 @@ const harness = Effect.fnUntraced(function* (
     yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
   const requestsPath = NodePath.join(
     config.stateDir,
-    `requests-${yield* crypto.randomUUIDv4}.jsonl`,
+    `requests-${yield* crypto.randomUUIDv4()}.jsonl`,
   );
-  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4}.txt`);
+  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4()}.txt`);
   const binary = writeFakeCli({
     directory: config.stateDir,
     name: "droid",
     source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
   });
-  const scenarioId = yield* crypto.randomUUIDv4;
+  const scenarioId = yield* crypto.randomUUIDv4();
   const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);
   const pidsPath = NodePath.join(config.stateDir, `owned-pids-${scenarioId}`);
   const scripted = scenario
@@ -1084,16 +1084,32 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
     ),
   );
 
-  it.effect(
-    "attributes native and custom-model authentication failures to the executing model",
-    () =>
+  it.effect.each([
+    {
+      droid: "0.235",
+      error: { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key" },
+    },
+    {
+      droid: "0.241",
+      error: {
+        code: -32603,
+        message: "Internal error: 401 Invalid API key",
+        data: { sessionId: "fixture-session", reason: "model_authentication_failed" },
+      },
+    },
+  ])(
+    "attributes native and custom-model authentication failures to the executing model (Droid $droid)",
+    ({ error }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const h = yield* harness(false, false, false, undefined, {
-            body: `function onPrompt(message) { fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key" }); }`,
+            body: `function onPrompt(message) { fail(message, ${encodeJson(error)}); }`,
           });
           yield* h.send(1, "full-access");
-          assert.equal((yield* h.terminal).status, "failed");
+          const native = yield* h.terminal;
+          assert.equal(native.status, "failed");
+          if (native.status === "failed")
+            assert.equal(native.failure.message, "401 Invalid API key");
           yield* h.send(2, "full-access", "default", "custom", "custom:scient-fixture");
           assert.equal((yield* h.terminal).status, "failed");
           assert.deepEqual(h.rejectedAuthentication, ["401 Invalid API key"]);
@@ -2198,7 +2214,8 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
         yield* Deferred.await(h.writeBlocked);
         yield* h.signal("die");
         yield* h.nativeTerminated;
-        yield* Deferred.succeed(h.releaseWrite, undefined);
+        // Keep the RPC outside the transport until teardown interrupts it. Releasing
+        // it here lets the transport error race the runtime scope's interruption.
         assert.equal((yield* h.terminal).status, "failed");
         const settled = h.recorded.findLast((event) => event.type === "provider_turn.updated");
         if (settled?.type !== "provider_turn.updated")

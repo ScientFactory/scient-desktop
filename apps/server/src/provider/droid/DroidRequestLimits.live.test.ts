@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
+import { droidRequestFailureDetail } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
@@ -190,10 +191,10 @@ it.effect.skipIf(!binary)(
         .prompt({ prompt: [{ type: "text", text: "Say hello." }] })
         .pipe(Effect.timeout("30 seconds"), Effect.flip);
       expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(10_000);
-      expect(failure).toMatchObject({
-        _tag: "AcpRequestError",
-        data: `400 Scient could not connect to ${new URL(stopped).host}: connection refused.`,
-      });
+      expect(failure._tag).toBe("AcpRequestError");
+      expect(failure._tag === "AcpRequestError" && droidRequestFailureDetail(failure)).toBe(
+        `400 Scient could not connect to ${new URL(stopped).host}: connection refused.`,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   60_000,
 );

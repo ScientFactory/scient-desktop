@@ -225,6 +225,15 @@ list instead of persisting `error` over a working install. The built-in `grok-bu
 CLI's product name, not an ACP model id. `applyGrokAcpModelSelection` treats it as "keep the
 session's current model" and never sends it in `session/set_model`.
 
+### Claude health check
+
+`checkClaudeProviderStatus` runs `claude --version` and, for first-party accounts,
+`claude auth status --json` before reading capabilities. Each command gets 20 seconds rather than
+the shared 4-second probe deadline. The native CLI takes 2-4 seconds to answer either command on
+Windows, so the shorter deadline reported a healthy install as failing whenever the machine was
+busy, and the composer then offered setup for a provider whose conversations kept working. A
+command that still does not answer reports `error` or an unverified account as before.
+
 ## Antigravity ownership and protocol
 
 [`AntigravityDriver`][antigravity] uses Google's official ACP executable. The instance config
@@ -884,17 +893,23 @@ Scient Agent.
   device code and instructions are removed for read-only clients. A sign-in or
   sign-out names one entry. `ScientAgentConnectionActions` starts one isolated agent process per
   attempt, sends `login`, turns the agent's `open_url` and `input` requests into the operation's
-  link, device code and instructions, writes a pasted answer straight to that process, and ends
-  on the `login` response. The manager verifies the result against the refreshed list, not
-  against `auth`, which stays `required: false`. A question that arrives after the link was
-  described is published on the waiting operation (`laterQuestion`). What the user pastes is
-  removed from any error the agent returns. Sign-out sends `logout`, and the
+  link, device code and instructions, writes each pasted answer straight to that process, and
+  ends on the `login` response. The manager verifies the result against the refreshed list, not
+  against `auth`, which stays `required: false`. A sign-in can ask several questions, each after
+  the previous answer (Cloudflare asks for a token, an account id and a gateway id). Each one
+  that arrives after the attempt was described, including the first, is published on the
+  waiting operation (`nextQuestion`); an answer's `verifying` never replaces a question that
+  already followed it. Every question is published with a server-minted `questionId` that the
+  answer echoes, and each answer is bound to the agent request it was asked in, so an answer
+  typed for an earlier question is refused rather than taken for the open one. A client that
+  predates `questionId` can answer only an operation's first question. What the user pastes is
+  removed from any error the agent returns.
+  Sign-out sends `logout`, and the
   lifecycle manager then stops the provider's sessions on whichever instances are current: every
   process that could have read the sign-in started before it was removed. Removal and stop are
   one uninterruptible step, so a client that disconnects midway cannot leave sessions holding the
   sign-in. When the agent's process ends or never answers, the sign-in may be gone, and the
-  sessions are stopped as well; when the agent answers that it kept the sign-in, they are not. An agent build that does not report `kind` offers no sign-in. A sign-in
-  that asks a second question after the first answer fails with a pointer to the terminal.
+  sessions are stopped as well; when the agent answers that it kept the sign-in, they are not. An agent build that does not report `kind` offers no sign-in.
 - Not yet: more than one instance.
 
 `provider/scient/ScientAgent.live.test.ts` is the opt-in suite against real executables
@@ -1145,7 +1160,8 @@ symlinks there. Volta is proven by its `volta-shim` link plus the package's imag
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
 `pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
 the runner's version check catches an updater that exits 0 without updating. Mise installs stay
-manual-only because their version is pinned in mise's config. npm updates pin `--prefix` because the
+manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
+cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.

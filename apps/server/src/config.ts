@@ -1,11 +1,3 @@
-/**
- * ServerConfig - Runtime configuration services.
- *
- * Defines process-level server configuration and networking helpers used by
- * startup and runtime layers.
- *
- * @module ServerConfig
- */
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -19,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import packageJson from "../package.json" with { type: "json" };
 
 export const DEFAULT_PORT = 3773;
 
@@ -28,15 +21,11 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
-/**
- * ServerDerivedPaths - Derived paths from the base directory.
- */
 export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
-  /** Palettes this machine publishes for clients to follow, one file per theme. */
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly analysisDir: string;
@@ -53,7 +42,6 @@ export interface ServerDerivedPaths {
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   readonly documentArtifactsDir: string;
-  /** Screenshots the agent asks the collaborative browser to keep for the user. */
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
   readonly serverTracePath: string;
@@ -75,9 +63,6 @@ export interface DeriveServerPathsOptions {
   readonly developmentScratchRoot?: string | undefined;
 }
 
-/**
- * ServerConfig - Service tag for server runtime configuration.
- */
 export class ServerConfig extends Context.Service<
   ServerConfig,
   ServerDerivedPaths & {
@@ -90,11 +75,6 @@ export class ServerConfig extends Context.Service<
     readonly otlpTracesUrl: string | undefined;
     readonly otlpMetricsUrl: string | undefined;
     readonly otlpLogsUrl: string | undefined;
-    /**
-     * How each signal is exported. Read instead of a process-wide setting so
-     * the wire format, credential, and schedule travel with the endpoint they
-     * were configured beside.
-     */
     readonly otlpTracesExport: SignalExport;
     readonly otlpMetricsExport: SignalExport;
     readonly otlpLogsExport: SignalExport;
@@ -119,6 +99,12 @@ export class ServerConfig extends Context.Service<
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly syncTexNavigatorPath?: string | undefined;
+    /** Host-owned native publisher; never selected by a workspace request. */
+    readonly filePublicationHelperPath?: string | undefined;
+    /** Shared physical-file history across profiles; tests use isolated storage. */
+    readonly filePublicationRetentionRoot?: string | undefined;
+    /** Explicit admission budget. Unresolved versions are never silently evicted. */
+    readonly filePublicationRetentionLimitBytes?: number | null | undefined;
     readonly fileExchangePath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
@@ -126,7 +112,6 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServePort: number;
   }
 >()("t3/config/ServerConfig") {
-  /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (
     cwd: string,
     baseDirOrPrefix: string | { readonly prefix: string },
@@ -135,16 +120,17 @@ export class ServerConfig extends Context.Service<
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
-/**
- * Resource attributes shared by every OTLP exporter, so traces, metrics, and
- * logs report the same service identity to the collector.
- */
-export const otlpResource = (config: ServerConfig["Service"]) => ({
+export const otlpResource = (
+  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
+  hostName: string,
+) => ({
   serviceName: "t3code-server",
+  serviceVersion: packageJson.version,
   attributes: {
     "service.namespace": "t3code",
     "service.runtime": "t3-server",
     "service.mode": config.mode,
+    "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
   },
 });
 
@@ -287,6 +273,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     desktopBrowserControlFd: undefined,
     resourceMonitorPath: undefined,
     syncTexNavigatorPath: undefined,
+    filePublicationRetentionRoot: `${baseDir}/file-publications`,
     staticDir: undefined,
     devUrl,
     devAllowedOrigins: [],
@@ -295,8 +282,23 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   });
 });
 
-export const layerTest = (cwd: string, baseDirOrPrefix: string | { readonly prefix: string }) =>
-  Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix));
+export const layerTest = (
+  cwd: string,
+  baseDirOrPrefix: string | { readonly prefix: string },
+  publicationOptions: Pick<
+    ServerConfig["Service"],
+    | "filePublicationHelperPath"
+    | "filePublicationRetentionRoot"
+    | "filePublicationRetentionLimitBytes"
+    | "syncTexNavigatorPath"
+  > = {},
+) =>
+  Layer.effect(
+    ServerConfig,
+    makeTest(cwd, baseDirOrPrefix).pipe(
+      Effect.map((config) => ServerConfig.of({ ...config, ...publicationOptions })),
+    ),
+  );
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;

@@ -1,3 +1,4 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useNavigate } from "@tanstack/react-router";
 import type {
   EnvironmentId,
@@ -16,7 +17,7 @@ import {
 import { ANTIGRAVITY_DEFAULT_MODEL } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ModelPickerNewChatFooter } from "../../components/chat/ModelPickerNewChatFooter";
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
@@ -129,6 +130,7 @@ export function ProviderOnboardingPicker(props: {
   readonly continueInNewChatDisabled?: boolean;
 }) {
   const navigate = useNavigate();
+  const { autoSelectReadyProvider, onInstanceModelChange } = props;
   const {
     context: overlay,
     instanceRef,
@@ -141,32 +143,38 @@ export function ProviderOnboardingPicker(props: {
   const [query, setQuery] = useState("");
   const [dialogEntry, setDialogEntry] = useState<ProviderInstanceEntry | null>(null);
   const open = props.open ?? uncontrolledOpen;
-  const setOpen = useCallback(
-    (nextOpen: boolean) => {
-      if (!nextOpen && instanceRef.current !== null) return;
-      if (nextOpen && reconnectEntry) {
-        setSelectedDriver(reconnectEntry.driverKind);
-        setQuery("");
-      }
-      props.onOpenChange?.(nextOpen);
-      if (props.open === undefined) setUncontrolledOpen(nextOpen);
-    },
-    [props.onOpenChange, props.open, reconnectEntry, instanceRef],
-  );
+  const setOpen = useStableCallback((nextOpen: boolean) => {
+    if (!nextOpen && instanceRef.current !== null) return;
+    if (nextOpen && reconnectEntry) {
+      setSelectedDriver(reconnectEntry.driverKind);
+      setQuery("");
+    }
+    props.onOpenChange?.(nextOpen);
+    if (props.open === undefined) setUncontrolledOpen(nextOpen);
+  });
 
-  useEffect(() => {
-    if (open || overlay.instanceId !== null) return;
-    setSelectedDriver(null);
-    setQuery("");
-  }, [open, overlay.instanceId]);
+  const [previousPresentation, setPreviousPresentation] = useState({
+    open,
+    instanceId: overlay.instanceId,
+  });
+  if (
+    previousPresentation.open !== open ||
+    previousPresentation.instanceId !== overlay.instanceId
+  ) {
+    setPreviousPresentation({ open, instanceId: overlay.instanceId });
+    if (!open && overlay.instanceId === null) {
+      setSelectedDriver(null);
+      setQuery("");
+    }
+  }
 
-  const entriesByDriver = useMemo(() => {
+  const entriesByDriver = (() => {
     const entries = new Map<ProviderDriverKind, ProviderInstanceEntry>();
     for (const entry of props.instanceEntries) {
       if (!entries.has(entry.driverKind) || entry.isDefault) entries.set(entry.driverKind, entry);
     }
     return entries;
-  }, [props.instanceEntries]);
+  })();
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleDefinitions = DRIVER_OPTIONS.filter((definition) =>
     driverOptionMatchesQuery(definition, normalizedQuery),
@@ -190,17 +198,11 @@ export function ProviderOnboardingPicker(props: {
     ? `Reconnect ${reconnectEntry.displayName}`
     : "Choose your AI";
 
-  const readySelection = useMemo(
-    () =>
-      readyProviderModelSelection(
-        selectedEntry,
-        (selectedEntry ? props.preferredSelections?.[selectedEntry.instanceId] : undefined) ??
-          props.fallbackSelection,
-        selectedEntry
-          ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels
-          : undefined,
-      ),
-    [selectedEntry, props.preferredSelections, props.fallbackSelection, props.modelPreferences],
+  const readySelection = readyProviderModelSelection(
+    selectedEntry,
+    (selectedEntry ? props.preferredSelections?.[selectedEntry.instanceId] : undefined) ??
+      props.fallbackSelection,
+    selectedEntry ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels : undefined,
   );
   useEffect(() => {
     if (
@@ -209,7 +211,7 @@ export function ProviderOnboardingPicker(props: {
       showHome ||
       !selectedEntry ||
       !readySelection ||
-      props.autoSelectReadyProvider === false
+      autoSelectReadyProvider === false
     ) {
       return;
     }
@@ -217,20 +219,20 @@ export function ProviderOnboardingPicker(props: {
     // canonical selection back to T3's existing selection path so the
     // user leaves onboarding with a provider they can immediately use.
     if (selectedEntry.driverKind === "antigravity") {
-      props.onInstanceModelChange(
+      onInstanceModelChange(
         selectedEntry.instanceId,
         readySelection.model,
         readySelection.options ?? [],
       );
     } else {
-      props.onInstanceModelChange(selectedEntry.instanceId, readySelection.model);
+      onInstanceModelChange(selectedEntry.instanceId, readySelection.model);
     }
     setOpen(false);
   }, [
     overlay.instanceId,
     open,
-    props.autoSelectReadyProvider,
-    props.onInstanceModelChange,
+    autoSelectReadyProvider,
+    onInstanceModelChange,
     readySelection,
     selectedEntry,
     setOpen,

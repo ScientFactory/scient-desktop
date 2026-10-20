@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -158,19 +159,11 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
   }),
 );
 
-/**
- * The legacy `OpenCodeProviderLive` Layer + `OpenCodeProvider` service tag
- * are deleted. The snapshot-producing logic they wrapped now lives in the
- * standalone `checkOpenCodeProviderStatus(settings, cwd)` Effect, which
- * drivers call directly when building their per-instance snapshot
- * `ManagedServerProvider`. Tests mirror that shape: build a settings payload,
- * invoke the check, assert on the returned snapshot.
- */
-
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     runVersionPending: false,
+    runVersionDelay: null as Duration.Input | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
@@ -190,6 +183,7 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
+    this.state.runVersionDelay = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
@@ -262,7 +256,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
               cause: runtimeMock.state.runVersionError,
             }),
           )
-        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+        : runtimeMock.state.runVersionDelay
+          ? Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }).pipe(
+              Effect.delay(runtimeMock.state.runVersionDelay),
+            )
+          : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<
@@ -497,15 +495,30 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
 
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("4 seconds");
+      yield* TestClock.adjust("10 seconds");
       const snapshot = yield* Fiber.join(probeFiber);
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 10 seconds.",
       );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits for a slow but healthy local CLI version probe", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionDelay = "6 seconds";
+      const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("6 seconds");
+      const snapshot = yield* Fiber.join(probeFiber);
+
+      NodeAssert.notEqual(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.19");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -689,7 +702,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         "auto",
         "full-access",
       ]);
-      // Plan mode runs as OpenCode's plan agent, and every session can compact.
       NodeAssert.equal(snapshot.showInteractionModeToggle, true);
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
@@ -727,7 +739,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.message, "OpenCode could not load its model list.");
-      // A failed catalog read still leaves the session able to compact.
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
         ["compact"],
@@ -825,8 +836,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
 
   it.effect("labels each model with the sub-provider that listed it", () =>
     Effect.gen(function* () {
-      // Names come from the server's provider list; see openCode2Catalog.test.ts
-      // for reading that list itself.
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({
           serverUrl: "http://127.0.0.1:9999",
@@ -857,9 +866,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       const subProviderFor = (slug: string) =>
         snapshot.models.find((model) => model.slug === slug)?.subProvider;
       NodeAssert.equal(subProviderFor("openai/gpt-5.4"), "OpenAI");
-      // A provider called plain "OpenCode" would repeat the instance name.
       NodeAssert.equal(subProviderFor("custom/m1"), undefined);
-      // The id stands in until the server names its providers.
       NodeAssert.equal(subProviderFor("anthropic/claude"), "anthropic");
     }),
   );
@@ -947,7 +954,6 @@ const bigPickle: OpenCode2Model = {
 
 it.effect("waits for a fresh OpenCode 2 server to list its models", () =>
   Effect.gen(function* () {
-    // A fresh server lists nothing until its catalog loads.
     const replies: Array<ReadonlyArray<OpenCode2Model>> = [[], [], [bigPickle]];
     const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [bigPickle]));
     const fiber = yield* load.pipe(Effect.forkChild);
@@ -968,7 +974,6 @@ it.effect("keeps the last OpenCode 2 model list while a fresh server's stays emp
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-// What 2.0.18 lists for a directory once it has scanned it (live, 2026-09-29).
 const builtinCommands = [
   { name: "init", description: "guided AGENTS.md setup" },
   { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
@@ -992,7 +997,6 @@ const scanned: OpenCode2Workspace = {
 
 it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", () =>
   Effect.gen(function* () {
-    // A directory the server has not served yet lists no commands until its scan ends.
     const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
     const scanEnded = yield* Deferred.make<void>();
     const load = yield* loadOpenCode2Workspace(

@@ -108,13 +108,109 @@ closing the attempt scope cancels the owned flow. Pre-browser errors expose
 only fixed, allowlisted runtime-resolution, helper-preparation, runtime-startup,
 or link-capture messages; unknown causes remain generic. A failed current attempt
 records its authorization phase, known error type, and available numeric exit or
-allowlisted system error code. The diagnostic never retains native output, paths,
-credentials, or OAuth URLs, and logging does not determine the attempt's outcome.
-The lifecycle handoff accepts the same 16,384-character authorization URL bound
-as native provider auth without truncating the link. Browser-opening errors in the compact
-desktop/web view belong to the provider instance, operation, and opening
-invocation. They are visible only while waiting for browser authorization,
-not after verification begins.
+allowlisted system error code. For a failed ACP request it also records an
+allowlist of facts and no text of the agent's own: the method, the JSON-RPC code,
+the message only when it is a standard JSON-RPC message, and the kind of failure
+`data.details` describes. The known shape "failed to create workspace folder …:
+mkdir …" is recorded as `workspace_folder_create_failed` with the folder's last
+segment when it is one of the profile's own folders and the OS error as
+EEXIST, ENOENT, EACCES, EPERM or ENOTDIR; anything else is `unrecognized` with its
+length. These are attributes of a warning event in the server trace, so they follow
+the user's trace exporter configuration like every other trace event; Settings >
+Diagnostics lists only the event's fixed message. Credentials and OAuth URLs are not retained, and logging does not
+determine the attempt's outcome. When
+Google accepted the sign-in but `session/new` failed, the failed operation carries
+`failedAfterSignIn` and the UI says the sign-in finished but Antigravity could not
+start; the manager sets the same flag when it cannot verify an account the provider
+reported as signed in. The lifecycle handoff accepts the same 16,384-character authorization URL bound
+as native provider auth without truncating the link.
+
+The agent reads skills under its private `GEMINI_HOME`, and creates
+`config/skills` and `antigravity-cli/skills` there on `session/new`; a link to a
+missing directory makes every session fail. Profile preparation therefore links
+those directories to `~/.gemini` only when the target exists, removes a dangling
+link otherwise, and replaces an empty directory the agent created once the target
+appears; a directory with content is never touched
+(`scient/skills/antigravityUserSkillLinks.ts`). The browser-helper preflight runs
+once per server process for each combination of helper executable and the
+`NODE_OPTIONS` and `ELECTRON_RUN_AS_NODE` values it launches with (held only as
+a digest), and a timeout no longer waits for
+the helper's teardown (`scient/providerLifecycle/antigravityBrowserHelperPreflight.ts`).
+Verification cleanup also removes SQLite sidecars left without their database,
+which a failed `session/new` leaves behind.
+
+Starting Antigravity unpacks the agent first and can take up to a minute. Its
+connection actions name a starting message, which the manager publishes with the
+`starting` operation, and the setup card and Settings row say it is starting
+rather than claiming a browser is open. Scient does not pre-start the agent.
+
+## Opening sign-in pages
+
+The window that starts a sign-in opens its page once, whatever setup view is
+mounted when the page becomes available. The code lives in
+`apps/web/src/scient/providerConnection/`: `providerSignInFlow.ts` runs the flow,
+`providerSignInRequests.ts` holds the request ids, `providerSignInOpenings.ts`
+records each opening and reports failures, `providerSignInPage.ts` opens a URL,
+and `useProviderSignInBrowser.ts` is the setup views' hook.
+
+1. **Request id.** Before a start, the window records a random id in session
+   storage and sends it as `signInRequestId`. The connection manager stamps it on
+   every state of the operation it creates.
+2. **Claim.** Whenever the start reply or a streamed provider snapshot shows an
+   operation stamped with a held id, waiting on a `primary` URL, the window sends
+   `claimProviderSignInPage`, one claim per operation at a time. Replies and
+   snapshots count alike; the client keeps no view of which operation is current.
+3. **Grant.** Under the operation's transition lock, the manager grants once per
+   operation, only while it is the current operation, waits on that page and
+   carries that id. The grant returns the page's URL, which the window opens if it
+   still holds the id. Windows sharing a copied session, a reload after a grant, a
+   repeated report, and an operation replaced or cancelled before the claim are
+   denied; clients without the id never ask.
+4. **Release.** An id is released by the claim's answer, by a reply or snapshot
+   showing its operation ended, by a rejected start, by the user opening the page
+   by hand, or 15 minutes after it was made. It is never released because a
+   snapshot does not show its operation yet. An unknown answer keeps it for the
+   next report.
+
+`ProviderSignInPageCoordinator`, mounted once in the root route, registers the
+claim command and then watches the provider snapshots of each environment in
+which the window holds an id. A second start from the same window joins the
+in-flight command and releases its own id; one from another client is rejected,
+because a server runs one connection operation per instance. A cancel the server
+processes after the grant opens nothing if the snapshot showing it arrives first;
+otherwise the page opens, as if the user cancelled just after it opened. A window
+that dies between the grant and the opening, or a full quit, leaves the card's
+open action. Other clients' setup views offer to open the page and never say it is
+open. Against a server that does not stamp ids, the reply alone identifies a new
+operation.
+
+Once the manager has published an accepted operation, the rest of its startup runs
+in a manager-owned fiber. The start request waits for it, but a reload or
+disconnect only detaches the request; cancel, the provider's own failure or
+deadline, and manager teardown end the startup.
+
+The desktop app opens pages through the system browser. In a browser tab, a page
+opened long after the click is usually blocked as a popup, so Scient opens
+`about:blank` without `noopener` to see that, cuts the opener link, and follows a
+`noreferrer` link inside the new window, so the sign-in page receives no referrer.
+If that navigation fails, the blank window is closed. A failed or blocked opening
+shows in a mounted setup view of the instance, or else as a notification; both
+offer to open the page, which a blocking browser allows because it is the user's
+own click. Providers that open their own browser publish `manual_fallback` URLs,
+which open only on request. Scient Agent's account sign-ins use the same flow. The
+generic connection dialog, for providers without assisted setup, keeps its own
+opening because no sign-in method uses it.
+
+The Settings and onboarding row starts sign-in directly when the provider has
+exactly one method that only needs a page Scient opens (`codex_browser`,
+`cursor_browser`, `antigravity_google`); a choice of methods, a device code, a
+pairing or configured credentials open the setup card. So does a started flow that
+waits on something other than that page, and any one-click start for an
+environment whose server is not known to be on this device: the provider's browser
+return goes to `127.0.0.1` on the browser's device, so the card's field for pasting
+the return URL must be visible. Only the desktop app's own backends count as on
+this device; a browser tab on localhost may be reaching a remote server through a
+tunnel.
 
 ## Independent lifecycle state
 
@@ -151,7 +247,9 @@ errors appear in the selected provider's detail pane rather than repeating in th
 
 Provider settings and onboarding share the same header actions. An enabled missing runtime with
 advertised install capability shows Install; an enabled installed runtime needing authentication
-with an advertised login method shows Sign in. Both retain an icon-only Manage entry. Active runtime,
+with an advertised login method shows Sign in, which starts sign-in directly or opens the setup
+card as described in [Opening sign-in pages](#opening-sign-in-pages). Both retain an icon-only
+Manage entry. Active runtime,
 sign-in, and external update operations show a compact progress control alongside icon-only Manage,
 including a download percentage only while downloading with a known total. Progress comes from the
 server's operation state and remains visible when the lifecycle dialog closes. Clicking progress or
@@ -458,6 +556,12 @@ and
 [`ProviderRuntimeManager`](../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts)
 are process-scoped services shared by every WebSocket client. Closing a dialog or disconnecting one
 client therefore does not duplicate or orphan an operation.
+
+A managed runtime change starts in a manager-owned fiber from the first step, including planning,
+which can take tens of seconds on a loaded Windows machine. A reload or disconnect only detaches the
+start request; cancel and manager teardown still end it. Before the operation is published, nothing
+can cancel it, so its first runtime-state read gives up after two minutes and releases the
+reservation.
 
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation

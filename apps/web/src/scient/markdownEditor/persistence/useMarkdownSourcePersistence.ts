@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MarkdownPersistenceLease } from "./markdownPersistenceRegistry";
 
@@ -20,27 +21,21 @@ export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLea
       active.current = false;
     };
   }, []);
-  const onProjectionApplied = useCallback(
-    (source: string) => {
-      const current = persistence.getSnapshot();
-      if (active.current)
-        appliedVersion.current = source === current.draftSource ? current.editVersion : null;
-    },
-    [persistence],
-  );
-  const onContentsChange = useCallback(
-    (source: string) => {
-      if (!active.current || appliedVersion.current === null) return;
-      if (persistence.getPendingInput() !== null) return;
-      if (!persistence.change(source, appliedVersion.current)) {
-        rejectStaleProjection((version) => version + 1);
-      } else appliedVersion.current = persistence.getSnapshot().editVersion;
-    },
-    [persistence],
-  );
-  const onExternalVersionApplied = useCallback((version: number) => {
+  const onProjectionApplied = (source: string) => {
+    const current = persistence.getSnapshot();
+    if (active.current)
+      appliedVersion.current = source === current.draftSource ? current.editVersion : null;
+  };
+  const onContentsChange = (source: string) => {
+    if (!active.current || appliedVersion.current === null) return;
+    if (persistence.getPendingInput() !== null) return;
+    if (!persistence.change(source, appliedVersion.current)) {
+      rejectStaleProjection((version) => version + 1);
+    } else appliedVersion.current = persistence.getSnapshot().editVersion;
+  };
+  const onExternalVersionApplied = useStableCallback((version: number) => {
     appliedVersion.current = version;
-  }, []);
+  });
   return {
     contents: snapshot.draftSource,
     revision: snapshot.baselineRevision,

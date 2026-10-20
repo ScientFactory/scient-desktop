@@ -1,5 +1,5 @@
 import type { OrchestrationV2Run } from "@t3tools/contracts";
-import { useMemo } from "react";
+
 import type { ChatMessage, SessionPhase } from "../../types";
 import { promptRunStarting } from "./responseFollow";
 
@@ -63,7 +63,7 @@ export function isOnlySendBusy(state: {
 }
 
 /** ChatView's working state for the timeline (see `resolveTimelineWorking`). */
-export function useTimelineWorking(input: {
+export function deriveTimelineWorking(input: {
   /** The thread is working by ChatView's own rule. */
   threadWorking: boolean;
   /** Busy only because a send is being dispatched: no run, setup or other cause. */
@@ -79,14 +79,14 @@ export function useTimelineWorking(input: {
 }): boolean {
   const { threadWorking, onlySendBusy, dispatchBaselineUserMessageId, projection } = input;
   const optimisticPromptShown = input.optimisticMessages.some((message) => !message.queueAdmission);
-  const latest = useMemo(() => {
+  const latest = (() => {
     const messages = projection?.messages ?? [];
     const promptId = messages.findLast((message) => message.role === "user")?.id ?? null;
     return {
       promptId,
       starting: promptRunStarting({ promptId, runs: projection?.runs ?? [], messages }),
     };
-  }, [projection]);
+  })();
   return resolveTimelineWorking({
     isWorking: threadWorking,
     onlySendBusy,

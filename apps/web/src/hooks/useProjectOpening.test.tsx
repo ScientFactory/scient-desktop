@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, useCallback, useLayoutEffect, useState } from "react";
+import { act, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { CommandDialog, CommandDialogPopup } from "../components/ui/command";
@@ -27,10 +27,10 @@ const claim = vi.fn(() => coordinator.claim({ kind: "explicit", scope: "route" }
 
 function Probe() {
   const [open, updateOpen] = useState(true);
-  const close = useCallback(() => {
+  const close = () => {
     closed();
     updateOpen(false);
-  }, []);
+  };
   const opening = useProjectOpening(open, close);
   useLayoutEffect(() => {
     api = opening;

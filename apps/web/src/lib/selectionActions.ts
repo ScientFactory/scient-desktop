@@ -26,11 +26,8 @@ export function resolveSelectionActionPosition(options: {
 }
 
 /**
- * Opens selection actions after release, leaving multi-clicks time to finish.
- * DOM selections call selectionChanged; canvas selections can use their own
- * change notification. Each surface still owns reading and acting on its text.
- * Interactive popovers pass getActionElement to keep editing their fields from
- * replacing the captured source selection.
+ * Interactive popovers pass getActionElement to keep editing their fields from replacing the
+ * captured source selection.
  */
 export function observeSelectionActions({
   element,
@@ -104,10 +101,7 @@ export function observeSelectionActions({
   const onSelectionStart = (event: PointerEvent) => {
     if (!event.isPrimary) return;
     const target = event.target as Element | null;
-    // Buttons can preserve an existing text selection while opening a menu.
-    // Their release must not reopen selection actions beside the button.
     if (target?.closest("button, [role=button]")) return;
-    // A surface may consume a press for a link or terminal mouse reporting.
     gestureActive =
       event.button === 0 &&
       (!event.defaultPrevented || allowPreventedSelectionStart?.(event.target) === true);

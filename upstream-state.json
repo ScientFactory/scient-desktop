@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "f23d0084b6e023ffb1af9e332d8666affc99d542",
-  "reviewedThrough": "f23d0084b6e023ffb1af9e332d8666affc99d542",
-  "reviewedAt": "2026-10-12",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261012-f23d0084b6.md",
+  "integrationBase": "f34ba437a5dec23a205ef5f670f7b10439ae98eb",
+  "reviewedThrough": "f34ba437a5dec23a205ef5f670f7b10439ae98eb",
+  "reviewedAt": "2026-10-19",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261019-f34ba437a5.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "ed6fd66fd3ac04816e66bdce0ed4fc667bc753a7",
-  "lastRefreshPreviousOfficialTip": "74dfbb697235b0db87355d3f8575dc2ba45dddf7",
-  "lastRefreshOfficialTip": "f23d0084b6e023ffb1af9e332d8666affc99d542",
+  "lastRefreshBase": "129f4af07bc3b78cab506086fcad0c5f12d7105f",
+  "lastRefreshPreviousOfficialTip": "d8e9fd267e26b7680f035edc0b40db09d2685dbb",
+  "lastRefreshOfficialTip": "f34ba437a5dec23a205ef5f670f7b10439ae98eb",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 72,
-  "lastRefreshMerge": "de8482724fa062fbea7daa4549cd70dc9e665b85",
-  "lastRefreshBranch": "codex/t3-sync-f23d0084b6-investigation-20261011",
+  "lastRefreshRangeCount": 84,
+  "lastRefreshMerge": "9ef3f49f0de3d380389e2e26d0ff9753ef37ff11",
+  "lastRefreshBranch": "codex/t3-sync-f34ba437a5-20261019",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,7 +43,7 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "887e363db1eae11ca7d1566a48bd5c6c71d17f8f",
-  "lastRefreshOwnedMainMerge": "43779ee83b358cb929e32cafa1a3e53f7eb147cd",
-  "lastRefreshVerifiedAt": "2026-10-13T00:57:57.456261+00:00"
+  "lastRefreshOwnedMain": "17f7bfb2f47a4622f627b34d378bc33c1f43eb01",
+  "lastRefreshOwnedMainMerge": "a0e936c50f2dfebe362a2fa3707aaecac1399797",
+  "lastRefreshVerifiedAt": "2026-10-20T05:49:54Z"
 }

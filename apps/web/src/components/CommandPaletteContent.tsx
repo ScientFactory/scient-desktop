@@ -1,11 +1,5 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import {
-  type ComponentProps,
-  type ReactNode,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { type ComponentProps, type ReactNode, useEffect, useImperativeHandle, useRef } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -18,20 +12,11 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
-  /**
-   * How tall the results panel may grow: the palette's list, a taller file list, or the whole
-   * dialog body (for modes that lay out their own status and empty states).
-   */
   readonly panelSize?: "list" | "tall-list" | "fill" | "project-picker";
   readonly showBackHint?: boolean;
   readonly testId?: string;
 };
 
-/**
- * Shared command palette chrome. Palette modes provide their query behavior,
- * results, and optional input accessory while retaining one input, panel, and
- * keyboard-hint gutter.
- */
 export function CommandPaletteContent({
   children,
   containerProps,
@@ -52,16 +37,18 @@ export function CommandPaletteContent({
 
   // Direct-open flows replace the initial palette view after the dialog has
   // already moved focus. Reclaim it when the replacement input mounts so
-  // typing cannot continue in the composer behind the modal.
-  useLayoutEffect(() => {
-    inputRef.current?.focus();
+  // typing cannot continue in the composer behind the modal. Defer until the
+  // dialog has recorded the previous focus target for restoration on close.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   return (
     <div {...containerProps} className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} ref={inputRef} />
+          <CommandInput autoFocus={false} {...inputProps} ref={inputRef} />
           {inputAccessory}
         </div>
         <CommandPanel
@@ -70,9 +57,7 @@ export function CommandPaletteContent({
               ? "flex min-h-0 flex-1 flex-col"
               : panelSize === "tall-list"
                 ? "max-h-[min(34rem,76vh)]"
-                : panelSize === "project-picker"
-                  ? "flex max-h-[min(28rem,70vh)] flex-col"
-                  : "max-h-[min(28rem,70vh)]"
+                : "flex max-h-[min(28rem,70vh)] min-h-0 flex-col"
           }
         >
           {children}

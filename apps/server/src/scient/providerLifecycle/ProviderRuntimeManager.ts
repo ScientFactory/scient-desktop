@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import type {
@@ -151,6 +152,7 @@ function operation(input: {
 
 const IDLE_POLL_INTERVAL = "1 second";
 const RESELECT_INTERVAL = "10 minutes";
+const STARTUP_SUMMARY_TIMEOUT = "2 minutes";
 
 export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
@@ -236,6 +238,8 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   });
 
   yield* Effect.addFinalizer(() => cleanupAll);
+  // Startups run here, not in the request that asked for them.
+  const managerScope = yield* Scope.Scope;
 
   const publishCancelled = Effect.fn("ProviderRuntimeManager.publishCancelled")(function* (
     instanceId: ProviderInstanceId,
@@ -414,7 +418,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     },
   );
 
-  const start: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.start")(
+  const startup: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.startup")(
     function* (input) {
       const target = yield* readTarget(input.instanceId);
       const planned = yield* plan({ instanceId: input.instanceId, action: input.action });
@@ -426,7 +430,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider setup plan changed. Review it again before continuing.",
         });
       }
-      const operationId = `runtime-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+      const operationId = `runtime-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
       const reserved = yield* lifecycleCoordinator.reserve({
         instanceId: input.instanceId,
         provider: target.provider,
@@ -442,6 +446,17 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       }
       const startedAt = yield* nowIso;
       const baseSummary = yield* target.actions.getSummary.pipe(
+        // Nothing is published yet, so Cancel cannot reach a stalled read; the
+        // bound keeps it from holding the reservation indefinitely.
+        Effect.timeoutOrElse({
+          duration: STARTUP_SUMMARY_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new ProviderConnectionActionError({
+                message: "Scient could not read the provider runtime state in time. Try again.",
+              }),
+            ),
+        }),
         Effect.mapError((failure) =>
           makeError({
             provider: target.provider,
@@ -689,6 +704,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     },
   );
 
+  // Once asked, a runtime change belongs to the manager: planning can stall for
+  // a long time on a loaded machine, and a client that reconnects meanwhile only
+  // detaches from the reply. Cancel and manager shutdown still stop it.
+  const start: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.start")(
+    function* (input) {
+      const fiber = yield* startup(input).pipe(Effect.forkIn(managerScope));
+      return yield* Fiber.join(fiber);
+    },
+  );
+
   const cancel: ProviderRuntimeManagerShape["cancel"] = Effect.fn("ProviderRuntimeManager.cancel")(
     function* (input) {
       const target = yield* readTarget(input.instanceId);
@@ -777,7 +802,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     // Wait without holding the lifecycle reservation, so user actions stay
     // available while turns run; re-check once reserved.
     yield* waitForIdleTurns(provider, Effect.void);
-    const operationId = `reselect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+    const operationId = `reselect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId,
       provider,

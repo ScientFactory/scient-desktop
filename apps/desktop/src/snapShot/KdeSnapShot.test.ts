@@ -139,6 +139,26 @@ it("detects a bundled update, updates explicitly, and removes only capture's reg
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep me");
 });
 
+it("installs under the Scient name and replaces a helper installed under T3's name", async () => {
+  const { executable, desktop } = kdeCapturePaths(paths);
+  expect(NodePath.basename(executable)).toBe("scient-kde-snap-shot");
+  const legacy = NodePath.join(NodePath.dirname(executable), "t3-kde-snap-shot");
+  await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+  await NodeFSP.mkdir(NodePath.dirname(desktop), { recursive: true });
+  await NodeFSP.writeFile(legacy, "bundled executable", { mode: 0o755 });
+  await NodeFSP.writeFile(desktop, kdeCaptureDesktopEntry(legacy));
+  expect((await setup.state()).status).toBe("update-required");
+  await setup.perform("install-kde-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([
+    NodePath.basename(executable),
+  ]);
+  expect(await NodeFSP.readFile(desktop, "utf8")).toBe(kdeCaptureDesktopEntry(executable));
+  expect((await setup.state()).status).toBe("ready");
+  await NodeFSP.writeFile(legacy, "bundled executable");
+  await setup.perform("remove-kde-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([]);
+});
+
 it("repairs the old semicolon permission entry without replacing unrelated registrations", async () => {
   await setup.perform("install-kde-helper");
   const { desktop } = kdeCapturePaths(paths);

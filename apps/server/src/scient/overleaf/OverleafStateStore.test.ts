@@ -266,6 +266,52 @@ describe("OverleafStateStore", () => {
     ),
   );
 
+  it.live("persists nothing when a fresh vault would strand retained copies", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        const document = overleafConnectionFixture();
+        yield* store.createConnection(document);
+        const holding = revised(document, {
+          retention: {
+            ...document.retention,
+            copies: [
+              {
+                applyId: "apply-1",
+                relativePath: "main.tex",
+                revision: "r1",
+                state: "changed",
+                retainedAt: "2026-10-12T12:00:00.000Z",
+                retainedAtSyncCount: 0,
+              },
+            ],
+          },
+        });
+        yield* store.replaceConnection({ expectedRevision: 1, next: holding });
+        const rejected = yield* Effect.flip(
+          store.replaceConnection({
+            expectedRevision: 2,
+            next: revised(holding, {
+              retention: {
+                ...holding.retention,
+                vaultIdentity: { ...holding.retention.vaultIdentity, fileId: "99" },
+              },
+            }),
+          }),
+        );
+        expect(rejected).toMatchObject({
+          _tag: "OverleafTransitionRejectedError",
+          violation: "vault-replaced-while-referenced",
+        });
+        expect(yield* store.readConnection("connection-1")).toEqual({
+          _tag: "ready",
+          document: holding,
+        });
+      }),
+    ),
+  );
+
   it.live.each(["temporary-written", "temporary-synced", "before-publish", "published"] as const)(
     "keeps a whole document when a replacement stops at %s",
     (point) =>

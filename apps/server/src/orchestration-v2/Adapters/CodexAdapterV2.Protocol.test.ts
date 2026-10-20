@@ -42,7 +42,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
         ...call,
         arguments: { title: "  " },
       });
-      assert.equal(blankTitle.title, "js");
+      assert.equal(blankTitle.title, "Computer use");
       assert.deepEqual(blankTitle.input, { title: "  " });
       const otherMcp = yield* CodexAdapterV2.projectCodexDynamicToolItem({
         ...call,

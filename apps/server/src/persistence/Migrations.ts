@@ -1,19 +1,8 @@
-/**
- * Migration runner with an inline loader.
- *
- * Uses Migrator.make with fromRecord to define migrations inline.
- * All migrations are statically imported - no dynamic file system loading.
- *
- * `runMigrations` is called by the SQLite persistence layer at startup, so the
- * schema is always up to date before the application starts.
- */
-
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
-// Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
 import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
@@ -87,17 +76,18 @@ import Migration0063 from "./Migrations/063_McpAppModelContext.ts";
 import Migration0064 from "./Migrations/064_ThreadSnapshotWindowIndexes.ts";
 // T3 migration 61 follows Scient shipped ledger at the next free ID.
 import Migration0065 from "./Migrations/065_PullRequestReviewGuides.ts";
+// Incoming T3 migration 62 follows the immutable Scient ledger.
+import Migration0066 from "./Migrations/066_ThreadFailureLookupIndex.ts";
+// T3 migration 63 follows the immutable Scient ledger. Scient keeps the V1 tables its history
+// import reads; see the migration.
+import Migration0067 from "./Migrations/067_DropUnusedV1Projections.ts";
+// SCIENT-FORK:START — incoming T3 migration 64 follows the immutable Scient ledger.
+import Migration0068 from "./Migrations/068_CanonicalizeThreadPullRequestLinks.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — immutable owned migration identities.
+import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
+// SCIENT-FORK:END
 
-/**
- * Migration loader with all migrations defined inline.
- *
- * Key format: "{id}_{name}" where:
- * - id: numeric migration ID (determines execution order)
- * - name: descriptive name for the migration
- *
- * Uses Migrator.fromRecord which parses the key format and
- * returns migrations sorted by ID.
- */
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -176,6 +166,11 @@ export const migrationEntries = [
   [63, "McpAppModelContext", Migration0063],
   [64, "ThreadSnapshotWindowIndexes", Migration0064],
   [65, "PullRequestReviewGuides", Migration0065],
+  [66, "ThreadFailureLookupIndex", Migration0066],
+  [67, "DropUnusedV1Projections", Migration0067],
+  // SCIENT-FORK:START — immutable migration numbering.
+  [68, "CanonicalizeThreadPullRequestLinks", Migration0068],
+  // SCIENT-FORK:END
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -199,93 +194,6 @@ export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
-/**
- * Reject a ledger this build cannot safely continue from.
- *
- * The migrator keys on `migration_id` alone: a database whose ledger was
- * written by a fork, a preview or the local V2 shadow keeps that id and
- * silently skips this build's migration at it, reporting success over a short
- * schema. Validation is by migration id, never by position — Scient deliberately
- * retired migration 50, so a legitimate ledger may contain an id this build no
- * longer defines.
- */
-const validateLedger = Effect.fn("validateLedger")(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const tables = yield* sql<{ readonly name: string }>`
-    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
-  `;
-  if (tables.length === 0) return; // Fresh database: nothing recorded yet.
-  const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-    SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
-  `;
-  if (rows.length === 0) return;
-
-  const latest = migrationEntries[migrationEntries.length - 1]!;
-  let previousRecordedId = 0;
-  for (const row of rows) {
-    if (row.migration_id <= previousRecordedId) {
-      return yield* new Migrator.MigrationError({
-        kind: "BadState",
-        message:
-          `Migration ledger is not in increasing id order: ${row.migration_id} ("${row.name}") ` +
-          `follows ${previousRecordedId}. The ledger was modified; refusing to continue.`,
-      });
-    }
-    if (row.migration_id > latest[0]) {
-      return yield* new Migrator.MigrationError({
-        kind: "BadState",
-        message:
-          `Migration ledger records ${row.migration_id} ("${row.name}"), beyond the latest known ` +
-          `${latest[0]} ("${latest[1]}"). The database was migrated by a newer or different ` +
-          `build; refusing to run this build's migrations against it.`,
-      });
-    }
-    // One ascending pass finds this row's migration and simultaneously rejects a
-    // gap: any migration this build defines between the previously recorded id
-    // and this one was never recorded, so an id-ordered migrator would skip it
-    // forever. That is the silent short-schema failure, and it must refuse.
-    let expectedName: string | undefined;
-    for (const [id, name] of migrationEntries) {
-      if (id === row.migration_id) {
-        expectedName = name;
-        break;
-      }
-      if (id > previousRecordedId && id < row.migration_id) {
-        return yield* new Migrator.MigrationError({
-          kind: "BadState",
-          message:
-            `Migration ledger skips ${id} ("${name}"), which this build defines, between recorded ` +
-            `${previousRecordedId} and ${row.migration_id}. That migration would never run; ` +
-            `refusing to continue.`,
-        });
-      }
-    }
-    previousRecordedId = row.migration_id;
-    // Retired ids are tolerated: an older build recorded them and this build
-    // intentionally no longer defines them.
-    if (expectedName === undefined) continue;
-    if (row.name !== expectedName) {
-      return yield* new Migrator.MigrationError({
-        kind: "BadState",
-        message:
-          `Migration ledger records ${row.migration_id} as "${row.name}" but this build names it ` +
-          `"${expectedName}". The ledger was written by a different build; this build's migration ` +
-          `at that id would be silently skipped, so refusing to continue.`,
-      });
-    }
-  }
-});
-
-/**
- * Run all pending migrations.
- *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
- *
- * Returns array of [id, name] tuples for migrations that were run.
- *
- * @returns Effect containing array of executed migrations
- */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
@@ -296,7 +204,9 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
       ? yield* reconcileV2PreviewMigration()
       : [];
   // After the preview lift, so a repaired ledger is judged as this build sees it.
-  yield* validateLedger();
+  // SCIENT-FORK:START — validation stays before any migration can reinterpret shipped ids.
+  yield* validateScientMigrationLedger(migrationManifest);
+  // SCIENT-FORK:END
   const executedMigrations = [
     ...previewMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
@@ -306,10 +216,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
 
-  // The migrator keys on migration_id: a database that recorded a different
-  // migration under a shared id (local or fork builds) keeps that id and
-  // silently skips this build's migration at it. Surface the divergence so the
-  // skipped schema change is diagnosable.
   const sql = yield* SqlClient.SqlClient;
   const recorded = yield* sql<{
     readonly migration_id: number;

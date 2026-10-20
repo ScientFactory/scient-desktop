@@ -20,7 +20,7 @@
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "icons:export:android": "node scripts/export-android-icons.ts",
-    "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
+    "build": "vp run --fail-if-no-match --filter \"./apps/*\" --filter \"./packages/*\" --filter \"./oxlint-plugin-t3code\" --filter \"./scripts\" build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
@@ -58,8 +58,8 @@
     "dev:app:status": "node scripts/local-dev-app.mjs status",
     "dev:app:stop": "node scripts/local-dev-app.mjs stop",
     "dev:app:uninstall": "node scripts/local-dev-app.mjs uninstall",
-    "canonical:sync": "node scripts/canonical-main-sync.mjs",
-    "canonical:sync:install": "node scripts/canonical-main-sync.mjs --install",
+    "dev:app:review": "node scripts/dev-app/controller.mjs review",
+    "dev:app:stable": "node scripts/dev-app/controller.mjs",
     "canonical:sync:uninstall": "node scripts/canonical-main-sync.mjs --uninstall",
     "brand:check": "node scripts/check-scient-brand.ts",
     "analysis:seams:check": "node scripts/verify-scient-analysis-seams.mjs",
@@ -72,6 +72,8 @@
     "alignment:checks": "node scripts/scient-alignment-checks.mjs",
     "alignment:plan": "node scripts/scient-alignment.mjs plan",
     "alignment:start": "node scripts/scient-alignment.mjs start",
+    "alignment:facts": "node scripts/scient-alignment.mjs facts",
+    "alignment:gates": "node scripts/scient-alignment-gates.mjs",
     "build:synctex-runtime": "node scripts/stage-synctex-runtime.ts",
     "voice:runtime:stage": "node scripts/stage-whisper-runtime.ts --verbose --dev-cache"
   },
@@ -81,11 +83,15 @@
     "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
     "knip": "6.34.0",
+    "tsc-rs": "0.7.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.10.0",
+  "scientDevApp": {
+    "protocol": 1
+  }
 }

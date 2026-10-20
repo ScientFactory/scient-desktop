@@ -12,7 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FileSystem from "effect/FileSystem";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import type { ProviderAdapterRegistryV2 } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 
@@ -21,11 +21,13 @@ import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as RuntimePolicy from "../../orchestration-v2/RuntimePolicy.ts";
 import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import * as Commit from "./ConversationImportCommit.ts";
 import * as ImporterLive from "./ConversationImporterLive.ts";
 import type { PortableConversationImportPlan } from "./conversationImportPlan.ts";
@@ -112,9 +114,7 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
 export const createNativeProjects = Effect.gen(function* () {
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
-  const workspaceRoot = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-    prefix: "scient-native-import-workspace-",
-  });
+  const workspaceRoot = yield* checkpointWorkspace("scient-native-import-workspace");
   for (const projectId of [PROJECT_ID, OTHER_PROJECT_ID]) {
     yield* sink.commitProjectCommand({
       commandId: CommandId.make(`native-create-${projectId}`),
@@ -174,10 +174,18 @@ export function nativeImportRuntimeTestLayer(
   options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
   const database = options.databaseLayer ?? SqlitePersistence.layerMemory;
+  // Local threads must resolve to the disposable project, never the server checkout.
+  const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
+    Layer.provide(
+      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.succeed(undefined) }),
+    ),
+    Layer.orDie,
+  );
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,
-    { databaseLayer: database, configureMcp: false, ...options },
+    { databaseLayer: database, configureMcp: false, runtimePolicyLayer, ...options },
   ).pipe(
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),

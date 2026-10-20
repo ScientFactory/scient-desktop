@@ -1,5 +1,5 @@
 import type { MessageId } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useState } from "react";
 
 import { useContentDirection } from "./ContentDirectionScope";
 import {
@@ -11,7 +11,9 @@ import {
 /**
  * The direction a chat message renders in: the requested one, or the scoped
  * conversation direction. While an `auto` message streams, its first resolved
- * direction is held so the text does not flip as tokens arrive.
+ * direction is held so the text does not flip as tokens arrive. After it
+ * completes, that direction stays the fallback for text with no strong script,
+ * on every render, until the message streams again.
  */
 export function useChatContentDirection(input: {
   readonly text: string;
@@ -26,30 +28,32 @@ export function useChatContentDirection(input: {
   const { text, contentDirection, messageId, directionHint, isStreaming } = input;
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
-  const streamingDirectionRef = useRef<{
-    messageId: MessageId | null;
-    direction: FixedContentDirection;
+  const id = messageId ?? null;
+  const [held, setHeld] = useState<{
+    readonly messageId: MessageId | null;
+    readonly direction: FixedContentDirection;
+    readonly streaming: boolean;
   } | null>(null);
   if (
     isStreaming &&
     effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId !== (messageId ?? null)
+    (held === null || held.messageId !== id || !held.streaming)
   ) {
-    streamingDirectionRef.current = {
-      messageId: messageId ?? null,
+    setHeld({
+      messageId: id,
       direction: resolveStreamingMarkdownDirection({
         markdown: text,
         requestedDirection: effectiveContentDirection,
         messageDirectionHint: directionHint,
         isStreaming: true,
       }),
-    };
+      streaming: true,
+    });
+  } else if (!isStreaming && held?.streaming) {
+    setHeld({ ...held, streaming: false });
   }
   const frozenDirection =
-    effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId === (messageId ?? null)
-      ? streamingDirectionRef.current.direction
-      : null;
+    effectiveContentDirection === "auto" && held?.messageId === id ? held.direction : null;
   const resolvedContentDirection = resolveStreamingMarkdownDirection({
     markdown: text,
     requestedDirection: effectiveContentDirection,
@@ -57,6 +61,5 @@ export function useChatContentDirection(input: {
     frozenDirection,
     isStreaming,
   });
-  if (!isStreaming) streamingDirectionRef.current = null;
   return { effectiveContentDirection, resolvedContentDirection };
 }

@@ -11,7 +11,7 @@ const source = NodeURL.fileURLToPath(new URL("./dev-bundle-bootstrap.cjs", impor
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node test gates a macOS-only bundle fixture.
 const macOnlyIt = NodeOS.platform() === "win32" ? it.skip : it;
 
-function fixture(run) {
+function fixture(run, { role = "candidate" } = {}) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-dev-bootstrap-"));
   try {
     const appDir = NodePath.join(root, "Resources", "app");
@@ -43,7 +43,7 @@ function fixture(run) {
         repoRoot: root,
         mainEntryPath: main,
         stateRoot: state,
-        role: "candidate",
+        role,
         nodePath: process.execPath,
         fallbackEnvironmentPath: fallback,
       }),
@@ -108,5 +108,64 @@ describe("native dev bundle bootstrap", () => {
       assert.isFalse(NodeFS.existsSync(environmentPath));
       assert.match(NodeFS.readFileSync(pidPath, "utf8"), /^[0-9]+\n$/u);
     }),
+  );
+
+  function runManagedStable({ root, bootstrap }, profileRoot) {
+    const environmentPath = NodePath.join(root, "managed.json");
+    NodeFS.writeFileSync(
+      environmentPath,
+      JSON.stringify({ SCIENT_NEXT_PROFILE_ROOT: profileRoot }),
+      { mode: 0o600 },
+    );
+    const resultPath = NodePath.join(root, "result.json");
+    const result = NodeChildProcess.spawnSync(process.execPath, [bootstrap], {
+      encoding: "utf8",
+      env: {
+        TEST_RESULT_PATH: resultPath,
+        SCIENT_NEXT_DEV_RUNNER_ACTIVE: "1",
+        SCIENT_DEV_APP_ENV_FILE: environmentPath,
+      },
+    });
+    return { result, resultPath };
+  }
+
+  macOnlyIt("runs a managed stable launch on its controller's profile", () =>
+    fixture(
+      (context) => {
+        const profile = NodePath.join(context.state, "profiles", "pr-1");
+        NodeFS.mkdirSync(profile, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(profile, "scient-dev-profile.json"),
+          JSON.stringify({ id: "pr-1" }),
+        );
+        const { result, resultPath } = runManagedStable(context, profile);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(
+          JSON.parse(NodeFS.readFileSync(resultPath, "utf8")).state,
+          NodeFS.realpathSync(profile),
+        );
+      },
+      { role: "stable" },
+    ),
+  );
+
+  macOnlyIt("refuses a managed stable launch without a valid profile", () =>
+    fixture(
+      (context) => {
+        const outside = NodePath.join(context.root, "elsewhere");
+        NodeFS.mkdirSync(outside);
+        NodeFS.writeFileSync(
+          NodePath.join(outside, "scient-dev-profile.json"),
+          JSON.stringify({ id: "elsewhere" }),
+        );
+        NodeFS.mkdirSync(NodePath.join(context.state, "profiles"));
+        for (const profileRoot of ["", outside, NodePath.join(context.state, "profiles", "none")]) {
+          const { result, resultPath } = runManagedStable(context, profileRoot);
+          assert.notEqual(result.status, 0);
+          assert.isFalse(NodeFS.existsSync(resultPath));
+        }
+      },
+      { role: "stable" },
+    ),
   );
 });

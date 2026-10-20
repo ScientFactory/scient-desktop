@@ -177,7 +177,7 @@ const decodeTranscript = Schema.decodeUnknownSync(ProviderReplayTranscript);
 
 describe("Pi replay recording provenance", () => {
   it.each(Object.entries(piReplayFixtureProvenance))(
-    "restores only upstream's lazy skill-discovery edit for %s",
+    "restores only reviewed skill-discovery and queued-start edits for %s",
     (scenario, provenance) => {
       const liveBytes = NodeFS.readFileSync(
         new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),

@@ -65,9 +65,6 @@ const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
-// Sends fs/write_text_file for this path, then fs/read_text_file, at the start of
-// each prompt whatever the client advertised, and appends each outcome as a JSON
-// line to T3_ACP_CLIENT_FS_PROBE_LOG_PATH.
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -164,6 +161,7 @@ const droidAutonomyLocked = process.env.T3_ACP_DROID_AUTONOMY_LOCKED === "1";
 // Droid keeps its own ladder for a model id it knows: `minimal=low` applies Low to a Minimal write.
 const droidEffortReplacement = process.env.T3_ACP_DROID_EFFORT_REPLACEMENT?.split("=");
 const omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
+const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
@@ -198,6 +196,7 @@ let currentReasoning = "medium";
 let currentAutonomy = droidInitialAutonomy;
 let currentContext = "272k";
 let currentFast = false;
+let currentAgent = "";
 let authenticated = !requiresAuthentication;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
@@ -392,6 +391,22 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     }
   }
 
+  // Mirrors GitHub Copilot, whose default agent is the empty-valued choice.
+  const agentOptions: Array<AcpSchema.SessionConfigOption> = emitEmptyDefaultAgentOption
+    ? [
+        {
+          configId: "agent",
+          name: "Agent",
+          category: "_agent",
+          type: "select" as const,
+          currentValue: currentAgent,
+          options: [
+            { value: "", name: "Copilot" },
+            { value: "example", name: "example" },
+          ],
+        },
+      ]
+    : [];
   const modeOption: AcpSchema.SessionConfigOption = {
     configId: "mode",
     name: "Mode",
@@ -436,6 +451,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         ];
   return currentModelId === "custom:Ox-Alpha-0"
     ? [
+        ...agentOptions,
         ...autonomyOptions,
         modelOption,
         {
@@ -453,7 +469,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           ],
         },
       ]
-    : [modeOption, ...autonomyOptions, modelOption];
+    : [...agentOptions, modeOption, ...autonomyOptions, modelOption];
 }
 
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
@@ -522,13 +538,14 @@ function modeState(): AcpCompat.SessionModeState {
 }
 
 // Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
-// "grok-build" product name. Native helper model switching has its own v1 fixture.
+// "grok-build" product name.
 const grokAcpModels: ReadonlyArray<AcpCompat.ModelInfo> = [
   {
-    modelId: "grok-4.6",
+    modelId: process.env.T3_ACP_GROK_MODEL ?? "grok-4.6",
     name: "Grok 4.6",
     _meta: {
-      totalContextTokens: 500_000,
+      totalContextTokens: Number(process.env.T3_ACP_GROK_CONTEXT_TOKENS ?? 500_000),
+      contextWindows: [256_000, 500_000],
       supportsReasoningEffort: true,
       reasoningEffort: initialGrokReasoningEffort ?? "high",
       reasoningEfforts: [
@@ -547,7 +564,7 @@ function modelState(): AcpCompat.SessionModelState {
   }
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-4.6";
+    : (process.env.T3_ACP_GROK_MODEL ?? "grok-4.6");
   return {
     currentModelId: modelId,
     availableModels: grokAcpModels,
@@ -953,6 +970,9 @@ const program = Effect.gen(function* () {
           currentReasoning = "none";
         }
       }
+      if (request.configId === "agent" && typeof request.value === "string") {
+        currentAgent = request.value;
+      }
       if (
         (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
         typeof request.value === "string"
@@ -1036,8 +1056,6 @@ const program = Effect.gen(function* () {
         });
       }
       if (emitTaskBackgroundedAfterCancel) {
-        // Grok cancel-as-detach: the foreground command is re-run as a
-        // background task that later completes on its own.
         yield* Effect.sync(() => {
           writeJsonRpcNotification("_x.ai/task_backgrounded", {
             sessionId: cancelledSessionId,
@@ -1122,7 +1140,6 @@ const program = Effect.gen(function* () {
           requestedSessionId,
           requestedSessionId,
         ].entries()) {
-          // Progress from an earlier tool must not end the retry.
           if (index === 2 && vibeRetryOutcome === "recovered") {
             yield* Effect.sync(() =>
               writeJsonRpcNotification("session/update", {
@@ -1676,7 +1693,6 @@ const program = Effect.gen(function* () {
           yield* Effect.sleep("100 millis");
           return yield* Effect.sync(() => process.exit(0));
         }
-        // Stay open until session/cancel so interrupt tests can observe a running tool.
         while (!cancelledSessions.has(requestedSessionId)) {
           yield* Effect.sleep("25 millis");
         }
@@ -1931,8 +1947,6 @@ const program = Effect.gen(function* () {
       }
 
       if (emitBackgroundToolDuringAnswer) {
-        // A command backgrounded earlier reports progress and then finishes
-        // while the next answer is still streaming.
         const toolCallId = "background-1";
         const say = (text: string) =>
           agent.client.sessionUpdate({
@@ -1965,7 +1979,6 @@ const program = Effect.gen(function* () {
         yield* say("| x |\n");
         yield* progress("completed", "done");
         yield* say("| 2 | y |\n");
-        // Agents can repeat a terminal update after the call finished.
         yield* progress("completed", "done");
         yield* say("| 3 | z |");
         return yield* finishPrompt(requestedSessionId, "end_turn");
@@ -2206,9 +2219,6 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
-      // In-turn monitor + TaskOutput hydrate, then a late post-finalize
-      // duplicate terminal TaskOutput for the same task. Exercises the
-      // already-handled short-circuit: must not pin hasPendingBackgroundWork.
       if (emitInTurnTaskOutputThenLateDuplicate) {
         const monitorToolCallId = "tool-call-monitor-1";
         yield* agent.client.sessionUpdate({
@@ -2258,9 +2268,6 @@ const program = Effect.gen(function* () {
             content: { type: "text", text: "Monitor listing ready in-turn." },
           },
         });
-        // After deferred finalize (~2s) clears activeTurn, re-emit a terminal
-        // TaskOutput for the same task so bufferPostSettleWake sees
-        // alreadyHandledToolUpdate with a non-empty wake path.
         yield* Effect.gen(function* () {
           yield* Effect.sleep("2500 millis");
           yield* Effect.sync(() => {
@@ -2304,10 +2311,6 @@ const program = Effect.gen(function* () {
           },
         });
 
-        // After the prompt settles, replay the CLI-injected monitor-event
-        // turn: end notice, TaskOutput hydration, then (once the trigger
-        // file exists) the report chunk. Detached fiber on the real clock;
-        // it outlives the prompt handler.
         yield* Effect.gen(function* () {
           yield* Effect.sleep("150 millis");
           yield* Effect.sync(() => {
@@ -2427,7 +2430,6 @@ const program = Effect.gen(function* () {
         const planRoot = process.env.T3_ACP_PLAN_ROOT ?? "/tmp/mock-home/.grok";
         const planPath = `${planRoot}/sessions/${requestedSessionId}/plan.md`;
         const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
-        // enter_plan_mode first so the adapter arms planModeActive.
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {

@@ -154,7 +154,7 @@ async function recordClaudeStreamingQuery(input: {
     for (const [index, prompt] of input.prompts.entries()) {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
       const promptUuid = await Effect.runPromise(
-        Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4).pipe(
+        Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4()).pipe(
           Effect.provide(NodeCrypto.layer),
         ),
       );

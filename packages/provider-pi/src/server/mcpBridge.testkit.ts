@@ -30,7 +30,10 @@ interface RegisteredTool {
 
 type AgentStartHook = (
   event: { systemPrompt: string },
-  ctx: { ui: { notify: (message: string, severity: string) => void } },
+  ctx: {
+    model?: { api: string };
+    ui: { notify: (message: string, severity: string) => void };
+  },
 ) => Promise<{ systemPrompt: string }>;
 
 export async function loadMcpBridge(
@@ -45,6 +48,7 @@ export async function loadMcpBridge(
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
+  let agentStartHookCount = 0;
   const tools: RegisteredTool[] = [];
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
@@ -123,7 +127,11 @@ export async function loadMcpBridge(
     pi: {
       registerCommand: () => undefined,
       sendMessage: () => undefined,
-      on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
+      on: (name: string, handler: AgentStartHook) => {
+        if (name === "before_agent_start" && ++agentStartHookCount > 1)
+          throw new Error("Pi MCP bridge registered duplicate native system-prompt hooks.");
+        handlers.set(name, handler);
+      },
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);

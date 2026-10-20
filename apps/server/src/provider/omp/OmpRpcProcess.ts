@@ -18,7 +18,10 @@ import type { OmpRpcModel } from "effect-omp-rpc/schema";
 import { makeOmpRpcClient, type OmpRpcClient, type OmpRpcFrameTrace } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
-import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  isCommandMissingCause,
+  spawnAndCollect,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
 import {
   canonicalOmpExecutablePath,
@@ -32,6 +35,9 @@ const isProtocolError = Schema.is(OmpRpcProtocolError);
 /** RPC package errors stay product-neutral. User-facing text names the product once. */
 export const ompUserDetail = (target: OmpTarget, detail: string): string =>
   detail.includes(target.name) ? detail : `${target.name}: ${detail}`;
+/** What the version probe reports when the executable itself is absent. */
+export const ompNotInstalledDetail = (target: OmpTarget): string =>
+  `${target.name} is not installed or its executable could not be found.`;
 export const OMP_RPC_ARGS = ["--mode", "rpc", "--approval-mode", "yolo"] as const;
 
 export const ompRpcArgs = (
@@ -429,7 +435,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const resolvedBinary = yield* resolveCommandPath(options.command, {
     env,
     bypassCache: true,
-  }).pipe(Effect.orElseSucceed(() => options.command));
+  }).pipe(Effect.map((resolved) => resolved ?? options.command));
   const executableIdentity = yield* canonicalOmpExecutablePath(resolvedBinary);
   // The gate is a type-level requirement: an ungated process could start
   // while a managed activation replaces its runtime.
@@ -448,20 +454,16 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         (cause) => new OmpRpcProtocolError({ detail: ompUserDetail(target, cause.detail), cause }),
       ),
     );
-  const binaryMetadata = yield* fs.stat(executableIdentity).pipe(
-    Effect.option,
-    Effect.map((info) =>
-      Option.match(info, {
-        onNone: () => "",
-        onSome: (stat) =>
-          [
-            Option.match(stat.mtime, { onNone: () => "", onSome: (value) => value.toISOString() }),
-            ByteSize.toBigInt(stat.size).toString(),
-            Option.match(stat.ino, { onNone: () => "", onSome: (value) => String(value) }),
-          ].join(":"),
-      }),
-    ),
-  );
+  const binaryInfo = yield* fs.stat(executableIdentity).pipe(Effect.option);
+  const binaryMetadata = Option.match(binaryInfo, {
+    onNone: () => "",
+    onSome: (stat) =>
+      [
+        Option.match(stat.mtime, { onNone: () => "", onSome: (value) => value.toISOString() }),
+        ByteSize.toBigInt(stat.size).toString(),
+        Option.match(stat.ino, { onNone: () => "", onSome: (value) => String(value) }),
+      ].join(":"),
+  });
   const { version, runtimeVersion } = yield* gate
     .verifiedVersion(
       versionCacheKey(target, executableIdentity, env, binaryMetadata),
@@ -495,7 +497,12 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         isProtocolError(cause)
           ? cause
           : new OmpRpcProtocolError({
-              detail: `${target.name} version verification failed.`,
+              // A missing executable was never verified, so it did not fail verification.
+              // One that exists but cannot find what it runs (a shim's runtime) did.
+              detail:
+                Option.isNone(binaryInfo) && isCommandMissingCause(cause)
+                  ? ompNotInstalledDetail(target)
+                  : `${target.name} version verification failed.`,
               cause,
             }),
       ),

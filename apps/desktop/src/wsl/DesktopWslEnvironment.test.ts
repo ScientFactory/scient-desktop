@@ -2,21 +2,29 @@
 import { describe, it } from "@effect/vitest";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import {
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   DesktopWslDistroListError,
+  DesktopWslEnvironment,
   formatMissingToolsReason,
+  layer as wslEnvironmentLayer,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
@@ -34,8 +42,6 @@ const encoder = new TextEncoder();
 const REQUIRED_SHELL_TOOLS = ["flock", "sha256sum", "tar", "mktemp"] as const;
 
 const posixShellRunner = (() => {
-  // Candidates rather than a platform switch: wsl.exe simply fails to spawn
-  // where it does not exist, which is the same answer as a shell missing flock.
   const candidates = [
     { file: "bash", args: [] as ReadonlyArray<string> },
     { file: "wsl.exe", args: ["-e", "bash"] as ReadonlyArray<string> },
@@ -68,7 +74,6 @@ const runShell = (script: string) => {
 
 const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-// Polls for up to five seconds until a background holder has taken effect.
 const awaitHolder = (condition: string) =>
   `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 500 ] || exit 1; sleep 0.01; done`;
 
@@ -82,8 +87,6 @@ const holdRuntimeBusy = (entry: string) =>
     awaitHolder(`grep -qF -- ${entry} /proc/[0-9]*/cmdline 2>/dev/null`),
   ].join("\n");
 
-// Holds a cache's install lock the way a concurrent install does, and likewise
-// releases it when the script exits.
 const holdInstallLock = (lock: string) =>
   [
     `exec 6> >(exec 9> ${lock}; flock -x 9; cat >/dev/null 2>&1)`,
@@ -162,6 +165,102 @@ describe("probeWslDistros", () => {
   });
 });
 
+describe("WSL command deadlines", () => {
+  const makeControlledEnvironment = Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const released = yield* Deferred.make<void>();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.acquireRelease(
+        Deferred.succeed(started, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.await(exited),
+              isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+        () => Deferred.succeed(released, undefined),
+      ),
+    );
+    const environment = yield* DesktopWslEnvironment.pipe(
+      Effect.provide(
+        wslEnvironmentLayer.pipe(
+          Layer.provide([
+            DesktopEnvironment.layer({
+              dirname: "/repo/apps/desktop",
+              homeDirectory: "/home/test",
+              platform: "win32",
+              processArch: "x64",
+              appVersion: "1.2.3",
+              appPath: "/repo",
+              isPackaged: true,
+              resourcesPath: "/repo/resources",
+              runningUnderArm64Translation: false,
+            }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
+            FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ]),
+        ),
+      ),
+    );
+    return { environment, started, exited, released };
+  });
+
+  it.effect("waits for a cold distro to finish starting after 15 seconds", () =>
+    Effect.gen(function* () {
+      const { environment, started, exited, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment.preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+      yield* Fiber.join(fiber);
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
+
+  it.effect("releases a stalled warmup process at the 30-second deadline", () =>
+    Effect.gen(function* () {
+      const { environment, started, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment.preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(29));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Fiber.join(fiber);
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
+
+  it.effect("still gives path conversion only 10 seconds and releases its process", () =>
+    Effect.gen(function* () {
+      const { environment, started, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment
+        .windowsToWslPath("Ubuntu", "C:\\project")
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Fiber.join(fiber)).toEqual(Option.none());
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
+});
+
 describe("WSL runtime cache", () => {
   it.each([
     [
@@ -225,8 +324,6 @@ describe("WSL runtime cache", () => {
     );
     expect(script).toContain(`if [ "$archive_sha" != '${expected}' ]; then`);
 
-    // A warm cache exits before the hash, so reuse never pays for it, and the
-    // mismatch check runs before anything mutates the cache.
     const readyShortCircuit = script.indexOf("if runtime_is_ready; then");
     const digestChecked = script.indexOf("archive_sha=$(sha256sum");
     const existingRuntimeMoved = script.indexOf('mv -T "$runtime_root" "$runtime_stale"');
@@ -236,11 +333,6 @@ describe("WSL runtime cache", () => {
     expect(extracted).toBeGreaterThan(digestChecked);
   });
 
-  // Invalidation revokes the ready marker without stopping the backend that
-  // failed the probe, so the next install can find an unready tree that a live
-  // process is still running out of. Deleting it there unlinks node_modules
-  // under that process; the pruner already refuses to touch in-use caches, and
-  // the install path has to refuse too.
   it("moves an in-use runtime aside instead of deleting it under a live backend", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
@@ -249,8 +341,6 @@ describe("WSL runtime cache", () => {
     );
 
     expect(script).toContain('grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
-    // No /proc means no way to tell, and guessing wrong costs a backend its
-    // runtime, so an unknowable answer has to count as in use.
     expect(script).toContain("  [ -d /proc/1 ] || return 0");
     expect(script).toContain('  if runtime_in_use "$runtime_root"; then');
 
@@ -261,9 +351,6 @@ describe("WSL runtime cache", () => {
     expect(inUseChecked).toBeGreaterThan(-1);
     expect(inUseChecked).toBeLessThan(moved);
 
-    // In use: keep the tree and restart the sweep's clock, because renaming
-    // preserves the directory's mtime and a long-installed tree would otherwise
-    // already be past the age gate. Idle: delete it now, as before.
     const kept = script.indexOf('touch "$runtime_stale"');
     const deleted = script.indexOf('rm -rf "$runtime_stale"');
     expect(kept).toBeGreaterThan(moved);
@@ -287,7 +374,6 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue');
 
     // Readiness gates the short-circuit, so a cache missing the payload
-    // reinstalls from the archive instead of being reused forever.
     const payloadCheckDefined = script.indexOf("node_pty_payload_present() {");
     const readinessDefined = script.indexOf("runtime_is_ready() {");
     const readyShortCircuit = script.indexOf("if runtime_is_ready; then");
@@ -313,14 +399,11 @@ describe("WSL runtime cache", () => {
     expect(script).toContain(
       '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
     );
-    // A runtime installed before the marker carried a digest reads as empty,
-    // which has to be a miss rather than a pass.
     expect(script).toContain('    [ -n "$recorded_entry_digest" ] &&');
     expect(script).toContain(
       `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/.t3code-wsl-runtime-ready"`,
     );
 
-    // The digest is recorded after extraction and before promotion.
     const extracted = script.indexOf("tar -xzf");
     const digestRecorded = script.indexOf(
       'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
@@ -341,8 +424,6 @@ describe("WSL runtime cache", () => {
 
     expect(script).toContain('if ! node_pty_payload_present "$runtime_tmp"; then');
 
-    // The extracted tree is rejected before the ready marker is written, so a
-    // defective archive falls back to the mounted tree instead of caching.
     const payloadValidated = script.indexOf('node_pty_payload_present "$runtime_tmp"');
     const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
     const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
@@ -374,17 +455,11 @@ describe("WSL runtime cache", () => {
     const script = buildWslRuntimePruneScript("1.2.3/x64");
 
     // The running backend's argv holds `<runtime>/apps/server/dist/bin.mjs`, so
-    // the process itself is the lease and exiting releases it. Nothing has to be
-    // registered up front, which is what makes this cover backends already
-    // running from an older version that knows nothing about pruning.
     expect(script).toContain('  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
     expect(script).toContain('  ! runtime_in_use "$candidate" || continue');
 
-    // Without visible processes the retention rules cannot tell a live cache
-    // from an abandoned one, so the sweep is skipped rather than guessed at.
     expect(script).toContain("[ -d /proc/1 ] || exit 0");
 
-    // The guard has to gate the delete, not just exist.
     const inUseChecked = script.indexOf('! runtime_in_use "$candidate"');
     const removed = script.indexOf('rm -rf -- "$candidate"');
     expect(inUseChecked).toBeGreaterThan(-1);
@@ -394,31 +469,21 @@ describe("WSL runtime cache", () => {
   it("sweeps orphaned install scratch directories the ready-marker loops cannot see", () => {
     const script = buildWslRuntimePruneScript("1.2.3/x64");
 
-    // Dot-prefixed, so `"$runtime_parent"/*` never matches them, and they carry
-    // no ready marker either; without this pass a killed install leaks forever.
     expect(script).toContain(
       'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     );
-    // Age guard: a scratch directory younger than this belongs to a live install.
     expect(script).toContain('find "$scratch" -maxdepth 0 -mmin +120');
   });
 
   it("invalidates a cache by dropping its ready marker, not the tree", () => {
     const script = buildWslRuntimeInvalidateScript("1.2.3/x64");
 
-    // Readiness is a presence check, so a tree whose pty.node is present but
-    // unloadable stays ready forever unless the probe can revoke the marker.
     expect(script).toContain('rm -f "$HOME/.t3/wsl-runtime/1.2.3_x64/.t3code-wsl-runtime-ready"');
-    // Deleting the tree here would pull it out from under any backend still
-    // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
   });
 });
 
-// Reading the generated script proves what it says, not what it does. A cache
 // whose bin.mjs was truncated satisfied every assertion above and still got
-// reused, so these run the real script against a real archive in a throwaway
-// HOME and check the outcome.
 describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed)", () => {
   const fixtures: Array<string> = [];
 
@@ -501,8 +566,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
   it("reuses a warm cache without touching the archive", () => {
     const fixture = createFixture();
     expect(fixture.install().status).toBe(0);
-    // Deleting the archive is how the test tells reuse apart from a silent
-    // reinstall: only the warm path can succeed without it.
     expect(runShell(`set -eu\nrm ${sh(fixture.archivePath)}`).status).toBe(0);
 
     const warm = fixture.install();
@@ -532,20 +595,12 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     const broken = fixture.install();
 
-    // Non-zero with no runtimeRoot is what sends the backend to the mounted
-    // server tree. Exiting 0 here is the bug: launch would pick the zero-byte
-    // server, fail to become ready, and do it again on every restart.
     expect(broken.status).not.toBe(0);
     expect(parseWslRuntimeRoot(broken.stdout)).toBeNull();
   });
 
   it("extracts once when two installs race for the same cache", () => {
     const fixture = createFixture();
-    // A tar shim counts extractions and holds the critical section open long
-    // enough that the second install is certain to arrive while the first is
-    // still inside it. One extraction is the answer either way the runs
-    // interleave: whoever waits for the lock re-checks readiness before
-    // spending an extract, so a broken lock shows up as two.
     const raced = runShell(
       [
         "set -eu",
@@ -586,9 +641,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
   it("leaves no half-built cache when extraction fails", () => {
     const fixture = createFixture();
-    // Truncating the archive and re-recording its digest gets the install past
-    // the digest gate and into a tar that dies mid-stream, which is what a full
-    // disk or an interrupted write looks like from inside the distro.
     const truncated = runShell(
       [
         "set -eu",
@@ -607,21 +659,12 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     expect(failed.status).not.toBe(0);
     expect(parseWslRuntimeRoot(failed.stdout)).toBeNull();
-    // A partial extract that survived under the cache name would be promoted by
-    // the next launch's readiness check; scratch that survived would sit there
-    // until the pruner's age sweep. Neither is left behind. Only directories
-    // are counted: the empty flock file stays on purpose, which is what keeps
-    // the lock from carrying stale state across a killed install.
     const leftovers = runShell(
       `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
     );
     expect(leftovers.stdout.trim()).toBe("");
   });
 
-  // The archive and the identity recorded beside it can diverge — a partial
-  // download, or a rebuilt archive dropped next to an older sidecar. Either
-  // gate firing means the bytes never reach the cache under a name that claims
-  // to describe something else.
   it("refuses an archive whose bytes do not match the digest recorded for it", () => {
     const fixture = createFixture();
 

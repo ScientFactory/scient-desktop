@@ -54,7 +54,7 @@ require a cosmetic folder migration.
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
-- [Use T3 Code as your default browser](./user/default-browser.md)
+- [Default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
@@ -72,7 +72,7 @@ require a cosmetic folder migration.
 - [Scientific computing](./user/scientific-computing.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
-- [Background service (Linux and macOS)](./user/background-service.md)
+- [Run a server without the desktop app](./user/background-service.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 
 ---
@@ -136,6 +136,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Superseded repository copy of the Scientific Artifact Studio roadmap](./internals/scientific-artifact-studio.md)
 - [Canonical cross-product Scientific Artifact Studio roadmap](https://github.com/ScientFactory/Scient/blob/main/docs/planning/scientific-artifact-studio.md)
 - [Scient universal file opening](./internals/scient-universal-file-opening.md)
+- [Saving workspace files](./internals/scient-file-saving.md)
 - [Scient PDF reader](./internals/scient-pdf-reader.md)
 - [Scient LaTeX](./internals/scient-latex.md)
 - [Scient content direction](./internals/scient-content-direction.md)

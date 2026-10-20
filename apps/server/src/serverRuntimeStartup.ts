@@ -288,9 +288,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   // Allocate outside the recoverable bootstrap work: a failed platform UUID
   // source remains a typed error for callers of this resolver.
-  const commandId = CommandId.make(yield* crypto.randomUUIDv4);
-  const projectId = ProjectId.make(yield* crypto.randomUUIDv4);
-  const threadCommandId = CommandId.make(yield* crypto.randomUUIDv4);
+  const commandId = CommandId.make(yield* crypto.randomUUIDv4());
+  const projectId = ProjectId.make(yield* crypto.randomUUIDv4());
+  const threadCommandId = CommandId.make(yield* crypto.randomUUIDv4());
   const targets: {
     bootstrapProjectId?: ProjectId;
     bootstrapThreadId?: ThreadId;
@@ -318,19 +318,37 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     }
     const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
     const resolved = resolveProjectSettings(settings, project.id, project).settings;
-    const launched = yield* threadLaunch.launch({
-      commandId: threadCommandId,
-      projectId: project.id,
-      title: "New thread",
-      modelSelection: resolved.defaultModelSelection ?? getAutoBootstrapThreadModelSelection(),
-      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-      runtimeMode: resolved.defaultRuntimeMode,
-      workspaceStrategy: { type: "root" },
-      createdBy: "system",
-      creationSource: "server",
-    });
-    targets.bootstrapThreadId = launched.threadId;
-    targets.bootstrapThreadCreated = !launched.resumed;
+    const launched = yield* threadLaunch
+      .launch({
+        commandId: threadCommandId,
+        projectId: project.id,
+        title: "New thread",
+        modelSelection: resolved.defaultModelSelection ?? getAutoBootstrapThreadModelSelection(),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: resolved.defaultRuntimeMode,
+        workspaceStrategy: { type: "root" },
+        createdBy: "system",
+        creationSource: "server",
+      })
+      .pipe(
+        // The bootstrap thread is optional; its launch must not prevent opening the app.
+        Effect.catchTags({
+          ThreadManagementProviderInstanceDisabledError: (error) =>
+            Effect.logInfo("Skipped bootstrap thread because its provider instance is disabled", {
+              projectId: project.id,
+              instanceId: error.instanceId,
+            }).pipe(Effect.as(undefined)),
+          ThreadLaunchError: (error) =>
+            Effect.logWarning("Failed to launch bootstrap thread", {
+              projectId: project.id,
+              operation: error.operation,
+            }).pipe(Effect.as(undefined)),
+        }),
+      );
+    if (launched !== undefined) {
+      targets.bootstrapThreadId = launched.threadId;
+      targets.bootstrapThreadCreated = !launched.resumed;
+    }
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("Automatic project bootstrap did not finish", {
@@ -367,7 +385,24 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
-const maybeOpenBrowser = (target: string) =>
+/**
+ * Prints the startup pairing URL to stdout, where `scient` users and the dev runner
+ * read it. The URL carries a one-time admin token, so it skips the logger: log
+ * records also land in the trace file and any configured OTLP collector.
+ */
+export const announceStartupPairingUrl = (pairingUrl: string) =>
+  Effect.logInfo("Authentication required. Open Scient using the pairing URL.").pipe(
+    // Indented to match the annotation line the pretty logger printed before.
+    Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
+  );
+
+// No URL here: the browser target carries the pairing token, which
+// announceStartupPairingUrl has already printed to stdout.
+export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {
+  hint: "Open the pairing URL above in your browser.",
+});
+
+export const maybeOpenBrowser = (target: string) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     if (serverConfig.noBrowser) {
@@ -376,18 +411,19 @@ const maybeOpenBrowser = (target: string) =>
     const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
     yield* externalLauncher.launchBrowser(target).pipe(
-      Effect.catch(() =>
-        Effect.logInfo("browser auto-open unavailable", {
-          hint: `Open ${target} in your browser.`,
-        }),
-      ),
+      // The target carries the pairing token, and a failed launch records its
+      // command line on the span, so this call stays out of traces.
+      Effect.withTracerEnabled(false),
+      Effect.catch(() => logBrowserAutoOpenUnavailable),
     );
   });
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.annotateSpans({ "startup.phase": phase }),
-    Effect.withSpan(`server.startup.${phase}`),
+    // Attributes on the span itself, not annotateSpans: an annotation follows
+    // every fiber forked inside the phase, such as the effect worker, for the
+    // life of the server.
+    Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
 interface StartupOptions {
@@ -438,7 +474,6 @@ export function runOrderedV2StartupPhases<
 >(input: {
   readonly importLegacyShells: Effect.Effect<Import, ImportError, ImportContext>;
   readonly recover: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
-  /** Settles delegated tasks whose runs recovery just terminalized. */
   readonly recoverDelegatedTasks: Effect.Effect<void, DelegationError, DelegationContext>;
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
@@ -624,8 +659,9 @@ const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* Effect.logDebug("startup phase: recording startup heartbeat");
           yield* recordStartupHeartbeat.pipe(
-            Effect.annotateSpans({ "startup.phase": "heartbeat.record" }),
-            Effect.withSpan("server.startup.heartbeat.record"),
+            Effect.withSpan("server.startup.heartbeat.record", {
+              attributes: { "startup.phase": "heartbeat.record" },
+            }),
             Effect.ignoreCause({ log: true }),
           );
           if (serverConfig.startupPresentation === "headless") {
@@ -639,9 +675,7 @@ const make = (options?: StartupOptions) =>
             yield* Effect.logDebug("startup phase: browser open check");
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {
-              yield* Effect.logInfo(
-                "Authentication required. Open Scient using the pairing URL.",
-              ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+              yield* announceStartupPairingUrl(startupBrowserTarget);
             }
             yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
           }
@@ -696,12 +730,15 @@ const make = (options?: StartupOptions) =>
       yield* Effect.logDebug("startup phase: complete");
       yield* flushCompileCache;
     }).pipe(
-      Effect.annotateSpans({
-        "server.mode": serverConfig.mode,
-        "server.port": serverConfig.port,
-        "server.host": serverConfig.host ?? "default",
+      Effect.withSpan("server.startup", {
+        kind: "server",
+        root: true,
+        attributes: {
+          "server.mode": serverConfig.mode,
+          "server.port": serverConfig.port,
+          "server.host": serverConfig.host ?? "default",
+        },
       }),
-      Effect.withSpan("server.startup", { kind: "server", root: true }),
     );
 
     yield* Effect.forkScoped(

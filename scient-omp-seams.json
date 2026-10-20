@@ -56,7 +56,7 @@
     },
     {
       "path": "apps/web/src/components/settings/ProviderSettingsPanel.tsx",
-      "anchor": "const modelPreferences = resolveProviderModelPreferences(",
+      "anchor": "const resolvedModelPreferences = resolveProviderModelPreferences(",
       "purpose": "Keep unavailable and default-hidden Pi and Oh My Pi models on the provider page, using saved instance visibility preferences when present."
     },
     {
@@ -163,6 +163,11 @@
       "path": "packages/shared/src/projectSettings.ts",
       "anchor": "const fallback = fallbackScientTextGenerationModelSelection(",
       "purpose": "Resolve project-scoped automatic writer fallback through the shipped Scient and Oh My Pi policy using owning project enablement."
+    },
+    {
+      "path": "packages/provider-pi/src/server/status.ts",
+      "anchor": "const slug = encodePiModelSlug(provider, id);",
+      "purpose": "Encode discovered model identities so Oh My Pi model ids that contain separators stay distinct and round-trip; an unencodable identity rejects the inventory like upstream's other invalid identities."
     }
   ],
   "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""],

@@ -55,7 +55,11 @@
     "apps/web/src/scient/rightPanel/scientRightPanelStore.ts",
     "apps/web/src/scientPreviewMiniPlayerArtifacts.ts",
     "apps/server/src/scient/ScientAssetUrls.ts",
-    "apps/server/src/scient/ScientWsServices.ts"
+    "apps/server/src/scient/ScientWsServices.ts",
+    "apps/web/src/components/files/FileRenameButton.tsx",
+    "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
+    "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.tsx",
+    "apps/server/scripts/scientServerAssets.ts"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
@@ -103,7 +107,7 @@
     {
       "path": "apps/server/scripts/cli.ts",
       "anchor": "scient-compute-bridge",
-      "purpose": "Stage the Python compute bridge beside the packed server and gate publishing on it."
+      "purpose": "Stage the Python compute bridge and managed runtimes beside the packed server through scientServerAssets."
     },
     {
       "path": "apps/server/src/assets/AssetAccess.ts",
@@ -274,6 +278,16 @@
       "path": "scripts/release-smoke.ts",
       "anchor": "packages/scient-analysis/package.json",
       "purpose": "Include Scient analysis packages in the existing packaged-app smoke inventory."
+    },
+    {
+      "path": "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
+      "anchor": "scientFilePanelProps",
+      "purpose": "Pass Scient's file-surface props (citations, presentation, renames, source links) to the file preview panel."
+    },
+    {
+      "path": "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
+      "anchor": "useScientBrowserPresentation",
+      "purpose": "Route agent-revealed browser previews and the floating player through Scient's presentation owner."
     }
   ]
 }

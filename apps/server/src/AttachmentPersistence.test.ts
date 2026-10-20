@@ -49,12 +49,23 @@ it.effect("an interrupted upload cannot publish partial bytes or block equal ret
     assert.deepEqual(first, repeated);
     const destination = path.join(config.attachmentsDir, attachmentRelativePath(first[0]!)!);
     assert.deepEqual(Array.from(yield* fs.readFile(destination)), [0, 1, 2, 3]);
-    const conflict = yield* persistChatAttachments({
+    const [replacement] = yield* persistChatAttachments({
       ...input,
       attachments: [{ ...input.attachments[0]!, dataUrl: "data:image/png;base64,BAUGBw==" }],
-    }).pipe(Effect.exit);
-    assert.equal(conflict._tag, "Failure");
+    });
+    assert.notEqual(replacement!.id, first[0]!.id);
     assert.deepEqual(Array.from(yield* fs.readFile(destination)), [0, 1, 2, 3]);
+    assert.deepEqual(
+      Array.from(
+        yield* fs.readFile(path.join(config.attachmentsDir, attachmentRelativePath(replacement!)!)),
+      ),
+      [4, 5, 6, 7],
+    );
+    // A corrupt existing identity must still refuse publication rather than overwrite it.
+    yield* fs.writeFile(destination, Uint8Array.from([9, 9, 9, 9]));
+    const conflict = yield* persistChatAttachments(input).pipe(Effect.exit);
+    assert.equal(conflict._tag, "Failure");
+    assert.deepEqual(Array.from(yield* fs.readFile(destination)), [9, 9, 9, 9]);
   }).pipe(
     Effect.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "atomic-attachment-" }).pipe(

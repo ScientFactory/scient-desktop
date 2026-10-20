@@ -615,6 +615,8 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           ? (currentArtifact?.version ?? null)
           : null,
         previousManagedVersion: latest?.previousVersion ?? null,
+        qualifiedVersion: currentArtifact?.version ?? null,
+        catalog: yield* catalogService.freshness,
         operation: null,
         message,
         diagnostics: buildDiagnostics({

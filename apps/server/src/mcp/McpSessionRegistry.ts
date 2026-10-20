@@ -34,11 +34,6 @@ export interface McpSessionRegistryShape {
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
-  /**
-   * Records a sign of life for every credential bound to `threadId`. Provider
-   * turns call this so that a session which is plainly alive keeps its
-   * credential even when it goes a long time without touching an MCP tool.
-   */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   /** Replaces the exact skill scope used by the next turn on this thread. */
   readonly replaceSkillScope: (
@@ -55,7 +50,6 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("t3/mcp/McpSessionRegistry") {}
 
-/** Registry credentials always belong to a provider session, so their scope has a thread. */
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
@@ -72,15 +66,6 @@ export interface McpSessionRegistryOptions {
 }
 
 /**
- * How long a credential outlives the last sign of life from its provider
- * session.
- *
- * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
- * credentials whose session died without a clean stop — the normal paths
- * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
- *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
  * the authority guarding every provider-scoped MCP capability on a
@@ -93,8 +78,6 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
-// A wildcard bind is reachable on loopback, which is where the provider
-// subprocesses run; anything else is announced as the address it bound.
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
     ? "127.0.0.1"
@@ -141,7 +124,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
@@ -304,10 +287,6 @@ export const issueActiveMcpCredential = (
         .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
     : Effect.undefined;
 
-/**
- * Refreshes the liveness of a thread's MCP credential. Called on every provider
- * turn so an active session is never mistaken for an abandoned one.
- */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
@@ -319,7 +298,6 @@ export const replaceActiveMcpSkillScope = (
     ? activeMcpSessionRegistry.replaceSkillScope(threadId, skillScope)
     : Effect.void;
 
-/** Exposed for tests. */
 export const __testing = {
   make: makeWithOptions,
 };

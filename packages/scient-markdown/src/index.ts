@@ -25,6 +25,7 @@ export {
 } from "./session.ts";
 export {
   MarkdownPersistenceCoordinator,
+  type MarkdownAuthorizedCurrentReview,
   type MarkdownPersistenceFailureKind,
   type MarkdownPersistenceOptions,
   type MarkdownPersistenceReadResult,

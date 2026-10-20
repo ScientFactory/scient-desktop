@@ -211,9 +211,16 @@ interface ClaudeSubagentFoundFrame {
 
 type ClaudeOutboundFrame =
   | { readonly type: "query.stop_task"; readonly taskId: string }
+  | { readonly type: "query.background_tasks"; readonly toolUseId: string }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
+  | {
+      readonly type: "query.apply_flag_settings";
+      readonly settings: Parameters<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"]
+      >[0];
+    }
   | ClaudeQueryInterruptFrame
   | ClaudePermissionResponseFrame
   | ClaudeSessionForkFrame

@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
-import { expect, it } from "vite-plus/test";
+import { forceCloseDatabase as forceCloseFakeDatabase } from "fake-indexeddb";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createEmptyThreadDraft, DraftId } from "../../composerDraftStore";
 import {
@@ -10,6 +11,10 @@ import {
   readExtractedIntent,
   readQueueEditJournals,
 } from "./editJournal";
+
+// fake-indexeddb types this parameter as the IDBDatabase class, not a connection.
+const forceCloseDatabase = (database: IDBDatabase) =>
+  forceCloseFakeDatabase(database as unknown as typeof IDBDatabase);
 
 it("migrates existing recovery journals before restoring either draft, without rewriting the saved source", async () => {
   const target = {
@@ -112,4 +117,97 @@ it("keeps a consumed semantic receipt when recovery copies and their file bytes 
     })),
   ).rejects.toThrow("identity changed");
   expect((await readExtractedIntent(id))?.phase).toBe("consumed");
+});
+
+it("keeps saving queued-message edits after the browser closes their storage", async () => {
+  // A fresh module instance opens its own connection, which the spy captures.
+  vi.resetModules();
+  const open = vi.spyOn(indexedDB, "open");
+  const journal = await import("./editJournal");
+  const draft = {
+    ...createEmptyThreadDraft(),
+    prompt: "Queued question",
+    images: [
+      {
+        type: "image" as const,
+        id: "plot",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUrl: "blob:plot",
+        file: new File(["png"], "plot.png", { type: "image/png" }),
+      },
+    ],
+  };
+  const session = {
+    key: "closed-storage",
+    journalKey: "closed-storage-journal",
+    originalTarget: {
+      environmentId: EnvironmentId.make("environment"),
+      threadId: ThreadId.make("t"),
+    },
+    editTarget: DraftId.make("closed-storage-edit"),
+    queueItemId: "qitem_closed",
+    editToken: "edit",
+    ordinary: createEmptyThreadDraft(),
+    edited: draft,
+  };
+  await journal.writeQueueEditJournal(session);
+  const connection = open.mock.results[0]?.value as IDBOpenDBRequest;
+  forceCloseDatabase(connection.result);
+
+  await journal.writeQueueEditJournal({
+    ...session,
+    edited: { ...draft, prompt: "Edited question" },
+  });
+  const restored = await journal.readQueueEditJournal(session.journalKey);
+  expect(restored?.edited.prompt).toBe("Edited question");
+  expect(await restored?.edited.images[0]?.file.text()).toBe("png");
+  open.mockRestore();
+});
+
+it("writes attachment bytes again when queue storage was deleted while the window was open", async () => {
+  vi.resetModules();
+  const journal = await import("./editJournal");
+  const file = new File(["png"], "plot.png", { type: "image/png" });
+  const draft = {
+    ...createEmptyThreadDraft(),
+    prompt: "Queued question",
+    images: [
+      {
+        type: "image" as const,
+        id: "plot",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUrl: "blob:plot",
+        file,
+      },
+    ],
+  };
+  const session = {
+    key: "deleted-storage",
+    journalKey: "deleted-storage-journal",
+    originalTarget: {
+      environmentId: EnvironmentId.make("environment"),
+      threadId: ThreadId.make("t"),
+    },
+    editTarget: DraftId.make("deleted-storage-edit"),
+    queueItemId: "qitem_deleted",
+    editToken: "edit",
+    ordinary: createEmptyThreadDraft(),
+    edited: draft,
+  };
+  await journal.writeQueueEditJournal(session);
+  await new Promise<void>((resolve, reject) => {
+    const deletion = indexedDB.deleteDatabase("scient-queue-edit-journal");
+    deletion.addEventListener("success", () => resolve());
+    deletion.addEventListener("error", () => reject(deletion.error));
+  });
+
+  // The same File object is saved again, as the composer does on the next edit.
+  await journal.writeQueueEditJournal({ ...session, edited: { ...draft, prompt: "Edited" } });
+  const restored = await journal.readQueueEditJournal(session.journalKey);
+  expect(restored?.edited.prompt).toBe("Edited");
+  expect(await restored?.edited.images[0]?.file.text()).toBe("png");
 });

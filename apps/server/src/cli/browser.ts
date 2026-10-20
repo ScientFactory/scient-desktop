@@ -36,7 +36,6 @@ export class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepEr
   }
 }
 
-/** Runs one setup command, streaming its output, and fails with its exit code. */
 const runStep = Effect.fn("browserSetup.runStep")(function* (
   step: string,
   command: string,
@@ -96,7 +95,6 @@ export const resolveBrowserSetupBaseDir = Effect.fn("browserSetup.baseDir")(func
   );
 });
 
-/** Whether apt has an installable candidate for `name`. */
 const aptOffers = Effect.fn("browserSetup.aptOffers")(function* (name: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const policy = yield* spawner
@@ -124,9 +122,31 @@ const installedBrowser = Effect.fn("browserSetup.installedBrowser")(function* (b
   return Option.none<string>();
 });
 
+/**
+ * Chrome starts without fonts, but pages then render no text. Without
+ * fontconfig there is no `fc-match` at all, which counts as no font.
+ */
+const fontAvailable = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const font = yield* spawner
+    .string(
+      ChildProcess.make("fc-match", ["--format=%{file}", "sans-serif"], {
+        stdin: "ignore",
+        stderr: "ignore",
+      }),
+    )
+    .pipe(
+      Effect.timeout("5 seconds"),
+      Effect.orElseSucceed(() => ""),
+    );
+  return font.trim() !== "";
+}).pipe(Effect.withSpan("browserSetup.fontAvailable"));
+
+const FONT_PACKAGES = ["fontconfig", "fonts-liberation"];
+
 const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
   Command.withDescription(
-    "Set up this Linux host for Scient's browser: allow Chrome's sandbox and install its libraries.",
+    "Set up this Linux host for Scient's browser: allow Chrome's sandbox and install its libraries and fonts.",
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
@@ -141,19 +161,27 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         "--base-dir",
         profile,
       ]);
+      // Root, unless sudo came from another user, is likely the server's own account.
+      const env = yield* HostProcess.Environment;
+      const rootWarning =
+        isRoot && (env.SUDO_USER ?? "root") === "root" && !PreviewBrowserHost.sandboxDisabled(env)
+          ? new PreviewBrowserHost.PreviewBrowserRootError().message
+          : undefined;
 
       const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
       const browser = yield* installedBrowser(profile);
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
+      const needsFonts = !(yield* fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
-      if (!needsProfile && missing.length === 0) {
+      if (!needsProfile && missing.length === 0 && !needsFonts) {
         return yield* Console.log(
-          Option.isSome(browser)
-            ? "This host is ready for Scient's browser."
-            : "Chrome's sandbox is allowed here. Scient's browser installs on first use; if it then reports missing libraries, run this again.",
+          rootWarning ??
+            (Option.isSome(browser)
+              ? "This host is ready for Scient's browser."
+              : "Chrome's sandbox is allowed here. Scient's browser installs on first use; if it then reports missing libraries, run this again."),
         );
       }
 
@@ -166,6 +194,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         if (missing.length > 0) {
           yield* Console.log(
             `Scient's browser is missing ${missing.join(", ")}; setup installs them.`,
+          );
+        }
+        if (needsFonts) {
+          yield* Console.log(
+            "Scient's browser needs fontconfig and system fonts; setup installs them.",
           );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
@@ -193,13 +226,24 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Allowed Chrome's sandbox for Scient's browser.");
       }
 
-      if (missing.length > 0) {
-        if (!hasApt) {
-          return yield* Console.log(
+      if ((missing.length > 0 || needsFonts) && !hasApt) {
+        if (missing.length > 0) {
+          yield* Console.log(
             `Scient's browser is missing ${missing.join(", ")}. Install them with your package manager, then run this again.`,
           );
         }
+        if (needsFonts) {
+          yield* Console.log(
+            "Scient's browser needs fontconfig and system fonts. Install them with your package manager, then run this again.",
+          );
+        }
+        return;
+      }
+      if (missing.length > 0 || needsFonts) {
         yield* runStep("refresh the package lists", "apt-get", ["update"]);
+      }
+
+      if (missing.length > 0) {
         const packages = yield* Effect.forEach(PreviewBrowserHost.DEBIAN_PACKAGES, (names) =>
           Effect.findFirst(names, aptOffers).pipe(Effect.map(Option.getOrElse(() => names[0]!))),
         );
@@ -212,7 +256,24 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Installed the browser's libraries.");
       }
 
-      yield* Console.log("This host is ready for Scient's browser.");
+      if (needsFonts) {
+        yield* runStep("install the browser's fonts", "apt-get", [
+          "install",
+          "-y",
+          "--no-install-recommends",
+          ...FONT_PACKAGES,
+        ]);
+        if (!(yield* fontAvailable)) {
+          return yield* Console.log(
+            "Font packages are installed, but Fontconfig still finds no system font. Check its configuration and run setup again.",
+          );
+        }
+        yield* Console.log(
+          "Installed the browser's fonts. Restart the Scient server if browser tabs were already open.",
+        );
+      }
+
+      yield* Console.log(rootWarning ?? "This host is ready for Scient's browser.");
     }),
   ),
 );

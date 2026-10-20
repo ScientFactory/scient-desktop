@@ -27,16 +27,12 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
+  | "/settings/documents"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
   | "/settings/archived";
 
-/**
- * Where a setting can be edited. Device-local rows have no scope: they render
- * at every selection. `project-defaults` rows accept project overrides, so
- * they are reachable from any server-backed selection.
- */
 export type SettingsSearchScope =
   | "environment"
   | "environment-defaults"
@@ -50,18 +46,11 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
-  /** Descriptions, option labels, and aliases people may remember instead of the title. */
   readonly searchTerms?: ReadonlyArray<string>;
   readonly scope?: SettingsSearchScope;
-  // Its row only renders in the desktop app, so a browser result would land on
-  // an anchor that isn't there.
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
-  // Its row only renders on Windows desktop, so other desktop platforms must
-  // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
-  // Its row renders only where the release channel can change: the desktop
-  // app, or a hosted web build deployed with a channel.
   readonly releaseChannelOnly?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
@@ -70,12 +59,7 @@ export interface SettingsSearchItem {
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
-  // Its row only renders while this environment's T3 Connect managed tunnel is on.
   readonly managedTunnelOnly?: boolean;
-  /**
-   * Sorts after every other match. Keybinding commands mirror rows on other
-   * surfaces, so "model" must still lead with Default model, not Model Picker.
-   */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -92,10 +76,6 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
 }
 
-/**
- * Section labels in sidebar order. The sidebar nav and the search-result
- * subtitles both render from this record, so each label exists once.
- */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/general": "General",
@@ -109,6 +89,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
   "/settings/scientific-computing": "Scientific Computing",
+  "/settings/documents": "Documents",
   "/settings/keybindings": "Shortcuts",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -121,12 +102,6 @@ export function keybindingSearchAnchorId<Command extends KeybindingCommand>(comm
   return `keybinding-${command}` as const;
 }
 
-/**
- * One result per built-in command, alphabetical by label. The anchor is
- * the command's first row; default keys are searchable so "mod+b" lands on
- * Sidebar: Toggle. A command with no default binding may have no row, so it
- * points at the section instead.
- */
 const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right) =>
   commandLabel(left).localeCompare(commandLabel(right)),
 ).map((command) => {
@@ -143,12 +118,10 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   };
 });
 
-/** Anchor id of a source control host's settings form on the Source Control page. */
 export function sourceControlHostSettingsSearchId(kind: string) {
   return `source-control-host-${kind}` as const;
 }
 
-/** One result per host whose definition declares settings, searchable by its field titles. */
 const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMap((definition) =>
   definition.settings && definition.kind !== "github"
     ? [
@@ -166,11 +139,6 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
     : [],
 );
 
-/**
- * Searchable settings and stable destinations, in result order. Rows with a
- * dedicated anchor render their id and title via `searchableSetting`; items
- * that may not be mounted point at their nearest stable section instead.
- */
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "desktop-update-track",
@@ -200,10 +168,95 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["scientific computing languages"],
   },
   {
+    id: "documents",
+    title: "Documents",
+    to: "/settings/documents",
+    searchTerms: ["documents", "latex", "tex", "markdown", "writing"],
+  },
+  {
+    id: "latex-installation",
+    title: "LaTeX tools",
+    to: "/settings/documents",
+    targetId: "latex-installation",
+    searchTerms: [
+      "installation",
+      "install latex",
+      "additional compilers",
+      "tinytex",
+      "tex live",
+      "miktex",
+      "tectonic",
+      "pdf build",
+    ],
+  },
+  {
+    id: "latex-compilers",
+    title: "LaTeX compiler status and technical details",
+    to: "/settings/documents",
+    targetId: "latex-compilers",
+    searchTerms: [
+      "available compilers",
+      "compiler status",
+      "latexmk",
+      "compiler versions",
+      "executable paths",
+      "engine capabilities",
+    ],
+  },
+  {
+    id: "new-document-compiler",
+    title: "Default LaTeX compiler for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-compiler",
+    searchTerms: ["compiler", "pdflatex", "xelatex", "lualatex", "hebrew compiler", "automatic"],
+  },
+  {
+    id: "latex-compilation",
+    title: "PDF compilation",
+    to: "/settings/documents",
+    targetId: "latex-compilation",
+    searchTerms: [
+      "latex",
+      "auto-compile",
+      "autocompile",
+      "rebuild",
+      "on save",
+      "manual",
+      "pdf compilation",
+    ],
+  },
+  {
+    id: "new-document-template",
+    title: "Templates and language for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-template",
+    searchTerms: [
+      "template",
+      "manage templates",
+      "default template",
+      "hide",
+      "arrange",
+      "restore defaults",
+      "new document",
+      "article",
+      "thesis",
+      "lab report",
+      "hebrew",
+    ],
+  },
+  {
+    id: "document-open-view",
+    title: "Open documents in Visual, Source, or Rich",
+    to: "/settings/documents",
+    targetId: "documents",
+    searchTerms: ["visual", "split", "source", "rich", "view", "open in"],
+  },
+  {
     id: "word-export",
     title: "Word export (Pandoc)",
-    to: "/settings/scientific-computing",
-    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+    to: "/settings/documents",
+    targetId: "word-export",
+    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
   {
     id: "storage-worktree-keep-when",
@@ -279,7 +332,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Color scheme",
     to: "/settings/appearance",
     searchTerms: ["appearance light dark system mode"],
-    // The scheme tiles sit at the top of the Appearance section.
     targetId: "appearance",
   },
   {
@@ -287,8 +339,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Themes",
     to: "/settings/appearance",
     searchTerms: ["appearance colors palette custom import"],
-    // Theme cards live directly under the scheme tiles; the section is the
-    // stable scroll destination for both.
     targetId: "appearance",
   },
   {
@@ -327,7 +377,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Environment identification",
     to: "/settings/appearance",
     searchTerms: ["dev beta nightly artwork pill label hide none"],
-    // The setting is stage-dependent, so its parent section is the stable destination.
     targetId: "appearance-interface",
   },
   {
@@ -856,6 +905,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "browser-search-engine",
+    title: "Search engine",
+    to: "/settings/integrations",
+    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom"],
+  },
+  {
+    id: "pull-request-links-open-in-app",
+    title: "Open pull requests in Scient",
+    to: "/settings/integrations",
+    searchTerms: ["pr links github browser external click default pull request view panel"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
@@ -1097,8 +1158,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/general": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
-  // Keybindings fan out to the selection; Providers shows the representative
-  // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/custom-models": null,
@@ -1107,13 +1166,13 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/integrations": null,
   "/settings/scheduled-tasks": null,
   "/settings/scientific-computing": null,
+  "/settings/documents": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/archived": "project-defaults",
 };
 
-/** Search keeps the selected target. A missing row can explain its owning scope instead. */
 export function getSettingsSearchTargetScope(targetId: string) {
   const items: readonly SettingsSearchItem[] = SETTINGS_SEARCH_ITEMS;
   const item =
@@ -1138,7 +1197,6 @@ interface AutoSettlementSearchEnvironment {
   } | null;
 }
 
-/** Discovery needs one capable environment; the selected page needs every connected target to support it. */
 export function getThreadAutoSettlementSearchAvailability(
   environments: readonly AutoSettlementSearchEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
@@ -1203,11 +1261,6 @@ export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean 
   return kind === "project" || kind === "checkout";
 }
 
-/**
- * `id` and `title` props for the element a search item anchors to. Panels
- * spread (or pick from) this instead of restating the strings, so the catalog
- * and the rendered settings cannot drift apart.
- */
 export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;

@@ -83,7 +83,6 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 
-// Trace file location, shared by the server and `t3 trace summary`.
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
   Config.map(Option.getOrUndefined),
@@ -93,6 +92,34 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  filePublicationHelperPath: Config.String("SCIENT_FILE_PUBLICATION_HELPER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  filePublicationRetentionRoot: Config.String("SCIENT_FILE_PUBLICATION_RETENTION_ROOT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  filePublicationRetentionLimitBytes: Config.Int(
+    "SCIENT_FILE_PUBLICATION_RETENTION_LIMIT_BYTES",
+  ).pipe(
+    Config.mapEffect((limit) =>
+      limit > 0 && Number.isSafeInteger(limit)
+        ? Effect.succeed(limit)
+        : Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message:
+                    "SCIENT_FILE_PUBLICATION_RETENTION_LIMIT_BYTES must be a positive safe integer.",
+                }),
+              ),
+            ),
+          ),
+    ),
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   fileExchangePath: Config.String("SCIENT_FILE_EXCHANGE_PATH").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -386,7 +413,13 @@ export const resolveServerConfig = (
     // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
     if (options?.rejectRunningServer && mode === "web") {
       const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
-      if (Option.isSome(runtime) && runtime.value.pid > 0 && isProcessAlive(runtime.value.pid)) {
+      // A killed container can leave a record with the new server's own PID.
+      if (
+        Option.isSome(runtime) &&
+        runtime.value.pid > 0 &&
+        runtime.value.pid !== process.pid &&
+        isProcessAlive(runtime.value.pid)
+      ) {
         return yield* new CliError.UserError({
           // SCIENT-FORK:START — Scient-facing copy.
           cause: `A Scient server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
@@ -421,6 +454,12 @@ export const resolveServerConfig = (
     const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
     const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+    const filePublicationHelperPath =
+      bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
+    const filePublicationRetentionRoot =
+      env.filePublicationRetentionRoot === undefined
+        ? undefined
+        : path.resolve(yield* expandHomePath(env.filePublicationRetentionRoot));
     const fileExchangePath = bootstrap?.fileExchangePath ?? env.fileExchangePath;
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
@@ -470,7 +509,6 @@ export const resolveServerConfig = (
     // SCIENT-FORK:START — Scient-facing copy.
     // Scient's own OTLP variables name no signal, so the one answer they give
     // SCIENT-FORK:END
-    // is the answer for all three.
     const signalExport: SignalExport = {
       protocol: env.otlpProtocol,
       headers: env.otlpHeaders,
@@ -548,6 +586,11 @@ export const resolveServerConfig = (
       desktopBrowserControlFd,
       resourceMonitorPath,
       syncTexNavigatorPath,
+      ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
+      ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
+      ...(env.filePublicationRetentionLimitBytes === undefined
+        ? {}
+        : { filePublicationRetentionLimitBytes: env.filePublicationRetentionLimitBytes }),
       fileExchangePath,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,

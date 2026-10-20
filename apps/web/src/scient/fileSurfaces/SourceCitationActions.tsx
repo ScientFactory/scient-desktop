@@ -1,6 +1,7 @@
+import { useLayoutEffect } from "react";
 import type { Editor } from "@pierre/diffs/edit";
 import type { FileCitation } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useId } from "react";
+import { useEffect, useRef, useId } from "react";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
 import { toastManager } from "~/components/ui/toast";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
@@ -39,8 +40,10 @@ export function SourceCitationActions<Annotation>({
   const { environmentId, threadId, cwd, path, latexRootRelativePath } = target;
   const ownerId = useId();
   const currentStaticSource = useRef(staticSource);
-  currentStaticSource.current = staticSource;
-  const capture = useCallback(() => {
+  useLayoutEffect(() => {
+    currentStaticSource.current = staticSource;
+  });
+  const capture = () => {
     const state = editor?.getEditState();
     const selections = editor?.getViewState().selections;
     if (
@@ -98,19 +101,7 @@ export function SourceCitationActions<Annotation>({
             : [],
       },
     };
-  }, [
-    editor,
-    viewport,
-    environmentId,
-    threadId,
-    cwd,
-    path,
-    latexRootRelativePath,
-    baseline,
-    ready,
-    staticSource,
-    ownerId,
-  ]);
+  };
   const handled = useRef<{ editor: typeof editor; id: number } | null>(null);
   useEffect(() => {
     if (!reveal?.sourceSelection || !ready()) return;

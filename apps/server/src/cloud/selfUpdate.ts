@@ -2,6 +2,7 @@ import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
+  type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateProgressStage,
   type ServerSelfUpdateResult,
   type ThreadId,
@@ -15,6 +16,8 @@ import * as HashSet from "effect/HashSet";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
@@ -183,9 +186,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
     if (capability === "desktop-managed") {
-      // input.targetVersion is meaningless here: the desktop app's own
-      // update feed decides what it downloads, and the result carries what
-      // it actually got.
       if (desktopAppUpdate.available) {
         return yield* desktopAppUpdate.run(reportProgress);
       }
@@ -195,13 +195,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     }
     if (capability === null) {
       return yield* failWith(
-        "Remote updates require the Scient background service. Run `t3 service install` on the server machine.",
+        "This server cannot update itself. Update it on the server machine with the exact Scient server release.",
       );
     }
 
     const targetVersion = input.targetVersion.trim();
     if (!isExactServiceVersion(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+      return yield* failWith(`'${targetVersion}' is not an exact Scient server version.`);
     }
     if (yield* Ref.getAndSet(inFlight, true)) {
       return yield* failWith("A server update is already in progress.");
@@ -322,3 +322,25 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       desktopAppUpdate.commit(requestId, onHandoffAccepted),
   });
 });
+// The RPC stream used to own this fiber, so a dropped client socket interrupted
+// the download. Offers after the queue shuts down are ignored; the update
+// still finishes, and the in-flight guard stays as it was.
+export const updateProgressStream = (
+  selfUpdate: ServerSelfUpdate["Service"],
+  input: ServerSelfUpdateInput,
+) =>
+  Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) => {
+    const offer = (event: ServerSelfUpdateProgressEvent) =>
+      Queue.offer(queue, event).pipe(Effect.ignore);
+
+    return selfUpdate
+      .update(input, (stage) => offer({ type: "progress", stage }))
+      .pipe(
+        Effect.flatMap((result) => offer({ type: "complete", result })),
+        Effect.catchTags({
+          ServerSelfUpdateError: (error) => Queue.fail(queue, error).pipe(Effect.ignore),
+        }),
+        Effect.andThen(Queue.end(queue).pipe(Effect.ignore)),
+        Effect.forkDetach,
+      );
+  });

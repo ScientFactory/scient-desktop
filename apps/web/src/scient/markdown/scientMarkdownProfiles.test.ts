@@ -28,7 +28,7 @@ describe("Scient Markdown profiles", () => {
     expect(chatMarkdown).toContain(
       "lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS",
     );
-    expect(chatMarkdown).toContain("useScientMathRemarkPlugins(remarkPlugins, text)");
+    expect(chatMarkdown).toContain("scientMathRemarkPluginsForMessage(remarkPlugins, text)");
     expect(chatMarkdown).toContain("remarkPlugins={scientRemarkPlugins}");
     expect(SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS).toHaveLength(7);
     for (const plugins of [

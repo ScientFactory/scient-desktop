@@ -30,6 +30,7 @@ import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/setting
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsDocumentsRouteImport } from './routes/settings.documents'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsCustomModelsRouteImport } from './routes/settings.custom-models'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -37,6 +38,7 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
 import { Route as SettingsSkillsProjectRouteImport } from './routes/settings.skills_.project'
 import { Route as SettingsSkillsExternalRouteImport } from './routes/settings.skills_.external'
@@ -149,6 +151,11 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsDocumentsRoute = SettingsDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -182,6 +189,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatNewRoute = ChatNewRouteImport.update({
+  id: '/new',
+  path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
@@ -220,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -227,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -253,6 +267,7 @@ export interface FileRoutesByTo {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/getting-started': typeof ChatGettingStartedRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -260,6 +275,7 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -289,6 +305,7 @@ export interface FileRoutesById {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/getting-started': typeof ChatGettingStartedRoute
+  '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -296,6 +313,7 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -326,6 +344,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/getting-started'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -333,6 +352,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -359,6 +379,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/getting-started'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -366,6 +387,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -394,6 +416,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/_chat/getting-started'
+    | '/_chat/new'
     | '/_chat/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -401,6 +424,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -581,6 +605,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/documents': {
+      id: '/settings/documents'
+      path: '/documents'
+      fullPath: '/settings/documents'
+      preLoaderRoute: typeof SettingsDocumentsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/diagnostics': {
       id: '/settings/diagnostics'
       path: '/diagnostics'
@@ -630,6 +661,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/new': {
+      id: '/_chat/new'
+      path: '/new'
+      fullPath: '/new'
+      preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/getting-started': {
       id: '/_chat/getting-started'
       path: '/getting-started'
@@ -670,6 +708,7 @@ declare module '@tanstack/react-router' {
 
 interface ChatRouteChildren {
   ChatGettingStartedRoute: typeof ChatGettingStartedRoute
+  ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -678,6 +717,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatGettingStartedRoute: ChatGettingStartedRoute,
+  ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
@@ -692,6 +732,7 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsCustomModelsRoute: typeof SettingsCustomModelsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsDocumentsRoute: typeof SettingsDocumentsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
@@ -715,6 +756,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsCustomModelsRoute: SettingsCustomModelsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsDocumentsRoute: SettingsDocumentsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,

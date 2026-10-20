@@ -187,9 +187,10 @@ export function useComputeManagedRuntime(input: {
     action: ComputeManagedRuntimeAction,
     options?: ComputeManagedRuntimeProvisionOptions,
   ): Promise<boolean> => {
+    const environmentId = input.environmentId;
     const individual = options?.toolkitChange !== undefined;
     const selection = action === "use-managed" || action === "use-existing";
-    if (!input.environmentId || unresolved) return false;
+    if (!environmentId || unresolved) return false;
     if (individual) {
       // Older servers do not understand this command; never let them interpret it
       // as an update of the complete environment.
@@ -219,7 +220,7 @@ export function useComputeManagedRuntime(input: {
       cancellationRequest.current = cancelledBuild;
       setCancellationKey(cancelledBuild);
     }
-    try {
+    return await (async () => {
       const activatesManaged =
         action === "use-managed" ||
         (action === "install" && options?.selectionAfterInstall !== "existing");
@@ -227,7 +228,7 @@ export function useComputeManagedRuntime(input: {
         throw new Error("The language could not be enabled. Settings were not saved.");
       }
       const result = await manage({
-        environmentId: input.environmentId,
+        environmentId: environmentId,
         input: {
           languageId: input.languageId,
           action,
@@ -247,44 +248,43 @@ export function useComputeManagedRuntime(input: {
         });
       }
       return true;
-    } catch (cause) {
-      if (cancelledBuild !== null) {
-        if (cancellationRequest.current === cancelledBuild) cancellationRequest.current = null;
-        setCancellationKey((current) => (current === cancelledBuild ? null : current));
-      }
-      const detail =
-        cause instanceof Error ? cause.message : "The installation could not be managed.";
-      setLocalFailureState({
-        scopeKey,
-        failure: fallbackManagedRuntimeFailure(input.languageId, detail, action),
+    })()
+      .catch(async (cause) => {
+        if (cancelledBuild !== null) {
+          if (cancellationRequest.current === cancelledBuild) cancellationRequest.current = null;
+          setCancellationKey((current) => (current === cancelledBuild ? null : current));
+        }
+        const detail =
+          cause instanceof Error ? cause.message : "The installation could not be managed.";
+        setLocalFailureState({
+          scopeKey,
+          failure: fallbackManagedRuntimeFailure(input.languageId, detail, action),
+        });
+        return false;
+      })
+      .finally(() => {
+        pendingCommands.current--;
+        inFlight.current = pendingCommands.current > 0;
+        setPending(inFlight.current);
       });
-      return false;
-    } finally {
-      pendingCommands.current--;
-      inFlight.current = pendingCommands.current > 0;
-      setPending(inFlight.current);
-    }
   };
   const cancel = async () => {
-    if (
-      !input.environmentId ||
-      operationKey === null ||
-      cancellationRequest.current === operationKey
-    )
+    const environmentId = input.environmentId;
+    if (!environmentId || operationKey === null || cancellationRequest.current === operationKey)
       return;
     // Acknowledgement is not completion: keep feedback tied to this operation
     // until server truth removes it. The ref also guards clicks before React renders.
     cancellationRequest.current = operationKey;
     setCancellationKey(operationKey);
     setLocalFailureState(null);
-    try {
+    return await (async () => {
       const result = await cancelCommand({
-        environmentId: input.environmentId,
+        environmentId: environmentId,
         input: { languageId: input.languageId },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       if (result.value) setCommandState({ scopeKey, status: result.value, querySnapshot });
-    } catch (cause) {
+    })().catch(async (cause) => {
       if (cancellationRequest.current === operationKey) cancellationRequest.current = null;
       setCancellationKey((current) => (current === operationKey ? null : current));
       const detail = cause instanceof Error ? cause.message : "Setup could not be cancelled.";
@@ -292,7 +292,7 @@ export function useComputeManagedRuntime(input: {
         scopeKey,
         failure: { summary: "Cancellation failed", detail, retryAction: null },
       });
-    }
+    });
   };
   const statusFailure =
     status?.failure === undefined || status.failure === null

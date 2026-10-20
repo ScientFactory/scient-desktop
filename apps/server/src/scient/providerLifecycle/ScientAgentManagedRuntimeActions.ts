@@ -233,7 +233,7 @@ const probeConfiguredScientAgentRuntime =
       const resolvedBinary = yield* resolveCommandPath(binary, {
         env: environment,
         bypassCache: true,
-      }).pipe(Effect.orElseSucceed(() => binary));
+      }).pipe(Effect.map((resolved) => resolved ?? binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
       yield* gate.acquireProcess(identity, { target: scientAgentTarget, kind: "one-shot" });
       const resolved = yield* resolveSpawnCommand(

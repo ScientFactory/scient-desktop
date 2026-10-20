@@ -286,6 +286,7 @@ export const OverleafTransitionViolation = Schema.Literals([
   "late-evidence-moved-base",
   "rejection-moved-base",
   "apply-link-changed",
+  "vault-replaced-while-referenced",
   "retained-copy-rewritten",
   "retained-copy-dropped",
 ]);
@@ -390,6 +391,13 @@ export function overleafTransitionViolation(
     !sameJson(previous.activeApply, next.activeApply)
   )
     return "apply-link-changed";
+  // Retained copies and an apply intent live in the recorded vault; a fresh one
+  // would leave them unreachable. Only an empty, unreferenced vault may be replaced.
+  if (
+    !sameJson(previous.retention.vaultIdentity, next.retention.vaultIdentity) &&
+    (previous.retention.copies.length > 0 || previous.activeApply !== null)
+  )
+    return "vault-replaced-while-referenced";
 
   const nextCopies = new Map(next.retention.copies.map((copy) => [retainedKey(copy), copy]));
   for (const copy of previous.retention.copies) {

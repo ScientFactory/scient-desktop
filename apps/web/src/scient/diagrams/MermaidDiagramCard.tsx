@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   CheckIcon,
   CopyIcon,
@@ -9,7 +10,7 @@ import {
   RefreshCwIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -23,7 +24,7 @@ import {
   RichFenceSourcePreview,
   type ScientRichFenceAuthoringActions,
   type ScientRichFenceSourceEditor,
-  useRichFenceContextMenu,
+  createRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
 
 import {
@@ -131,7 +132,9 @@ export function MermaidDiagramCard({
   const composerRef = useComposerHandleContext();
   const citationSource = use(AssistantCitationContext);
   const errorElementRef = useRef<HTMLSpanElement>(null);
-  const [diagramState, setDiagramState] = useState<DiagramState>({ status: "idle" });
+  const [diagramState, setDiagramState] = useState<DiagramState>(() => ({
+    status: isNearViewport ? "loading" : "idle",
+  }));
   const [retryVersion, setRetryVersion] = useState(0);
   const [sourceVisible, setSourceVisible] = useState<boolean | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -140,10 +143,7 @@ export function MermaidDiagramCard({
   const renderGenerationRef = useRef(0);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayTitle = title || "Mermaid diagram";
-  const markdownCopy = useMemo(
-    () => mermaidMarkdownCopySource(source, language, fenceMeta),
-    [fenceMeta, language, source],
-  );
+  const markdownCopy = mermaidMarkdownCopySource(source, language, fenceMeta);
   const resultIsCurrent =
     "source" in diagramState &&
     diagramState.source === source &&
@@ -153,12 +153,31 @@ export function MermaidDiagramCard({
     diagramState.status === "ready" && resultIsCurrent ? diagramState.result : null;
   const recovery = readyResult?.recovery;
 
+  const [previousRender, setPreviousRender] = useState({
+    isNearViewport: isNearViewport,
+    retryVersion: retryVersion,
+    source: source,
+    theme: theme,
+  });
+  if (
+    previousRender.isNearViewport !== isNearViewport ||
+    previousRender.retryVersion !== retryVersion ||
+    previousRender.source !== source ||
+    previousRender.theme !== theme
+  ) {
+    setPreviousRender({
+      isNearViewport: isNearViewport,
+      retryVersion: retryVersion,
+      source: source,
+      theme: theme,
+    });
+    if (isNearViewport && diagramState.status !== "error") setDiagramState({ status: "loading" });
+  }
   useEffect(() => {
     if (!isNearViewport) return;
     const generation = renderGenerationRef.current + 1;
     renderGenerationRef.current = generation;
     // Keep an error's geometry while its source is corrected or retried.
-    setDiagramState((current) => (current.status === "error" ? current : { status: "loading" }));
 
     void renderMermaidDiagram(source, theme).then(
       (result) => {
@@ -195,45 +214,42 @@ export function MermaidDiagramCard({
     [],
   );
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);
     setActionMessage(message);
     copyResetTimerRef.current = setTimeout(() => {
       setActionMessage(null);
       copyResetTimerRef.current = null;
     }, 1_500);
-  }, []);
+  };
 
-  const showActionError = useCallback((message: string) => {
+  const showActionError = (message: string) => {
     toastManager.add({ type: "error", title: message, data: { hideCopyButton: true } });
-  }, []);
+  };
 
-  const copySource = useCallback(
-    (text: string, recovered = false) => {
-      if (activeAction != null) return;
-      if (navigator.clipboard?.writeText == null) {
-        showActionError("Clipboard access is unavailable.");
-        return;
-      }
-      setActiveAction(recovered ? "copy-recovered-source" : "copy-source");
-      void navigator.clipboard.writeText(text).then(
-        () => {
-          setActiveAction(null);
-          showTransientMessage(recovered ? "Recovered source copied" : "Source copied");
-        },
-        (cause) => {
-          console.error("[scient-diagrams] Failed to copy Mermaid source", cause);
-          setActiveAction(null);
-          showActionError("Unable to copy the diagram source.");
-        },
-      );
-    },
-    [activeAction, showActionError, showTransientMessage],
-  );
-  const handleCopySource = useCallback(() => copySource(source), [copySource, source]);
+  const copySource = (text: string, recovered = false) => {
+    if (activeAction != null) return;
+    if (navigator.clipboard?.writeText == null) {
+      showActionError("Clipboard access is unavailable.");
+      return;
+    }
+    setActiveAction(recovered ? "copy-recovered-source" : "copy-source");
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setActiveAction(null);
+        showTransientMessage(recovered ? "Recovered source copied" : "Source copied");
+      },
+      (cause) => {
+        console.error("[scient-diagrams] Failed to copy Mermaid source", cause);
+        setActiveAction(null);
+        showActionError("Unable to copy the diagram source.");
+      },
+    );
+  };
+  const handleCopySource = useStableCallback(() => copySource(source));
   const handleCopyRecoveredSource = recovery ? () => copySource(recovery.source, true) : undefined;
 
-  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleContextMenu = createRichFenceContextMenu(authoringActions, handleCopySource);
   const sourceIsVisible =
     diagramState.status === "error" || sourceVisible === true || sourceEditor?.open === true;
   const handleToggleSource = () => setSourceVisible(!sourceIsVisible);
@@ -285,7 +301,7 @@ export function MermaidDiagramCard({
     );
   };
 
-  const handleCopyPng = useCallback(() => {
+  const handleCopyPng = () => {
     if (readyResult == null || activeAction != null) return;
     setActiveAction("copy-png");
     void copyMermaidPng(readyResult.svg, theme).then(
@@ -299,9 +315,9 @@ export function MermaidDiagramCard({
         showActionError("Unable to copy the diagram image.");
       },
     );
-  }, [activeAction, readyResult, showActionError, showTransientMessage, theme]);
+  };
 
-  const handleDownloadPng = useCallback(() => {
+  const handleDownloadPng = () => {
     if (readyResult == null || activeAction != null) return;
     setActiveAction("download-png");
     void downloadMermaidPng(readyResult.svg, title, theme).then(
@@ -312,9 +328,9 @@ export function MermaidDiagramCard({
         showActionError("Unable to create the PNG image.");
       },
     );
-  }, [activeAction, readyResult, showActionError, theme, title]);
+  };
 
-  const handleDownloadSvg = useCallback(() => {
+  const handleDownloadSvg = () => {
     if (readyResult == null || activeAction != null) return;
     try {
       downloadMermaidSvg(readyResult.svg, title, theme);
@@ -322,7 +338,7 @@ export function MermaidDiagramCard({
       console.error("[scient-diagrams] Failed to download Mermaid SVG", cause);
       showActionError("Unable to download the SVG image.");
     }
-  }, [activeAction, readyResult, showActionError, theme, title]);
+  };
 
   return (
     <div

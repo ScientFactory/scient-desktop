@@ -691,10 +691,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(terminal.status, "failed");
         if (terminal.status !== "failed") return;
         assert.isNotEmpty(terminal.failure.message);
-        assert.equal(
-          terminal.failure.class,
-          terminalReason === "blocking_limit" ? "usage_limit" : "provider_error",
-        );
+        // Without rate-limit evidence a blocking limit is not a usage limit (upstream #19848).
+        assert.equal(terminal.failure.class, "provider_error");
         assert.isFalse(
           harness.events.some(
             (event) =>

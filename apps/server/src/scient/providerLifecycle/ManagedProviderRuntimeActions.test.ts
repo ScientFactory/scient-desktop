@@ -21,7 +21,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
-import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
+import {
+  BUNDLED_MANAGED_RUNTIME_CATALOG,
+  ManagedRuntimeCatalog,
+  UNCHECKED_CATALOG_FRESHNESS,
+} from "./ManagedRuntimeCatalog.ts";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as Sink from "effect/Sink";
@@ -369,6 +373,7 @@ describe("managed provider runtime policy", () => {
         current: Effect.sync(() => catalog),
         refresh: Effect.sync(() => catalog),
         refreshNow: Effect.sync(() => catalog),
+        freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
         subscribeChanges: Effect.succeed(Stream.empty),
       });
       const resolve = (custom = false) =>
@@ -520,6 +525,7 @@ describe("managed provider runtime policy", () => {
             catalog = available;
             return catalog;
           }),
+          freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
           subscribeChanges: Effect.succeed(Stream.empty),
         });
         const resolution = yield* makeManagedProviderRuntimeResolution({

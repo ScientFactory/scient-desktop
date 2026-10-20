@@ -25,9 +25,9 @@ import {
   X,
 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
-  useMemo,
+  useLayoutEffect,
+  useSyncExternalStore,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -87,6 +87,23 @@ type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
 const recentSourceAdds = new Map<string, Map<string, number>>();
+function createRecentSourcesStore(initial: ReadonlySet<string>) {
+  let snapshot = initial;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    publish: (sourceIds: ReadonlySet<string>) => {
+      snapshot = sourceIds;
+      for (const listener of listeners) listener();
+    },
+  };
+}
 
 function readRecentSourceAdds(contextKey: string): ReadonlySet<string> {
   const now = Date.now();
@@ -244,9 +261,15 @@ export function ScientSourcesPanel(props: {
   const [editingSource, setEditingSource] = useState(false);
   const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;
-  const [recentlyAddedSourceIds, setRecentlyAddedSourceIds] = useState<ReadonlySet<string>>(() =>
-    readRecentSourceAdds(panelContext),
+  const [recentSourcesStore] = useState(() =>
+    createRecentSourcesStore(readRecentSourceAdds(panelContext)),
   );
+  const recentlyAddedSourceIds = useSyncExternalStore(
+    recentSourcesStore.subscribe,
+    recentSourcesStore.getSnapshot,
+    recentSourcesStore.getSnapshot,
+  );
+  const setRecentlyAddedSourceIds = recentSourcesStore.publish;
   const [sourcePendingRemoval, setSourcePendingRemoval] = useState<PendingSourceRemoval | null>(
     null,
   );
@@ -259,7 +282,9 @@ export function ScientSourcesPanel(props: {
     readonly sourceIds: ReadonlySet<string>;
   } | null>(null);
   const panelContextRef = useRef(panelContext);
-  panelContextRef.current = panelContext;
+  useLayoutEffect(() => {
+    panelContextRef.current = panelContext;
+  }, [panelContext]);
 
   useEffect(() => {
     panelMounted.current = true;
@@ -268,44 +293,46 @@ export function ScientSourcesPanel(props: {
     };
   }, []);
 
-  const revealImportedSource = useCallback(
-    (work: ReturnType<typeof sources.uploadLocalFiles>, revealSingleSource = true) => {
-      const requestedContext = panelContext;
-      const request = ++importRevealRequest.current;
-      setImportOutcome(null);
-      void work.then((outcome) => {
-        if (
-          outcome &&
-          panelMounted.current &&
-          panelContextRef.current === requestedContext &&
-          importRevealRequest.current === request
-        ) {
-          setImportOutcome(outcome);
-          setRecentlyAddedSourceIds(
-            rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
-          );
-          const sourceId = revealSingleSource ? importedSourceIdToReveal(outcome) : null;
-          if (sourceId) {
-            setEditingSource(false);
-            setSelectedSourceId(sourceId);
-          }
+  const revealImportedSource = (
+    work: ReturnType<typeof sources.uploadLocalFiles>,
+    revealSingleSource = true,
+  ) => {
+    const requestedContext = panelContext;
+    const request = ++importRevealRequest.current;
+    setImportOutcome(null);
+    void work.then((outcome) => {
+      if (
+        outcome &&
+        panelMounted.current &&
+        panelContextRef.current === requestedContext &&
+        importRevealRequest.current === request
+      ) {
+        setImportOutcome(outcome);
+        setRecentlyAddedSourceIds(
+          rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
+        );
+        const sourceId = revealSingleSource ? importedSourceIdToReveal(outcome) : null;
+        if (sourceId) {
+          setEditingSource(false);
+          setSelectedSourceId(sourceId);
         }
-      });
-    },
-    [panelContext],
-  );
+      }
+    });
+  };
 
-  useEffect(() => {
-    importRevealRequest.current += 1;
+  const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
+  if (previousPanelContext.context !== panelContext) {
+    setPreviousPanelContext({ context: panelContext });
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
-    setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext));
     setSourcePendingRemoval(null);
     setSourceQuery("");
-  }, [panelContext, props.environmentId, props.root]);
+  }
 
+  const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
   useEffect(() => {
+    const panelContext = expirySchedule.context;
     const entries = recentSourceAdds.get(panelContext);
     if (!entries || entries.size === 0) return;
     const expiresAt = Math.min(...entries.values());
@@ -314,17 +341,25 @@ export function ScientSourcesPanel(props: {
       Math.max(0, expiresAt - Date.now()) + 1,
     );
     return () => window.clearTimeout(timeout);
-  }, [panelContext, recentlyAddedSourceIds]);
-
-  const openSourceDetails = useCallback((sourceId: string) => {
-    setSelectedSourceId(sourceId);
-  }, []);
+  }, [expirySchedule, setRecentlyAddedSourceIds]);
 
   useEffect(() => {
-    if (sources.library) return;
-    setQuery("");
-    setSelectedKeys(new Set());
-  }, [sources.library]);
+    importRevealRequest.current += 1;
+    setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext));
+  }, [panelContext, setRecentlyAddedSourceIds]);
+
+  const openSourceDetails = (sourceId: string) => {
+    setSelectedSourceId(sourceId);
+  };
+
+  const [previousLibrary, setPreviousLibrary] = useState({ library: sources.library });
+  if (previousLibrary.library !== sources.library) {
+    setPreviousLibrary({ library: sources.library });
+    if (!sources.library) {
+      setQuery("");
+      setSelectedKeys(new Set());
+    }
+  }
 
   useLiveRefresh(
     () => {
@@ -348,36 +383,24 @@ export function ScientSourcesPanel(props: {
         ? rememberRecentSourceAdds(panelContext, newlyObserved)
         : readRecentSourceAdds(panelContext),
     );
-  }, [panelContext, sources.overview?.records]);
+  }, [panelContext, sources.overview?.records, setRecentlyAddedSourceIds]);
 
-  const toggleSelected = useCallback((itemKey: string) => {
+  const toggleSelected = (itemKey: string) => {
     setSelectedKeys((current) => {
       const next = new Set(current);
       if (next.has(itemKey)) next.delete(itemKey);
       else next.add(itemKey);
       return next;
     });
-  }, []);
+  };
 
-  const diagnosticsBySourceId = useMemo(
-    () =>
-      new Map(
-        sources.overview?.recordDiagnostics.map((entry) => [entry.sourceId, entry.diagnostics]) ??
-          [],
-      ),
-    [sources.overview?.recordDiagnostics],
+  const diagnosticsBySourceId = new Map(
+    sources.overview?.recordDiagnostics.map((entry) => [entry.sourceId, entry.diagnostics]) ?? [],
   );
-  const sourceSearchIndex = useMemo(
-    () => indexScientSourceSummaries(sources.overview?.records ?? []),
-    [sources.overview?.records],
-  );
-  const filteredSourceRecords = useMemo(
-    () =>
-      sortScientSourceRecords(
-        filterScientSourceSearchIndex(sourceSearchIndex, sourceQuery),
-        sourceSort,
-      ),
-    [sourceQuery, sourceSearchIndex, sourceSort],
+  const sourceSearchIndex = indexScientSourceSummaries(sources.overview?.records ?? []);
+  const filteredSourceRecords = sortScientSourceRecords(
+    filterScientSourceSearchIndex(sourceSearchIndex, sourceQuery),
+    sourceSort,
   );
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
@@ -388,82 +411,74 @@ export function ScientSourcesPanel(props: {
   const selectedRecord =
     selectedDetail && selectedDetail.revision === selectedSummary?.revision ? selectedDetail : null;
 
+  if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
+  const loadSource = sources.loadSource;
   useEffect(() => {
-    if (!selectedSourceId || selectedRecord) return;
-    if (!selectedSummary) {
-      setSelectedSourceId(null);
-      return;
-    }
-    void sources.loadSource(selectedSourceId).catch(() => undefined);
-  }, [selectedRecord, selectedSourceId, selectedSummary, sources.loadSource]);
-  const zoteroCollectionChoices = useMemo(
-    () => zoteroCollectionLabels(sources.zoteroCollections),
-    [sources.zoteroCollections],
-  );
+    if (!selectedSourceId || selectedRecord || !selectedSummary) return;
+    void loadSource(selectedSourceId).catch(() => undefined);
+  }, [selectedSourceId, selectedRecord, selectedSummary, loadSource]);
+  const zoteroCollectionChoices = zoteroCollectionLabels(sources.zoteroCollections);
   const selectedZoteroCollectionKey =
     sources.zoteroScope.kind === "collection" ? sources.zoteroScope.collectionKey : null;
   const selectedZoteroCollection = selectedZoteroCollectionKey
     ? sources.zoteroCollections.find((collection) => collection.key === selectedZoteroCollectionKey)
     : null;
 
-  const showSourceContextMenuAt = useCallback(
-    async (record: SourceRecord, anchorPoint: { readonly x: number; readonly y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
-      const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-      const items: ContextMenuItem<SourceContextAction>[] = [
-        { id: "view", label: "View source details" },
-        { id: "edit", label: "Edit source details", icon: "pencil" },
-        ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
-        {
-          id: "remove",
-          label: "Remove from Sources",
-          destructive: true,
-          disabled: sources.busy,
-          icon: "trash",
-        },
-      ];
-      const action = await api.contextMenu.show(items, {
-        x: anchorPoint.x,
-        y: anchorPoint.y,
-      });
-      if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-      switch (action) {
-        case "view":
-          setEditingSource(false);
-          openSourceDetails(record.sourceId);
-          break;
-        case "edit":
-          openSourceDetails(record.sourceId);
-          setEditingSource(true);
-          break;
-        case "open-pdf":
-          if (pdf) {
-            props.onOpenPdf({
-              sourceId: record.sourceId,
-              attachmentId: pdf.attachmentId,
-              fileName: pdf.fileName,
-            });
-          }
-          break;
-        case "remove":
-          setSourcePendingRemoval({ record, anchorPoint });
-          break;
-        case null:
-          break;
-      }
-    },
-    [openSourceDetails, panelContext, props.onOpenPdf, sources.busy],
-  );
-  const showSourceContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLElement>, record: SourceRecord) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void showSourceContextMenuAt(record, { x: event.clientX, y: event.clientY });
-    },
-    [showSourceContextMenuAt],
-  );
+  const showSourceContextMenuAt = async (
+    record: SourceRecord,
+    anchorPoint: { readonly x: number; readonly y: number },
+  ) => {
+    const api = readLocalApi();
+    if (!api) return;
+    const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
+    const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
+    const items: ContextMenuItem<SourceContextAction>[] = [
+      { id: "view", label: "View source details" },
+      { id: "edit", label: "Edit source details", icon: "pencil" },
+      ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
+      {
+        id: "remove",
+        label: "Remove from Sources",
+        destructive: true,
+        disabled: sources.busy,
+        icon: "trash",
+      },
+    ];
+    const action = await api.contextMenu.show(items, {
+      x: anchorPoint.x,
+      y: anchorPoint.y,
+    });
+    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+    switch (action) {
+      case "view":
+        setEditingSource(false);
+        openSourceDetails(record.sourceId);
+        break;
+      case "edit":
+        openSourceDetails(record.sourceId);
+        setEditingSource(true);
+        break;
+      case "open-pdf":
+        if (pdf) {
+          props.onOpenPdf({
+            sourceId: record.sourceId,
+            attachmentId: pdf.attachmentId,
+            fileName: pdf.fileName,
+          });
+        }
+        break;
+      case "remove":
+        setSourcePendingRemoval({ record, anchorPoint });
+        break;
+      case null:
+        break;
+    }
+  };
+  const showSourceContextMenu = (event: ReactMouseEvent<HTMLElement>, record: SourceRecord) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void showSourceContextMenuAt(record, { x: event.clientX, y: event.clientY });
+  };
 
   if (sources.overview === null) {
     if (sources.error) {

@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   CheckIcon,
   CopyIcon,
@@ -7,7 +8,7 @@ import {
   FileImageIcon,
   ImageIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -26,7 +27,7 @@ import {
   downloadPlotlySource,
   downloadPlotlySvg,
 } from "./plotlyExport";
-import { PlotlyInteractionToolbar } from "./PlotlyInteractionToolbar";
+import { PlotlyInteractionToolbar, readPlotlyInteractionMode } from "./PlotlyInteractionToolbar";
 import type { PlotlyTheme, PlotlyViewState } from "./plotlyRuntime";
 import type { ParsedPlotlySource } from "./plotlySpec";
 import { PlotlyView, type PlotlyViewController } from "./PlotlyView";
@@ -56,13 +57,21 @@ export function PlotlyChartDialog({
   title,
 }: PlotlyChartDialogProps) {
   const controllerRef = useRef<PlotlyViewController | null>(null);
+  const [controller, setController] = useState<PlotlyViewController | null>(null);
+  const [initialInteractionMode, setInitialInteractionMode] = useState<
+    import("./plotlyRuntime").PlotlyInteractionMode | null
+  >(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<"error" | "loading" | "ready">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<DialogAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
-  const dialogActivity = usePlotlyViewportActivity(parsed.hasWebGl, undefined, open);
+  const { active: dialogActive, ref: dialogRef } = usePlotlyViewportActivity(
+    parsed.hasWebGl,
+    undefined,
+    open,
+  );
 
   useEffect(
     () => () => {
@@ -71,53 +80,52 @@ export function PlotlyChartDialog({
     [],
   );
 
-  useEffect(() => {
+  const [previousOpen, setPreviousOpen] = useState({ open: open });
+  if (previousOpen.open !== open) {
+    setPreviousOpen({ open: open });
     if (open) setStatus("loading");
-  }, [open]);
+  }
 
-  const showTransientMessage = useCallback((message: string) => {
+  const showTransientMessage = (message: string) => {
     if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
     setActionMessage(message);
     messageTimerRef.current = setTimeout(() => {
       messageTimerRef.current = null;
       setActionMessage(null);
     }, 1_500);
-  }, []);
+  };
 
-  const showPersistentMessage = useCallback((message: string) => {
+  const showPersistentMessage = (message: string) => {
     if (messageTimerRef.current != null) {
       clearTimeout(messageTimerRef.current);
       messageTimerRef.current = null;
     }
     setActionMessage(message);
-  }, []);
+  };
 
-  const runControllerAction = useCallback(
-    (
-      action: Exclude<DialogAction, "copy-source" | null>,
-      operation: (controller: PlotlyViewController) => Promise<void>,
-      successMessage: string | null,
-      failureMessage: string,
-    ) => {
-      const controller = controllerRef.current;
-      if (controller == null || activeAction != null) return;
-      setActiveAction(action);
-      void operation(controller).then(
-        () => {
-          setActiveAction(null);
-          if (successMessage != null) showTransientMessage(successMessage);
-        },
-        (cause: unknown) => {
-          console.error("[scient-visualizations] Expanded Plotly action failed", action, cause);
-          setActiveAction(null);
-          showPersistentMessage(failureMessage);
-        },
-      );
-    },
-    [activeAction, showPersistentMessage, showTransientMessage],
-  );
+  const runControllerAction = (
+    action: Exclude<DialogAction, "copy-source" | null>,
+    operation: (controller: PlotlyViewController) => Promise<void>,
+    successMessage: string | null,
+    failureMessage: string,
+  ) => {
+    const controller = controllerRef.current;
+    if (controller == null || activeAction != null) return;
+    setActiveAction(action);
+    void operation(controller).then(
+      () => {
+        setActiveAction(null);
+        if (successMessage != null) showTransientMessage(successMessage);
+      },
+      (cause: unknown) => {
+        console.error("[scient-visualizations] Expanded Plotly action failed", action, cause);
+        setActiveAction(null);
+        showPersistentMessage(failureMessage);
+      },
+    );
+  };
 
-  const handleCopySource = useCallback(() => {
+  const handleCopySource = useStableCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
@@ -134,18 +142,15 @@ export function PlotlyChartDialog({
         showPersistentMessage("Unable to copy the Plotly source.");
       },
     );
-  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
+  });
 
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      if (!nextOpen) {
-        const state = controllerRef.current?.getState();
-        if (state != null) onReturnState(state);
-      }
-      onOpenChange(nextOpen);
-    },
-    [onOpenChange, onReturnState],
-  );
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      const state = controllerRef.current?.getState();
+      if (state != null) onReturnState(state);
+    }
+    onOpenChange(nextOpen);
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -252,22 +257,20 @@ export function PlotlyChartDialog({
           </div>
         ) : null}
         <PlotlyInteractionToolbar
-          controller={status === "ready" ? controllerRef.current : null}
+          controller={status === "ready" ? controller : null}
+          initialMode={status === "ready" ? initialInteractionMode : null}
           disabled={status !== "ready" || activeAction != null}
           hasCartesian={parsed.hasCartesian}
           onError={showPersistentMessage}
           scrollZoom={true}
         />
-        <div
-          ref={dialogActivity.ref}
-          className="relative min-h-0 flex-1 bg-secondary/30 p-4 sm:p-8"
-        >
+        <div ref={dialogRef} className="relative min-h-0 flex-1 bg-secondary/30 p-4 sm:p-8">
           {status === "loading" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               Rendering interactive Plotly figure…
             </div>
           ) : null}
-          {open && dialogActivity.active ? (
+          {open && dialogActive ? (
             <PlotlyView
               key={retryVersion}
               ref={controllerRef}
@@ -278,6 +281,8 @@ export function PlotlyChartDialog({
                 setStatus("error");
               }}
               onReady={() => {
+                setController(controllerRef.current);
+                setInitialInteractionMode(readPlotlyInteractionMode(controllerRef.current));
                 setErrorMessage(null);
                 setStatus("ready");
               }}

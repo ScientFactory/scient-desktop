@@ -268,3 +268,27 @@ export function createCoalescedRestartScheduler({
     },
   };
 }
+
+// Windows reports reads (last-access and attribute updates) through fs.watch, so
+// Electron loading its own bundle looked like a rebuild and restarted it. A watched
+// file counts as changed only when its size or modification time differs.
+export function createWatchedFileStamps(filePaths, { stat = NodeFS.statSync } = {}) {
+  const stampOf = (filePath) => {
+    try {
+      const stats = stat(filePath);
+      return `${String(stats.size)}:${String(stats.mtimeMs)}`;
+    } catch (error) {
+      if (error?.code === "ENOENT") return "missing";
+      throw error;
+    }
+  };
+  const stamps = new Map(filePaths.map((filePath) => [filePath, stampOf(filePath)]));
+  return {
+    changed(filePath) {
+      const next = stampOf(filePath);
+      if (stamps.get(filePath) === next) return false;
+      stamps.set(filePath, next);
+      return true;
+    },
+  };
+}

@@ -20,6 +20,7 @@ import {
   CodexOrchestratorReplayHarness,
   layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { CODEX_THREAD_CONFIG } from "../Adapters/CodexAdapterV2.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { historicalMessage } from "../ScientHistoricalContext.ts";
 import {
@@ -290,7 +291,7 @@ it.live(
               frame: {
                 id: 5,
                 method: "thread/start",
-                params: { config: { "tools.update_plan.enabled": true } },
+                params: { config: CODEX_THREAD_CONFIG },
               },
             },
             { type: "emit_inbound", label: "thread/start/fallback", frame: freshResult },

@@ -9,11 +9,11 @@ import { extractFile, listPackage, statFile } from "@electron/asar";
 import { runDesktopSmoke } from "../apps/desktop/scripts/smoke-test.mjs";
 
 const runtimeFiles = [
-  "resource-monitor/t3-resource-monitor",
+  "resource-monitor/scient-resource-monitor",
   "whisper-runtime/whisper-server",
   "synctex-runtime/synctex",
-  "kde-capture/t3-kde-snap-shot",
-  "hyprland-capture/t3-hyprland-snap-shot",
+  "kde-capture/scient-kde-snap-shot",
+  "hyprland-capture/scient-hyprland-snap-shot",
 ];
 const stagingPrefix = "apps/desktop/prod-resources/";
 const runtimeDirectories = runtimeFiles.map((file) => file.split("/")[0]);
@@ -223,7 +223,7 @@ async function qualify() {
     const whisper = run(binary("whisper-runtime/whisper-server"), ["--help"]);
     NodeAssert.equal(whisper.status, 0, whisper.stderr);
     NodeAssert.match(whisper.stdout + whisper.stderr, /--request-path/);
-    const monitor = run(binary("resource-monitor/t3-resource-monitor"), [], {
+    const monitor = run(binary("resource-monitor/scient-resource-monitor"), [], {
       input:
         [
           {
@@ -255,10 +255,10 @@ async function qualify() {
       "Resource monitor must sample this synthetic process",
     );
     NodeAssert.ok(!events.some((event) => event.type === "error"), monitor.stdout);
-    const kde = run(binary("kde-capture/t3-kde-snap-shot"), ["qualification-invalid-command"]);
+    const kde = run(binary("kde-capture/scient-kde-snap-shot"), ["qualification-invalid-command"]);
     NodeAssert.equal(kde.status, 1);
     NodeAssert.match(kde.stderr, /Expected check, capture/);
-    const hyprland = run(binary("hyprland-capture/t3-hyprland-snap-shot"), ["check"]);
+    const hyprland = run(binary("hyprland-capture/scient-hyprland-snap-shot"), ["check"]);
     NodeAssert.equal(hyprland.status, 1);
     NodeAssert.match(hyprland.stderr, /requires a native Hyprland session/);
     const smoke = await runDesktopSmoke({

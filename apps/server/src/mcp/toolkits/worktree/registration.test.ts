@@ -47,6 +47,7 @@ import * as LegacyV1ThreadImporter from "../../../orchestration-v2/legacy/Legacy
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -95,6 +96,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(LatexBuildService.LatexBuildService)({}),
+  Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
@@ -225,14 +227,9 @@ it.effect.each(
       }
       expect(toolNames).toContain("scient_worktree_handoff");
       expect(toolNames).toContain("scient_worktree_status");
-      // The worktree registration merges alongside the other toolkits rather
-      // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
 
-      // The handoff tool mutates thread state, reaches the network (origin
-      // fetch), and runs project setup scripts, so its MCP hints must not
-      // promise a read-only, closed-world, non-destructive tool.
       const handoff = tools.find((tool) => tool.name === "scient_worktree_handoff");
       expect(handoff?.annotations?.readOnlyHint).toBe(false);
       expect(handoff?.annotations?.destructiveHint).toBe(true);

@@ -9,6 +9,11 @@ const cssSource = NodeFS.readFileSync(
   NodePath.resolve(import.meta.dirname, "scient-markdown-editor.css"),
   "utf8",
 );
+// The find bar is shared by the document editors; its rules live with it.
+const findBarCss = NodeFS.readFileSync(
+  NodePath.resolve(import.meta.dirname, "../writing/findBar.css"),
+  "utf8",
+);
 const previewCssSource = NodeFS.readFileSync(
   NodePath.resolve(import.meta.dirname, "../../index.css"),
   "utf8",
@@ -371,10 +376,10 @@ describe("rich Markdown compact-surface styles", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-selection-toolbar \{[^}]*max-width: calc\(100vw - 1rem\)[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
     );
-    expect(cssSource).toMatch(
+    expect(findBarCss).toMatch(
       /\.scient-markdown-find-bar \{[^}]*overflow-x: auto[^}]*overflow-y: hidden[^}]*scrollbar-width: none/su,
     );
-    expect(cssSource).toMatch(/\.scient-markdown-find-bar > div \{[^}]*min-width: max-content/su);
+    expect(findBarCss).toMatch(/\.scient-markdown-find-bar > div \{[^}]*min-width: max-content/su);
   });
 
   it("keeps math editing visually quiet while retaining visible focus boundaries", () => {

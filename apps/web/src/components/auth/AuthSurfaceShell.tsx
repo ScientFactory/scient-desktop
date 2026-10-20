@@ -4,9 +4,6 @@ import { APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../../branding";
 import { ScientSymbol } from "../ScientSymbol";
 import { resolveSidebarStageBackdropVariant, StageBackdropArt } from "../SidebarStageBackdrop";
 
-/**
- * Branded masthead for the CLI-connect authorize and callback pages.
- */
 export function AuthSurfaceShell({ children }: { readonly children: ReactNode }) {
   const stageVariant = resolveSidebarStageBackdropVariant(APP_STAGE_LABEL);
 

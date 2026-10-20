@@ -25,10 +25,19 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
+
+const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 const projectId = ProjectId.make("project-mcp-orchestrator-detail");
@@ -40,7 +49,7 @@ const childRunId = RunId.make("run-mcp-child");
 const taskId = NodeId.make("node-mcp-task-1");
 const now = DateTime.makeUnsafe("2026-08-04T12:00:00.000Z");
 const codexDriver = ProviderDriverKind.make("codex");
-// Distinct from driver kind so a regression that re-derives from driver fails.
+
 const customCodexInstanceId = ProviderInstanceId.make("codex-custom-workspace");
 const parentInstanceId = ProviderInstanceId.make("codex");
 
@@ -131,7 +140,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -203,7 +212,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -332,7 +341,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
@@ -378,6 +387,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
 });
 
 it("cross-project reads require a user attachment and writes retain caller authority", async () => {
+  let parentShell: OrchestrationV2ThreadShell | null = null;
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
   ];
@@ -483,13 +493,15 @@ it("cross-project reads require a user attachment and writes retain caller autho
   const targetProjection = (threadId: ThreadId) =>
     threadId === childThreadId ? localProjection : foreignProjection(threadId);
 
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: (caller) =>
           Effect.sync(() => {
-            expect(caller).toEqual(makeScope().thread);
-            return parentRuns.length > 0
+            expect(caller.threadId).toBe(parentThreadId);
+            // The native owner grants an active run, or a background subagent it started.
+            return parentRuns.length > 0 ||
+              OrchestratorMcpService.isLiveCallerShell(parentShell, caller.providerInstanceId)
               ? Option.some({
                   runtimeMode: "full-access" as const,
                   interactionMode: "default" as const,
@@ -511,7 +523,9 @@ it("cross-project reads require a user attachment and writes retain caller autho
             Effect.succeed(
               threadId === foreignThreadId || threadId === childThreadId
                 ? (targetProjection(threadId).thread as unknown as OrchestrationV2ThreadShell)
-                : null,
+                : threadId === parentThreadId
+                  ? parentShell
+                  : null,
             ),
           getTimelinePage: (threadId) =>
             Effect.sync(() => {
@@ -660,7 +674,7 @@ it("cross-project reads require a user attachment and writes retain caller autho
       .interruptThread(makeScope(), { threadId: foreignThreadId })
       .pipe(Effect.flip);
     expect(staleInterrupt.code).toBe("parent_not_active");
-    // Nor create, change or remove scheduled work in another project.
+
     const staleSchedule = yield* service
       .scheduleTask(makeScope(), {
         projectId: foreignProjectId,
@@ -681,5 +695,163 @@ it("cross-project reads require a user attachment and writes retain caller autho
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
     expect(sentInputs).toHaveLength(2);
+
+    // A background item keeps only its owning instance live, even after a switch.
+    const backgroundTasks = [
+      {
+        taskId: "background-subagent",
+        kind: "subagent" as const,
+        providerInstanceId: parentInstanceId,
+      },
+    ];
+    parentShell = {
+      ...liveThreadShell(parentThreadId, { activeRunId: null }),
+      pendingBackgroundTasks: backgroundTasks,
+    };
+    // Scient keeps sends inside the caller's project, so the local child stands in for upstream's target.
+    const backgroundSent = yield* service.sendToThread(makeScope(), {
+      threadId: childThreadId,
+      message: "background",
+    });
+    expect(backgroundSent.threadId).toBe(childThreadId);
+    expect(sentInputs).toHaveLength(3);
+    const delegate = yield* service
+      .delegateTask(makeScope(), { task: "requires a run" })
+      .pipe(Effect.flip);
+    expect(delegate.code).toBe("parent_not_active");
+    const create = yield* service
+      .createThreads(makeScope(), { threads: [{ prompt: "requires a run" }] })
+      .pipe(Effect.flip);
+    expect(create.code).toBe("parent_not_active");
+    const secret = yield* service
+      .requestSecret(makeScope(), { label: "Secret", reason: "requires a run" })
+      .pipe(Effect.flip);
+    expect(secret.code).toBe("parent_not_active");
+
+    parentShell = { ...parentShell, providerInstanceId: customCodexInstanceId };
+    const switchedScope = {
+      ...makeScope(),
+      thread: { ...makeScope().thread!, providerInstanceId: customCodexInstanceId },
+    };
+    const switched = yield* service
+      .sendToThread(switchedScope, { threadId: childThreadId, message: "wrong owner" })
+      .pipe(Effect.flip);
+    expect(switched.code).toBe("parent_not_active");
+    const mismatched = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "stale provider" })
+      .pipe(Effect.flip);
+    expect(mismatched.code).toBe("parent_not_active");
+
+    // A fresh active run wins over the earlier inactive projection and empty roster.
+    parentShell = liveThreadShell(parentThreadId);
+    const restarted = yield* service.sendToThread(makeScope(), {
+      threadId: childThreadId,
+      message: "new run",
+    });
+    expect(restarted.threadId).toBe(childThreadId);
+
+    parentShell = {
+      ...parentShell,
+      activeRunId: null,
+      pendingBackgroundTasks: backgroundTasks,
+      archivedAt: now,
+    };
+    const archived = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "archived" })
+      .pipe(Effect.flip);
+    expect(archived.code).toBe("parent_not_active");
+
+    parentShell = { ...parentShell, archivedAt: null, pendingBackgroundTasks: [] };
+    const stopped = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "after stop" })
+      .pipe(Effect.flip);
+    expect(stopped.code).toBe("parent_not_active");
+    expect(sentInputs).toHaveLength(4);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("sendToThread reports why the orchestrator refused the message", async () => {
+  const targetThreadId = ThreadId.make("thread-mcp-orchestrator-dead-session");
+  const targetProjection = {
+    thread: baseThread({
+      threadId: targetThreadId,
+      title: "Stalled",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderSessionManagerV2)({
+          resolveMcpInvocationPolicy: () =>
+            Effect.succeed(Option.some({ runtimeMode: "full-access", interactionMode: "default" })),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === targetThreadId
+                ? (targetProjection.thread as unknown as OrchestrationV2ThreadShell)
+                : liveThreadShell(parentThreadId),
+            ),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === targetThreadId
+                ? targetProjection
+                : ({
+                    ...targetProjection,
+                    thread: baseThread({
+                      threadId: parentThreadId,
+                      title: "Parent",
+                      instanceId: parentInstanceId,
+                      model: "gpt-5.4",
+                    }),
+                    runs: [
+                      makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
+                    ],
+                  } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          getProjectThreadRecords: () => Effect.succeed(targetProjection),
+          sendToThread: (input) =>
+            Effect.fail(
+              new OrchestratorDispatchError({
+                commandId: input.commandId,
+                commandType: "message.dispatch",
+                cause: "Provider session provider-session-dead is not active.",
+              }),
+            ),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const failure = yield* service
+      .sendToThread(makeScope(), { threadId: targetThreadId, message: "restart", mode: "restart" })
+      .pipe(Effect.flip);
+    expect(failure.code).toBe("orchestration_error");
+    expect(failure.message).toBe(
+      `Unable to send to thread ${targetThreadId}: Provider session provider-session-dead is not active.`,
+    );
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

@@ -39,6 +39,13 @@ export default mergeConfig(
           dependsOn: ["@t3tools/web#build"],
           cache: false,
         },
+        // SCIENT-FORK:START — desktop development renders from the Vite dev server, so its
+        // server build skips the web production build and its copy (minutes per launch).
+        "build:dev": {
+          command: "node scripts/cli.ts build --skip-web-client",
+          cache: false,
+        },
+        // SCIENT-FORK:END
       },
     },
     pack: {
@@ -54,12 +61,10 @@ export default mergeConfig(
       sourcemap: true,
       clean: true,
       deps: {
-        // Both halves are required. `alwaysBundle` forces the JS dependencies in
-        // (declared deps are external by default, which is what this change is
-        // undoing). `neverBundle` forces the native packages out: returning
-        // false from `alwaysBundle` only means "no opinion", so a transitive
-        // dependency would still be bundled — which silently inlined native
-        // loaders such as node-gyp-build, losing native acceleration.
+        // `neverBundle` forces the native packages out: returning false from
+        // `alwaysBundle` only means "no opinion", so a transitive dependency
+        // would still be bundled — which silently inlined native loaders such
+        // as node-gyp-build, losing native acceleration.
         alwaysBundle: shouldBundleCliDependency,
         neverBundle: (id: string) => isExternalCliDependency(id),
         onlyBundle: false,
@@ -103,12 +108,14 @@ export default mergeConfig(
       // The server suite exercises sqlite, git, temp worktrees, and orchestration
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,
-      // CI runs the suite as `--shard` runs of equal recorded duration.
       sequence: { sequencer: WeightedShardSequencer },
       // Appended to the root setup, which mergeConfig concatenates.
-      setupFiles: ["./src/testUtils/gitConfig.setup.ts"],
-      // Server integration tests exercise sqlite, git, and orchestration together.
-      // Under package-wide runs they can exceed the default budget on loaded CI hosts.
+      setupFiles: [
+        "./src/testUtils/gitConfig.setup.ts",
+        // SCIENT-FORK:START — Git cannot reach the source checkout from a test.
+        "./src/testUtils/checkoutIsolation.setup.ts",
+        // SCIENT-FORK:END
+      ],
       hookTimeout: 120_000,
       testTimeout: 120_000,
     },

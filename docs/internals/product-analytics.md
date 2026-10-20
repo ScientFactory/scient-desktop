@@ -63,7 +63,10 @@ protections below. Final copy and layout require human review before activation.
 persisted/wire validator; the website gateway consumes its generated copy.
 Revision 3 added product insight signals. Revision 4 makes provider installation
 state explicit, so a bundled-but-missing provider cannot be mistaken for an
-installed runtime. Installation state is aggregated per provider driver: it is
+installed runtime. Revision 5 names every settings page in `settings.viewed`
+(Scheduled Tasks, SnapShots, Documents and Storage reported as `other` before);
+the desktop derives its page list from the settings sidebar, and a test fails
+when a page is missing from the contract. Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
@@ -75,8 +78,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v4.json \
-  /absolute/website/workers/events/fixtures/contract-v4.json
+  packages/scient-analytics/fixtures/contract-v5.json \
+  /absolute/website/workers/events/fixtures/contract-v5.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -362,6 +365,11 @@ SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.
 
+The bundled analytics worker is a sibling of every emitted server module,
+including lazy CLI chunks. Its location must not depend on an entry or chunk
+filename. `scripts/lib/analytics-worker-packaging.test.ts` builds and relocates
+that boundary, then exercises delivery, restart identity, and saved Off consent.
+
 The website candidate also contains an opt-in cross-repository test. After
 building the exact desktop candidate, run it from the website root:
 
@@ -398,8 +406,9 @@ connection method. The server validates those values and can persist the support
 connection management can describe current clients. Invalid or unknown values are ignored and never
 reject a connection.
 
-Upstream also added `client.connected` and `client.turn.requested` analytics call sites. Those names
-are not registered in Scient's analytics contract and are therefore dropped at the Scient boundary.
+Upstream also added `client.connected`, `client.turn.requested` and `feature.used` analytics call
+sites. Those names are not registered in Scient's analytics contract and are therefore dropped at the
+Scient boundary.
 They must not be documented as collected or used to build a dashboard unless Scient deliberately
 adds a reviewed, privacy-bounded contract for them.
 

@@ -186,8 +186,10 @@ tag or release already exists.
    in the same workflow run. Publication fails closed if macOS is unsigned or
    the repository release gate is disabled. Windows is also required to be
    signed unless the operator explicitly set `allow_unsigned_windows=true` when
-   creating the candidate; that exception is recorded in the release body and
-   may trigger an Unknown Publisher or SmartScreen warning. The workflow
+   creating the candidate; that exception is recorded in the workflow run's
+   summary, not the release body, because the app shows the release body as
+   release notes. Unsigned installers may trigger an Unknown Publisher or
+   SmartScreen warning, which `docs/user/install.md` explains. The workflow
    publishes the already accepted assembled artifact, downloads the draft again,
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or
@@ -231,7 +233,9 @@ Electron Builder derives the active GitHub repository from the release run.
 Stable releases publish `latest*.yml` and their installers/blockmaps from
 `ScientFactory/scient-desktop`.
 
-Scient does not publish T3's npm package. Each release instead contains
+Scient does not publish T3's npm package: upstream's npm launcher sources are
+not carried, and the inherited `apps/server/scripts/cli.ts publish` command is
+not called by any Scient workflow. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
 that immutable GitHub asset at the exact desktop version. The tarball is built
 from the same source SHA and includes native resource monitors from the matrix.

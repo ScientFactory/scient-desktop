@@ -33,13 +33,14 @@ import {
   PNG_BYTES,
   PNG_BYTES_ALT,
 } from "./pandocTestSupport.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const binary = pandocBinaryForTests();
 
 const converterLayer = (
   seen: Array<WordConversionInput>,
   failure: WordConversionFailureReason | null = null,
-  beforeConvert?: (input: WordConversionInput) => void,
+  beforeConvert?: (input: WordConversionInput) => void | Effect.Effect<void>,
 ) =>
   Layer.effect(
     PandocWordConverter,
@@ -49,7 +50,8 @@ const converterLayer = (
         availability: Effect.succeed({ available: true, reason: null, installable: false }),
         convert: (input) =>
           Effect.gen(function* () {
-            beforeConvert?.(input);
+            const before = beforeConvert?.(input);
+            if (before !== undefined) yield* before;
             seen.push(input);
             if (failure !== null) {
               return yield* new WordConversionError({ reason: failure, message: "Word said no." });
@@ -77,6 +79,7 @@ const converterLayer = (
   );
 
 const WorkspaceLayer = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(layerKnownWorkspacesAllowAll),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
@@ -85,6 +88,7 @@ const WorkspaceLayer = WorkspaceFileSystem.layer.pipe(
 const run = <A, E>(
   body: (input: {
     readonly service: WordFileExport["Service"];
+    readonly files: WorkspaceFileSystem.WorkspaceFileSystem["Service"];
     readonly project: string;
     readonly revisionOf: (relativePath: string) => Effect.Effect<string>;
   }) => Effect.Effect<A, E>,
@@ -92,7 +96,7 @@ const run = <A, E>(
     readonly seen?: Array<WordConversionInput>;
     readonly failure?: WordConversionFailureReason;
     readonly realConverter?: boolean;
-    readonly beforeConvert?: (input: WordConversionInput) => void;
+    readonly beforeConvert?: (input: WordConversionInput) => void | Effect.Effect<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -131,7 +135,7 @@ const run = <A, E>(
           Effect.map((read) => read.revision),
           Effect.orDie,
         );
-      return yield* body({ service, project, revisionOf });
+      return yield* body({ service, files, project, revisionOf });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
@@ -628,6 +632,35 @@ describe("WordFileExport", () => {
             NodeFS.writeFileSync(sourcePath, "# Changed after capture\n\n![plot](plot.png)\n");
           },
         },
+      );
+    },
+  );
+
+  it.live(
+    "refuses converted Word bytes when a first-party workspace asset appeared during conversion",
+    () => {
+      let mutation: Effect.Effect<void> = Effect.void;
+      return run(
+        ({ service, files, project, revisionOf }) =>
+          Effect.gen(function* () {
+            mutation = files
+              .createBinaryFile({
+                cwd: project,
+                relativePath: "notes/plot.png",
+                bytes: PNG_BYTES,
+              })
+              .pipe(Effect.asVoid, Effect.orDie);
+            const revision = yield* revisionOf("notes/report.md");
+            const error = yield* service
+              .export({
+                cwd: project,
+                relativePath: "notes/report.md",
+                revision,
+              })
+              .pipe(Effect.flip);
+            expect(error._tag === "ScientWordExportError" && error.reason).toBe("file-changed");
+          }),
+        { beforeConvert: () => mutation },
       );
     },
   );

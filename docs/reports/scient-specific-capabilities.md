@@ -797,9 +797,13 @@ workspace-relative file/line information, package/install distinction, and
 bounded transcripts. Build state is explicit (`queued`, `running`,
 `publishing`, `succeeded`, `failed`, `cancelled`).
 
-Toolchain order is system `latexmk`, then Tectonic, then the user-requested
-managed TinyTeX install. System TeX is never modified. TinyTeX is pinned to
-the reviewed `v2026.08` asset and digest, installed through staging,
+Discovery preserves system `latexmk`, then Tectonic, as the default. An installed
+TinyTeX addition is used when the document needs a compiler the default cannot
+provide; it becomes the default only when no system driver exists. Settings and
+documents offer one opt-in TinyTeX bundle, including when Tectonic is already
+available. Compiler selection and availability checks do not download tools.
+System TeX is never modified.
+TinyTeX is pinned to the reviewed `v2026.08` asset and digest, installed through staging,
 verification, smoke test, atomic activation, optional recommended collections,
 and recoverable superseded-root cleanup. Downloads use HTTPS and an explicit
 host allowlist.

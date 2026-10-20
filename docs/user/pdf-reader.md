@@ -3,9 +3,10 @@
 Use the PDF reader to study papers, reports, books, and other project documents
 while keeping them beside the conversation and related files.
 
-Selecting a PDF anywhere that opens a file in Scient opens it in the Files side
+Opening a workspace or environment PDF uses the Scient reader in the Files side
 panel. The reader uses the full panel by default; the project file explorer and
-the PDF pages/outline sidebar remain optional.
+the PDF pages/outline sidebar remain optional. PDF attachments use the file
+viewer's embedded browser document instead. Browser tabs keep their own viewer.
 
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
 Each conversation keeps its own PDF reading position. A fork starts from the
@@ -15,17 +16,16 @@ not move the other.
 When you return to the same document, Scient restores its page, exact reading
 position, zoom or fit mode, rotation, and sidebar mode. This survives leaving and
 returning to the conversation, restarting Scient, and refreshed versions that
-keep the same document identity. Opening the same
-workspace path from another conversation in the same environment shares that
-reading session. Files at different worktree paths remain separate. Search text
-and PDF passwords are not restored.
+keep the same document identity. Reading state stays separate between
+conversations, even for the same workspace path. Files at different worktree
+paths also remain separate. Search text and PDF passwords are not restored.
 
 The reader supports:
 
 - continuous, fit-to-width reading that remains responsive in long documents;
 - previous/next navigation and direct page-number entry;
-- zoom in five-percent steps, one-click actual size, fit width, smooth trackpad
-  pinch zoom, and clockwise rotation;
+- zoom in five-percent steps, fit width by clicking the zoom percentage, actual
+  size, smooth trackpad pinch zoom, and clockwise rotation;
 - text selection and copy when the PDF contains a text layer;
 - responsive document search after each key, with previous/next result navigation;
 - internal document links and external links opened in a separate context;

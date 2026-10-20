@@ -69,8 +69,6 @@ describe("fetchEnvironmentPullRequestDiff", () => {
           : init.body instanceof Uint8Array
             ? new TextDecoder().decode(init.body)
             : "";
-      // The assertion deliberately inspects the serialized wire body rather than decoding a
-      // domain value for use in application code.
       expect(JSON.parse(body)).toEqual({
         projectId: "project-1",
         repository: "owner/repository",
@@ -112,7 +110,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
         traceId: "trace-auth-test",
       });
       expect(error.message).toBe(
-        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen T3 Code.",
+        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen Scient.",
       );
     }),
   );

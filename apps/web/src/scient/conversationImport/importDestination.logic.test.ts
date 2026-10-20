@@ -68,7 +68,7 @@ describe("newChatModelSelection", () => {
     },
   ) =>
     newChatModelSelection({
-      config,
+      providers: config.providers,
       settings: mergeEnvironmentSettings(config.settings, DEFAULT_UNIFIED_SETTINGS),
       project: target,
       ...carry,

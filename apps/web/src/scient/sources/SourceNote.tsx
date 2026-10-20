@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScientSourceDetailResult, ScientSourceNoteUpdateResult } from "@t3tools/contracts";
 import {
   $convertFromMarkdownString,
@@ -24,8 +25,8 @@ import {
   type TextFormatType,
 } from "lexical";
 import {
-  useCallback,
   useEffect,
+  useLayoutEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -80,7 +81,9 @@ function useSourceNoteState(input: {
   const saveAgainRef = useRef(false);
   const conflictRef = useRef(false);
   const onSaveRef = useRef(input.onSave);
-  onSaveRef.current = input.onSave;
+  useLayoutEffect(() => {
+    onSaveRef.current = input.onSave;
+  }, [input.onSave]);
 
   useEffect(() => {
     recordRef.current = input.record;
@@ -102,7 +105,7 @@ function useSourceNoteState(input: {
     }
   }, [input.record]);
 
-  const persist = useCallback(async () => {
+  const persist = useStableCallback(async function persistNote() {
     if (savingRef.current) {
       saveAgainRef.current = true;
       return;
@@ -117,7 +120,7 @@ function useSourceNoteState(input: {
       setError(null);
     }
     let continueSaving = false;
-    try {
+    return await (async () => {
       const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision);
       recordRef.current = result.record;
       const remote = noteText(result.record);
@@ -136,23 +139,25 @@ function useSourceNoteState(input: {
         setStatus(draftRef.current === remote ? "saved" : "pending");
       }
       continueSaving = true;
-    } catch {
-      if (mountedRef.current) {
-        setStatus("error");
-        setError("Note could not be saved. Keep typing or leave and return to retry.");
-      }
-    } finally {
-      savingRef.current = false;
-      if (
-        continueSaving &&
-        !conflictRef.current &&
-        (saveAgainRef.current || draftRef.current !== confirmedRef.current)
-      ) {
-        saveAgainRef.current = false;
-        void persist();
-      }
-    }
-  }, []);
+    })()
+      .catch(async () => {
+        if (mountedRef.current) {
+          setStatus("error");
+          setError("Note could not be saved. Keep typing or leave and return to retry.");
+        }
+      })
+      .finally(() => {
+        savingRef.current = false;
+        if (
+          continueSaving &&
+          !conflictRef.current &&
+          (saveAgainRef.current || draftRef.current !== confirmedRef.current)
+        ) {
+          saveAgainRef.current = false;
+          void persistNote();
+        }
+      });
+  });
 
   useEffect(() => {
     if (draft === confirmed || status === "conflict" || status === "error") return;
@@ -219,8 +224,10 @@ function SourceNoteEditorBridge(props: {
   const acceptedValueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
   const onFormatChangeRef = useRef(props.onFormatChange);
-  onChangeRef.current = props.onChange;
-  onFormatChangeRef.current = props.onFormatChange;
+  useLayoutEffect(() => {
+    onChangeRef.current = props.onChange;
+    onFormatChangeRef.current = props.onFormatChange;
+  }, [props.onChange, props.onFormatChange]);
 
   useImperativeHandle(
     props.editorRef,
@@ -270,32 +277,29 @@ function SourceNoteEditorBridge(props: {
     });
   }, [editor]);
 
-  const handleChange = useCallback(
-    (editorState: EditorState, _editor: unknown, tags: Set<string>) => {
-      if (tags.has(NOTE_EDITOR_SYNC_TAG)) return;
-      const next = editorState.read(() =>
-        $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true),
+  const handleChange = (editorState: EditorState, _editor: unknown, tags: Set<string>) => {
+    if (tags.has(NOTE_EDITOR_SYNC_TAG)) return;
+    const next = editorState.read(() =>
+      $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true),
+    );
+    if (next.length > NOTE_MAX_LENGTH) {
+      editor.update(
+        () => {
+          $convertFromMarkdownString(
+            acceptedValueRef.current,
+            NOTE_MARKDOWN_TRANSFORMERS,
+            undefined,
+            true,
+          );
+        },
+        { tag: NOTE_EDITOR_SYNC_TAG },
       );
-      if (next.length > NOTE_MAX_LENGTH) {
-        editor.update(
-          () => {
-            $convertFromMarkdownString(
-              acceptedValueRef.current,
-              NOTE_MARKDOWN_TRANSFORMERS,
-              undefined,
-              true,
-            );
-          },
-          { tag: NOTE_EDITOR_SYNC_TAG },
-        );
-        return;
-      }
-      if (next === acceptedValueRef.current) return;
-      acceptedValueRef.current = next;
-      onChangeRef.current(next);
-    },
-    [editor],
-  );
+      return;
+    }
+    if (next === acceptedValueRef.current) return;
+    acceptedValueRef.current = next;
+    onChangeRef.current(next);
+  };
 
   return <OnChangePlugin ignoreSelectionChange onChange={handleChange} />;
 }
@@ -558,11 +562,11 @@ export function useSourceNoteControls(props: {
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const [activeFormats, setActiveFormats] = useState<SourceNoteFormats>(EMPTY_SOURCE_NOTE_FORMATS);
 
-  const handleFormatChange = useCallback((formats: SourceNoteFormats) => {
+  const handleFormatChange = (formats: SourceNoteFormats) => {
     setActiveFormats((current) =>
       current.bold === formats.bold && current.italic === formats.italic ? current : formats,
     );
-  }, []);
+  };
 
   const applyFormat = (format: Extract<TextFormatType, "bold" | "italic">) => {
     quickNoteEditorRef.current?.format(format);

@@ -12,7 +12,11 @@ import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 import { HYPRLAND_CAPTURE_ACTION } from "./linuxCaptureSession.ts";
 export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
 
-export const HYPRLAND_CAPTURE_EXECUTABLE = "t3-hyprland-snap-shot";
+export const HYPRLAND_CAPTURE_EXECUTABLE = "scient-hyprland-snap-shot";
+// SCIENT-FORK:START — earlier releases installed the helper under T3's name.
+const legacyExecutable = (executable: string) =>
+  NodePath.join(NodePath.dirname(executable), "t3-hyprland-snap-shot");
+// SCIENT-FORK:END
 export type HyprlandCapturePaths = { readonly bundle: string; readonly dataHome: string };
 export function hyprlandCaptureExecutable(paths: HyprlandCapturePaths) {
   return NodePath.join(
@@ -93,6 +97,16 @@ export class HyprlandCaptureSetup {
   async state(): Promise<DesktopCaptureHelperState> {
     try {
       const installed = await regularFile(hyprlandCaptureExecutable(this.paths));
+      // SCIENT-FORK:START — reinstall a helper installed under T3's name.
+      if (
+        !installed &&
+        (await regularFile(legacyExecutable(hyprlandCaptureExecutable(this.paths))))
+      )
+        return {
+          status: "update-required",
+          message: "Update the bundled capture helper to continue.",
+        };
+      // SCIENT-FORK:END
       if (!installed)
         return {
           status: "not-installed",
@@ -131,6 +145,9 @@ export class HyprlandCaptureSetup {
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink()))
       throw new Error("The capture helper directory must not be a link.");
     await regularFile(executable);
+    // SCIENT-FORK:START — drop the helper installed under T3's name.
+    await NodeFSP.rm(legacyExecutable(executable), { force: true }).catch(() => undefined);
+    // SCIENT-FORK:END
     if (action === "remove-hyprland-helper") {
       await NodeFSP.rm(executable, { force: true });
       return;

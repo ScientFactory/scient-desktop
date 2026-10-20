@@ -5,6 +5,7 @@ const testState = vi.hoisted(() => {
   let beforeNavigate: () => void = () => undefined;
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
+  let projectRemoved = false;
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree",
     newWorktreesStartFromOrigin: false,
@@ -50,6 +51,12 @@ const testState = vi.hoisted(() => {
     get projectFileRead() {
       return projectFileRead;
     },
+    get projectRemoved() {
+      return projectRemoved;
+    },
+    removeProject() {
+      projectRemoved = true;
+    },
     get targetSettings() {
       return targetSettings;
     },
@@ -61,6 +68,7 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      projectRemoved = false;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -79,22 +87,29 @@ const testState = vi.hoisted(() => {
   };
 });
 
+const testServerConfigs = () =>
+  new Map([
+    [
+      "environment-primary",
+      {
+        settings: {
+          ...testState.targetSettings,
+          newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
+        },
+      },
+    ],
+    ["environment-ssh", { settings: testState.targetSettings }],
+  ]);
+
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => testServerConfigs() },
+}));
+
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === "primary-settings"
       ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
-      : new Map([
-          [
-            "environment-primary",
-            {
-              settings: {
-                ...testState.targetSettings,
-                newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
-              },
-            },
-          ],
-          ["environment-ssh", { settings: testState.targetSettings }],
-        ]),
+      : testServerConfigs(),
 }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopedProjectKey: () => "remote-project",
@@ -106,9 +121,6 @@ vi.mock("@t3tools/contracts", () => ({
   DEFAULT_SERVER_SETTINGS: {},
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
-  // Environment settings pass through; the tests set project fields on the
-  // project record, which the hook still honors until the server folds them.
-  // With a file argument the env mode resolves like the real chain.
   resolveProjectSettings: (
     settings: Record<string, unknown>,
     _projectId: unknown,
@@ -126,7 +138,6 @@ vi.mock("@t3tools/shared/projectSettings", () => ({
     sources: { defaultModelSelection: "environment", defaultThreadEnvMode: "environment" },
     overrides: {},
   }),
-  // The new-project rule has its own tests in projectSettings.test.ts.
   resolveNewThreadEnvMode: (input: {
     projectSettings: { settings: { defaultThreadEnvMode: "local" | "worktree" } };
   }) => input.projectSettings.settings.defaultThreadEnvMode,
@@ -167,22 +178,23 @@ vi.mock("../logicalProject", () => ({
   getProjectOrderKey: () => "remote-project",
   selectProjectGroupingSettings: () => ({}),
 }));
-vi.mock("../state/entities", () => ({
-  readProjects: () => [
-    {
-      id: "project-remote",
-      environmentId: "environment-ssh",
-      workspaceRoot: "/remote/project",
-      defaultThreadEnvMode: null,
-      defaultModelSelection: null,
-    },
-  ],
-  readThreadShell: () => null,
-  readProject: () => null,
-  readThreadShells: () => [],
-  useProjects: () => [],
-  useThreadShell: () => null,
-}));
+vi.mock("../state/entities", () => {
+  const project = {
+    id: "project-remote",
+    environmentId: "environment-ssh",
+    workspaceRoot: "/remote/project",
+    defaultThreadEnvMode: null,
+    defaultModelSelection: null,
+  };
+  return {
+    readProject: () => (testState.projectRemoved ? null : project),
+    readProjects: () => (testState.projectRemoved ? [] : [project]),
+    readThreadShell: () => null,
+    readThreadShells: () => [],
+    useProjects: () => [],
+    useThreadShell: () => null,
+  };
+});
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
@@ -195,6 +207,7 @@ vi.mock("../uiStateStore", () => ({
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
+import { readProject } from "../state/entities";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
 describe("useNewThreadHandler", () => {
@@ -284,6 +297,45 @@ describe("useNewThreadHandler", () => {
       expect(testState.router.navigate).not.toHaveBeenCalled();
       expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
     });
+
+    it("abandons a delayed draft open when the project is removed meanwhile", async () => {
+      testState.reset(draft);
+      const pendingOpen = useNewThreadHandler()(
+        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+        { replace: true },
+      );
+
+      testState.removeProject();
+      testState.completeProjectFileRead(null);
+
+      await expect(pendingOpen).resolves.toBeNull();
+      expect(testState.router.navigate).not.toHaveBeenCalled();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    });
+
+    // SCIENT-FORK:START — the index landing retries a null open only for a removed project.
+    it("yields a superseded automatic open while its project still exists", async () => {
+      testState.reset(draft);
+      // A fresh route visit, so no earlier explicit claim on "/" refuses the automatic one.
+      testState.navigateAway();
+      testState.router.state.location.href = "/";
+      const openThread = useNewThreadHandler();
+      const projectRef = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never;
+      const automatic = openThread(projectRef, { replace: true, navigationKind: "automatic" });
+      const explicit = openThread(projectRef, { replace: true });
+
+      testState.completeProjectFileRead(null);
+
+      await expect(automatic).resolves.toBeNull();
+      await expect(explicit).resolves.not.toBeNull();
+      expect(testState.router.navigate).toHaveBeenCalledOnce();
+      // A null here is not a removal, so the landing must not retry it into a loop.
+      expect(readProject(projectRef)).not.toBeNull();
+    });
+    // SCIENT-FORK:END
 
     it.each([true, false])(
       "uses the target environment's start-from-origin default of %s",

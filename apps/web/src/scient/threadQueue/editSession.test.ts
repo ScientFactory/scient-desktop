@@ -43,12 +43,12 @@ import * as DateTime from "effect/DateTime";
 import { nativeQueueEditItem } from "./nativeQueueEditItem";
 import {
   ensureInlineContextReferences,
-  toKindScopedComposerContextId,
   formatInlineContextReference,
 } from "../../lib/composerContextReferences";
 import {
   projectComposerContextForProvider,
   collectComposerContextReferences,
+  toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

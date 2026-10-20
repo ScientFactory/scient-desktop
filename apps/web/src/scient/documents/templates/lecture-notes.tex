@@ -1,0 +1,59 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[numbers]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{exercise}[theorem]{Exercise}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{<<SCIENT_TITLE>>}
+\author{<<SCIENT_AUTHOR_BLOCK>>}
+\date{}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+
+\section{Introduction}
+% Guide: Introduce the topic and the main question of the lecture.
+\par
+
+\begin{definition}
+% Guide: Define the first concept.
+\end{definition}
+
+\begin{theorem}
+% Guide: State the main result.
+\end{theorem}
+
+\begin{proof}
+% Guide: Prove it.
+\end{proof}
+
+\begin{example}
+% Guide: Work through an example.
+\end{example}
+
+\begin{exercise}
+% Guide: Set an exercise for the reader.
+\end{exercise}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

@@ -6,7 +6,30 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
+import {
+  providerSettingsLifecyclePresentation,
+  managedVersionAdvisory,
+  type ProviderSettingsVersionAdvisory,
+} from "./providerSettingsLifecyclePresentation";
+
+describe("provider settings version action ownership", () => {
+  const advisory: ProviderSettingsVersionAdvisory = {
+    title: "Compatibility warning",
+    detail: "Use the supported version.",
+    updateCommand: "synthetic-provider update",
+    emphasis: "strong",
+    targetVersion: "2.0.0",
+  };
+
+  it("keeps managed-copy guidance while removing external installation authority", () => {
+    const managed = managedVersionAdvisory(advisory, true);
+    expect(managed).toEqual({ ...advisory, updateCommand: null, targetVersion: null });
+    expect(advisory.updateCommand).toBe("synthetic-provider update");
+    expect(managedVersionAdvisory(null, true)).toBeNull();
+    expect(managedVersionAdvisory(advisory, false)).toBe(advisory);
+    expect(managedVersionAdvisory(null, false)).toBeNull();
+  });
+});
 
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make("codex"),
@@ -765,5 +788,64 @@ describe("provider settings lifecycle presentation", () => {
       statusLabel: "Needs attention",
       detail: "Claude is signed in, but model discovery failed.",
     });
+  });
+});
+
+describe("a sign-in this client just started", () => {
+  const signedOut = provider({
+    installed: true,
+    version: "1.1.17",
+    auth: { status: "unauthenticated", required: true },
+    status: "warning",
+    models: [],
+    connection: {
+      methods: ["antigravity_google"],
+      canDisconnect: false,
+      operation: null,
+      startingMessage: "Antigravity can take up to a minute to start.",
+    },
+  });
+
+  it("reads as the server's starting state before the server reports it", () => {
+    expect(
+      providerSettingsLifecyclePresentation(signedOut, "Antigravity", { startingHere: true }),
+    ).toMatchObject({
+      kind: "signing-in",
+      statusLabel: "Starting",
+      detail: "Antigravity can take up to a minute to start.",
+      busy: true,
+    });
+    expect(providerSettingsLifecyclePresentation(signedOut, "Antigravity").statusLabel).toBe(
+      "Sign-in required",
+    );
+  });
+
+  it("replaces an earlier failure while the retry starts", () => {
+    const failed = {
+      ...signedOut,
+      connection: {
+        ...signedOut.connection!,
+        operation: {
+          operationId: "connect-1",
+          method: "antigravity_google" as const,
+          status: "failed" as const,
+          startedAt: "2026-10-18T00:00:00.000Z",
+          finishedAt: "2026-10-18T00:01:00.000Z",
+          message: "Antigravity authenticated, but could not initialize a session or load models.",
+          failedAfterSignIn: true,
+        },
+      },
+    };
+    expect(providerSettingsLifecyclePresentation(failed, "Antigravity")).toMatchObject({
+      kind: "failed",
+      statusLabel: "Setup failed",
+      actionLabel: "Retry",
+      // The row's hover text is the user's sentence, not the server's.
+      detail: "Signed in, but Antigravity couldn’t start. Try again.",
+    });
+    expect(
+      providerSettingsLifecyclePresentation(failed, "Antigravity", { startingHere: true })
+        .statusLabel,
+    ).toBe("Starting");
   });
 });

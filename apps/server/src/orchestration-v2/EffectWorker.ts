@@ -54,9 +54,6 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
 const isProviderRunInterruptError = Schema.is(ProviderTurnControlService.ProviderRunInterruptError);
 
 /**
- * Pure interrupt races with hard process teardown or a dead session produce
- * "not active" protocol errors. Retrying those only delays recovery.
- *
  * Do not apply this to `provider-turn.restart`: that compound effect also runs
  * detach and start. Swallowing a start failure that happens to mention
  * "is not active" would drop the outbox item without ever starting the
@@ -78,10 +75,6 @@ export function isNonRetryableProviderTurnControlFailure(
 }
 
 export interface OrchestrationEffectExecutorV2Shape {
-  /**
-   * Runs one claimed effect. `willRetry` is true when the worker will retry a
-   * failure, so a step can fail and try again instead of settling the run.
-   */
   readonly execute: (
     effect: EffectOutbox.OrchestrationEffectV2,
     options?: { readonly willRetry: boolean },
@@ -150,7 +143,6 @@ export const layerExecutor: Layer.Layer<
             }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
-              // A continuation that will never run still owes a delegated parent a result.
               Effect.tapError(() =>
                 willRetry
                   ? Effect.void
@@ -248,9 +240,24 @@ export const layerExecutor: Layer.Layer<
                 providerSessionId: request.providerSessionId,
                 providerThreadId: request.providerThreadId,
                 providerTurnId: request.providerTurnId,
-                ...(request.subagent === undefined ? {} : { subagent: request.subagent }),
+                ...(request.subagent === undefined
+                  ? {}
+                  : {
+                      subagent: {
+                        ...request.subagent,
+                        requestedAt: DateTime.makeUnsafe(effect.createdAt),
+                      },
+                    }),
               })
               .pipe(
+                Effect.tapError((cause) =>
+                  request.subagent === undefined
+                    ? Effect.void
+                    : Effect.logWarning("orchestration-v2.subagent-stop-failed", {
+                        effectId: effect.id,
+                        cause,
+                      }),
+                ),
                 Effect.catch((cause) =>
                   Effect.gen(function* () {
                     if (
@@ -272,29 +279,38 @@ export const layerExecutor: Layer.Layer<
                     return "not-interrupted" as const;
                   }),
                 ),
-                // Live native children remain SDK-authoritative. Only a released
-                // session permits repairing the captured child locally.
-                Effect.flatMap((outcome) =>
-                  request.subagent !== undefined && outcome !== "session-absent"
-                    ? Effect.void
-                    : threads
-                        .dispatch({
-                          type: "thread.background-work.settle",
-                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                          threadId: effect.threadId,
-                          providerThreadId: request.providerThreadId,
-                          providerTurnId: request.providerTurnId,
-                          ...(request.subagent === undefined
-                            ? {}
-                            : {
-                                subagent: {
-                                  ...request.subagent,
-                                  providerSessionId: request.providerSessionId,
-                                },
-                              }),
-                        })
-                        .pipe(Effect.asVoid),
-                ),
+                // A native outcome and physical session release are distinct proofs.
+                Effect.flatMap((outcome) => {
+                  if (
+                    request.subagent !== undefined &&
+                    outcome !== "session-absent" &&
+                    typeof outcome !== "object"
+                  )
+                    return Effect.void;
+                  return threads
+                    .dispatch({
+                      type: "thread.background-work.settle",
+                      commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                      threadId: effect.threadId,
+                      providerThreadId: request.providerThreadId,
+                      providerTurnId: request.providerTurnId,
+                      ...(request.subagent === undefined
+                        ? {}
+                        : {
+                            subagent: {
+                              ...request.subagent,
+                              providerSessionId: request.providerSessionId,
+                              ...(typeof outcome === "object"
+                                ? {
+                                    stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                                    outcome,
+                                  }
+                                : {}),
+                            },
+                          }),
+                    })
+                    .pipe(Effect.asVoid);
+                }),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -366,9 +382,6 @@ export const layerExecutor: Layer.Layer<
                         ...(message.selectedScientSkillNames === undefined
                           ? {}
                           : { selectedScientSkillNames: message.selectedScientSkillNames }),
-                        // A user's follow-up starts on the thread's saved selection,
-                        // which already holds the steer's choice. A delegated
-                        // completion stays pinned to the run it reports to.
                         ...(message.delegatedCompletion === undefined
                           ? {}
                           : { modelSelection: run.modelSelection }),
@@ -635,9 +648,6 @@ export const layerExecutor: Layer.Layer<
                     requestId: effect.commandId,
                   }),
                 ),
-                // The last failed attempt tells waiting clients it failed,
-                // instead of leaving them to time out. Clients get a fixed
-                // message; the worker logs the full cause for each attempt.
                 Effect.tapCause((cause) =>
                   willRetry || Cause.hasInterruptsOnly(cause)
                     ? Effect.void
@@ -647,7 +657,13 @@ export const layerExecutor: Layer.Layer<
                           commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
                           threadId: effect.threadId,
                           requestId: effect.commandId,
-                          message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                          message: Option.match(Cause.findErrorOption(cause), {
+                            onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                            onSome: (error) =>
+                              error._tag === "CheckpointRollbackExecutionError"
+                                ? CheckpointRollbackService.rollbackFailureClientMessage(error)
+                                : CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                          }),
                         })
                         .pipe(
                           Effect.catchCause((recordCause) =>
@@ -1008,8 +1024,6 @@ export const layerWithOptions = (
                 nonRetryable,
                 error,
               });
-          // Prefer succeed for terminal interrupt races so the outbox does not
-          // keep a failed interrupt around; fail only when we must not retry.
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })

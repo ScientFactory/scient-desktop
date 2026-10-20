@@ -105,17 +105,22 @@ function ScientReleaseNotesDialog({
   const [selected, setSelected] = useState(current);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setSelected(current);
-    setView("release");
-  }, [current, open]);
+  const [previousPresentation, setPreviousPresentation] = useState({ current, open });
+  if (previousPresentation.current !== current || previousPresentation.open !== open) {
+    setPreviousPresentation({ current, open });
+    if (open) {
+      setSelected(current);
+      setView("release");
+    }
+  }
 
+  const focusRequest = { open, selected, view };
   useEffect(() => {
-    if (!open) return;
+    if (!focusRequest.open) return;
+    // Re-focus when navigating between releases or the history view.
     const frame = requestAnimationFrame(() => titleRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [open, selected, view]);
+  }, [focusRequest]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

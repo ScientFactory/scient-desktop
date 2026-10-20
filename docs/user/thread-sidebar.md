@@ -94,7 +94,7 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
+or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
 
@@ -137,12 +137,23 @@ position, below the upper group. Reopening it restarts that delay; new work canc
 it. Other newly inactive threads can subsequently land above it.
 
 You can still drag threads within or between sections, and move whole sections. A
-manual drop keeps the exact place you choose, including an inactive thread above
-working threads. Automatic updates do not undo the drop. Its next entry into or exit
-from the upper group resumes automatic placement. For example, if no thread is active
-and you drag X first, a newly working Y goes above X. If you deliberately drag X above
-an already working A, a later working B joins after A, preserving your explicit move.
-Movement pauses during a drag or native context menu.
+drop keeps the place you choose, with one limit: active work always gets the top back.
+
+| You drag                                     | It stays there                                                                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| An active thread within the upper group      | Until you move it again.                                                            |
+| An inactive thread among inactive threads    | Until you move it again.                                                            |
+| An inactive thread above active threads      | Until another thread becomes active; the upper group then forms above it again.     |
+| An active thread down among inactive threads | Until it stops being active. Meanwhile, newly active threads still join at the top. |
+
+For example, if you drag X above a working A, X stays there until B starts working;
+then A and B sit above X. If you drag a working A to the bottom, a later working B
+still goes to the top while A stays where you put it. Movement pauses during a drag
+or native context menu.
+
+When you are connected to several machines and one is offline or catching up, only
+that machine's threads hold their last known places; threads on the other machines
+keep moving. Its threads are rechecked when it is back.
 
 Turning the setting off reveals the saved manual order and cancels pending movements.
 Manual moves made while it was on remain saved. Turning it back on groups current
@@ -224,20 +235,47 @@ Sections view:
   on purpose, such as _mRNA_ or _iOS_, is kept as written: paste it, or type it and then change the
   first letter back.
 
+### Sections on several machines
+
+Sections are stored on the machine that runs their threads, so every window and connected client
+shows the same sections: the desktop app on that machine, the web app opened remotely, or Scient on
+another computer connected to it. With one machine, as most people have, this is all you notice.
+
+With more than one connected environment, such as your computer and an SSH server, each machine
+has its own sections:
+
+- A thread can join only sections of its own machine. The **Section** menu lists that machine's
+  sections, and dragging a thread onto another machine's section does nothing.
+- While sections from more than one machine are listed, each header shows its machine's icon
+  after the section name; hover it for the machine's name. Two machines' sections with the same
+  name stay separate.
+- **New section…** for threads on several machines creates a section of that name on each. A
+  section started from **New section** goes to the machine of the selected project; when more than
+  one machine can hold it, the form lets you choose.
+- **General** holds every machine's threads without a section. Each machine keeps its own order of
+  sections and General's place among them. **Move up** and **Move down** step over that machine's
+  sections, and a section dragged among another machine's sections returns to its own machine's
+  group.
+
+Before this, one section list served every environment. A thread on another environment that was
+filed into that list now shows in **General**; file it again into a section of its own machine.
+Update Scient everywhere you use it, since older versions still file every thread into one list.
+
+### Removing empty sections
+
 To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
-choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A
-section counts as empty when no active, pinned, snoozed, or settled thread belongs to it; archived
-threads do not keep a section. Adding a thread restarts the count, and **General** is never
-removed. Cleanup runs only while Scient is open and every environment is connected, and a device
-only removes a section when it is connected to every environment whose threads have been in it.
-It shows **Undo** when it removes a section. The setting is stored with the section list on your
-primary environment.
+choose how many days a section may stay empty (7 by default). It is off unless you turn it on. Each
+environment has its own setting: choose an environment at the top of Settings to change only its
+cleanup, or **All environments** to change every connected environment together. A section counts as
+empty when no active, pinned, snoozed, or settled thread belongs to it; archived threads do not keep
+a section. Adding a thread restarts the count, and **General** is never removed. Cleanup runs only
+while Scient is open, and a device only judges a machine's sections after it has held that
+machine's full thread list for a minute. It shows **Undo** when it removes a section.
 
 Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
-confirmation brings the section and its threads back. The section list is stored on the server of
-your primary environment, so every window and connected client shows the same sections. If
-**Section** is missing from a thread's menu, update the Scient server running that thread's
-environment. The mobile app does not show sections yet; it keeps its usual layout.
+confirmation brings the section and its threads back. If **Section** is missing from a thread's
+menu, update the Scient server running that thread's environment. The mobile app does not show
+sections yet; it keeps its usual layout.
 
 ## Fold working threads (beta)
 
@@ -285,7 +323,8 @@ By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
-settlement, but an old closed or merged pull request does not settle work you
+settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
+but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
 

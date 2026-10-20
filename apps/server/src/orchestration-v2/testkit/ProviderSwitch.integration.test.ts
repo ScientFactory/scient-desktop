@@ -696,8 +696,6 @@ describe("orchestration v2 provider switching", () => {
               : scenario === "large-current-input"
                 ? "x".repeat(9_000)
                 : "Continue work";
-          // First establish the returning native thread: the current request must
-          // not be charged as existing context on the subsequent handoff.
           if (returning) {
             if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
             yield* dispatch(
@@ -2168,6 +2166,8 @@ describe("orchestration v2 provider switching", () => {
         );
         assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
         assert.ok(handoffItem?.type === "handoff");
+        assert.include(turns.at(-1)!.text, "Codex current turn complete");
+        assert.include(turns.at(-1)!.text, "Codex first queued turn complete");
         assert.include(turns.at(-1)!.text, "Codex second queued turn complete");
       }),
     ),
@@ -2847,8 +2847,6 @@ describe("orchestration v2 provider switching", () => {
             CLAUDE_MODEL_SELECTION,
           );
           yield* waitForIdle(threadId);
-          // Stopping the shared Codex process drops its loaded native thread, so
-          // returning to Codex has to resume it (and fall back when that fails).
           const codexSession = (yield* orchestrator.getThreadProjection(
             threadId,
           )).providerSessions.find(
@@ -2899,7 +2897,6 @@ describe("orchestration v2 provider switching", () => {
         assert.lengthOf(projection.providerThreads, 2);
         assert.equal(projection.runs[0]?.providerThreadId, projection.runs[2]?.providerThreadId);
         assert.notEqual(projection.runs[0]?.providerThreadId, projection.runs[1]?.providerThreadId);
-        // The failed resume bound a fresh native Codex thread to the same row.
         assert.equal(yield* Ref.get(codexNativeThreadGeneration), 2);
         const codexThread = projection.providerThreads.find(
           (providerThread) => providerThread.id === projection.runs[2]?.providerThreadId,
@@ -2951,8 +2948,6 @@ describe("orchestration v2 provider switching", () => {
         assert.include(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
         assert.include(turns[1]?.text ?? "", "codex before switch");
         assert.include(turns[1]?.text ?? "", claudePrompt);
-        // The fresh native thread has none of the earlier Codex turn, so the
-        // portable fallback re-sends it alongside the Claude delta.
         assert.include(turns[2]?.text ?? "", "Context handoff (full_thread_summary):");
         assert.include(turns[2]?.text ?? "", "Context handoff (delta_since_target_last_seen):");
         assert.include(turns[2]?.text ?? "", "codex before switch");

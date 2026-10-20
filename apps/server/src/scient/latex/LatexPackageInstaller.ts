@@ -8,11 +8,11 @@
  *
  * Three rules shape it. It is only ever pointed at the managed distribution's
  * own `bin` directory, because a system TeX Live or MiKTeX belongs to the user
- * and Scient does not reach into it; it never fails — a repository that cannot
- * be reached, a package that does not exist, a `tlmgr` that will not run all
+ * and Scient does not reach into it; ordinary repository or package failures
  * come back as `failed`, leaving the caller with the compiler error it already
- * had rather than a second one about the fetch; and it only ever reports a
- * package as installed once the engine can actually see the file it was
+ * had rather than a second one about the fetch. Unknown process retirement is
+ * instead an infrastructure failure that quarantines further distribution work;
+ * and it only reports a package as installed once the engine can see the file it was
  * fetched for.
  *
  * Every `tlmgr` run goes through one permit, because `tlmgr` writes the
@@ -28,10 +28,11 @@
  * process-tree kill: on Windows it would stop the `tlmgr.bat` shim and leave
  * the `perl` doing the actual work running, which then finishes the install
  * minutes after the build already reported it failed — and rebuilds the file
- * index underneath a compile that was told the package was never placed. The
- * port's `cancel` is `taskkill /T /F`, so a budget that elapses ends the whole
- * tree. Short read-only probes (`kpsewhich`) stay on `ProcessRunner`, which is
- * what it is for.
+ * index underneath a compile that was told the package was never placed.
+ * Cancellation uses the shared adapter to stop its owned process group and
+ * observe exit before another installer acquires the distribution permit.
+ * Short read-only probes
+ * (`kpsewhich`) stay on `ProcessRunner`, which is what it is for.
  */
 import { ExecutionRunId } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -40,9 +41,11 @@ import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -50,6 +53,7 @@ import * as Stream from "effect/Stream";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { latexEngineEnvironment } from "./latexCommand.ts";
+import { makeLatexProcessRetirementMarkers } from "./latexProcessRetirement.ts";
 
 export interface LatexPackageInstallInput {
   readonly packages: ReadonlyArray<string>;
@@ -80,7 +84,9 @@ export interface LatexFileVisibilityInput {
 export class LatexPackageInstaller extends Context.Service<
   LatexPackageInstaller,
   {
-    readonly install: (input: LatexPackageInstallInput) => Effect.Effect<LatexPackageInstallResult>;
+    readonly install: (
+      input: LatexPackageInstallInput,
+    ) => Effect.Effect<LatexPackageInstallResult, PlatformError.PlatformError>;
     /**
      * Which of these files the engine cannot find. A probe that could not run
      * at all answers "found", because a distribution whose `kpsewhich` is
@@ -88,7 +94,7 @@ export class LatexPackageInstaller extends Context.Service<
      */
     readonly unresolvedFiles: (
       input: LatexFileVisibilityInput,
-    ) => Effect.Effect<ReadonlyArray<string>>;
+    ) => Effect.Effect<ReadonlyArray<string>, PlatformError.PlatformError>;
   }
 >()("t3/scient/latex/LatexPackageInstaller") {}
 
@@ -317,12 +323,15 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const acquireProcessRetirementMarker = yield* makeLatexProcessRetirementMarkers;
   const platform = yield* HostProcess.Platform;
   const hostEnvironment = yield* HostProcess.Environment;
   const pathDelimiter = platform === "win32" ? ";" : ":";
   // `tlmgr` writes the distribution's own package database, so two runs
   // against one tree are a lock error at best. Every run below takes this.
   const tlmgrGate = yield* Semaphore.make(1);
+  const unretiredDistributions = new Set<string>();
   // The port wants an id per run. Nothing reads it here; it only has to be
   // stable and unique enough to tell two runs apart in a trace.
   const runCounter = yield* Ref.make(0);
@@ -346,9 +355,9 @@ export const make = Effect.gen(function* () {
    * `bin` directory leads the child's PATH exactly as it does for a compile,
    * because these tools drive the same helpers `latexmk` does.
    *
-   * A budget that elapses cancels the whole process tree, so nothing this
-   * service started can still be writing to the distribution after the caller
-   * has been told the run failed.
+   * A budget that elapses requests process-tree cancellation. The permit stays
+   * owned until retirement is proved; an unknown outcome preserves the durable
+   * marker and refuses further mutation, including after service restart.
    */
   const runScript = (input: {
     readonly binDirectory: string;
@@ -359,6 +368,16 @@ export const make = Effect.gen(function* () {
     tlmgrGate.withPermits(1)(
       Effect.scoped(
         Effect.gen(function* () {
+          const retirementMarker = path.join(input.binDirectory, ".scient-unretired-install");
+          if (
+            unretiredDistributions.has(input.binDirectory) ||
+            (yield* fileSystem.exists(retirementMarker))
+          )
+            return yield* Effect.die(
+              new Error(
+                "The managed TeX distribution is quarantined because installer retirement is unknown.",
+              ),
+            );
           const invocation = texliveScriptInvocation({
             binDirectory: input.binDirectory,
             script: input.script,
@@ -368,13 +387,33 @@ export const make = Effect.gen(function* () {
             dirname: (segment) => path.dirname(segment),
             pathDelimiter,
           });
-          const handle = yield* processes.start({
-            runId: yield* nextRunId,
-            executable: invocation.executable,
-            args: invocation.args,
-            cwd: input.binDirectory,
-            environment: scriptEnvironment(invocation),
-          });
+          const runId = yield* nextRunId;
+          const quarantine = Effect.sync(() => unretiredDistributions.add(input.binDirectory));
+          const { handle } = yield* Effect.acquireRelease(
+            Effect.gen(function* () {
+              const settleRetirement = yield* acquireProcessRetirementMarker(
+                retirementMarker,
+                runId,
+              );
+              const handle = yield* processes
+                .start({
+                  runId,
+                  executable: invocation.executable,
+                  args: invocation.args,
+                  cwd: input.binDirectory,
+                  environment: scriptEnvironment(invocation),
+                })
+                .pipe(Effect.onError(() => quarantine));
+              return { handle, settleRetirement };
+            }).pipe(Effect.orDie),
+            ({ handle, settleRetirement }) =>
+              handle.cancel.pipe(
+                Effect.andThen(handle.exitCode),
+                Effect.andThen(settleRetirement),
+                Effect.onError(() => quarantine),
+                Effect.orDie,
+              ),
+          );
           const outputRef = yield* Ref.make(emptyOutputTail);
           const outputFiber = yield* handle.output.pipe(
             Stream.runForEach((chunk) =>
@@ -386,12 +425,12 @@ export const make = Effect.gen(function* () {
             Effect.forkScoped,
           );
           const exitCode = yield* handle.exitCode.pipe(Effect.timeoutOption(input.timeout));
-          // The port's cancel is a tree kill. Without it the shim dies and the
-          // `perl` underneath keeps installing into a distribution whose owner
-          // has already moved on, which is the orphan this service exists to
-          // not create.
-          if (Option.isNone(exitCode)) yield* handle.cancel.pipe(Effect.ignoreCause());
-          yield* Fiber.join(outputFiber).pipe(Effect.ignoreCause());
+          // The finalizer must prove retirement before clearing the marker.
+          if (Option.isNone(exitCode)) yield* handle.cancel;
+          yield* Fiber.join(outputFiber).pipe(
+            Effect.timeoutOption("2 seconds"),
+            Effect.ignoreCause(),
+          );
           return {
             ok: Option.isSome(exitCode) && exitCode.value === 0,
             output: renderOutputTail(yield* Ref.get(outputRef)),
@@ -460,6 +499,15 @@ export const make = Effect.gen(function* () {
   const unresolvedFiles = (input: LatexFileVisibilityInput) =>
     Effect.gen(function* () {
       if (input.binDirectory.length === 0) return [];
+      if (
+        unretiredDistributions.has(input.binDirectory) ||
+        (yield* fileSystem.exists(path.join(input.binDirectory, ".scient-unretired-install")))
+      )
+        return yield* Effect.die(
+          new Error(
+            "The managed TeX distribution cannot be inspected while installer retirement is unknown.",
+          ),
+        );
       // The names come out of a transcript the document wrote, and these reach
       // argv too.
       const named = dedupe(input.files).filter((fileName) =>
@@ -472,7 +520,7 @@ export const make = Effect.gen(function* () {
         if (answer !== null) unresolved.push(...answer);
       }
       return unresolved;
-    });
+    }).pipe(tlmgrGate.withPermits(1));
 
   /** Maps a missing file back to the package that ships it. Costs one query. */
   const searchOwningPackage = (input: {

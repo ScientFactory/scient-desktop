@@ -11,6 +11,7 @@ export interface EnvironmentQueryView<A> {
   readonly data: A | null;
   readonly error: string | null;
   readonly isPending: boolean;
+  readonly isSuccess: boolean;
   readonly refresh: () => void;
 }
 
@@ -46,6 +47,7 @@ function useEnvironmentResultView<A, E>(
     data: Option.getOrNull(AsyncResult.value(result)),
     error: result._tag === "Failure" ? formatError(result.cause) : null,
     isPending: atom !== null && isWaiting(result),
+    isSuccess: result._tag === "Success",
     refresh,
   };
 }

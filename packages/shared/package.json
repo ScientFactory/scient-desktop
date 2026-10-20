@@ -19,10 +19,6 @@
       "types": "./src/orchestrationV2ThreadError.ts",
       "import": "./src/orchestrationV2ThreadError.ts"
     },
-    "./legacyCliLauncher": {
-      "types": "./src/legacyCliLauncher.ts",
-      "import": "./src/legacyCliLauncher.ts"
-    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
@@ -122,6 +118,10 @@
     "./toolActivity": {
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
+    },
+    "./terminalOutput": {
+      "types": "./src/terminalOutput.ts",
+      "import": "./src/terminalOutput.ts"
     },
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
@@ -230,6 +230,10 @@
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
+    },
+    "./threadTranscript": {
+      "types": "./src/threadTranscript.ts",
+      "import": "./src/threadTranscript.ts"
     },
     "./threadReference": {
       "types": "./src/threadReference.ts",
@@ -522,10 +526,22 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./githubMarkdownLinks": {
+      "types": "./src/githubMarkdownLinks.ts",
+      "import": "./src/githubMarkdownLinks.ts"
+    },
+    "./promptLinks": {
+      "types": "./src/promptLinks.ts",
+      "import": "./src/promptLinks.ts"
+    },
+    "./scientPromptLinks": {
+      "types": "./src/scientPromptLinks.ts",
+      "import": "./src/scientPromptLinks.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

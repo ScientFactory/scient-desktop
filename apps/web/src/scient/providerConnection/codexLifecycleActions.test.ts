@@ -47,6 +47,10 @@ function controller(overrides: Partial<ProviderLifecycleController> = {}) {
     cancelConnection: vi.fn(async () => provider()),
     submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => updatePlan),
     startRuntime: vi.fn(async () => provider()),
@@ -145,7 +149,7 @@ describe("Codex lifecycle actions", () => {
     expect(lifecycle.planRuntime).not.toHaveBeenCalled();
   });
 
-  it("opens the provider-owned browser URL returned by Codex", async () => {
+  it("starts Codex browser sign-in and leaves opening the page to the controller", async () => {
     const lifecycle = controller({
       startConnection: vi.fn(async () =>
         provider({
@@ -170,11 +174,10 @@ describe("Codex lifecycle actions", () => {
 
     expect(lifecycle.startConnection).toHaveBeenCalledTimes(1);
     expect(lifecycle.startConnection).toHaveBeenCalledWith("codex_browser");
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledTimes(1);
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/");
+    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
   });
 
-  it("starts and opens Codex's official device-code flow", async () => {
+  it("starts Codex's official device-code flow", async () => {
     const lifecycle = controller({
       startConnection: vi.fn(async () =>
         provider({
@@ -199,6 +202,6 @@ describe("Codex lifecycle actions", () => {
     await startCodexDeviceSignIn(lifecycle);
 
     expect(lifecycle.startConnection).toHaveBeenCalledWith("codex_device_code");
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/device");
+    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
   });
 });

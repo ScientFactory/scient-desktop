@@ -4,7 +4,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { ArrowRightIcon } from "lucide-react";
-import { lazy, Suspense, useCallback, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
 import { usePrimarySessionState } from "../../environments/primary";
 import { usePrimaryEnvironment } from "../../state/environments";
@@ -34,40 +34,41 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
 
   const busy = canImport && importing;
 
-  const finish = useCallback(
-    async (projectRef?: ScopedProjectRef, importWarning?: string, importedThreadCount = 0) => {
-      if (projectRef !== undefined) {
-        try {
-          const opened = await openNewThread(projectRef);
-          if (opened === null) return false;
-          onImported?.();
-        } catch {
-          toastManager.add({
-            type: "error",
-            title: "Could not open the imported project",
-            description: "Your imported projects are still available in the sidebar.",
-          });
-          return false;
-        }
-      }
-      setOpen(false);
-      if (importWarning) {
+  const finish = async (
+    projectRef?: ScopedProjectRef,
+    importWarning?: string,
+    importedThreadCount = 0,
+  ) => {
+    if (projectRef !== undefined) {
+      try {
+        const opened = await openNewThread(projectRef);
+        if (opened === null) return false;
+        onImported?.();
+      } catch {
         toastManager.add({
-          type: "warning",
-          title: "Some history was not imported",
-          description: importWarning,
-          timeout: 0,
+          type: "error",
+          title: "Could not open the imported project",
+          description: "Your imported projects are still available in the sidebar.",
         });
-      } else if (importedThreadCount > 0) {
-        toastManager.add({
-          type: "success",
-          title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
-        });
+        return false;
       }
-      return true;
-    },
-    [openNewThread, onImported],
-  );
+    }
+    setOpen(false);
+    if (importWarning) {
+      toastManager.add({
+        type: "warning",
+        title: "Some history was not imported",
+        description: importWarning,
+        timeout: 0,
+      });
+    } else if (importedThreadCount > 0) {
+      toastManager.add({
+        type: "success",
+        title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+      });
+    }
+    return true;
+  };
 
   return (
     <>

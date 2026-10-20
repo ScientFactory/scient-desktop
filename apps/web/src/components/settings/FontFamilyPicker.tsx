@@ -1,6 +1,6 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
 import {
   Combobox,
@@ -33,9 +33,6 @@ type FontEnumerationState =
   | { readonly status: "granted"; readonly families: readonly string[] }
   | { readonly status: "unavailable" };
 
-// Shared across every row: once one picker learns the fonts (or learns the
-// permission is blocked), the others follow without re-querying — and the
-// rows can swap to the plain-input control together.
 let enumerationState: FontEnumerationState = supportsFontEnumeration()
   ? { status: "unknown" }
   : { status: "unavailable" };
@@ -68,12 +65,9 @@ export function discoverInstalledFonts(): void {
 let grantedProbeStarted = false;
 
 /**
- * Discover eagerly when the permission is already granted, so the picker
- * renders without waiting for a focus. Electron's default permission handler
- * approves silently (it has no prompt UI), and a browser that granted once
- * reports "granted" on later visits — in both, no user gesture is needed.
- * "prompt" and "denied" states change nothing: the focus-driven flow stays,
- * because raising the browser prompt still requires a gesture.
+ * Electron's default permission handler approves silently (it has no prompt
+ * UI), and a browser that granted once reports "granted" on later visits — in
+ * both, no user gesture is needed.
  */
 function probeAlreadyGrantedPermission(): void {
   if (grantedProbeStarted || enumerationState.status !== "unknown") return;
@@ -84,20 +78,10 @@ function probeAlreadyGrantedPermission(): void {
     (status) => {
       if (status.state === "granted") discoverInstalledFonts();
     },
-    () => {
-      // The engine does not recognize the permission name; keep the
-      // focus-driven flow.
-    },
+    () => {},
   );
 }
 
-/**
- * Whether the engine can list installed fonts (Local Font Access API —
- * Chromium and Electron). "unknown" until discovery resolves the permission;
- * rows render a plain family-name input until the state is known granted,
- * then upgrade to the picker. Where the permission is already granted,
- * discovery starts at mount and the picker appears without a focus.
- */
 export function useFontEnumeration(): FontEnumerationState {
   useEffect(probeAlreadyGrantedPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
@@ -121,16 +105,13 @@ export function FontFamilyPicker({
 }: {
   ariaLabel: string;
   triggerWidth?: "default" | "content";
-  /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
   /** CSS stack that an unset preference actually uses. */
   defaultPreviewFontFamily: string;
   /** Semantic meaning of an unset preference, e.g. "System default". */
   defaultOptionLabel: string;
-  /** Committed family name; empty string means the default is in use. */
   selectedFamily: string;
   requireMonospace?: boolean;
-  /** Open the popup on mount — set when the control upgrades under focus. */
   initialOpen?: boolean;
   onSelect: (family: string) => void;
 }) {
@@ -140,11 +121,11 @@ export function FontFamilyPicker({
   // its open state never receives Base UI's entrance style baseline, so the
   // exit transition on close has no style delta, never fires transitionend,
   // and the popup lingers on screen forever.
+  const [openAfterMount] = useState(initialOpen);
   useEffect(() => {
-    if (initialOpen) setOpen(true);
-    // The prop is only meaningful at mount - the control just swapped in
-    // under an active focus - so later changes are deliberately ignored.
-  }, []);
+    // oxlint-disable-next-line react/set-state-in-effect -- Base UI needs one closed commit first to record the popup's entrance style.
+    if (openAfterMount) setOpen(true);
+  }, [openAfterMount]);
   const listRef = useRef<LegendListRef | null>(null);
   const enumeration = useFontEnumeration();
 
@@ -153,14 +134,11 @@ export function FontFamilyPicker({
     if (nextOpen) setQuery("");
   };
 
-  const families = useMemo(() => {
-    if (enumeration.status !== "granted") return [];
-    return enumeration.families;
-  }, [enumeration]);
+  const families = enumeration.status === "granted" ? enumeration.families : [];
 
-  const items = useMemo(() => {
-    return getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
-  }, [defaultFamily, defaultOptionLabel, families, query]);
+  // SCIENT-FORK:START - preserve semantic default labels and their matching filter.
+  const items = getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
+  // SCIENT-FORK:END
 
   const selectedValue = selectedFamily.length === 0 ? DEFAULT_FONT_VALUE : selectedFamily;
 
@@ -217,8 +195,6 @@ export function FontFamilyPicker({
         if (typeof next === "string") handlePick(next);
       }}
       onItemHighlighted={(_value, eventDetails) => {
-        // Keyboard highlights must pull the virtualized row into view, or
-        // arrow keys walk past the rendered window and navigate blind.
         if (!open || eventDetails.index < 0 || eventDetails.reason !== "keyboard") return;
         void listRef.current?.scrollIndexIntoView?.({ index: eventDetails.index, animated: false });
       }}
@@ -242,6 +218,10 @@ export function FontFamilyPicker({
               <LegendList<string>
                 ref={listRef}
                 data={items}
+                // Rows are memoized by item, but Base UI highlights and selects
+                // virtualized rows by index. Re-render them when filtering moves
+                // a surviving item to a new index.
+                extraData={items}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}

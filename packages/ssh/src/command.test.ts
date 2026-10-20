@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   baseSshArgs,
@@ -100,40 +100,51 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("resolves the remote t3 package spec from the desktop release channel", () =>
+  // SCIENT-FORK:START remote packages follow the Scient desktop release.
+  it.effect("pins the remote server to this desktop's own Scient release", () =>
     Effect.sync(() => {
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17",
-          updateChannel: "latest",
-        }),
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17" }),
         "https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.17/scient-server-0.0.17.tgz",
       );
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17-nightly.20260415.44",
-          updateChannel: "nightly",
-        }),
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17-nightly.20260415.44" }),
         "https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.17-nightly.20260415.44/scient-server-0.0.17-nightly.20260415.44.tgz",
-      );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "nightly",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
-      );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "latest",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
       );
     }),
   );
+
+  it.effect("offers no remote package for development or unpublished builds", () =>
+    Effect.sync(() => {
+      assert.isUndefined(
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17", isDevelopment: true }),
+      );
+      assert.isUndefined(resolveRemoteT3CliPackageSpec({ appVersion: "local build" }));
+    }),
+  );
+  // SCIENT-FORK:END
+  it.effect("passes an option-shaped alias to ssh as the destination", () => {
+    const spawned: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command)) spawned.push(command.args);
+      return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "bad hostname\n" }));
+    });
+    return runSshCommand(
+      { alias: "-oProxyCommand=false", hostname: "devbox", username: null, port: null },
+      { remoteCommandArgs: ["sh", "-s"] },
+    ).pipe(
+      Effect.flip,
+      Effect.map(() => {
+        assert.deepEqual(spawned[0]?.slice(-4), ["--", "-oProxyCommand=false", "sh", "-s"]);
+      }),
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
 
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>

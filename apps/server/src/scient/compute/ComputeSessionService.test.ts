@@ -4251,7 +4251,15 @@ describe("compute session under load", () => {
             yield* waitUntil(executionAt(executionId, "succeeded"));
           }
 
-          const session = yield* waitUntil(sessionAt("ready"));
+          // A result is recorded before the session goes idle, and the session
+          // stays ready throughout, so wait for idle itself. A stalled session
+          // never gets there and fails at the deadline.
+          const session = yield* waitUntil(
+            Effect.gen(function* () {
+              const current = yield* sessionAt("ready");
+              return current?.activity === "idle" ? current : null;
+            }),
+          );
           expect(session.activity).toBe("idle");
         }),
       );

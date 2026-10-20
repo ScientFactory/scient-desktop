@@ -82,6 +82,7 @@ it.live(
                 if (!child) options = input.options;
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                  backgroundTasks: () => Effect.succeed(false),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(frames),
@@ -102,6 +103,7 @@ it.live(
                       Effect.asVoid,
                     ),
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(frames),
                 };

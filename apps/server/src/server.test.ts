@@ -11,7 +11,6 @@ import * as PlatformError from "effect/PlatformError";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
-  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -130,10 +129,28 @@ import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
 
+import {
+  nativeFilePublicationCapabilities,
+  resolveNativeFilePublicationHelperPath,
+} from "./scient/workspace/NativeFilePublication.ts";
+
 const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
 const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+// Retained history exists only where the resolved helper grants native publication authority.
+const nativePublicationServer = await (async () => {
+  const helper = await resolveNativeFilePublicationHelperPath();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
+})();
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout: "",
@@ -264,6 +281,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -285,6 +303,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -292,7 +311,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -602,6 +621,7 @@ const buildAppUnderTest = (options?: {
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+    knownWorkspaces?: Partial<KnownWorkspaces.KnownWorkspaces["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
@@ -794,12 +814,21 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
+    // Every folder is known unless a test narrows it; WorkspaceFileSystem's own tests cover
+    // the rejection.
+    const knownWorkspacesLayer = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: () => Effect.succeed(true),
+      assertContains: () => Effect.void,
+      ...options?.layers?.knownWorkspaces,
+    });
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
+      knownWorkspacesLayer,
       WorkspaceFileSystem.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
+        Layer.provide(knownWorkspacesLayer),
       ),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
@@ -965,6 +994,10 @@ const buildAppUnderTest = (options?: {
               streamChanges: Stream.make([]),
               refresh: Effect.void,
               ...options?.layers?.usageLimitSources,
+            }),
+            Layer.mock(DatabaseStorage.DatabaseStorage)({
+              reclaim: Effect.void,
+              status: Stream.make(null),
             }),
           ),
         ),
@@ -1308,6 +1341,13 @@ const buildAppUnderTest = (options?: {
           }),
         ),
         Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+            getEnvironmentId:
+              options?.layers?.serverEnvironment?.getEnvironmentId ??
+              Effect.succeed(testEnvironmentDescriptor.environmentId),
+          }),
+        ),
+        Layer.provide(
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () => Effect.succeed(null),
             ...options?.layers?.repositoryIdentityResolver,
@@ -1400,7 +1440,7 @@ const buildAppUnderTest = (options?: {
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
         Layer.provide(
-          GitHubApi.layerWithDependencies.pipe(
+          GitHubRest.layerWithDependencies.pipe(
             Layer.provide(ServerSourceControlHost.layer),
             Layer.provide(VcsDriverRegistry.layer),
             Layer.provideMerge(VcsProcess.layer),
@@ -1828,7 +1868,7 @@ const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstra
 const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, body } = yield* exchangeAccessToken(credential, {
-      scope: AuthAdministrativeScopes.join(" "),
+      scope: AuthStandardClientScopes.join(" "),
     });
     if (!responseOk(response)) {
       return yield* new AuthenticationGetterError({
@@ -3294,9 +3334,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(ownerResponse.status, 200);
       assert.equal(ownerBody.publishAgentActivity, true);
 
+      // The default grant includes relay management; a narrower link must not.
       const credentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: { cookie: ownerCookie },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "relay:write"),
+        }),
       });
       const credential = (yield* credentialResponse.json) as { readonly credential: string };
       const pairedCookie = yield* getAuthenticatedSessionCookieHeader(credential.credential);
@@ -5066,7 +5109,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepInclude(listed, {
         label: "Synthetic phone",
         // Frozen legacy scope metadata and the full granular grant are distinct.
-        scopes: ["orchestration:read", "orchestration:operate", "terminal:operate", "relay:read"],
+        scopes: [
+          "orchestration:read",
+          "orchestration:operate",
+          "terminal:operate",
+          "relay:read",
+          "access:read",
+          "access:write",
+          "relay:write",
+        ],
         permissions: [...AuthStandardClientScopes],
       });
 
@@ -5211,11 +5262,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      // The default grant includes access management; a narrower link must not.
       const ownerResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
-        body: yield* HttpBody.json({}),
+        body: yield* HttpBody.json({
+          scopes: AuthStandardClientScopes.filter((scope) => scope !== "access:write"),
+        }),
       });
       const ownerBody = (yield* ownerResponse.json) as {
         readonly credential: string;
@@ -5797,8 +5851,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("proxies browser OTLP trace exports through the server", () =>
+  it.effect.each([
+    {
+      caseTitle: "rejects browser OTLP exports from an undeclared origin by default",
+      trustedDevOrigin: false,
+    },
+    {
+      caseTitle: "proxies browser OTLP trace exports through the server",
+      trustedDevOrigin: true,
+    },
+  ])("$caseTitle", ({ trustedDevOrigin }) =>
     Effect.gen(function* () {
+      const clientOrigin = "http://localhost:5733";
       const upstreamRequests: Array<{
         readonly body: string;
         readonly contentType: string | null;
@@ -5914,6 +5978,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           otlpTracesUrl: collector.url,
+          ...(trustedDevOrigin ? { devUrl: new URL(clientOrigin) } : {}),
         },
         layers: {
           browserTraceCollector: {
@@ -5925,17 +5990,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const rejected = yield* HttpClient.post("/api/observability/v1/traces", {
+        headers: {
+          cookie,
+          "content-type": "application/json",
+          origin: trustedDevOrigin ? "http://localhost:5734" : clientOrigin,
+        },
+        body: HttpBody.text(JSON.stringify(payload), "application/json"),
+      });
+      assert.equal(rejected.status, 401);
+      assert.propertyVal(yield* rejected.json, "reason", "invalid_credential");
+      assert.deepEqual(localTraceRecords, []);
+      assert.deepEqual(upstreamRequests, []);
+      if (!trustedDevOrigin) return;
+
       const response = yield* HttpClient.post("/api/observability/v1/traces", {
         headers: {
-          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          cookie,
           "content-type": "application/json",
-          origin: "http://localhost:5733",
+          origin: clientOrigin,
         },
         body: HttpBody.text(JSON.stringify(payload), "application/json"),
       });
 
-      assert.equal(response.status, 204);
-      assert.equal(response.headers["access-control-allow-origin"], "*");
+      assert.equal(response.status, 204, yield* response.text);
+      assert.equal(response.headers["access-control-allow-origin"], clientOrigin);
+      assert.equal(response.headers["access-control-allow-credentials"], "true");
       assert.deepEqual(localTraceRecords, [
         {
           type: "otlp-span",
@@ -9199,6 +9280,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      yield* fs.symlink(
+        path.join(workspaceDir, "missing-referent.txt"),
+        path.join(workspaceDir, "dangling.txt"),
+      );
 
       yield* buildAppUnderTest();
 
@@ -9226,9 +9311,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: "missing.txt",
             }).pipe(Effect.result),
+            missingRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: invalidWorkspace,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
+            nonDirectoryRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: outsideFile,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
             linkedRead: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            danglingRead: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "dangling.txt",
             }).pipe(Effect.result),
             browse: client[WS_METHODS.filesystemBrowse]({
               cwd: workspaceDir,
@@ -9299,7 +9396,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.relativePath, "missing.txt");
       assert.equal(readError.failure, "operation_failed");
       assert.equal(readError.reason, "not_found");
+      assert.equal(readError.currentMissing, true);
       assert.isDefined(readError.cause);
+
+      if (
+        results.danglingRead._tag !== "Failure" ||
+        results.danglingRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed dangling-referent read failure");
+      }
+      assert.equal(results.danglingRead.failure.cwd, workspaceDir);
+      assert.equal(results.danglingRead.failure.relativePath, "dangling.txt");
+      assert.equal(results.danglingRead.failure.reason, "not_found");
+      assert.isUndefined(results.danglingRead.failure.currentMissing);
+
+      if (
+        results.missingRootRead._tag !== "Failure" ||
+        results.missingRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed missing-root read failure");
+      }
+      assert.equal(results.missingRootRead.failure.failure, "operation_failed");
+      assert.equal(results.missingRootRead.failure.operation, "realpath-workspace-root");
+      assert.equal(results.missingRootRead.failure.operationPath, invalidWorkspace);
+      assert.equal(results.missingRootRead.failure.reason, "not_found");
+      assert.equal(results.missingRootRead.failure.osErrorCode, "ENOENT");
+      assert.isUndefined(results.missingRootRead.failure.currentMissing);
+      assert.isDefined(results.missingRootRead.failure.cause);
+
+      if (
+        results.nonDirectoryRootRead._tag !== "Failure" ||
+        results.nonDirectoryRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed non-directory-root read failure");
+      }
+      assert.equal(results.nonDirectoryRootRead.failure.failure, "operation_failed");
+      assert.equal(results.nonDirectoryRootRead.failure.operation, "stat");
+      assert.equal(results.nonDirectoryRootRead.failure.operationPath, outsideFile);
+      assert.equal(results.nonDirectoryRootRead.failure.osErrorCode, "ENOTDIR");
+      assert.isUndefined(results.nonDirectoryRootRead.failure.currentMissing);
+      assert.isDefined(results.nonDirectoryRootRead.failure.cause);
 
       // A symlink leading out of the project is viewable, never editable.
       if (results.linkedRead._tag !== "Success") {
@@ -9446,6 +9582,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }
         assert.equal(result.failure.failure, "operation_failed");
         assert.equal(result.failure.reason, "permission_denied");
+        assert.isUndefined(result.failure.currentMissing);
         // The system's own code travels too: a file mode refuses with EACCES,
         // which the client tells apart from the system itself declining.
         assert.equal(result.failure.osErrorCode, "EACCES");
@@ -9485,29 +9622,135 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("routes websocket rpc projects.writeFile", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
+  it.effect.skipIf(!nativePublicationServer)(
+    "preserves websocket file mutation ownership, retained history, and recovery refusal",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+        yield* buildAppUnderTest();
 
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsWriteFile]({
-            cwd: workspaceDir,
-            relativePath: "nested/created.txt",
-            contents: "written-by-rpc",
-          }),
-        ),
-      );
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const input = {
+                cwd: workspaceDir,
+                relativePath: "nested/created.txt",
+                contents: "written-by-rpc",
+                createOnly: true as const,
+                mutationId: "rpc-create",
+              };
+              const created = yield* client[WS_METHODS.projectsWriteFile](input);
+              assert.equal(created.mutationId, input.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsWriteFile](input), created);
+              const conflict = yield* client[WS_METHODS.projectsWriteFile]({
+                ...input,
+                contents: "must-not-publish",
+              }).pipe(Effect.flip);
+              assert.equal(conflict._tag, "ProjectWriteFileError");
+              if (conflict._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected mutation intent failure");
+              assert.equal(conflict.failure, "mutation_intent_conflict");
+              assert.equal(conflict.mutationId, input.mutationId);
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                input.contents,
+              );
 
-      assert.equal(response.relativePath, "nested/created.txt");
-      const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
-      assert.equal(persisted, "written-by-rpc");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
+              const updated = yield* client[WS_METHODS.projectsWriteFile]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                contents: "updated-by-rpc",
+                expectedRevision: created.revision,
+                mutationId: "rpc-update",
+              });
+              const history = yield* client[WS_METHODS.projectsListFileVersions](input);
+              const retained = history.versions.find(
+                (version) => version.revision === created.revision,
+              );
+              assert.isDefined(retained);
+              if (!retained) return assert.fail("Expected retained pre-publication revision");
+              assert.equal(retained.mutationId, "rpc-update");
+              assert.isNull(history.attention);
+              const discarded = yield* client[WS_METHODS.projectsDiscardFileVersion]({
+                ...input,
+                versionId: retained.versionId,
+              });
+              assert.equal(discarded.versionId, retained.versionId);
+              const afterDiscard = yield* client[WS_METHODS.projectsListFileVersions](input);
+              assert.isFalse(
+                afterDiscard.versions.some((version) => version.versionId === retained.versionId),
+              );
+              assert.isNull(afterDiscard.attention);
+
+              for (const currentRevision of [updated.revision, null]) {
+                const refused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                  ...input,
+                  recoveryId: "no-durable-attention",
+                  currentRevision,
+                  choice: "accept-current",
+                }).pipe(Effect.flip);
+                assert.equal(refused._tag, "ProjectWriteFileError");
+                if (refused._tag !== "ProjectWriteFileError")
+                  return assert.fail("Expected typed recovery refusal");
+                assert.equal(refused.failure, "mutation_intent_conflict");
+                assert.equal(refused.cwd, input.cwd);
+                assert.equal(refused.relativePath, input.relativePath);
+                assert.equal(refused.recoveryId, "no-durable-attention");
+                assert.isUndefined(refused.currentRevision);
+              }
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                "updated-by-rpc",
+              );
+
+              const renameInput = {
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                destinationRelativePath: "nested/renamed.txt",
+                expectedRevision: updated.revision,
+                mutationId: "rpc-rename",
+              };
+              const renamed = yield* client[WS_METHODS.projectsRenameFile](renameInput);
+              assert.equal(renamed.mutationId, renameInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsRenameFile](renameInput), renamed);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              const absentRefused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                recoveryId: "no-durable-attention",
+                currentRevision: null,
+                choice: "accept-current",
+              }).pipe(Effect.flip);
+              assert.equal(absentRefused._tag, "ProjectWriteFileError");
+              if (absentRefused._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected typed absent-path refusal");
+              assert.equal(absentRefused.failure, "mutation_intent_conflict");
+              assert.isUndefined(absentRefused.currentRevision);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              assert.equal(
+                yield* fs.readFileString(
+                  path.join(workspaceDir, renameInput.destinationRelativePath),
+                ),
+                "updated-by-rpc",
+              );
+              const deleteInput = {
+                cwd: input.cwd,
+                relativePath: renameInput.destinationRelativePath,
+                expectedRevision: renamed.revision,
+                mutationId: "rpc-delete",
+              };
+              const deleted = yield* client[WS_METHODS.projectsDeleteFile](deleteInput);
+              assert.equal(deleted.mutationId, deleteInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsDeleteFile](deleteInput), deleted);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, deleteInput.relativePath)));
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("rejects generic Files writes to owner-managed project paths", () =>
@@ -10269,6 +10512,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
+        // Inherited feature usage; Scient's analytics contract drops this name.
+        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10297,6 +10542,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
         },
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -10431,6 +10677,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cwd: workspaceDir,
             relativePath: "../escape.txt",
             contents: "nope",
+            mutationId: "rpc-refused-write",
           }),
         ).pipe(Effect.result),
       );
@@ -10446,6 +10693,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(writeError.cwd, workspaceDir);
       assert.equal(writeError.relativePath, "../escape.txt");
       assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.equal(writeError.mutationId, "rpc-refused-write");
+      assert.isUndefined(writeError.publicationOutcome);
       assert.isDefined(writeError.cause);
       assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -14006,6 +14255,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const entered = yield* Deferred.make<void>();
       const scriptExit = yield* Deferred.make<void>();
+      const setupCancelled = yield* Deferred.make<void>();
       const fixture = yield* makeNativeLaunchFixture("recreated-during-setup", {
         layers: {
           projectSetupScriptRunner: {
@@ -14021,6 +14271,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   async: false,
                   completion: Deferred.await(scriptExit).pipe(
                     Effect.as({ exitCode: 0, durationMs: 1 }),
+                    Effect.onInterrupt(() => Deferred.succeed(setupCancelled, undefined)),
                   ),
                 }),
               ),
@@ -14068,6 +14319,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               commandId: CommandId.make("delete-preparing-incarnation"),
               threadId: fixture.threadId,
             });
+            // Observe the actual cancellation while completion is still blocked.
+            yield* Deferred.await(setupCancelled);
             const deleted = yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId);
             const deletedSequence = yield* fixture.app.v2.eventSink.latestSequence();
             assert.isNotNull(deleted.thread.deletedAt);
@@ -14098,7 +14351,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(replacement.runs, []);
       const sequence = yield* fixture.app.v2.eventSink.latestSequence();
       yield* Deferred.succeed(scriptExit, undefined);
-      yield* fixture.snapshotWhere((snapshot) => snapshot.phase === "failed");
+      // Deletion cancels the preparing run and its blocked setup before release.
+      // Late completion must not revive that execution or touch the replacement.
+      yield* fixture.snapshotWhere((snapshot) => snapshot.phase === "cancelled");
       assert.deepEqual(
         yield* fixture.app.v2.threads.getThreadProjection(replacementId),
         replacement,

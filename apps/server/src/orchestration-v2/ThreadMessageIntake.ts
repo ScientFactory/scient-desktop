@@ -16,13 +16,12 @@ import { rejectThreadCommandDuringClone } from "./scient-fork/ThreadDispatchClon
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
-// A disabled-instance refusal comes from ThreadManagementService.dispatch's
-// own enablement check, which also runs before any commit is attempted.
 function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
+    case "OrchestratorThreadAlreadyExistsError":
     case "OrchestratorProjectionError":
     case "OrchestratorProviderAdapterError":
     case "OrchestratorCommandPreviouslyRejectedError":
@@ -90,8 +89,6 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         message: "Question attachment must be a pending upload.",
       });
     }
-    // Claims accumulate across questions, so all of preparation shares one
-    // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];
     const pinReleases: Array<Effect.Effect<void>> = [];
     const claims: AttachmentClaims.ClaimedAttachments[] = [];
@@ -347,9 +344,6 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         }
         // Project/receipt reads precede message dispatch. The create-thread error
         // also wraps post-message projection reads, so its tag alone is not proof.
-        // The initial message's own dispatch can still find the instance newly
-        // disabled, which wraps the same tag handled above instead of surfacing
-        // it directly, so the guard below also recognizes it.
         const notAccepted =
           error.operation === "resolve-project" ||
           error.operation === "read-receipt" ||

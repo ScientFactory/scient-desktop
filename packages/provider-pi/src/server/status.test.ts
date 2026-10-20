@@ -6,12 +6,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as PlatformError from "effect/PlatformError";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Predicate from "effect/Predicate";
-import * as Schema from "effect/Schema";
 
 import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
 import { decodePiModelSlug, encodePiModelSlug } from "./model.ts";
@@ -23,6 +24,10 @@ import { decodePiModelSlug, encodePiModelSlug } from "./model.ts";
 const FAKE_PID = 999_999_999;
 
 const encoder = new TextEncoder();
+const decodeRpcRequest = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.String, type: Schema.String })),
+);
+const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /** Splits a byte stream into LF-delimited records, as Pi's RPC framing requires. */
 function makeLineSplitter() {
@@ -129,7 +134,6 @@ function makePiProbeSpawner(input: {
 }
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
-const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /** Spawner whose RPC session dies on startup, as an unlaunchable Pi would. */
 function piRpcStartupFailureSpawner(version: string) {
@@ -142,6 +146,51 @@ function piRpcStartupFailureSpawner(version: string) {
     );
   });
 }
+
+const piDiscoverySpawner = (inventory: unknown) =>
+  Effect.gen(function* () {
+    const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+    let stdinBuffer = "";
+    const stdin = Sink.forEach((chunk: Uint8Array) =>
+      Effect.gen(function* () {
+        stdinBuffer += new TextDecoder().decode(chunk);
+        while (true) {
+          const newline = stdinBuffer.indexOf("\n");
+          if (newline === -1) return;
+          const line = stdinBuffer.slice(0, newline);
+          stdinBuffer = stdinBuffer.slice(newline + 1);
+          if (line.length === 0) continue;
+          const request = decodeRpcRequest(line);
+          const data =
+            request.type === "get_available_models"
+              ? inventory
+              : request.type === "get_commands"
+                ? { commands: [] }
+                : {};
+          yield* Queue.offer(
+            stdout,
+            encoder.encode(
+              `${encodeJsonLine({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
+            ),
+          );
+        }
+      }),
+    );
+    return ChildProcessSpawner.make((command) => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      return Effect.succeed(
+        args.includes("--version")
+          ? processHandle({ stdout: "pi 0.84.3\n" })
+          : ChildProcessSpawner.makeHandle({
+              ...processHandle({}),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              stdin,
+              stdout: Stream.fromQueue(stdout),
+            }),
+      );
+    });
+  });
 
 const settings = {
   enabled: true,
@@ -265,7 +314,6 @@ describe("PiProvider", () => {
                         name: "Private canonical model",
                         reasoning: false,
                       },
-                      { provider: "", id: "invalid", name: "Invalid provider" },
                     ],
                   };
                 case "get_commands":
@@ -317,7 +365,6 @@ describe("PiProvider", () => {
         provider: "team/provider %",
         modelId: "org/model with space%2F",
       });
-      assert.isFalse(snapshot.models.some((entry) => entry.name === "Invalid provider"));
 
       assert.deepEqual(
         snapshot.slashCommands?.map((command) => [command.name, command.description]),
@@ -356,6 +403,61 @@ describe("PiProvider", () => {
       assert.equal(snapshot.status, "disabled");
       assert.include(snapshot.message ?? "", "disabled");
       assert.deepEqual(spawns, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports only the models returned by successful Pi discovery", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner({
+        models: [{ provider: "anthropic", id: "claude-sonnet-4" }],
+      });
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        ["default", "anthropic/claude-sonnet-4"],
+      );
+      assert.equal(snapshot.models[1]?.subProvider, "anthropic");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a known unauthenticated inventory when Pi returns no usable models", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner({ models: [] });
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "warning");
+      assert.equal(snapshot.auth.status, "unauthenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        ["default"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    ["missing models", {}],
+    ["non-array models", { models: {} }],
+    ["missing model provider", { models: [{ id: "claude-sonnet-4" }] }],
+    ["missing model id", { models: [{ provider: "anthropic" }] }],
+    ["empty model provider", { models: [{ provider: "", id: "claude-sonnet-4" }] }],
+    ["empty model id", { models: [{ provider: "anthropic", id: "" }] }],
+    [
+      "mixed valid and invalid models",
+      { models: [{ provider: "anthropic", id: "claude-sonnet-4" }, { provider: "openrouter" }] },
+    ],
+  ] as const)("reports unknown authentication when Pi discovery returns %s", (_label, inventory) =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(inventory);
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "unknown");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

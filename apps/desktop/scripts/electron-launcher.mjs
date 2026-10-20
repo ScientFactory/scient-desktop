@@ -32,9 +32,20 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
-const devBundleIdSuffix = NodePath.basename(repoRoot)
+// SCIENT-DEV-APP: the standing stable app keeps the identity it was first
+// installed with (keychain item, microphone grant) wherever its checkout lives.
+const devBundleIdSuffix = (
+  process.env.SCIENT_DEV_BUNDLE_ID_SUFFIX?.trim() || NodePath.basename(repoRoot)
+)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
+// SCIENT-DEV-APP: the stable app's signed, per-machine root. A review launch
+// points SCIENT_NEXT_HOME at one of its profiles instead.
+function stableRoot(environment) {
+  return environment.SCIENT_DEV_APP_ROLE === "stable"
+    ? environment.SCIENT_DEV_STABLE_ROOT || environment.SCIENT_NEXT_HOME || null
+    : null;
+}
 export function resolveDevelopmentAppDisplayName(environment = process.env, root = repoRoot) {
   return resolveDevAppDisplayName(environment, root);
 }
@@ -43,7 +54,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 24;
+const LAUNCHER_VERSION = 25;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -257,10 +268,7 @@ function signDevelopmentAppBundle(appBundlePath, identity) {
 
 export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   const launcherRepoRoot = NodePath.resolve(desktopRoot, "..", "..");
-  const logRoot =
-    environment.SCIENT_DEV_APP_ROLE === "stable" && environment.SCIENT_NEXT_HOME
-      ? environment.SCIENT_NEXT_HOME
-      : NodePath.join(launcherRepoRoot, ".scient-next");
+  const logRoot = stableRoot(environment) ?? NodePath.join(launcherRepoRoot, ".scient-next");
   const logPath = NodePath.join(logRoot, "local-dev-app.log");
   const openArgumentsPath = NodePath.join(
     logRoot,
@@ -269,9 +277,16 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   );
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
-  const localDevInvocation = pnpmExecPath
-    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app:start`
-    : "pnpm dev:app:start";
+  // SCIENT-DEV-APP: the stable app opens through its installed controller,
+  // which knows the reviewed commit and profile.
+  const stableController = stableRoot(environment)
+    ? NodePath.join(stableRoot(environment), "controller", "scripts", "dev-app", "controller.mjs")
+    : null;
+  const localDevInvocation = stableController
+    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(stableController)} open`
+    : pnpmExecPath
+      ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app:start`
+      : "pnpm dev:app:start";
   const roleExport = environment.SCIENT_DEV_APP_ROLE
     ? `export SCIENT_DEV_APP_ROLE=${shellSingleQuote(environment.SCIENT_DEV_APP_ROLE)}`
     : "";
@@ -369,10 +384,7 @@ function writeDevelopmentBootstrap(appBundlePath) {
   const resourcesAppPath = NodePath.join(appBundlePath, "Contents", "Resources", "app");
   NodeFS.mkdirSync(resourcesAppPath, { recursive: true });
   const role = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
-  const stateRoot =
-    role === "stable" && process.env.SCIENT_NEXT_HOME
-      ? process.env.SCIENT_NEXT_HOME
-      : NodePath.join(repoRoot, ".scient-next");
+  const stateRoot = stableRoot(process.env) ?? NodePath.join(repoRoot, ".scient-next");
   NodeFS.writeFileSync(
     NodePath.join(resourcesAppPath, "package.json"),
     `${JSON.stringify({
@@ -564,6 +576,8 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   for (const [key, value] of Object.entries(resolveMacBundleInfoPlistStrings(executableName))) {
     setPlistString(infoPlistPath, key, value);
   }
+  // macOS 26 offers Messages/Mail codes in every text field unless opted out.
+  setPlistJson(infoPlistPath, "NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac", true);
   setPlistJson(infoPlistPath, "CFBundleURLTypes", [
     {
       CFBundleURLName: APP_BUNDLE_ID,
@@ -665,9 +679,7 @@ function buildMacLauncher(electronBinaryPath) {
       : undefined,
     bootstrapNodePath: isDevelopment ? process.execPath : undefined,
     bootstrapStateRoot: isDevelopment
-      ? process.env.SCIENT_DEV_APP_ROLE === "stable" && process.env.SCIENT_NEXT_HOME
-        ? process.env.SCIENT_NEXT_HOME
-        : NodePath.join(repoRoot, ".scient-next")
+      ? (stableRoot(process.env) ?? NodePath.join(repoRoot, ".scient-next"))
       : undefined,
   };
 

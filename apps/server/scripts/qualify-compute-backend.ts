@@ -35,6 +35,7 @@ import * as OwnedLocalEndpoints from "../src/localEndpoints/OwnedLocalEndpointRe
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as WorkspaceEntries from "../src/workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../src/workspace/WorkspaceFileSystem.ts";
+import * as KnownWorkspaces from "../src/workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../src/workspace/WorkspacePaths.ts";
 import * as LocalAnalysisStore from "../src/scient/analysis/LocalAnalysisStore.ts";
 import * as LocalDuplexProcess from "../src/scient/execution/LocalDuplexProcess.ts";
@@ -215,7 +216,15 @@ const program = Effect.gen(function* () {
   );
   const workspaceLayer = WorkspaceFileSystem.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
+    // The qualification workspace is a temporary root that no project registers.
+    Layer.provide(
+      Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+        contains: () => Effect.succeed(true),
+        assertContains: () => Effect.void,
+      }),
+    ),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+    Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),
     Layer.provide(NodeServices.layer),
   );
 

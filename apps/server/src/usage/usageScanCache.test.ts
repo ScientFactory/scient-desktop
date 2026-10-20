@@ -66,7 +66,23 @@ describe("scan cache round trip", () => {
         100,
         [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
       ],
-      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+      [
+        "/b.jsonl",
+        200,
+        [
+          record({
+            sessionId: "session-b",
+            reportedCostUsd: 1.5,
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 0,
+              reasoningTokens: 0,
+            },
+          }),
+        ],
+      ],
     ]);
     original.set("/grok.jsonl", {
       size: 40,
@@ -74,8 +90,9 @@ describe("scan cache round trip", () => {
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+        record({ provider: "grok", model: "<synthetic>", dedupeKey: "s:p:<synthetic>" }),
       ],
-      tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
+      tailRecords: [record({ provider: "grok", model: "<synthetic>", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
     original.set("/codex.jsonl", {
@@ -122,7 +139,21 @@ describe("scan cache round trip", () => {
       position: position({ state: { sessionId: "session-pi" } }),
     });
 
-    const encoded = encodeScanCache(original);
+    original.set("/a.jsonl", {
+      ...original.get("/a.jsonl")!,
+      tailRecords: [record({ dedupeKey: "msg_tail:" })],
+    });
+    const claude = original.get("/a.jsonl")!;
+    const cached = new Map(original);
+    cached.set("/a.jsonl", {
+      ...claude,
+      records: [...claude.records, record({ model: "<synthetic>" })],
+      tailRecords: [
+        ...claude.tailRecords,
+        record({ model: "<synthetic>", dedupeKey: "msg_tail:" }),
+      ],
+    });
+    const encoded = encodeScanCache(cached);
     for (const version of [encoded.version, 5]) {
       // Earlier v5 writers omitted the optional pricing-model column.
       const files = Object.fromEntries(
@@ -145,8 +176,6 @@ describe("scan cache round trip", () => {
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {
-    // Resuming with a bad reducer state would attach appended usage to the
-    // wrong model or replay fork-copied history; that entry must cold parse.
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const poisoned = {
       ...encoded,
@@ -161,8 +190,6 @@ describe("scan cache round trip", () => {
   });
 
   it("drops an entry whose guard length is outside the supported range", () => {
-    // The guard length sizes a Buffer in the reader; a bogus value would make
-    // every parse of that file fail and silently drop its usage.
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const poisoned = {
       ...encoded,
@@ -203,7 +230,6 @@ describe("scan cache round trip", () => {
     const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
     expect(decodeScanCache(JSON.parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
 
-    // The replacement adds intern entries; /a's memoised indexes must hold.
     cache.set("/b.jsonl", {
       ...cache.get("/b.jsonl")!,
       size: 30,
@@ -224,7 +250,6 @@ describe("scan cache round trip", () => {
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {
-    // A bad cache should cost one cold scan, never a broken page.
     expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
     expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
@@ -245,8 +270,6 @@ describe("scan cache round trip", () => {
   });
 
   it("rejects the whole cache when an intern table holds a non-string", () => {
-    // models: [1] would pass the undefined guard, put a number in a record's
-    // model, and crash lookupRate at aggregate time.
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const poisoned = { ...encoded, models: [1] };
 
@@ -254,8 +277,6 @@ describe("scan cache round trip", () => {
   });
 
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
-    // Keeping the surviving rows under the original (size, mtime) would read
-    // as a valid warm hit and the file would never be re-parsed.
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
     );

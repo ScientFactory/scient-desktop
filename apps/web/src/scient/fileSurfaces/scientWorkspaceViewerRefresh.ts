@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useRef } from "react";
 
 import type { AssetUrlState } from "~/assets/assetUrls";
 import { fileSurfaceAssetResource } from "~/components/files/fileSurfaceAssetResource";
@@ -12,7 +12,7 @@ import { fileSurfaceAssetResource } from "~/components/files/fileSurfaceAssetRes
  */
 
 /** The asset a viewer loads, named by the tab's own path. */
-export function useScientViewerResource(
+export function scientViewerResource(
   props: {
     readonly absolutePath: string;
     readonly workspaceRoot: string;
@@ -22,23 +22,13 @@ export function useScientViewerResource(
   /** The viewer shows the file as an HTML page. */
   htmlDocument?: boolean,
 ) {
-  return useMemo(
-    () =>
-      fileSurfaceAssetResource({
-        absolutePath: props.absolutePath,
-        workspaceRoot: props.workspaceRoot,
-        relativePath: props.relativePath,
-        threadId: props.threadRef.threadId,
-        ...(htmlDocument === undefined ? {} : { htmlDocument }),
-      }),
-    [
-      htmlDocument,
-      props.absolutePath,
-      props.relativePath,
-      props.threadRef.threadId,
-      props.workspaceRoot,
-    ],
-  );
+  return fileSurfaceAssetResource({
+    absolutePath: props.absolutePath,
+    workspaceRoot: props.workspaceRoot,
+    relativePath: props.relativePath,
+    threadId: props.threadRef.threadId,
+    ...(htmlDocument === undefined ? {} : { htmlDocument }),
+  });
 }
 
 /**
