@@ -1,5 +1,5 @@
 import { createRoot, type Root } from "react-dom/client";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import type { MathfieldElement } from "mathlive";
@@ -27,13 +27,9 @@ async function mount(value: string, display = false) {
   function Harness() {
     const [source, setSource] = useState(value);
     const [macroDefinition, setMacroDefinition] = useState("x");
-    const macros = useMemo(
-      () =>
-        latexDocumentMathSetup(
-          `\\documentclass{article}\n\\newcommand{\\reviewmacro}{${macroDefinition}}\n\\begin{document}`,
-        ).macros,
-      [macroDefinition],
-    );
+    const macros = latexDocumentMathSetup(
+      `\\documentclass{article}\n\\newcommand{\\reviewmacro}{${macroDefinition}}\n\\begin{document}`,
+    ).macros;
     return (
       <LatexDocumentMathContext.Provider value={macros}>
         <textarea

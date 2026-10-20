@@ -332,7 +332,7 @@ function LoadedScientPdfReader(props: {
   const saveCopy = () =>
     createReaderSaveCopy({
       presentedSource,
-      actions: props.actions,
+      props,
       saveCopyPendingRef,
       setSavingCopy,
     })();
@@ -584,12 +584,12 @@ function LoadedScientPdfReader(props: {
 
 function createReaderSaveCopy({
   presentedSource,
-  actions,
+  props,
   saveCopyPendingRef,
   setSavingCopy,
 }: {
   presentedSource: ReturnType<typeof usePresentedPdfSourceBundle>;
-  actions: PdfSourceActions;
+  props: { readonly actions: PdfSourceActions };
   saveCopyPendingRef: RefObject<boolean>;
   setSavingCopy: Dispatch<SetStateAction<boolean>>;
 }) {
@@ -600,7 +600,7 @@ function createReaderSaveCopy({
     setSavingCopy(true);
     try {
       const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
-        actions.saveCopy(bundle.source, bundle.resolved),
+        props.actions.saveCopy(bundle.source, bundle.resolved),
       );
       const presentation = announcePdfSaveCopyResult(result);
       if (presentation.refreshSource) bundle.resolved.refresh();

@@ -1,5 +1,5 @@
 import type { ScientLatexToolchainReport } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { createMarkdownPersistenceTransport } from "../markdownEditor/persistence/markdownPersistenceTransport";
 import { markdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { readLatexToolchain } from "./client";
@@ -29,13 +29,15 @@ export function useLatexDocumentCompiler(input: {
     error: string | null;
   } | null>(null);
 
-  useEffect(() => {
+  // A refresh key change re-reads the root with the same target.
+  const watchRoot = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!target || key === null || target.relativePath === input.selectedPath) return;
     let disposed = false;
     let sequence = 0;
     const transport = createMarkdownPersistenceTransport(target);
     const update = async () => {
-      const issued = ++sequence;
+      sequence += 1;
+      const issued = sequence;
       try {
         const disk = await transport.read();
         if (disposed || issued !== sequence) return;
@@ -74,9 +76,14 @@ export function useLatexDocumentCompiler(input: {
       stop();
       stopOwned();
     };
-  }, [target, key, input.selectedPath, input.refreshKey]);
+  });
+  useEffect(
+    () => watchRoot(target, key, input.selectedPath, input.refreshKey),
+    [target, key, input.selectedPath, input.refreshKey],
+  );
 
-  useEffect(() => {
+  // A refresh key change reads capabilities again for the same environment.
+  const readCapabilities = useEffectEvent((..._changes: readonly unknown[]) => {
     if (environmentId === null || input.offline || input.report != null) return;
     let disposed = false;
     void (async () => {
@@ -98,7 +105,11 @@ export function useLatexDocumentCompiler(input: {
     return () => {
       disposed = true;
     };
-  }, [environmentId, input.offline, input.refreshKey, input.report]);
+  });
+  useEffect(
+    () => readCapabilities(environmentId, input.offline, input.refreshKey, input.report),
+    [environmentId, input.offline, input.refreshKey, input.report],
+  );
 
   const currentRoot = root?.key === key ? root : null;
   const currentCapabilities = capabilities?.environmentId === environmentId ? capabilities : null;

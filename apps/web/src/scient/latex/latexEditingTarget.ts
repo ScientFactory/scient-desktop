@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/core";
-import { createContext, useCallback, useRef, useSyncExternalStore } from "react";
+import { createContext, useState, useSyncExternalStore } from "react";
 import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { countSelectedWords } from "../writing/caretStatus";
 import { createEditorBackgroundTask } from "./editorBackgroundTask";
@@ -30,22 +30,19 @@ export function latexEditingTarget(owner: Editor): Editor {
 
 /** Menus and selection status subscribe to the same caret owner as commands. */
 function useLatexEditingTarget(owner: Editor | null): Editor | null {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      if (!owner) return () => {};
-      const subscriptions = listeners.get(owner) ?? new Set<() => void>();
-      listeners.set(owner, subscriptions);
-      subscriptions.add(listener);
-      const focus = () => clearLatexEditingTarget(owner);
-      owner.on("focus", focus);
-      return () => {
-        subscriptions.delete(listener);
-        owner.off("focus", focus);
-      };
-    },
-    [owner],
-  );
-  const snapshot = useCallback(() => (owner ? latexEditingTarget(owner) : null), [owner]);
+  const subscribe = (listener: () => void) => {
+    if (!owner) return () => {};
+    const subscriptions = listeners.get(owner) ?? new Set<() => void>();
+    listeners.set(owner, subscriptions);
+    subscriptions.add(listener);
+    const focus = () => clearLatexEditingTarget(owner);
+    owner.on("focus", focus);
+    return () => {
+      subscriptions.delete(listener);
+      owner.off("focus", focus);
+    };
+  };
+  const snapshot = () => (owner ? latexEditingTarget(owner) : null);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
@@ -56,44 +53,56 @@ interface EditingSnapshot<T> {
   value: T;
 }
 
-/** Keep commands on the live editor while subscriptions publish only their selected data. */
-function useLatexEditingSnapshot<T>(
-  owner: Editor | null,
+interface EditingSnapshotStore<T> {
+  readonly editor: Editor | null;
+  readonly deferTyping: boolean;
+  readonly select: (editor: Editor | null) => T;
+  readonly equal: (before: T, after: T) => boolean;
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly snapshot: () => EditingSnapshot<T>;
+}
+
+/**
+ * One editor's cached selected data. The store, not render, holds the last
+ * published snapshot, so a quiet typing period keeps its identity.
+ */
+function createEditingSnapshotStore<T>(
+  editor: Editor | null,
   deferTyping: boolean,
   select: (editor: Editor | null) => T,
   equal: (before: T, after: T) => boolean,
-) {
-  const editor = useLatexEditingTarget(owner);
-  const selected = useRef<EditingSnapshot<T> | null>(null);
-  const observed = useRef<EditingSnapshot<T> | null>(null);
-  const read = useCallback(() => {
+): EditingSnapshotStore<T> {
+  let selected: EditingSnapshot<T> | null = null;
+  let observed: EditingSnapshot<T> | null = null;
+  const read = () => {
     const state = editor?.state ?? null;
     const editable = editor?.isEditable;
     if (
-      !selected.current ||
-      selected.current.editor !== editor ||
-      selected.current.state !== state ||
-      selected.current.editable !== editable
+      !selected ||
+      selected.editor !== editor ||
+      selected.state !== state ||
+      selected.editable !== editable
     )
-      selected.current = { editor, state, editable, value: select(editor) };
-    return selected.current;
-  }, [editor, select]);
-  const same = useCallback(
-    (before: EditingSnapshot<T>, after: EditingSnapshot<T>) =>
-      before.editor === after.editor &&
-      before.editable === after.editable &&
-      equal(before.value, after.value),
-    [equal],
-  );
-  if (observed.current?.editor !== editor) observed.current = read();
-  const subscribe = useCallback(
-    (listener: () => void) => {
+      selected = { editor, state, editable, value: select(editor) };
+    return selected;
+  };
+  const same = (before: EditingSnapshot<T>, after: EditingSnapshot<T>) =>
+    before.editor === after.editor &&
+    before.editable === after.editable &&
+    equal(before.value, after.value);
+  observed = read();
+  return {
+    editor,
+    deferTyping,
+    select,
+    equal,
+    subscribe: (listener) => {
       if (!editor) return () => {};
       const task = createEditorBackgroundTask();
       const publish = () => {
         const next = read();
-        if (observed.current && same(observed.current, next)) return;
-        observed.current = next;
+        if (observed && same(observed, next)) return;
+        observed = next;
         listener();
       };
       const transaction = ({ transaction }: { transaction: Transaction }) => {
@@ -104,7 +113,7 @@ function useLatexEditingSnapshot<T>(
           !transaction.docChanged &&
           !transaction.selectionSet &&
           !transaction.storedMarksSet &&
-          observed.current?.editable === editor.isEditable
+          observed?.editable === editor.isEditable
         )
           return;
         if (deferTyping && isOrdinaryTyping(transaction)) task.schedule(publish);
@@ -114,7 +123,7 @@ function useLatexEditingSnapshot<T>(
         }
       };
       const update = () => {
-        if (!deferTyping || observed.current?.editable !== editor.isEditable) publish();
+        if (!deferTyping || observed?.editable !== editor.isEditable) publish();
       };
       editor.on("transaction", transaction);
       editor.on("update", update);
@@ -124,16 +133,40 @@ function useLatexEditingSnapshot<T>(
         editor.off("update", update);
       };
     },
-    [editor, deferTyping, read, same],
+    snapshot: () => {
+      const next = !deferTyping || !observed ? read() : observed;
+      if (!observed || !same(observed, next)) observed = next;
+      return observed;
+    },
+  };
+}
+
+/** Keep commands on the live editor while subscriptions publish only their selected data. */
+function useLatexEditingSnapshot<T>(
+  owner: Editor | null,
+  deferTyping: boolean,
+  select: (editor: Editor | null) => T,
+  equal: (before: T, after: T) => boolean,
+) {
+  const editor = useLatexEditingTarget(owner);
+  // Held in state so its cached snapshot outlives compiler cache eviction;
+  // a new target or selection starts a new store.
+  const [store, setStore] = useState(() =>
+    createEditingSnapshotStore(editor, deferTyping, select, equal),
   );
-  const snapshot = useCallback(() => {
-    const next = !deferTyping || !observed.current ? read() : observed.current;
-    if (!observed.current || !same(observed.current, next)) observed.current = next;
-    return observed.current;
-  }, [deferTyping, read, same]);
+  let current = store;
+  if (
+    store.editor !== editor ||
+    store.deferTyping !== deferTyping ||
+    store.select !== select ||
+    store.equal !== equal
+  ) {
+    current = createEditingSnapshotStore(editor, deferTyping, select, equal);
+    setStore(current);
+  }
   // Editability can change without replacing EditorState. Include it in the
   // stable snapshot so formatting controls still react to that transition.
-  const state = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const state = useSyncExternalStore(current.subscribe, current.snapshot, current.snapshot);
   return { editor, value: state.value, editable: state.editable };
 }
 

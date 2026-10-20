@@ -31,6 +31,7 @@ export function useLatexSourceRecovery(
   useEffect(() => {
     if (lease === null) return;
     let previous = lease.getSnapshot();
+    // oxlint-disable-next-line react/set-state-in-effect -- Reading startup recovery parks stored drafts, which render must not do; the offer follows that read.
     setOffered({
       key,
       recovery: readStartupRecovery(key, { source: previous.draftSource }).recovery,
@@ -76,9 +77,11 @@ export function useLatexSourceRecovery(
     };
   }, [key, lease]);
 
-  useEffect(() => {
-    // Visual can resolve the same offered record while Source is hidden.
-    // Refresh parked records on view changes, without parking the live draft.
+  // Visual can resolve the same offered record while Source is hidden.
+  // Refresh parked records on view changes, without parking the live draft.
+  const [shownPresentation, setShownPresentation] = useState(presentation);
+  if (shownPresentation !== presentation) {
+    setShownPresentation(presentation);
     setOffered((shown) => {
       if (shown?.key !== key) return shown;
       if (shown.recovery && !shown.recovery.parked && isRecoveryStored(key, shown.recovery))
@@ -86,7 +89,7 @@ export function useLatexSourceRecovery(
       const next = readStoredRecovery(key);
       return next?.identity === shown.recovery?.identity ? shown : { key, recovery: next };
     });
-  }, [key, presentation]);
+  }
 
   const settle = (shown: LatexVisualRecovery, resolved: boolean) => {
     if (!resolved && isRecoveryStored(key, shown)) return;

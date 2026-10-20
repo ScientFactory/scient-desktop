@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { normalizePdfZoom } from "../pdf/pdfReaderModel";
 
 /** Chromium trackpad pinches arrive as Ctrl+wheel, just as in our PDF reader. */
@@ -9,30 +9,27 @@ export function useLatexPinchZoom(
 ) {
   const latest = useRef({ zoom, onZoom });
   const anchor = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
-  const changeZoom = useCallback(
-    (scale: number, apply?: () => void) => {
-      const current = latest.current.zoom;
-      const next = apply ? scale : normalizePdfZoom(scale);
-      const scroll = scrollRef.current;
-      const stage = scroll?.querySelector<HTMLElement>(".scient-latex-page-stage");
-      if (scroll && stage && current > 0 && next !== current) {
-        const bounds = stage.getBoundingClientRect();
-        const viewport = scroll.getBoundingClientRect();
-        // Like PDF.js's toolbar zoom, retain the visible document location.
-        const clientX = Math.max(bounds.left, viewport.left + scroll.clientLeft);
-        const clientY = Math.max(bounds.top, viewport.top + scroll.clientTop);
-        anchor.current = {
-          x: (clientX - bounds.left) / current,
-          y: (clientY - bounds.top) / current,
-          clientX,
-          clientY,
-        };
-      }
-      if (apply) apply();
-      else latest.current.onZoom(next);
-    },
-    [scrollRef],
-  );
+  const changeZoom = (scale: number, apply?: () => void) => {
+    const current = latest.current.zoom;
+    const next = apply ? scale : normalizePdfZoom(scale);
+    const scroll = scrollRef.current;
+    const stage = scroll?.querySelector<HTMLElement>(".scient-latex-page-stage");
+    if (scroll && stage && current > 0 && next !== current) {
+      const bounds = stage.getBoundingClientRect();
+      const viewport = scroll.getBoundingClientRect();
+      // Like PDF.js's toolbar zoom, retain the visible document location.
+      const clientX = Math.max(bounds.left, viewport.left + scroll.clientLeft);
+      const clientY = Math.max(bounds.top, viewport.top + scroll.clientTop);
+      anchor.current = {
+        x: (clientX - bounds.left) / current,
+        y: (clientY - bounds.top) / current,
+        clientX,
+        clientY,
+      };
+    }
+    if (apply) apply();
+    else latest.current.onZoom(next);
+  };
   useLayoutEffect(() => {
     latest.current = { zoom, onZoom };
     const point = anchor.current;

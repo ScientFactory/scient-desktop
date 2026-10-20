@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
@@ -31,7 +31,9 @@ async function mount(preamble = "", disabled = false, viewport = 900) {
   root = createRoot(host);
   function Harness() {
     const [text, setText] = useState(source);
-    setExternalSource = setText;
+    useLayoutEffect(() => {
+      setExternalSource = setText;
+    });
     return (
       <LatexDocumentSettings
         source={text}

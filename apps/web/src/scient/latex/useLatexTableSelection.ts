@@ -1,7 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { Editor } from "@tiptap/core";
 import { NodeSelection, Selection } from "@tiptap/pm/state";
-import { registerLatexSelection, runLatexSelectionCommand } from "./latexSelectionSession";
+import {
+  registerLatexSelection,
+  runLatexSelectionCommand,
+  type LatexSelectionSnapshot,
+} from "./latexSelectionSession";
 import { latexContainerScope } from "./latexStructuredSelection";
 import { isLatexEditingMenuEvent } from "./latexContextEvents";
 import {
@@ -37,6 +42,15 @@ export function tableSelectionContains(
 }
 
 /** Native text selection stays inside one cell; crossing cells selects a rectangle. */
+
+/** The compiler cannot lower an object getter in a hook; the clipboard text is read on demand. */
+function withLazyContent(
+  read: () => NonNullable<LatexSelectionSnapshot["content"]>,
+  rest: Omit<LatexSelectionSnapshot, "content">,
+): LatexSelectionSnapshot {
+  return Object.defineProperty(rest, "content", { get: read, enumerable: true });
+}
+
 export function useLatexTableSelection(props: {
   root: RefObject<HTMLElement | null>;
   editor: Editor;
@@ -68,8 +82,11 @@ export function useLatexTableSelection(props: {
     root?.dispatchEvent(new CustomEvent("scient-latex-selection-change", { bubbles: true }));
   };
   const storeRef = useRef(store);
-  storeRef.current = store;
-  const select = (next: LatexTableSelection) => {
+  useLayoutEffect(() => {
+    storeRef.current = store;
+  });
+  // One identity: the selection session registered below commands it.
+  const select = useStableCallback((next: LatexTableSelection) => {
     clearLatexEditingTarget(current.current.editor);
     storeRef.current(next);
     const field = document.activeElement;
@@ -87,7 +104,7 @@ export function useLatexTableSelection(props: {
         editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
       );
     document.getSelection()?.removeAllRanges();
-  };
+  });
   const selectTable = () =>
     select({
       anchor: { row: 0, column: 0 },
@@ -140,41 +157,41 @@ export function useLatexTableSelection(props: {
         const range = selected.current;
         if (!range) return null;
         const node = current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1);
-        return {
-          get content() {
-            return {
-              text: current.current.onClipboard(range) ?? "",
-              from: 0,
-              to: 1,
-              kind: "cells" as const,
-            };
+        return withLazyContent(
+          () => ({
+            text: current.current.onClipboard(range) ?? "",
+            from: 0,
+            to: 1,
+            kind: "cells" as const,
+          }),
+          {
+            isCurrent: () =>
+              root.isConnected &&
+              current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) === node,
+            path: [
+              ...latexContainerScope(root),
+              "Table",
+              range.whole
+                ? "Whole table"
+                : `Cells (${range.anchor.row + 1}, ${range.anchor.column + 1})\u2013(${range.head.row + 1}, ${range.head.column + 1})`,
+            ],
+            scopes: () => [
+              root.querySelector("table")?.getBoundingClientRect() ?? root.getBoundingClientRect(),
+            ],
+            selectionOverlay: false,
+            selection: () => selectedCells(range),
+            restore: (focus) => {
+              if (
+                !root.isConnected ||
+                current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) !== node
+              )
+                return false;
+              storeRef.current(range);
+              if (focus) root.focus({ preventScroll: true });
+              return true;
+            },
           },
-          isCurrent: () =>
-            root.isConnected &&
-            current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) === node,
-          path: [
-            ...latexContainerScope(root),
-            "Table",
-            range.whole
-              ? "Whole table"
-              : `Cells (${range.anchor.row + 1}, ${range.anchor.column + 1})\u2013(${range.head.row + 1}, ${range.head.column + 1})`,
-          ],
-          scopes: () => [
-            root.querySelector("table")?.getBoundingClientRect() ?? root.getBoundingClientRect(),
-          ],
-          selectionOverlay: false,
-          selection: () => selectedCells(range),
-          restore: (focus) => {
-            if (
-              !root.isConnected ||
-              current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) !== node
-            )
-              return false;
-            storeRef.current(range);
-            if (focus) root.focus({ preventScroll: true });
-            return true;
-          },
-        };
+        );
       },
       command: (command) => {
         if (command === "enterScope") return false;
@@ -462,7 +479,7 @@ export function useLatexTableSelection(props: {
       props.editor.off("selectionUpdate", synchronize);
       props.editor.off("focus", synchronize);
     };
-  }, [props.enabled, props.root, props.editor]);
+  }, [props.enabled, props.root, props.editor, select]);
   return {
     selection,
     selectTable,

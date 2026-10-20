@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useState } from "react";
 import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
 import {
   createLatexEditorSourceSnapshot,
@@ -82,8 +82,7 @@ export function createLatexVisualTestOwner(
 }
 
 export function useLatexVisualTestOwner(source: string) {
-  const owner = useRef<LatexVisualTestOwner | null>(null);
-  if (!owner.current) owner.current = createLatexVisualTestOwner(source);
-  owner.current.observe(source);
-  return owner.current;
+  const [owner] = useState(() => createLatexVisualTestOwner(source));
+  owner.observe(source);
+  return owner;
 }

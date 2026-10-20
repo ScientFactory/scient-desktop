@@ -2,6 +2,7 @@ import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { useEditorState } from "@tiptap/react";
+import { useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
@@ -95,7 +96,9 @@ it("native typing leaves unchanged controls alone while selection, formatting an
   let renders = 0;
   function Toolbar() {
     const state = useLatexEditingPresentation(editor);
-    renders += 1;
+    useLayoutEffect(() => {
+      renders += 1;
+    });
     return (
       <>
         <output data-presentation="">
@@ -168,7 +171,9 @@ it("presentation follows inline ownership and commands without waiting for a tra
   let renderedEditor: Editor | null = null;
   function Toolbar({ editor }: { editor: Editor | null }) {
     const state = useLatexEditingPresentation(editor);
-    renderedEditor = state.editor;
+    useLayoutEffect(() => {
+      renderedEditor = state.editor;
+    });
     return <output>{`${state.italic}|${state.selectedWords}|${state.formattingAvailable}`}</output>;
   }
   try {

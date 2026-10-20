@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -65,7 +65,10 @@ describe("Source recovery without a Visual editor", () => {
     )!;
   };
   function Host() {
-    recovery = useLatexSourceRecovery(lease, key, presentation);
+    const current = useLatexSourceRecovery(lease, key, presentation);
+    useLayoutEffect(() => {
+      recovery = current;
+    });
     return null;
   }
   beforeEach(async () => {

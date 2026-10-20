@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import type { Editor } from "@tiptap/core";
 import { latexReferenceRevision } from "./latexEquationReferences";
 
@@ -56,5 +56,5 @@ export function useLatexReferenceState<T>(
   const json = useSyncExternalStore(store?.subscribe ?? unsubscribed, () =>
     JSON.stringify(editor && !editor.isDestroyed ? (select(editor) ?? null) : null),
   );
-  return useMemo(() => JSON.parse(json) as T | null, [json]);
+  return JSON.parse(json) as T | null;
 }
