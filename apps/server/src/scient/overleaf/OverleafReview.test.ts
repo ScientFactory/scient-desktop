@@ -562,19 +562,44 @@ describe("buildOverleafReview", () => {
     ),
   );
 
-  it.live("refuses a rename by letter case or Unicode form alone, whatever is chosen", () =>
+  it.live("refuses a respelling by letter case or Unicode form alone, whatever is chosen", () =>
     Effect.gen(function* () {
       const chapter = paragraphs("chapter");
-      for (const [from, to] of [
-        ["Chapter.tex", "chapter.tex"],
-        ["Cafe\u0301.tex", "Caf\u00e9.tex"],
-      ] as const) {
+      const other = paragraphs("other");
+      for (const { base, remote, from, to } of [
         // Overleaf renamed it; the folder had deleted it.
+        {
+          base: { "Chapter.tex": chapter },
+          remote: { "chapter.tex": chapter },
+          from: "Chapter.tex",
+          to: "chapter.tex",
+        },
+        {
+          base: { "Cafe\u0301.tex": chapter },
+          remote: { "Caf\u00e9.tex": chapter },
+          from: "Cafe\u0301.tex",
+          to: "Caf\u00e9.tex",
+        },
+        // New content under the new spelling: Git sees no rename.
+        {
+          base: { "Chapter.tex": chapter },
+          remote: { "chapter.tex": other },
+          from: "Chapter.tex",
+          to: "chapter.tex",
+        },
+        // Two renames Git pairs differently: a.tex → b.tex and z.tex → A.tex.
+        {
+          base: { "a.tex": chapter, "z.tex": other },
+          remote: { "A.tex": other, "b.tex": chapter },
+          from: "a.tex",
+          to: "A.tex",
+        },
+      ]) {
         yield* withScenario(
           {
-            base: { "main.tex": "m", [from]: chapter },
+            base: { "main.tex": "m", ...base },
             local: { "main.tex": "m" },
-            remote: { "main.tex": "m", [to]: chapter },
+            remote: { "main.tex": "m", ...remote },
           },
           ({ review }) =>
             Effect.gen(function* () {

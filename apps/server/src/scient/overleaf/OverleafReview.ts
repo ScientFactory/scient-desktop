@@ -148,8 +148,10 @@ export type OverleafReviewRefusal =
   /** Two paths differ only by letter case or Unicode form; one would silently replace the other. */
   | { readonly reason: "path-alias"; readonly first: string; readonly second: string }
   /**
-   * One side renamed a file by letter case or Unicode form alone. Undo it, or rename
-   * through another name with a synchronization in between.
+   * A file's name changed by letter case or Unicode form alone since the last
+   * synchronization (`from` was synchronized, `to` is the new spelling), whether or not
+   * Git saw a rename. Undo it, or rename through another name with a synchronization
+   * in between.
    */
   | { readonly reason: "alias-rename"; readonly from: string; readonly to: string }
   | { readonly reason: "candidate-file-limit" }
@@ -298,6 +300,22 @@ function repositoryFolder(paths: Iterable<string>) {
   return null;
 }
 
+/**
+ * A path in `before` (the base) spelled differently, by letter case or Unicode form
+ * alone, in `before` or `after`, or null. Folders are not compared: files in folders
+ * spelled two ways are different files unless their whole paths collide.
+ */
+function respelling(before: Iterable<string>, after: Iterable<string>) {
+  const seen = new Map<string, string>();
+  for (const path of [...before, ...after]) {
+    const key = manuscriptCollisionKey(path);
+    const earlier = seen.get(key);
+    if (earlier !== undefined && earlier !== path) return { from: earlier, to: path };
+    seen.set(key, path);
+  }
+  return null;
+}
+
 /** Two different spellings of one path, by letter case or Unicode form, or null. */
 function findAlias(paths: Iterable<string>) {
   const seen = new Map<string, string>();
@@ -366,6 +384,13 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     ...[...remote.keys()].filter((path) => !inventory.captured.has(path)),
   ]);
   if (alias !== null) return refused({ reason: "path-alias", ...alias });
+  // Every path the applier touches is in the base, Overleaf's tree or the capture; the
+  // target is drawn from the last two. Two spellings of one path among them are one
+  // file on a disk that ignores letter case or Unicode form: the applier cannot carry
+  // out the change between them, or keep its base whole if interrupted, whether or not
+  // Git saw a rename. It stays a typed refusal (contract section 5), not a workaround.
+  const respelled = respelling(base.keys(), [...remote.keys(), ...inventory.captured.keys()]);
+  if (respelled !== null) return refused({ reason: "alias-rename", ...respelled });
 
   const requested = new Set(input.collisionPaths);
   const collisions = findCollisions({ inventory, remote, collisionPaths: requested });
@@ -435,14 +460,6 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: localTree })),
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: input.remote.tree })),
   ];
-  // A rename that only changes letter case or Unicode form is one file on a disk that
-  // ignores them; the applier cannot carry it out or keep its base whole if interrupted.
-  // It stays a typed refusal (contract section 5), not something the review works around.
-  const aliasRename = renames.find(
-    (rename) => manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to),
-  );
-  if (aliasRename !== undefined)
-    return refused({ reason: "alias-rename", from: aliasRename.from, to: aliasRename.to });
   const guarded = guardedPaths({
     base,
     local,
