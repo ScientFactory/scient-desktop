@@ -562,6 +562,37 @@ describe("buildOverleafReview", () => {
     ),
   );
 
+  it.live("refuses a rename by letter case or Unicode form alone, whatever is chosen", () =>
+    Effect.gen(function* () {
+      const chapter = paragraphs("chapter");
+      for (const [from, to] of [
+        ["Chapter.tex", "chapter.tex"],
+        ["Cafe\u0301.tex", "Caf\u00e9.tex"],
+      ] as const) {
+        // Overleaf renamed it; the folder had deleted it.
+        yield* withScenario(
+          {
+            base: { "main.tex": "m", [from]: chapter },
+            local: { "main.tex": "m" },
+            remote: { "main.tex": "m", [to]: chapter },
+          },
+          ({ review }) =>
+            Effect.gen(function* () {
+              for (const choice of [undefined, "mine", "theirs"] as const) {
+                const choices = new Map(
+                  choice === undefined ? [] : [[overleafConflictKey([from, to]), choice]],
+                );
+                expect(yield* review({ choices })).toEqual({
+                  _tag: "refused",
+                  refusal: { reason: "alias-rename", from, to },
+                });
+              }
+            }),
+        );
+      }
+    }),
+  );
+
   it.live("binds recorded markers and collisions into the digest, canonically", () =>
     withScenario(
       {

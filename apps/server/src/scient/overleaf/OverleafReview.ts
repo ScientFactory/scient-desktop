@@ -147,6 +147,11 @@ export type OverleafReviewRefusal =
     }
   /** Two paths differ only by letter case or Unicode form; one would silently replace the other. */
   | { readonly reason: "path-alias"; readonly first: string; readonly second: string }
+  /**
+   * One side renamed a file by letter case or Unicode form alone. Undo it, or rename
+   * through another name with a synchronization in between.
+   */
+  | { readonly reason: "alias-rename"; readonly from: string; readonly to: string }
   | { readonly reason: "candidate-file-limit" }
   | { readonly reason: "candidate-too-large" }
   | { readonly reason: "candidate-file-too-large"; readonly path: string }
@@ -430,6 +435,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: localTree })),
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: input.remote.tree })),
   ];
+  // A rename that only changes letter case or Unicode form is one file on a disk that
+  // ignores them; the applier cannot carry it out or keep its base whole if interrupted.
+  // It stays a typed refusal (contract section 5), not something the review works around.
+  const aliasRename = renames.find(
+    (rename) => manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to),
+  );
+  if (aliasRename !== undefined)
+    return refused({ reason: "alias-rename", from: aliasRename.from, to: aliasRename.to });
   const guarded = guardedPaths({
     base,
     local,
@@ -583,17 +596,6 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       ACKNOWLEDGED.has(kind),
     ),
   };
-  // On a disk that ignores letter case or Unicode form, a path absent before and after
-  // but spelled like a file that is present resolves to that file: the applier, which
-  // checks every path of a unit, would find a file where none should be, and it cannot
-  // rename a file to another spelling of its name. The alias check above refuses any
-  // plan that changes a spelling on disk, so such a path needs no change on disk. It
-  // stays in the review and the base, and leaves the applier's plan with its renames.
-  const presentKeys = new Set([...capturedPaths, ...target.keys()].map(manuscriptCollisionKey));
-  const spelledLikePresent = (path: string) =>
-    !inventory.captured.has(path) &&
-    !target.has(path) &&
-    presentKeys.has(manuscriptCollisionKey(path));
   const review: OverleafReview = {
     id: newOverleafId(),
     digest: overleafReviewDigest(binding),
@@ -614,13 +616,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
         capturedPaths.map((path) => [path, inventory.captured.get(path)!.revision]),
       ),
       target,
-      renames: renames.filter(
-        (rename) => !spelledLikePresent(rename.from) && !spelledLikePresent(rename.to),
-      ),
-      conflicts: groups.flatMap((group) => {
-        const paths = group.paths.filter((path) => !spelledLikePresent(path));
-        return paths.length === 0 ? [] : [{ ...group, paths }];
-      }),
+      renames,
+      conflicts: groups,
       markerPaths,
     },
   };
