@@ -288,6 +288,57 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
       }),
     );
   });
+
+  it("withholds Scient's MCP approval grant once connectors share the session", () => {
+    const tagged = {
+      sessionId: "session-1",
+      message: "Approve this request?",
+      mode: "form",
+      requestedSchema: { type: "object", properties: {} },
+      _meta: { codex_approval_kind: "mcp_tool_call" },
+    } satisfies EffectAcpSchema.CreateElicitationRequest;
+    const autoAcceptEdits: AcpRuntimePolicy = {
+      runtimeMode: "auto-accept-edits",
+      cwd: process.cwd(),
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+    };
+
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition(autoAcceptEdits, tagged, undefined, false),
+      "allow",
+    );
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition(autoAcceptEdits, tagged, undefined, true),
+      "ask",
+    );
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition(
+        { runtimeMode: "full-access", cwd: process.cwd() },
+        tagged,
+        undefined,
+        true,
+      ),
+      "allow",
+    );
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition(
+        { runtimeMode: "approval-required", cwd: process.cwd() },
+        tagged,
+        undefined,
+        true,
+      ),
+      "ask",
+    );
+    assert.isUndefined(
+      acpMcpToolApprovalElicitationDisposition(
+        { runtimeMode: "full-access", cwd: process.cwd() },
+        { ...tagged, _meta: { codex_approval_kind: "ordinary_form" } },
+        undefined,
+        true,
+      ),
+    );
+  });
 });
 
 describe("client terminal disposition", () => {

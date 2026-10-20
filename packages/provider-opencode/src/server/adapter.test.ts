@@ -617,6 +617,7 @@ describe("OpenCodeAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-opencode",
           capabilities,
+          connectors: [],
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         let guidanceCapabilities: ReadonlySet<string> | undefined;
@@ -681,6 +682,97 @@ describe("OpenCodeAdapterV2", () => {
         } else {
           assert.deepEqual([...(guidanceCapabilities ?? [])].sort(), [...capabilities].sort());
         }
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+    ),
+  );
+
+  it.effect("adds each connector beside Scient's server with the thread's credential", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const suffix = "connectors";
+        const threadId = ThreadId.make(`thread-opencode-${suffix}`);
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make(suffix),
+          threadId,
+          providerSessionId: suffix,
+          providerInstanceId: ProviderInstanceId.make(`opencode-${suffix}`),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer synthetic-opencode",
+          capabilities: new Set(),
+          connectors: [
+            {
+              connectorId: "connector-github",
+              serverName: "github",
+              displayName: "GitHub",
+              url: "http://127.0.0.1:43123/mcp/connectors/connector-github",
+            },
+            {
+              connectorId: "connector-linear",
+              serverName: "linear",
+              displayName: "Linear",
+              url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+            },
+          ],
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const added: Array<unknown> = [];
+        let prompted = false;
+        const nativeEvents = asyncEventStream();
+        const h = yield* makeOpenCodeRuntimeHarness(
+          suffix,
+          "connectors-native",
+          {
+            event: {
+              subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                  once: true,
+                });
+                return { stream: nativeEvents.stream };
+              },
+            },
+            mcp: {
+              add: async (input: { readonly name: string }) => {
+                added.push(input);
+                // An unreachable connector must not stop the session.
+                if (input.name === "github") throw new Error("connector unreachable");
+                return { data: true };
+              },
+            },
+            session: {
+              ...nativePermissionPeer(),
+              create: async () => ({
+                data: { id: "connectors-native", time: { created: 1, updated: 1 } },
+              }),
+              promptAsync: async () => {
+                prompted = true;
+                return { data: true };
+              },
+              abort: async () => ({ data: true }),
+              children: async () => ({ data: [] }),
+            },
+          },
+          false,
+        );
+        yield* h.startTurn();
+        const remote = (url: string) => ({
+          type: "remote",
+          url,
+          headers: { Authorization: "Bearer synthetic-opencode" },
+          oauth: false,
+        });
+        assert.deepEqual(added, [
+          { name: "t3-code", config: remote("http://127.0.0.1:43123/mcp") },
+          {
+            name: "github",
+            config: remote("http://127.0.0.1:43123/mcp/connectors/connector-github"),
+          },
+          {
+            name: "linear",
+            config: remote("http://127.0.0.1:43123/mcp/connectors/connector-linear"),
+          },
+        ]);
+        assert.isTrue(prompted);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
     ),
   );

@@ -1,7 +1,7 @@
 # Scient skills core
 
-Status: personal and project-owned skill management implemented. Add-on
-installation remains a later phase.
+Status: personal, project-owned, and add-on (Scient plugin bundle) skill
+management implemented.
 
 ## Purpose
 
@@ -10,9 +10,11 @@ user or by an initialized Scient project. A skill is data, not authority. It
 cannot install software, grant a tool, reveal a credential, start a process, or
 widen a provider session's permissions.
 
-This core is intentionally independent of the future add-on system. An add-on
-may eventually contribute an immutable skill release, but add-on installation,
-permissions, runtimes, and removal remain separate lifecycle boundaries.
+This core stays independent of the add-on system that delivers skills.
+Declarative Scient plugin bundles (see
+[Scient Extensions](scient-extensions.md#scient-plugins)) contribute immutable
+skill releases; installation, enablement, and removal stay with the plugin
+registry, while activation stays with the skill policy described here.
 
 ## Skill contracts
 
@@ -56,6 +58,36 @@ limits are supplemented by project-wide directory and snapshot-memory bounds.
 Creating a valid project skill requires no registration step and makes it
 available on the next turn.
 
+### Add-on releases
+
+A plugin bundle lists Agent Skills directories in `scient.plugin.json`
+(`contributes.skills`). Each directory is a reviewed release: it must carry
+`scient.skill.json` whose `origin` is
+`{ "kind": "addon", "addonId": <plugin id>, "addonVersion": <plugin version> }`,
+matching the plugin exactly, so a release keyed as `addon:<id>@<version>`
+cannot be claimed by another bundle or version. The plugin registry
+(`apps/server/src/scient/extensions/plugins/ScientPluginRegistry.ts`)
+snapshots the whole bundle once, rejects symbolic links, non-regular files and
+oversized bundles, digests sorted paths and contents with the release scheme,
+copies the bytes into `<stateDir>/scient-plugins/<id>@<version>-<digest12>/`,
+and loads each skill from that in-memory snapshot with the same release loader.
+On restart the installed copy is re-read and must match the recorded digest;
+a changed copy is withheld with a diagnostic.
+
+Only enabled, verified bundles publish their releases to the skill registry,
+which replaces the full add-on set atomically. A release whose id or name is
+already registered by Scient or by another plugin is refused at install and
+withheld by the registry. Add-on releases appear in **Settings → Skills** under
+their manifest category with origin `addon:<id>@<version>`. They are never
+active by default: shipping defaults apply only to `scient` origin, and a
+bundle cannot declare itself active. The user activates them exactly like a
+built-in, but that preference is bound to the exact release (id, version and
+digest): a plugin upgrade, or a reinstall whose skill bytes changed under the
+same versions, needs a fresh activation.
+Disabling a plugin withholds its releases from the catalog and from turn
+scopes while keeping the user's preference; removing it deletes the installed
+copy.
+
 ## Identity and activation
 
 A delivered release is selected only by the exact tuple `id`, `version`,
@@ -66,10 +98,12 @@ Scient-owned shipping defaults live beside the built-in catalog rather than in
 portable skill manifests, so an add-on cannot declare itself active. Personal
 preferences store an explicit active or inactive decision plus invocation
 policy. The effective policy is the user preference when one exists, otherwise
-the Scient-owned shipping default. A preference follows a stable skill ID only
-within the same origin, while every turn still authorizes the exact current
-release. This lets a trusted Scient app update preserve user intent without
-allowing an add-on update to inherit authority across origins.
+the Scient-owned shipping default. For `scient`-origin releases a preference
+follows a stable skill ID, so a trusted Scient app update preserves user
+intent; every other origin binds the preference to the exact release (id,
+version and SHA-256 digest), so changed add-on bytes never inherit authority,
+even when their origin string is unchanged. Every turn still authorizes the
+exact current release.
 
 For reviewed releases, the manifest declares whether a release may be activated
 at `user`, `project`, or both scopes. Scope is independent from release origin:
@@ -357,7 +391,9 @@ the provider state instead of claiming that an unverified choice succeeded.
 ## Deliberate phase-one exclusions
 
 - no Librarian port;
-- no add-on catalog, installer, permission system, runtime, or marketplace;
+- no add-on permission system, runtime, or marketplace: plugin bundles are
+  installed only from a directory on the server host, contribute data (skill
+  releases and connector definitions), and nothing in them is executed;
 - no arbitrary third-party JavaScript or executable loading;
 - no script execution from a skill resource;
 - no personal skill import/upload or agent-authored personal publication; and
@@ -388,9 +424,12 @@ Automated coverage must continue to prove:
    skills without changing stored user text;
 10. project-owned default activation, durable per-project preferences,
     collision quarantine, reserved-manifest rejection, and aggregate bounds;
-    and
 11. initialization and interrupted recovery preserving `.scient/skills`
-    byte-for-byte.
+    byte-for-byte; and
+12. add-on releases bound to their plugin's exact origin, never active by
+    default, activated only for their exact release digest, withheld while the
+    plugin is disabled or its installed copy no longer matches its digest, and
+    unable to reuse a registered id or name.
 
 The fork-owned roots and inherited integration points are recorded in
 `scient-skills-seams.json` and checked by `pnpm skills:seams:check`.

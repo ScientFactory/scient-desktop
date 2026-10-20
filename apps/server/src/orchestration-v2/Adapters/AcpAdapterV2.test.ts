@@ -800,6 +800,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer self-contained-mcp-bridge-token",
         capabilities: new Set(),
+        connectors: [],
       });
 
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
@@ -863,6 +864,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer instruction-transition-token",
         capabilities: new Set(),
+        connectors: [],
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -2442,6 +2444,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer source-thread-token",
         capabilities: new Set(["preview"] as const),
+        connectors: [],
       });
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
@@ -2451,6 +2454,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
         capabilities: new Set(["preview"] as const),
+        connectors: [],
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -2595,6 +2599,119 @@ describe("AcpAdapterV2", () => {
       assert.equal(terminalOutput.output, "Bearer target-thread-token");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  it.effect.each(
+    [
+      { acpMcp: false, httpMcp: false },
+      { acpMcp: false, httpMcp: true },
+      { acpMcp: true, httpMcp: false },
+      { acpMcp: true, httpMcp: true },
+    ].map(({ acpMcp, httpMcp }) => ({
+      caseTitle: `delivers each Scient connector as a stdio bridge beside Scient MCP over ${acpMcp ? "ACP" : "stdio"}${httpMcp ? " to an http-capable agent" : ""}`,
+      acpMcp,
+      httpMcp,
+    })),
+  )("$caseTitle", ({ acpMcp, httpMcp }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test-connectors");
+      const threadId = ThreadId.make("thread-acp-connectors");
+      const authorization = "Bearer connector-session-token";
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-connectors"),
+        threadId,
+        providerSessionId: "mcp-session-acp-connectors",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: authorization,
+        capabilities: new Set(),
+        connectors: [
+          {
+            connectorId: "connector-linear",
+            serverName: "linear",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+          },
+          {
+            connectorId: "connector-notion",
+            serverName: "notion_2",
+            displayName: "Notion",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-notion",
+          },
+        ],
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: {
+              ...(acpMcp ? { T3_ACP_MCP_ACP: "1" } : {}),
+              ...(httpMcp ? { T3_ACP_MCP_HTTP: "1" } : {}),
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-connectors"),
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+      const bridgeArgs = [
+        process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
+        "acp-mcp-bridge",
+      ];
+      const bridge = (name: string, endpoint: string) => ({
+        type: "stdio",
+        name,
+        command: process.execPath,
+        args: bridgeArgs,
+        env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+          { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+        ],
+      });
+      const createdRequest = Option.getOrThrow(
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/new",
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.deepEqual(rawProtocolRequestParam(createdRequest, "mcpServers"), [
+        acpMcp
+          ? { type: "acp", name: "scient", serverId: "t3-code" }
+          : bridge("scient", "http://127.0.0.1:43123/mcp"),
+        bridge("linear", "http://127.0.0.1:43123/mcp/connectors/connector-linear"),
+        bridge("notion_2", "http://127.0.0.1:43123/mcp/connectors/connector-notion"),
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(
     [false, true].map((acpMcp) => ({
       caseTitle: `refuses source-ID native forks without rebinding source credentials over ${acpMcp ? "ACP" : "stdio"}`,
@@ -2686,6 +2803,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer source-thread-token",
         capabilities: new Set(["preview"] as const),
+        connectors: [],
       });
       yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
@@ -2695,6 +2813,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
         capabilities: new Set(["preview"] as const),
+        connectors: [],
       });
       yield* Effect.addFinalizer(() =>
         Effect.all([mcpSessions.clear(sourceThreadId), mcpSessions.clear(targetThreadId)]),
@@ -3167,6 +3286,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43124/mcp",
         authorizationHeader: "Bearer rollback-target-token",
         capabilities: new Set(),
+        connectors: [],
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
       const makeRuntime = makeMockRuntime({

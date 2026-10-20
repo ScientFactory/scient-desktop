@@ -501,6 +501,307 @@ describe("Pi tool discovery permissions", () => {
   });
 });
 
+describe("Pi Scient connectors", () => {
+  const linear = {
+    serverName: "linear",
+    url: "http://fixture.invalid/mcp/connectors/linear",
+    tools: [
+      {
+        name: "search.issues",
+        description: "Search Linear issues.",
+        annotations: { readOnlyHint: true },
+      },
+      { name: "create_issue", description: "Create a Linear issue." },
+    ],
+  };
+  const notion = {
+    serverName: "notion",
+    url: "http://fixture.invalid/mcp/connectors/notion",
+    tools: [{ name: "search", description: "Search Notion." }],
+  };
+
+  it("registers each connector's tools under a server prefix on the session credential", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [linear, notion],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    assert.deepEqual(
+      bridge.tools.map((tool) => [tool.name, tool.exposure]),
+      [
+        ["orchestrator_capabilities", "direct"],
+        ["delegate_task", "direct"],
+        ["task_status", "direct"],
+        ["preview_snapshot", "deferred"],
+        ["linear__search_issues", "deferred"],
+        ["linear__create_issue", "deferred"],
+        ["notion__search", "deferred"],
+      ],
+    );
+    for (const name of ["linear__search_issues", "linear__create_issue", "notion__search"]) {
+      assert.include(bridge.getActiveTools(), name);
+    }
+
+    const output = await bridge.tools
+      .find((tool) => tool.name === "linear__search_issues")!
+      .execute("connector-call", { query: "bug" });
+    assert.equal(output.content[0]?.text, "linear:search.issues");
+    assert.equal(bridge.transports.at(-1)?.url, linear.url);
+    assert.deepEqual(bridge.requests.at(-1)?.params, {
+      name: "search.issues",
+      arguments: { query: "bug" },
+    });
+    assert.isTrue(
+      bridge.transports.every((transport) => transport.authorization === "Bearer fixture-token"),
+    );
+    assert.sameMembers(
+      [...new Set(bridge.transports.map((transport) => transport.url))],
+      ["http://fixture.invalid/mcp", linear.url, notion.url],
+    );
+  });
+
+  it("confirms connector tools even when they are annotated read-only", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      runtimeMode: "approval-required",
+      connectors: [linear],
+    });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: { hasUI: boolean; ui: { confirm: (title: string) => Promise<boolean> } },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const confirmations: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        confirm: async (title: string) => {
+          confirmations.push(title);
+          return false;
+        },
+      },
+    };
+    assert.isUndefined(await hook({ toolName: "orchestrator_capabilities", input: {} }, ctx));
+    assert.equal((await hook({ toolName: "linear__search_issues", input: {} }, ctx))?.block, true);
+    assert.deepEqual(confirmations, ["Allow linear__search_issues?"]);
+  });
+
+  it("keeps Scient and healthy connectors when one connector fails", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [{ ...linear, fail: true }, notion],
+    });
+    const notifications: Array<readonly [string, string]> = [];
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      {
+        model: { api: "anthropic-messages" },
+        ui: { notify: (message, severity) => notifications.push([message, severity]) },
+      },
+    );
+    assert.deepEqual(
+      bridge.tools.map((tool) => tool.name),
+      [
+        "orchestrator_capabilities",
+        "delegate_task",
+        "task_status",
+        "preview_snapshot",
+        "notion__search",
+      ],
+    );
+    assert.deepEqual(notifications, [["Scient connector linear unavailable.", "warning"]]);
+    const scientResult = await bridge.tools
+      .find((tool) => tool.name === "preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scientResult.content[0]?.text, "browser snapshot");
+  });
+
+  it("gives a connector tool colliding with a projected Scient tool name a hashed alias", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolNameMap: { preview_snapshot: "mcp__scient__preview_snapshot" },
+      connectors: [
+        {
+          serverName: "mcp",
+          url: "http://fixture.invalid/mcp/connectors/mcp",
+          tools: [{ name: "scient__preview_snapshot" }, { name: "other" }],
+        },
+      ],
+    });
+    assert.deepEqual(
+      bridge.tools.filter((tool) => tool.name.startsWith("mcp__")).map((tool) => tool.name),
+      ["mcp__scient__preview_snapshot", "mcp__scient__preview_snapshot_573af5c1", "mcp__other"],
+    );
+    const scient = await bridge.tools
+      .find((tool) => tool.name === "mcp__scient__preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scient.content[0]?.text, "browser snapshot");
+    const connector = await bridge.tools
+      .find((tool) => tool.name === "mcp__scient__preview_snapshot_573af5c1")!
+      .execute("connector-call", {});
+    assert.equal(connector.content[0]?.text, "mcp:scient__preview_snapshot");
+    assert.deepEqual(bridge.requests.at(-1)?.params, {
+      name: "scient__preview_snapshot",
+      arguments: {},
+    });
+  });
+
+  const VALID_TOOL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+  const longServer = {
+    serverName: "k".repeat(44),
+    url: "http://fixture.invalid/mcp/connectors/long",
+    tools: [
+      { name: "search_documents_" + "a".repeat(47) },
+      { name: "search_documents_" + "b".repeat(47) },
+    ],
+  };
+  const connectorNames = (bridge: { readonly tools: ReadonlyArray<{ readonly name: string }> }) =>
+    bridge.tools.map((tool) => tool.name).filter((name) => name.includes("__"));
+
+  it("aliases over-long connector tool names deterministically and calls the original name", async () => {
+    const expected = [
+      "k".repeat(44) + "__search_do_3ff089b7",
+      "k".repeat(44) + "__search_do_73415594",
+    ];
+    const first = await loadMcpBridge({ modern: true, connectors: [longServer] });
+    const second = await loadMcpBridge({ modern: true, connectors: [longServer] });
+    assert.deepEqual(connectorNames(first), expected);
+    assert.deepEqual(connectorNames(second), expected);
+    for (const name of expected) {
+      assert.equal(name.length, 64);
+      assert.match(name, VALID_TOOL_NAME);
+    }
+
+    const output = await first.tools
+      .find((tool) => tool.name === expected[1])!
+      .execute("connector-call", { query: "q" });
+    assert.equal(output.content[0]?.text, `${longServer.serverName}:${longServer.tools[1]!.name}`);
+    assert.equal(first.transports.at(-1)?.url, longServer.url);
+    assert.deepEqual(first.requests.at(-1)?.params, {
+      name: longServer.tools[1]!.name,
+      arguments: { query: "q" },
+    });
+  });
+
+  it("prefixes an underscore when the server name starts with a digit", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [
+        {
+          serverName: "1password",
+          url: "http://fixture.invalid/mcp/connectors/1password",
+          tools: [{ name: "item.get" }],
+        },
+      ],
+    });
+    assert.deepEqual(connectorNames(bridge), ["_1password__item_get"]);
+    const output = await bridge.tools
+      .find((tool) => tool.name === "_1password__item_get")!
+      .execute("connector-call", {});
+    assert.equal(output.content[0]?.text, "1password:item.get");
+  });
+
+  it("resolves names across connectors in delivered order", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [
+        {
+          serverName: "a",
+          url: "http://fixture.invalid/mcp/connectors/a",
+          tools: [{ name: "b__c" }],
+        },
+        {
+          serverName: "a__b",
+          url: "http://fixture.invalid/mcp/connectors/ab",
+          tools: [{ name: "c" }],
+        },
+      ],
+    });
+    assert.deepEqual(connectorNames(bridge), ["a__b__c", "a__b__c_a92700ce"]);
+    const output = await bridge.tools
+      .find((tool) => tool.name === "a__b__c_a92700ce")!
+      .execute("connector-call", {});
+    assert.equal(output.content[0]?.text, "a__b:c");
+  });
+
+  it("declares only valid connector tool names to completion gateways", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [
+        longServer,
+        {
+          serverName: "1password",
+          url: "http://fixture.invalid/mcp/connectors/1password",
+          tools: [{ name: "item.get" }, { name: "vault/list items" }],
+        },
+      ],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const names = connectorNames(bridge);
+    assert.lengthOf(names, 4);
+    for (const name of names) assert.include(bridge.getActiveTools(), name);
+    for (const name of bridge.getActiveTools()) assert.match(name, VALID_TOOL_NAME);
+  });
+
+  it("keeps Scient and other connectors when one connector lists a pathological catalog", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [
+        {
+          serverName: "patho",
+          url: "http://fixture.invalid/mcp/connectors/patho",
+          tools: [
+            { name: "a.b" },
+            { name: "a_b" },
+            { name: "dup" },
+            { name: "dup" },
+            { name: "x".repeat(300) },
+            { name: "x".repeat(300) + "!" },
+          ],
+          malformedTools: [null, {}, { name: 42 }, { name: "" }],
+        },
+        notion,
+      ],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const names = bridge.tools.map((tool) => tool.name);
+    assert.includeMembers(names, [
+      "orchestrator_capabilities",
+      "delegate_task",
+      "task_status",
+      "preview_snapshot",
+      "patho__a_b",
+      "patho__a_b_602396cf",
+      "patho__dup",
+      "notion__search",
+    ]);
+    assert.lengthOf(names, new Set(names).size);
+    assert.lengthOf(connectorNames(bridge), 6);
+    for (const name of names) assert.match(name, VALID_TOOL_NAME);
+    for (const name of bridge.getActiveTools()) assert.match(name, VALID_TOOL_NAME);
+
+    const notionOutput = await bridge.tools
+      .find((tool) => tool.name === "notion__search")!
+      .execute("connector-call", {});
+    assert.equal(notionOutput.content[0]?.text, "notion:search");
+    const scientOutput = await bridge.tools
+      .find((tool) => tool.name === "preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scientOutput.content[0]?.text, "browser snapshot");
+  });
+});
+
 async function loadRequestHook(): Promise<RequestHook> {
   const h = await loadContextGuard(PI_T3_MCP_EXTENSION_SOURCE, 0);
   return ({ payload }, ctx) => {

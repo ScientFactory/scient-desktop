@@ -214,6 +214,9 @@ function makeRegistry(
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
       // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
       getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+      recordProviderNativeInventory: () => Ref.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

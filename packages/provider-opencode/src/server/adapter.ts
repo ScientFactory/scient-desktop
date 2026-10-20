@@ -1011,6 +1011,30 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               },
             }),
           );
+          // SCIENT-FORK:START — connectors are best effort beside Scient's own server:
+          // one unreachable connector must not stop the session. They take the
+          // mode's permission rules like any other MCP server, never Scient's.
+          for (const connector of mcpSession.connectors) {
+            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+              client.mcp.add({
+                name: connector.serverName,
+                config: {
+                  type: "remote",
+                  url: connector.url,
+                  headers: { Authorization: mcpSession.authorizationHeader },
+                  oauth: false,
+                },
+              }),
+            ).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  `Could not add the ${connector.displayName} connector to OpenCode.`,
+                  error,
+                ),
+              ),
+            );
+          }
+          // SCIENT-FORK:END
         }
 
         const now = yield* DateTime.now;

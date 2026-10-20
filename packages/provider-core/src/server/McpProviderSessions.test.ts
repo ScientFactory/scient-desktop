@@ -17,6 +17,7 @@ describe("McpProviderSessions", () => {
         endpoint: "http://127.0.0.1:12345/mcp",
         authorizationHeader: "Bearer fixture",
         capabilities,
+        connectors: [],
       });
       capabilities.add("preview");
       const captured = yield* sessions.read(threadId);
@@ -33,6 +34,44 @@ describe("McpProviderSessions", () => {
       const replacement = yield* sessions.read(threadId);
       assert.strictEqual(replacement?.providerSessionId, "replacement");
       assert.deepStrictEqual([...replacement!.capabilities], []);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+
+  it.effect("captures the delivered connector list independently of the caller", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("connector-thread");
+      const connectors = [
+        {
+          connectorId: "con_linear0001",
+          serverName: "linear",
+          displayName: "Linear",
+          url: "http://127.0.0.1:12345/mcp/connectors/con_linear0001",
+        },
+      ];
+      yield* sessions.set({
+        environmentId: EnvironmentId.make("connector-environment"),
+        threadId,
+        providerSessionId: "connector-session",
+        providerInstanceId: ProviderInstanceId.make("connector-instance"),
+        endpoint: "http://127.0.0.1:12345/mcp",
+        authorizationHeader: "Bearer fixture",
+        capabilities: new Set(),
+        connectors,
+      });
+      connectors.push({ ...connectors[0]!, connectorId: "con_widened01", serverName: "widened" });
+      connectors[0]!.url = "https://attacker.example/mcp";
+      const captured = yield* sessions.read(threadId);
+      assert.deepStrictEqual(captured?.connectors, [
+        {
+          connectorId: "con_linear0001",
+          serverName: "linear",
+          displayName: "Linear",
+          url: "http://127.0.0.1:12345/mcp/connectors/con_linear0001",
+        },
+      ]);
+      (captured!.connectors as Array<(typeof connectors)[number]>).length = 0;
+      assert.strictEqual((yield* sessions.read(threadId))?.connectors.length, 1);
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 });

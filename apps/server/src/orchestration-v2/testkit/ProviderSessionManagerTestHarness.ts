@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -29,6 +30,10 @@ import * as Stream from "effect/Stream";
 import { HttpServer } from "effect/http";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
+import type {
+  ConnectorRuntime,
+  ExtensionDeliveryReceipts,
+} from "../../scient/extensions/ExtensionsServices.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -478,6 +483,10 @@ function makeTestLayer(input: {
   readonly invalidateInitiatedWork?: ProviderAdapterV2SessionRuntime["invalidateInitiatedWork"];
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  /** Optional Scient Extensions services the manager reads with `serviceOption`. */
+  readonly extensionsLayer?: Layer.Layer<ConnectorRuntime | ExtensionDeliveryReceipts>;
+  /** Provider snapshots returned by the registry (native MCP servers, etc.). */
+  readonly providers?: ReadonlyArray<ServerProvider>;
 }) {
   const configuredEventSinkLayer =
     input.releaseWriteFailure === undefined
@@ -547,7 +556,7 @@ function makeTestLayer(input: {
         Layer.mergeAll(
           registryLayer,
           Layer.succeed(ProviderRegistry.ProviderRegistry, {
-            ...makeProviderRegistryMock(),
+            ...makeProviderRegistryMock(input.providers),
             setProviderAuthenticationFailure:
               input.onAuthenticationFailure ??
               (() =>
@@ -560,6 +569,7 @@ function makeTestLayer(input: {
           TestStoresLayer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.extensionsLayer === undefined ? [] : [input.extensionsLayer]),
         ),
       ),
     ),

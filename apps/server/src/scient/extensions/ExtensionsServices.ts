@@ -137,18 +137,52 @@ export interface ConnectorRuntimeShape {
 }
 
 export class ConnectorRuntime extends Context.Service<ConnectorRuntime, ConnectorRuntimeShape>()(
-  "t3/scient/extensions/ConnectorRuntime",
+  "t3/scient/extensions/ExtensionsServices/ConnectorRuntime",
 ) {}
 
 export interface ExtensionDeliveryReceiptsShape {
-  readonly record: (receipt: ExtensionDeliveryReceipt) => Effect.Effect<void>;
+  /**
+   * Records the receipt prepared for a credential. `withheld`, when given, is
+   * the credential's latest settled registration outcome and is applied in the
+   * same step; otherwise the previous report is kept only if the thread's
+   * receipt already belonged to this credential.
+   */
+  readonly record: (
+    receipt: ExtensionDeliveryReceipt,
+    options?: {
+      readonly withheld?: ReadonlyArray<{
+        readonly serverName: string;
+        readonly reason: ExtensionDeliverySkipReason;
+      }>;
+    },
+  ) => Effect.Effect<void>;
+  /**
+   * A settled adapter connector registration for the credential
+   * `providerSessionId`: the delivered connectors it left out (a
+   * provider-native server owns the name, the agent's servers were unknown,
+   * or registering failed). Replaces the previous report for that credential,
+   * so connectors a later registration did register return to delivered.
+   * Ignored while another credential owns the thread's receipt. Ordering
+   * between overlapping registrations is the caller's: see
+   * `ConnectorSessionDelivery.registrationTrackerFor`.
+   */
+  readonly reportRegistration: (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: string;
+    readonly withheld: ReadonlyArray<{
+      readonly serverName: string;
+      readonly reason: ExtensionDeliverySkipReason;
+    }>;
+  }) => Effect.Effect<void>;
   readonly get: (threadId: ThreadId) => Effect.Effect<Option.Option<ExtensionDeliveryReceipt>>;
+  /** Emits the thread whose visible receipt just changed. */
+  readonly changes: Stream.Stream<ThreadId>;
 }
 
 export class ExtensionDeliveryReceipts extends Context.Service<
   ExtensionDeliveryReceipts,
   ExtensionDeliveryReceiptsShape
->()("t3/scient/extensions/ExtensionDeliveryReceipts") {}
+>()("t3/scient/extensions/ExtensionsServices/ExtensionDeliveryReceipts") {}
 
 export interface ExtensionsDiscoverShape {
   readonly search: (input: DiscoverSearchInput) => Effect.Effect<DiscoverPage, ExtensionsError>;
@@ -157,7 +191,7 @@ export interface ExtensionsDiscoverShape {
 export class ExtensionsDiscover extends Context.Service<
   ExtensionsDiscover,
   ExtensionsDiscoverShape
->()("t3/scient/extensions/ExtensionsDiscover") {}
+>()("t3/scient/extensions/ExtensionsServices/ExtensionsDiscover") {}
 
 export interface ScientPluginRegistryShape {
   readonly list: () => Effect.Effect<{
@@ -174,7 +208,7 @@ export interface ScientPluginRegistryShape {
 export class ScientPluginRegistry extends Context.Service<
   ScientPluginRegistry,
   ScientPluginRegistryShape
->()("t3/scient/extensions/ScientPluginRegistry") {}
+>()("t3/scient/extensions/ExtensionsServices/ScientPluginRegistry") {}
 
 export interface ProviderPluginManagementShape {
   readonly act: (
@@ -185,4 +219,4 @@ export interface ProviderPluginManagementShape {
 export class ProviderPluginManagement extends Context.Service<
   ProviderPluginManagement,
   ProviderPluginManagementShape
->()("t3/scient/extensions/ProviderPluginManagement") {}
+>()("t3/scient/extensions/ExtensionsServices/ProviderPluginManagement") {}

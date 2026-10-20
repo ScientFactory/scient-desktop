@@ -25,6 +25,7 @@ import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 // SCIENT-FORK:START
 import { useNewSectionForThreads } from "~/scient/sections/useNewSectionForThreads";
+import { ExtensionsReceiptIndicator } from "~/scient/extensions/ExtensionsReceiptIndicator";
 // SCIENT-FORK:END
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
@@ -419,6 +420,12 @@ export const ChatHeader = memo(function ChatHeader({
       />
       {/* SCIENT-FORK:START */}
       {newSection.popover}
+      {isServerThread ? (
+        <ExtensionsReceiptIndicator
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
       {/* SCIENT-FORK:END */}
     </div>
   );

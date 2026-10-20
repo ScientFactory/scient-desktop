@@ -405,6 +405,7 @@ export default function(pi) {
                     providerSessionId: `mcp:${threadId}`,
                     endpoint: `${base}/mcp`,
                     authorizationHeader: "Bearer synthetic-only",
+                    connectors: [],
                   },
                 }),
               resolve: () => Effect.succeed(undefined),

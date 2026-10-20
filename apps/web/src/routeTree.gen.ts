@@ -30,6 +30,7 @@ import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/setting
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsExtensionsRouteImport } from './routes/settings.extensions'
 import { Route as SettingsDocumentsRouteImport } from './routes/settings.documents'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsCustomModelsRouteImport } from './routes/settings.custom-models'
@@ -151,6 +152,11 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsExtensionsRoute = SettingsExtensionsRouteImport.update({
+  id: '/extensions',
+  path: '/extensions',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsDocumentsRoute = SettingsDocumentsRouteImport.update({
   id: '/documents',
   path: '/documents',
@@ -241,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -276,6 +283,7 @@ export interface FileRoutesByTo {
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -314,6 +322,7 @@ export interface FileRoutesById {
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -353,6 +362,7 @@ export interface FileRouteTypes {
     | '/settings/custom-models'
     | '/settings/diagnostics'
     | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -388,6 +398,7 @@ export interface FileRouteTypes {
     | '/settings/custom-models'
     | '/settings/diagnostics'
     | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -425,6 +436,7 @@ export interface FileRouteTypes {
     | '/settings/custom-models'
     | '/settings/diagnostics'
     | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -605,6 +617,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/extensions': {
+      id: '/settings/extensions'
+      path: '/extensions'
+      fullPath: '/settings/extensions'
+      preLoaderRoute: typeof SettingsExtensionsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/documents': {
       id: '/settings/documents'
       path: '/documents'
@@ -733,6 +752,7 @@ interface SettingsRouteChildren {
   SettingsCustomModelsRoute: typeof SettingsCustomModelsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsDocumentsRoute: typeof SettingsDocumentsRoute
+  SettingsExtensionsRoute: typeof SettingsExtensionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
@@ -757,6 +777,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCustomModelsRoute: SettingsCustomModelsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsDocumentsRoute: SettingsDocumentsRoute,
+  SettingsExtensionsRoute: SettingsExtensionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,

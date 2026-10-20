@@ -7,7 +7,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
-    issue: ({ threadId, providerInstanceId, capabilities, browserToolsAvailable }) =>
+    issue: ({ threadId, providerInstanceId, capabilities, browserToolsAvailable, connectors }) =>
       Effect.succeed({
         config: {
           environmentId: EnvironmentId.make("environment:mcp-test"),
@@ -17,6 +17,13 @@ export const layer = Layer.succeed(
           endpoint: "http://127.0.0.1/mcp",
           authorizationHeader: `Bearer mcp-test:${threadId}`,
           capabilities: capabilities ?? new Set(browserToolsAvailable === false ? [] : ["preview"]),
+          connectors: (connectors ?? []).map((connector) => ({
+            ...connector,
+            url: McpSessionRegistry.connectorProxyUrl(
+              "http://127.0.0.1/mcp",
+              connector.connectorId,
+            ),
+          })),
         },
       }),
     resolve: () => Effect.succeed(undefined),

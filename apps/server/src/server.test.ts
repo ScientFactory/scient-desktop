@@ -211,6 +211,9 @@ import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
 import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
+// SCIENT-FORK:START — the real extensions owners, as the server composes them.
+import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+// SCIENT-FORK:END
 import {
   coalesceProviderStatusUpdates,
   resolveAvailableEditorsForConfig,
@@ -1023,6 +1026,10 @@ const buildAppUnderTest = (options?: {
               Effect.die("Source control title links are not stubbed in this test"),
           }),
         ),
+        // SCIENT-FORK:START — extensions RPCs and connector routes use the real owners,
+        // backed by this fixture's state directory and the provider registry below.
+        Layer.provide(ScientExtensionsLayerLive),
+        // SCIENT-FORK:END
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({

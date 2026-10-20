@@ -78,6 +78,9 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { scientSkillDeliveryForProvider } from "../scient/skills/ScientSkillSession.ts";
+// SCIENT-FORK:START Scient Extensions connector delivery
+import * as ConnectorSessionDelivery from "../scient/extensions/ConnectorSessionDelivery.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -414,6 +417,9 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      // SCIENT-FORK:START Scient Extensions connector delivery (optional services)
+      const connectorDelivery = yield* ConnectorSessionDelivery.make;
+      // SCIENT-FORK:END
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -635,10 +641,36 @@ export const layerWithOptions = (
           ProviderAdapter.ProviderAdapterV2["Service"],
           "driver" | "mcpSessionInjection"
         >,
+        // SCIENT-FORK:START Scient Extensions: receipts name sessions without a credential.
+        providerSessionId: ProviderSessionId,
+        // SCIENT-FORK:END
       ): Effect.Effect<PreparedMcpCredential> =>
         mcpPrepareLock.withLock(
           threadId,
           Effect.gen(function* () {
+            // SCIENT-FORK:START Scient Extensions connector delivery
+            const planConnectors = (mcpInjection: boolean) =>
+              connectorDelivery.plan({
+                driver: adapter.driver,
+                mcpInjection,
+                // An unreadable thread falls back to no project: only connectors
+                // allowed for every project can then be delivered.
+                projectId: projectionStore.getThread(threadId).pipe(
+                  Effect.map((thread) => thread.projectId),
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      "Could not resolve the thread's project; delivering only all-project connectors.",
+                      { threadId, cause },
+                    ).pipe(Effect.as(undefined)),
+                  ),
+                ),
+                provider: providerRegistry.getProviders.pipe(
+                  Effect.map((providers) =>
+                    providers.find((snapshot) => snapshot.instanceId === providerInstanceId),
+                  ),
+                ),
+              });
+            // SCIENT-FORK:END
             if (options.configureMcp === false || adapter.mcpSessionInjection !== true) {
               const configured = yield* mcpSessions.read(threadId);
               if (configured !== undefined) {
@@ -654,6 +686,16 @@ export const layerWithOptions = (
                   yield* clearMcpSession(threadId, configured.providerSessionId);
                 }
               }
+              // SCIENT-FORK:START Scient Extensions: this session receives no connector;
+              // replace any receipt left by an earlier, injected session.
+              yield* connectorDelivery.record({
+                threadId,
+                providerInstanceId,
+                providerSessionId,
+                issuedAtMillis: yield* Clock.currentTimeMillis,
+                plan: yield* planConnectors(false),
+              });
+              // SCIENT-FORK:END
               return { mcpCredentialId: undefined, issued: false };
             }
             // Reuse a still-valid credential for this thread instead of
@@ -678,6 +720,11 @@ export const layerWithOptions = (
               capabilities.add("skills:read");
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
+            // Capability grants owned by other Scient features (Secrets: secrets:list,
+            // secrets:use) are appended here, before connector delivery is planned.
+            // SCIENT-FORK:START Scient Extensions connector delivery
+            const connectorPlan = yield* planConnectors(true);
+            // SCIENT-FORK:END
             const existing = yield* mcpSessions.read(threadId);
             if (existing !== undefined) {
               // Reserve before the async resolve so a release cannot
@@ -700,8 +747,35 @@ export const layerWithOptions = (
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
-                [...capabilities].every((capability) => resolved.capabilities.has(capability))
+                [...capabilities].every((capability) => resolved.capabilities.has(capability)) &&
+                // SCIENT-FORK:START Scient Extensions: a changed connector set re-issues.
+                ConnectorSessionDelivery.sameDeliveredConnectors(
+                  existing.connectors,
+                  resolved.connectorIds,
+                  connectorPlan.delivered,
+                )
+                // SCIENT-FORK:END
               ) {
+                // SCIENT-FORK:START Scient Extensions delivery receipt. The
+                // reservation is handed to the caller only on success.
+                yield* connectorDelivery
+                  .record({
+                    threadId,
+                    providerInstanceId,
+                    providerSessionId: existing.providerSessionId,
+                    issuedAtMillis: resolved.issuedAt,
+                    plan: connectorPlan,
+                    // The credential's latest registration outcome still holds.
+                    registration: existing.beginConnectorRegistration,
+                  })
+                  .pipe(
+                    Effect.onError(() =>
+                      Effect.sync(() =>
+                        dropMcpCredentialReservation(threadId, existing.providerSessionId),
+                      ),
+                    ),
+                  );
+                // SCIENT-FORK:END
                 return { mcpCredentialId: existing.providerSessionId, issued: false };
               }
               dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -721,8 +795,37 @@ export const layerWithOptions = (
                     },
                   }
                 : {}),
+              connectors: connectorPlan.delivered,
             });
-            yield* mcpSessions.set(credential.config);
+            yield* mcpSessions.set({
+              ...credential.config,
+              // SCIENT-FORK:START Scient Extensions: adapters amend this runtime's receipts.
+              ...(credential.config.connectors.length === 0
+                ? {}
+                : {
+                    beginConnectorRegistration: connectorDelivery.registrationTrackerFor({
+                      threadId,
+                      providerSessionId: credential.config.providerSessionId,
+                    }),
+                  }),
+              // SCIENT-FORK:END
+            });
+            // SCIENT-FORK:START Scient Extensions delivery receipt, recorded before the
+            // reservation: a failed or interrupted write revokes the unowned new credential.
+            yield* connectorDelivery
+              .record({
+                threadId,
+                providerInstanceId,
+                providerSessionId: credential.config.providerSessionId,
+                issuedAtMillis: yield* Clock.currentTimeMillis,
+                plan: connectorPlan,
+              })
+              .pipe(
+                Effect.onError(() =>
+                  clearMcpSession(threadId, credential.config.providerSessionId),
+                ),
+              );
+            // SCIENT-FORK:END
             reserveMcpCredential(threadId, credential.config.providerSessionId);
             return { mcpCredentialId: credential.config.providerSessionId, issued: true };
           }),
@@ -1621,6 +1724,7 @@ export const layerWithOptions = (
                 input.threadId,
                 input.providerInstanceId,
                 attachedEntry.exposedRuntime,
+                input.providerSessionId,
               );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
@@ -2664,6 +2768,7 @@ export const layerWithOptions = (
                     input.threadId,
                     input.modelSelection.instanceId,
                     adapter,
+                    input.providerSessionId,
                   );
                   const mcpCredentialId = prepared.mcpCredentialId;
                   // The reservation from prepare protects the credential (which

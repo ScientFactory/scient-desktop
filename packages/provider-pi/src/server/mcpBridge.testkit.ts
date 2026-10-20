@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -36,6 +37,20 @@ type AgentStartHook = (
   },
 ) => Promise<{ systemPrompt: string }>;
 
+export interface FixtureConnector {
+  readonly serverName: string;
+  readonly url: string;
+  readonly tools: ReadonlyArray<{
+    readonly name: string;
+    readonly description?: string;
+    readonly annotations?: { readonly readOnlyHint?: boolean };
+  }>;
+  /** Listed verbatim after `tools`, as a misbehaving server might send them. */
+  readonly malformedTools?: ReadonlyArray<unknown>;
+  /** Fail every request, as an unreachable or misconfigured connector would. */
+  readonly fail?: boolean;
+}
+
 export async function loadMcpBridge(
   options: {
     readonly modern?: boolean;
@@ -45,6 +60,7 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
+    readonly connectors?: ReadonlyArray<FixtureConnector>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -91,11 +107,19 @@ export async function loadMcpBridge(
         ...(options.toolNameMap === undefined
           ? {}
           : { PI_TOOL_NAME_MAP: JSON.stringify(options.toolNameMap) }),
+        ...(options.connectors === undefined
+          ? {}
+          : {
+              T3_MCP_CONNECTORS: JSON.stringify(
+                options.connectors.map(({ serverName, url }) => ({ serverName, url })),
+              ),
+            }),
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
     },
     AbortSignal,
+    NodeCrypto,
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -114,11 +138,32 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
+      const connector = options.connectors?.find((candidate) => candidate.url === url);
+      if (connector?.fail === true) {
+        return new Response("connector unavailable", { status: 502 });
+      }
+      const calledTool =
+        typeof request.params === "object" && request.params !== null && "name" in request.params
+          ? String(request.params.name)
+          : "";
       const result =
         request.method === "tools/list"
-          ? { tools: catalog }
+          ? {
+              tools:
+                connector === undefined
+                  ? catalog
+                  : [
+                      ...connector.tools.map((tool) => ({
+                        ...tool,
+                        inputSchema: { type: "object", properties: {} },
+                      })),
+                      ...(connector.malformedTools ?? []),
+                    ],
+            }
           : request.method === "tools/call"
-            ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
+            ? connector === undefined
+              ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
+              : { content: [{ type: "text", text: `${connector.serverName}:${calledTool}` }] }
             : {};
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
         headers: { "content-type": "application/json" },

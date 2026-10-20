@@ -82,7 +82,15 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import { openCodeToolTurnItem } from "../toolItems.ts";
 import { makeOpenCodeTurnAcceptance } from "./turnAcceptance.ts";
-import { mcpRegistrationForOpenCode2Turn } from "./mcpRegistration.ts";
+import {
+  mcpRegistrationForOpenCode2Turn,
+  // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
+  openCode2ConnectorKey,
+  openCode2ConnectorServerName,
+  staleOpenCode2McpEntries,
+  type OpenCode2McpEntry,
+  // SCIENT-FORK:END
+} from "./mcpRegistration.ts";
 
 export interface OpenCode2AdapterOptions {
   readonly mcpSessionInjection?: boolean;
@@ -320,9 +328,8 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  mcp:
-    | { readonly name: string; readonly directory: string; readonly credential: string }
-    | undefined;
+  /** The MCP servers OpenCode holds for this thread: T3's own, then its connectors. */
+  mcp: ReadonlyArray<OpenCode2McpEntry>;
   instructions: string | undefined;
 }
 
@@ -386,11 +393,29 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
       ];
 
+// SCIENT-FORK:START — connector tools never take the thread's own server allow.
+/**
+ * `t3-code-*` denies the thread's own connectors with every other thread's, so
+ * they come back here as the mode would treat any tool: allowed in full access,
+ * asked otherwise, with the user's saved approvals for them applied again.
+ */
+const connectorRules = (
+  policy: RulesPolicy,
+  grants: ReadonlyArray<Rule>,
+  connectorServerNames: ReadonlyArray<string>,
+): ReadonlyArray<Rule> =>
+  connectorServerNames.flatMap((name) => [
+    rule(`${name}_*`, policy.runtimeMode === "full-access" ? "allow" : "ask"),
+    ...grants.filter((grant) => grant.action.startsWith(`${name}_`)),
+  ]);
+// SCIENT-FORK:END
+
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
+  connectorServerNames: ReadonlyArray<string>,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -405,6 +430,9 @@ const sessionRules = (
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
   ...mcpRules(mcpServerName),
+  // SCIENT-FORK:START — the thread's own connectors after every thread's are denied.
+  ...connectorRules(policy, grants, connectorServerNames),
+  // SCIENT-FORK:END
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -693,6 +721,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
   const driver = OPENCODE_PROVIDER;
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Crypto.Crypto, crypto));
+  // SCIENT-FORK:START — Scient Extensions connectors are keyed by their thread.
+  const connectorKeyFor = (threadId: string) =>
+    openCode2ConnectorKey(threadId).pipe(Effect.provideService(Crypto.Crypto, crypto));
+  // SCIENT-FORK:END
 
   const borrow = Effect.gen(function* () {
     const lent = yield* Deferred.make<
@@ -794,7 +826,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       reports: new Map(),
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
-      mcp: undefined,
+      mcp: [],
       instructions: undefined,
     });
 
@@ -2603,7 +2635,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
+      for (const state of threads.values()) state.mcp = [];
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -2726,18 +2758,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     const rulesFor = Effect.fnUntraced(function* (
       thread: Pick<ThreadState, "directory" | "agent" | "grants">,
       policy: RulesPolicy,
-      appThreadId: string | null,
+      appThreadId: OrchestrationV2ProviderThread["appThreadId"],
     ) {
       const plan = policy.interactionMode === "plan";
       const paths =
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+      // SCIENT-FORK:START — the connectors this thread's turns register, named as they are.
+      const connectors =
+        appThreadId !== null && configureMcp && !connection.external
+          ? ((yield* mcpSessions.read(appThreadId))?.connectors ?? [])
+          : [];
+      const connectorKey =
+        appThreadId === null || connectors.length === 0 ? "" : yield* connectorKeyFor(appThreadId);
+      const connectorServerNames = connectors.map((connector) =>
+        openCode2ConnectorServerName(connectorKey, connector.serverName),
+      );
+      // SCIENT-FORK:END
       return sessionRules(
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        connectorServerNames,
       );
     });
 
@@ -2969,11 +3013,29 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [...threads.values()].flatMap((state) => state.mcp),
         removeMcp,
         { concurrency: 8, discard: true },
       ),
     );
+
+    const addMcp = (entry: OpenCode2McpEntry, url: string, failure: string) =>
+      client.mcp
+        .add({
+          server: entry.name,
+          location: { directory: entry.directory },
+          config: new Mcp.RemoteConfig({
+            type: "remote",
+            url,
+            headers: { Authorization: entry.credential },
+            oauth: false,
+          }),
+        })
+        .pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.as(true),
+          Effect.catchCause((cause) => Effect.logWarning(failure, cause).pipe(Effect.as(false))),
+        );
 
     const prepareTurn = Effect.fnUntraced(function* (
       sessionId: string,
@@ -2993,41 +3055,39 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         external: connection.external,
         name,
         directory,
+        connectorKey: yield* connectorKeyFor(turnInput.threadId),
       });
-      if (
-        state.mcp !== undefined &&
-        (wanted === undefined ||
-          state.mcp.directory !== wanted.directory ||
-          state.mcp.credential !== wanted.credential)
-      ) {
-        yield* removeMcp(state.mcp);
-        state.mcp = undefined;
+      // SCIENT-FORK:START — connectors leave with T3's server, or alone once dropped.
+      const stale = staleOpenCode2McpEntries(state.mcp, wanted);
+      if (stale.length > 0) {
+        yield* Effect.forEach(stale, removeMcp, { discard: true });
+        state.mcp = state.mcp.filter((entry) => !stale.includes(entry));
       }
+      const hold = (entry: OpenCode2McpEntry) => {
+        const held = state.mcp.findIndex((existing) => existing.name === entry.name);
+        state.mcp = held === -1 ? [...state.mcp, entry] : state.mcp.with(held, entry);
+      };
+      // SCIENT-FORK:END
       // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
-        mcpAvailable = yield* client.mcp
-          .add({
-            server: name,
-            location: { directory },
-            config: new Mcp.RemoteConfig({
-              type: "remote",
-              url: wanted.endpoint,
-              headers: { Authorization: wanted.credential },
-              oauth: false,
-            }),
-          })
-          .pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not add Scient's MCP server to OpenCode.", cause).pipe(
-                Effect.as(false),
-              ),
-            ),
+        mcpAvailable = yield* addMcp(
+          wanted,
+          wanted.endpoint,
+          "Could not add Scient's MCP server to OpenCode.",
+        );
+        if (mcpAvailable) hold(wanted);
+        // SCIENT-FORK:START — each connector is best effort, like T3's own server.
+        for (const connector of wanted.connectors) {
+          const added = yield* addMcp(
+            connector,
+            connector.url,
+            `Could not add the ${connector.displayName} connector to OpenCode.`,
           );
-        if (mcpAvailable) state.mcp = wanted;
+          if (added) hold(connector);
+        }
+        // SCIENT-FORK:END
       }
       const instructions = [
         options.runtimeGuidance?.(mcpAvailable ? wanted?.capabilities : undefined),
@@ -3783,7 +3843,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             childOwners.delete(child);
             threads.delete(child);
           }
-          if (state.mcp !== undefined) yield* removeMcp(state.mcp);
+          yield* Effect.forEach(state.mcp, removeMcp, { discard: true });
         }),
       respondToRuntimeRequest: (requestInput) =>
         Effect.gen(function* () {

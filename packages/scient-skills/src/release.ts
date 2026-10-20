@@ -27,6 +27,9 @@ const SEMVER_PATTERN = new RegExp(
   `^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}(?:-${SEMVER_PRERELEASE}(?:\\.${SEMVER_PRERELEASE})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
   "u",
 );
+
+/** Exact SemVer 2.0.0, without ranges, `v` prefixes, or loose forms. */
+export const isStrictSemver = (value: string): boolean => SEMVER_PATTERN.test(value);
 const verifiedFiles = new WeakMap<SkillRelease, ReadonlyMap<string, Uint8Array>>();
 
 const compareStrings = (left: string, right: string): number =>

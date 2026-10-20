@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -28,6 +30,7 @@ export {
 import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecycle/ClaudeManagedRuntimeActions.ts";
 import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   createClaudeAdapterV2,
@@ -207,6 +210,13 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      // SCIENT-FORK:START — plugins and MCP servers Claude reports in each live
+      // session's `system/init` and turn end, published by the provider registry.
+      const nativeInventory = yield* Effect.acquireRelease(
+        PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
+        PubSub.shutdown,
+      );
+      // SCIENT-FORK:END
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
@@ -218,7 +228,14 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
           enabled,
           config: effectiveConfig,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          // SCIENT-FORK:START — live-session provider-native inventory.
+          onNativeInventory: (inventory) =>
+            PubSub.publish(nativeInventory, inventory).pipe(Effect.asVoid),
+          // SCIENT-FORK:END
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -468,6 +485,9 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
                 Effect.provideService(Path.Path, path),
               ),
         skillActions,
+        // SCIENT-FORK:START — live-session provider-native inventory.
+        nativeInventoryChanges: Stream.fromPubSub(nativeInventory),
+        // SCIENT-FORK:END
         orchestrationAdapter,
         textGeneration,
         voiceTranscriptCorrection,

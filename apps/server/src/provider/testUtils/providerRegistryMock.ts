@@ -22,6 +22,8 @@ export const makeProviderRegistryMock = (
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
   getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
   getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+  getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+  recordProviderNativeInventory: () => Effect.succeed(providers),
   getVoiceTranscriptCorrectionForInstance: () =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
     Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

@@ -106,6 +106,22 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
+  // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
+  [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDiscoverSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDeliveryReceipt]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsConnectorAdd]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorStartSignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorSetProjectSelection]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorTest]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginInstall]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginSetEnabled]: AuthSettingsWriteScope,
+  [WS_METHODS.providerPluginsAct]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
 
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,

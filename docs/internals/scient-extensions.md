@@ -135,29 +135,91 @@ Synara's port-change breakage).
 
 ### Outbound safety
 
-All connector egress (probe, discovery, token, proxy) uses one policy: `https`
-only (plain `http` only to a loopback host the user typed explicitly, never from
-the registry), no redirects on proxied MCP traffic, a public-address check
-against DNS rebinding for non-loopback hosts, request ≤ 4 MiB, response ≤ 32 MiB,
-5-minute proxy timeout, per-connector concurrency bound.
+All connector egress (probe, discovery, token, registration, revocation, proxy)
+uses one policy:
+
+- `https` only. The one exception is the exact loopback origin the user typed as
+  a connector address (never from the registry or a plugin); it never extends to
+  metadata, authorization-server or redirect URLs, even on another loopback port.
+- Every other host must resolve to globally routable unicast addresses, checked
+  inside the socket's DNS lookup (no rebinding window). IPv6 is allow-listed to
+  `2000::/3` minus special-use blocks; mapped and 6to4 addresses are judged by
+  their embedded IPv4 address; NAT64, ULA, link/site-local, Teredo and
+  documentation ranges are refused.
+- Only unauthenticated metadata `GET`s follow redirects (each hop re-checked).
+  Credentialed or body-carrying requests (probe, token, registration,
+  revocation, proxied MCP) never follow one, so no credential, code, verifier,
+  refresh token or client secret is replayed to another origin.
+- Request ≤ 4 MiB, response ≤ 32 MiB, 5-minute proxy timeout, and at most 32
+  upstream exchanges per connector, each held until its response body ends; a
+  full connector answers busy instead of queueing.
 
 ### Proxy
 
 `POST|GET|DELETE /mcp/connectors/:connectorId`, mounted beside `/mcp` and outside
 environment auth (the MCP session token is the authority, as for `/mcp`).
 
-- Forwards `content-type`, `accept`, `mcp-session-id`, `mcp-protocol-version`,
-  `last-event-id`; drops everything else including `authorization`, `cookie`.
+- Forwards `content-type`, `accept`, `mcp-protocol-version`, `last-event-id`;
+  drops everything else including `authorization`, `cookie`.
+- `mcp-session-id` is proxy-owned: the agent receives an opaque id bound to the
+  connector and to the Scient provider session that opened it, and only that
+  session can use or terminate it. Vendor session ids never reach the agent.
 - Buffers the request body (POST bodies are single JSON-RPC messages, ≤ 4 MiB)
-  so it can be replayed once after a refresh; streams response bodies without
-  buffering (SSE progress, `retry`, ids preserved). `GET` event streams are
-  passed through; upstream 405 is passed through.
-- 202 and 204 pass through. Upstream 404 for a session passes through (agent
-  re-initializes).
+  so it can be replayed once after a refresh. Responses are redacted by a
+  token-level JSON rewriter that builds no objects: every token is copied byte
+  for byte, and only a string (value or key) or number lexeme carrying a
+  credential Scient applied becomes `"[redacted by Scient]"`. Strings are
+  checked after JSON unescaping, tolerant percent decoding (up to three rounds,
+  plain and form) and base64/base64url decoding at every alignment (runs found
+  by a linear scan). Untainted JSON is unchanged, including exact numbers and
+  any key name; nesting beyond 512 levels is refused.
+- SSE is parsed line by line per the specification (CRLF, CR, LF or mixed,
+  across chunks) and re-rendered event by event, each complete event released at
+  once and bounded by its own 4 MiB of upstream bytes. Data is redacted as JSON;
+  empty data (resumption priming) passes as is. A credential-bearing `event` or
+  `id` is dropped, `retry` passes only as an integer up to 600 000 ms, and each
+  upstream comment becomes a fixed `: keepalive` (its content is never sent).
+  A success body or event that is not verifiable JSON is replaced by a Scient
+  JSON-RPC error (ending the stream). Response headers are rebuilt by Scient:
+  content type, a protocol version only when it is a known MCP version
+  (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25), and the proxy session id;
+  nothing else is forwarded.
+- Every credential Scient holds or applies is at least 16 characters (entered
+  keys, the Basic password half, issued access and refresh tokens, DCR and
+  user client secrets). Shorter ones are refused at entry; issued ones are
+  revoked and the connector marked needs-auth, whatever its previous status;
+  stored legacy material is never applied (a short own client secret must be
+  replaced, a short stored DCR registration is re-registered at the next
+  sign-in). They could not be told apart from ordinary text.
+- Only MCP results pass through. 202/204, `GET` 405 and session 404 keep their
+  status with server-owned bodies; every other upstream status or content type
+  becomes a server-owned error, so vendor error text never reaches the agent.
 - On upstream 401 with OAuth: one forced refresh, then the buffered request is
   replayed once.
-- Each completed `tools/call` is recorded as a use of the connector's credential
-  (thread, provider session, tool name, outcome).
+- Each `tools/call` is recorded as a use of the connector's credential (thread,
+  provider session, tool name, outcome at response headers).
+- Refusals: a missing or unknown bearer gets 401 without `resource_metadata`
+  (as for `/mcp`); a connector not delivered to the session gets 403; a lost
+  grant, a disabled connector, an ineligible plugin connector or a deselected
+  project gets a JSON-RPC error (code `-32001`) for `POST` and 403 for
+  `GET`/`DELETE`.
+
+### Lifecycle fencing
+
+Refresh, sign-in commit and disconnect for one connector run under one
+lifecycle lock. Each sign-in mints a grant id that refreshes keep; a refresh
+commits with compare-and-swap on the version it read and never overwrites a
+different grant (its tokens are revoked instead). Disconnect tombstones the
+connector and aborts its in-flight work before committing the removal; work
+that finishes afterwards cannot send, persist or keep a grant, and anything it
+obtained is revoked. A credential read outside the lock fills the in-memory
+grant cache only if no sign-in, refresh or drop was published while it ran, so
+a stale read never restores an older account. Connector state, secret
+creation, replacement and removal are synced (data, then directory entry)
+before they are acknowledged; a sync failure fails the operation, and only
+platforms that cannot sync a directory (Windows) skip that step. A removal also
+purges preserved duplicate entries with the same id so they never become live
+after a restart.
 
 ### Grants and delivery
 
@@ -171,9 +233,11 @@ connected ∧ enabled
 ```
 
 The set is stored on the registry scope (`connectorIds`) and in
-`McpProviderSessionConfig.connectors: { connectorId, serverName, url }[]`.
-Credential reuse requires an equal connector set; a changed set re-issues, which
-matches the existing behavior for capability changes.
+`McpProviderSessionConfig.connectors: { connectorId, serverName, displayName, url }[]`.
+Credential reuse requires an equal connector set (same ids, names and order); a
+changed set re-issues, which matches the existing behavior for capability changes.
+Drivers without a reviewed delivery path skip every connector as
+`transport-unsupported` (`apps/server/src/scient/extensions/ConnectorProviderSupport.ts`).
 
 At request time the proxy re-checks the same predicate, so disconnecting,
 disabling, or deselecting takes effect on the next call. Adding a connector
@@ -181,21 +245,52 @@ reaches sessions issued afterwards.
 
 Adapters map the list into their native formats:
 
-| Adapter                                         | Delivery                                                                                                             |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Claude                                          | additional `mcpServers` record entries (`type: "http"`)                                                              |
-| Codex                                           | additional `config.mcp_servers.<name>` entries with `http_headers`                                                   |
-| Cursor                                          | additional `mcpServers` record entries                                                                               |
-| OpenCode                                        | one `mcp.add` remote entry per connector                                                                             |
-| ACP (Grok, Droid, Antigravity, registry agents) | `mcpServers` http entries when the agent advertises `mcpCapabilities.http`; otherwise one stdio bridge per connector |
-| Pi                                              | JSON list in the extension bootstrap; extension registers each server's tools with a `<server>__` prefix             |
-| OMP                                             | bootstrap list                                                                                                       |
+| Adapter                                         | Delivery                                                                                                                                                                                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                                          | additional `mcpServers` record entries (`type: "http"`)                                                                                                                                                                                                     |
+| Codex                                           | additional `config.mcp_servers.<name>` entries with `http_headers`                                                                                                                                                                                          |
+| Cursor                                          | additional `mcpServers` record entries                                                                                                                                                                                                                      |
+| OpenCode                                        | one `mcp.add` remote entry per connector                                                                                                                                                                                                                    |
+| ACP (Grok, Droid, Antigravity, registry agents) | one stdio bridge entry per connector, exactly like Scient's own entry, even when the agent advertises `mcpCapabilities.http` (some ACP agents, e.g. codex-acp and pi-acp, silently drop http servers, and a receipt must never claim a delivery that fails) |
+| Pi                                              | JSON list in the extension bootstrap; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                         |
+| OMP                                             | bootstrap list; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                                               |
+
+Pi and OMP register connector tools under names every supported model API
+accepts (`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`): the tool name's other characters
+become `_`, a leading digit gains a `_` prefix, and a name that is too long or
+already taken becomes its first 55 characters plus `_` and 8 hex digits of
+SHA-256(`<server>\0<tool>`). Calls use the original tool name.
 
 Reserved server names: `scient`, `t3-code`, `t3_code`, `t3code`. Connector names
-are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Before
-delivery, adapters that know the provider's native server names (Codex
-`mcpServerStatus/list`, Claude init `mcp_servers`) skip a connector whose name
-collides and record the reason in the receipt.
+are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Planning
+skips a connector whose name the provider instance last reported as one of its
+native servers (a conservative check: the report may come from another
+workspace). Claude's native servers depend on the workspace, so the Claude
+adapter also asks the live CLI (`mcpServerStatus`) before it registers
+anything; a connector whose name a configured server already uses is left
+unregistered and the credential's receipt moves it to skipped with
+`name-collision`, so a user's own server is never replaced. If the CLI cannot
+list its servers within 10 s, every connector is withheld for that query and
+skipped with `native-servers-unknown` (fail closed: naming a plugin's server
+in `setMcpServers` would replace it). Each query starts through
+`McpProviderSessionConfig.beginConnectorRegistration`, which the issuing server
+runtime binds to its own receipt store and credential and which hands out a
+per-credential sequence before anything is awaited. Once `setMcpServers`
+returns, the query reports its settled outcome: connectors it withheld, plus
+connectors the CLI listed errors for (or every connector when registration
+rejected, timed out or was interrupted) as `registration-failed`. The receipt
+keeps the report of the query that started last, across every session sharing
+the credential, so a later query that registers a connector returns it to
+delivered and an older query that settles late cannot overwrite it. The
+sequence and the latest accepted outcome live in the credential's tracker,
+created once when the credential is issued, so replacing or evicting the
+thread's receipt never resets them: when the manager records a receipt for a
+reused credential it applies that outcome in the same step, so the receipt
+never shows a withheld connector as delivered.
+
+A session without an MCP injection channel (for example an external OpenCode
+server) records a receipt with no deliveries and every eligible connector
+skipped as `transport-unsupported`, replacing any earlier session's receipt.
 
 ### Receipts
 
@@ -203,8 +298,9 @@ collides and record the reason in the receipt.
 ExtensionDeliveryReceipt {
   threadId; providerInstanceId; providerSessionId; issuedAt;
   delivered: { connectorId; serverName }[];
-  skipped: { connectorId; serverName; reason: "needs-auth" | "disabled" | "project-deselected"
-             | "transport-unsupported" | "name-collision" }[];
+  skipped: { connectorId; serverName; reason: "needs-auth" | "needs-credential" | "disabled"
+             | "project-deselected" | "transport-unsupported" | "name-collision"
+             | "native-servers-unknown" | "registration-failed" }[];
 }
 ```
 
@@ -239,28 +335,112 @@ Manifest `scient.plugin.json` (`apiVersion: "scient.plugins/v1alpha1"`):
 
 ```ts
 ScientPluginManifest {
-  id; version; displayName; description; publisher;
+  apiVersion: "scient.plugins/v1alpha1";
+  id; version /* exact SemVer */; displayName; description; publisher;
   contributes: {
-    skills?: string[];                        // directories inside the bundle (Agent Skills format)
-    connectors?: RegistryServerRef[] | RemoteConnectorDefinition[];
-    capabilities?: McpCapability[];           // built-ins only
-    settingsPage?: string;                    // built-ins only
+    skills?: string[];                                            // directories inside the bundle (Agent Skills format)
+    connectors?: { url /* https */; displayName; description? }[]; // remote MCP servers
   };
 }
 ```
+
+Unknown keys are rejected rather than ignored. `capabilities` and settings
+pages exist only on built-in plugins; keys that would carry code (`main`,
+`scripts`, `bin`, `hooks`, `commands`, `mcpServers`, `ui`, `panels`) are
+rejected with a named reason.
 
 - **Built-in plugins** describe existing Scient features (Sources, Documents,
   Compute, Browser and devices, Pull requests, Skills). They appear in the
   library with their contributed tools and settings links. Their on/off controls
   are the existing settings (for example agent browser/device access); no
-  parallel toggle is introduced.
+  parallel toggle is introduced. The `scient.` id namespace is reserved for them.
 - **Declarative bundles** contain only data: Agent Skills directories and
-  connector definitions. They are installed from a local directory or archive,
-  snapshotted immutably with a SHA-256 digest (reusing the Scient skill release
-  loader and the `addon` skill origin), and removed atomically. A bundle's
-  connectors are created in `needs-auth`/disconnected state; installing never
-  signs in or grants anything. A bundle cannot declare itself active, consistent
-  with the skills authority model.
+  connector definitions. They are installed from an absolute directory path on
+  the server host and read once into memory. The requested root is `lstat`ed
+  and its device/inode is carried into the walk: its canonical path must name
+  that same directory, and the requested path must still name it afterwards.
+  Each directory must be a real directory whose `realpath` is its expected path
+  and whose device/inode is unchanged before and after it is listed and after
+  each of its files is read; each file is opened with `O_NOFOLLOW | O_NONBLOCK`,
+  its descriptor must be the same singly linked regular inode that was listed,
+  and it is read with a bounded loop. Symbolic links, hard links, FIFOs and
+  other special files are rejected; `.git` and `.DS_Store` are skipped; at most
+  2,000 entries, 1,000 files, 16 levels, 5 MiB per file and 20 MiB in total;
+  the scan stops when the request is cancelled.
+
+  **Accepted residual window (concurrent writer).** Node has no `openat`, so
+  these are pathname checks around each read, not race-free containment. A
+  process that can rename directories inside the selected bundle while Scient
+  reads it can, after an intermediate directory's last check, replace that
+  directory with a link to an outside directory, keep it replaced while one
+  child is `lstat`ed, opened and read (the listed and opened inode then both
+  belong to the same outside, singly linked file), and restore the original
+  before the post-read directory check. Every check passes and the snapshot
+  holds that outside file's bytes, which are then digested and installed like
+  bundle bytes. The window is accepted because the bundle path is chosen by
+  the user on the server host and exploiting it needs a writer that already
+  has rename access inside that directory while the install runs, plus read
+  access to the outside file; installing from a directory nobody else can
+  modify removes it. Closing it requires descriptor-relative traversal
+  (`openat` with `O_NOFOLLOW` on every component) or an equivalent platform
+  mechanism. A swapped root, a persistent directory or file swap, a swapped
+  final component, a FIFO, a replaced file and a growing file are all rejected.
+
+  The snapshot is digested with SHA-256 over sorted paths and contents and
+  copied to `<stateDir>/scient-plugins/<id>@<version>-<digest12>/`.
+  Installed bundles are recorded in `<stateDir>/scient-plugins.json`
+  (versioned, atomic write, unreadable entries preserved and written back; an
+  unreadable file is never overwritten and pauses changes), including the
+  connectors each plugin created. Ownership of a connector is dropped only when
+  a complete connector inventory (no `state-unreadable` or
+  `connector-record-unreadable` diagnostic) confirms it is gone; while the
+  connector store is degraded ownership is kept, and changes to a plugin's own
+  connectors fail with `state-unavailable`. Writing and reading share one 1 MiB
+  budget: a change whose encoded state, preserved entries included, would
+  exceed it fails with `limit-reached` and leaves the previous state in place,
+  so every committed state is readable at the next start. An install sizes the
+  complete candidate state (with the longest possible id for each connector it
+  would create) before it copies files, creates connectors, or retires any.
+  On restart each copy must still match its
+  recorded digest, otherwise it is listed with a diagnostic and contributes
+  nothing. Each contributed skill must carry `scient.skill.json` with origin
+  `{ kind: "addon", addonId: <id>, addonVersion: <version> }` and is loaded with
+  the Scient skill release loader (see
+  [Scient skills](scient-skills.md#add-on-releases)); a skill that reuses a
+  Scient or another plugin's skill id or name is refused, and personal
+  activation is bound to the exact release digest. Connectors are created
+  through the connector runtime and are never signed in by installing.
+
+- **Lifecycle.** Every change is serialized and, once past read-only
+  validation, runs uninterruptibly to completion. Reinstalling the same id
+  keeps owned connectors whose declared URL is unchanged (with their sign-in),
+  and adds new ones and removes dropped ones before the record commits; if any
+  step fails, the change is reported as failed and added connectors are rolled
+  back. Revoking (disabling a plugin, or reinstalling a disabled one) happens
+  before the record commits; granting happens only after it: enabling a
+  plugin, or repairing an unverified copy, re-enables retained connectors once
+  the verified record is durably committed, and a failure there leaves them
+  disabled with a diagnostic. Removing removes connectors first, then the
+  record and files.
+- **Grant-time eligibility.** After every commit the registry publishes to
+  `PluginConnectorEligibility` the exact connector ids owned by enabled,
+  verified plugins. The connector runtime consults it for every plugin-sourced
+  connector in `resolveDelivery` (skipped as "disabled"), `isGranted`,
+  `forward`, and `update` (enabling an ineligible one fails with `unsupported`).
+  Until the registry has published, and while `scient-plugins.json` is
+  unreadable, every plugin-sourced connector is denied. The service only reads
+  a `Ref`, sits below both the runtime and the registry, and takes no lock, so
+  revocation never depends on a successful connector or state write.
+- **Reconciliation.** At startup and before every change, plugin-sourced
+  connectors are converged on the committed records: connectors no record owns
+  (left by a crash or a failed rollback) are removed; connectors of a disabled
+  or unverified plugin are disabled; while the state file or any record is
+  unreadable, ownership is unknown and plugin connectors are disabled rather
+  than removed. Unreferenced copies and staging directories are deleted.
+  Cleanup that cannot finish is reported as a diagnostic and retried on the
+  next change; the connector stays denied meanwhile by grant-time eligibility.
+  A bundle cannot declare itself active, consistent with the skills authority
+  model.
 - **Code-bearing plugins are not supported.** Nothing from a bundle is executed:
   no local MCP server processes, no scripts, no UI code. Supporting third-party
   code requires a separate decision (see Open decisions).
@@ -268,11 +448,20 @@ ScientPluginManifest {
 ## Discover: MCP Registry
 
 Server-side client for `https://registry.modelcontextprotocol.io/v0.1/servers`
-(search, cursor pagination, `version=latest`), cached 10 minutes, with bounded
-retries. Entries are filtered to `status: active` and normalized into
-`DiscoverEntry` with `installable` = has a `streamable-http` remote without
-unresolved required variables. Package-only (local) entries are listed with
-"runs locally — not supported" and are not installable.
+(search, cursor pagination, `version=latest`, at most 100 per page), cached 10
+minutes per query, cursor and limit, with a 10-second deadline per attempt, two
+retries for transport failures, timeouts, 429 and 5xx, and a 4 MiB response
+cap. Entries are filtered to `status: active` and normalized into
+`DiscoverEntry`: `remotes` lists the `streamable-http` remotes served over
+https, decided after URL variables are substituted (fixed `value` first, then
+`default`), plus unresolved templates whose scheme is not a literal non-https
+one; a remote `requiresInput` when it has a required header or an unresolved
+URL variable; `installable` = at
+least one such remote without required input. Otherwise `unsupportedReason`
+explains why: package-only (local) servers "Runs locally — local servers are
+not supported yet", required configuration, non-https endpoints, or another
+transport (for example legacy SSE). `installedConnectorId` is computed live
+from connectors whose source is that registry name, never cached.
 
 ## Secrets integration
 

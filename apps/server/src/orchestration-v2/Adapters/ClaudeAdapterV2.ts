@@ -8,6 +8,16 @@ import {
 } from "../scient-provider/ClaudeWorkflowMemberPresentation.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
+// SCIENT-FORK:START Scient Extensions native inventory
+import {
+  claudeNativeInventoryFromInit,
+  claudeNativeMcpServers,
+} from "../../provider/ProviderNativeInventory.ts";
+import type { ProviderNativeInventory } from "../../provider/ScientProviderInstanceSeams.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START Scient Extensions turn-end MCP status sample
+import type { McpServerStatus as ClaudeMcpServerStatus } from "@anthropic-ai/claude-agent-sdk";
+// SCIENT-FORK:END
 import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
 import {
   nativeTurnAcceptance,
@@ -101,6 +111,7 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
+  type ExtensionDeliverySkipReason,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -288,6 +299,10 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK puts no deadline on control requests. The CLI answers
 // mcp_set_servers once each server connected or hit its own 30 s timeout.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+// SCIENT-FORK:START Scient Extensions: the native-server preflight reads the
+// CLI's already-loaded configuration, so it gets a short deadline of its own.
+export const CLAUDE_NATIVE_MCP_DISCOVERY_TIMEOUT = "10 seconds";
+// SCIENT-FORK:END
 // Claude Code flushes transcript writes every 100 ms, so a workflow member's
 // reply can land after the progress frame that settles it. Its transcript
 // stays the source of its answer this long after it settles.
@@ -462,6 +477,21 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  // SCIENT-FORK:START Scient Extensions connectors
+  /**
+   * `options.mcpServers` entries that must yield to a provider-native server
+   * of the same name in this session's workspace (Scient connectors). They are
+   * left unregistered so a user's own server is never replaced; when the CLI
+   * cannot say which servers it has, every one of them is withheld.
+   * `beginRegistration` runs before anything is awaited and its reporter gets
+   * the settled outcome once `setMcpServers` returns or fails, so the receipt
+   * describes the query that started last and only what it really registered.
+   */
+  readonly yieldToNativeServers?: {
+    readonly serverNames: ReadonlyArray<string>;
+    readonly beginRegistration: Effect.Effect<McpProviderSession.McpConnectorRegistrationReporter>;
+  };
+  // SCIENT-FORK:END
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -478,6 +508,13 @@ export interface ClaudeAgentSdkQuerySession {
   readonly backgroundTasks: (
     toolUseId: string,
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
+  // SCIENT-FORK:START Scient Extensions turn-end MCP status sample
+  /** The CLI's current MCP server status; absent where the session cannot report it. */
+  readonly mcpServerStatus?: Effect.Effect<
+    ReadonlyArray<ClaudeMcpServerStatus>,
+    ClaudeAgentSdkQueryRunnerError
+  >;
+  // SCIENT-FORK:END
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -841,13 +878,87 @@ export const layerQueryRunner: Layer.Layer<
               restore(
                 Effect.gen(function* () {
                   if (mcpServers !== undefined) {
+                    // SCIENT-FORK:START Scient Extensions: before anything dynamic is set,
+                    // every server the CLI reports is the workspace's own configuration.
+                    // Unknown ownership fails closed: no connector name is registered.
+                    const yielding = input.yieldToNativeServers;
+                    const yieldNames = yielding?.serverNames ?? [];
+                    // Taken at query start, so the query that started last owns the receipt.
+                    const report =
+                      yielding === undefined || yieldNames.length === 0
+                        ? undefined
+                        : yield* yielding.beginRegistration;
+                    const withholding =
+                      report === undefined
+                        ? undefined
+                        : yield* Effect.tryPromise(() => queryRuntime.mcpServerStatus()).pipe(
+                            Effect.map((statuses) => {
+                              const native = new Set(
+                                claudeNativeMcpServers(statuses, new Set()).map(
+                                  (server) => server.name,
+                                ),
+                              );
+                              return {
+                                serverNames: yieldNames.filter((name) => native.has(name)),
+                                reason: "name-collision" as const,
+                              };
+                            }),
+                            Effect.timeoutOrElse({
+                              duration: CLAUDE_NATIVE_MCP_DISCOVERY_TIMEOUT,
+                              orElse: () => Effect.fail("timeout"),
+                            }),
+                            Effect.catch(() =>
+                              Effect.logWarning(
+                                "orchestration-v2.claude-native-mcp-status-unavailable",
+                                { threadId: input.threadId, withheld: yieldNames },
+                              ).pipe(
+                                Effect.as({
+                                  serverNames: yieldNames,
+                                  reason: "native-servers-unknown" as const,
+                                }),
+                              ),
+                            ),
+                          );
+                    const withheld = withholding?.serverNames ?? [];
+                    const registered =
+                      withheld.length === 0
+                        ? mcpServers
+                        : Object.fromEntries(
+                            Object.entries(mcpServers).filter(([name]) => !withheld.includes(name)),
+                          );
+                    if (withholding !== undefined && withheld.length > 0)
+                      yield* Effect.logInfo("orchestration-v2.claude-connectors-withheld", {
+                        threadId: input.threadId,
+                        servers: withheld,
+                        reason: withholding.reason,
+                      });
+                    /** Connectors this query withheld or could not get registered. */
+                    const settle = (failed: ReadonlySet<string>) =>
+                      report === undefined || withholding === undefined
+                        ? Effect.void
+                        : report({
+                            withheld: yieldNames.flatMap(
+                              (
+                                serverName,
+                              ): ReadonlyArray<{
+                                readonly serverName: string;
+                                readonly reason: ExtensionDeliverySkipReason;
+                              }> =>
+                                withheld.includes(serverName)
+                                  ? [{ serverName, reason: withholding.reason }]
+                                  : failed.has(serverName)
+                                    ? [{ serverName, reason: "registration-failed" }]
+                                    : [],
+                            ),
+                          });
+                    // SCIENT-FORK:END
                     // Error texts and the CLI's mcp_status response can echo the headers, so
                     // only server names are logged.
                     const failed = yield* Effect.tryPromise(() =>
-                      queryRuntime.setMcpServers(mcpServers),
+                      queryRuntime.setMcpServers(registered),
                     ).pipe(
                       Effect.map((result) => Object.keys(result.errors)),
-                      Effect.orElseSucceed(() => Object.keys(mcpServers)),
+                      Effect.orElseSucceed(() => Object.keys(registered)),
                       Effect.timeoutOrElse({
                         duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
                         orElse: () =>
@@ -858,6 +969,9 @@ export const layerQueryRunner: Layer.Layer<
                             ),
                           ),
                       }),
+                      // SCIENT-FORK:START Scient Extensions: an unsettled registration delivered nothing.
+                      Effect.onError(() => settle(new Set(yieldNames))),
+                      // SCIENT-FORK:END
                     );
                     if (failed.length > 0) {
                       yield* Effect.logWarning("orchestration-v2.claude-mcp-servers-unavailable", {
@@ -865,6 +979,9 @@ export const layerQueryRunner: Layer.Layer<
                         servers: failed,
                       });
                     }
+                    // SCIENT-FORK:START Scient Extensions: report only what registration settled.
+                    yield* settle(new Set(failed));
+                    // SCIENT-FORK:END
                   }
                   yield* logProtocolEvent({
                     direction: "outgoing",
@@ -987,6 +1104,12 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+          // SCIENT-FORK:START Scient Extensions turn-end MCP status sample
+          mcpServerStatus: Effect.tryPromise({
+            try: () => queryRuntime.mcpServerStatus(),
+            catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
+          }),
+          // SCIENT-FORK:END
           interrupt: Effect.tryPromise({
             try: () => queryRuntime.interrupt(),
             catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -1295,21 +1418,36 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const scientServer = {
+    type: "http" as const,
+    url: session.endpoint,
+    headers: {
+      Authorization: session.authorizationHeader,
+    },
+    timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+  };
   return {
     scientAwareness: buildScientAwareness(
       toMcpCapabilities(session.capabilities),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     ),
+    // Only Scient's own tools are pre-approved; connector tools go through
+    // Claude's normal per-server permission flow.
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      scient: {
-        type: "http",
-        url: session.endpoint,
-        headers: {
-          Authorization: session.authorizationHeader,
-        },
-        timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
-      },
+      scient: scientServer,
+      // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
+      ...Object.fromEntries(
+        session.connectors.map((connector) => [
+          connector.serverName,
+          {
+            type: "http" as const,
+            url: connector.url,
+            headers: { Authorization: session.authorizationHeader },
+          },
+        ]),
+      ),
+      // SCIENT-FORK:END Scient Extensions connectors
     },
   };
 }
@@ -3508,6 +3646,9 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  // SCIENT-FORK:START Scient Extensions: provider-native plugins and MCP servers from live sessions
+  readonly onNativeInventory?: (inventory: ProviderNativeInventory) => Effect.Effect<void>;
+  // SCIENT-FORK:END
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -8832,11 +8973,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
+          const mcpSession =
+            input.configureMcp === false ? undefined : yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
-            mcpSession:
-              input.configureMcp === false
-                ? undefined
-                : yield* mcpSessions.read(turnInput.threadId),
+            mcpSession,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined
@@ -8974,6 +9114,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 threadId: turnInput.threadId,
                 providerSessionId: input.providerSessionId,
                 options: queryOptions,
+                // SCIENT-FORK:START Scient Extensions: connectors yield to native servers;
+                // the credential's own callback amends the runtime that issued it.
+                ...(mcpSession === undefined || mcpSession.connectors.length === 0
+                  ? {}
+                  : {
+                      yieldToNativeServers: {
+                        serverNames: mcpSession.connectors.map((connector) => connector.serverName),
+                        beginRegistration:
+                          mcpSession.beginConnectorRegistration ??
+                          Effect.succeed(() => Effect.void),
+                      },
+                    }),
+                // SCIENT-FORK:END
               })
               .pipe(
                 Effect.onError(() =>
@@ -9052,7 +9205,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       message.permissionMode !== undefined
                     )
                       context.permissionMode = message.permissionMode;
+                    // SCIENT-FORK:START Scient Extensions: publish the session's native inventory,
+                    // leaving out every MCP server Scient itself injected into this query.
+                    if (
+                      adapterOptions.onNativeInventory !== undefined &&
+                      message.type === "system" &&
+                      message.subtype === "init"
+                    )
+                      yield* adapterOptions.onNativeInventory(
+                        claudeNativeInventoryFromInit(
+                          message,
+                          new Set(Object.keys(mcpOverrides.mcpServers ?? {})),
+                        ),
+                      );
+                    // SCIENT-FORK:END
                     yield* handleSdkMessage({ query: querySession, message });
+                    // SCIENT-FORK:START Scient Extensions turn-end MCP status sample: servers
+                    // that were pending at init settle during the turn. Bounded and off the
+                    // message path; a failed sample keeps the last report.
+                    const onNativeInventory = adapterOptions.onNativeInventory;
+                    const sampleMcpServerStatus = querySession.mcpServerStatus;
+                    if (
+                      onNativeInventory !== undefined &&
+                      sampleMcpServerStatus !== undefined &&
+                      message.type === "result"
+                    )
+                      yield* sampleMcpServerStatus.pipe(
+                        Effect.timeout("5 seconds"),
+                        Effect.flatMap((servers) =>
+                          onNativeInventory({
+                            mcpServers: claudeNativeMcpServers(
+                              servers,
+                              new Set(Object.keys(mcpOverrides.mcpServers ?? {})),
+                            ),
+                          }),
+                        ),
+                        Effect.catch((cause) =>
+                          Effect.logDebug("Claude MCP server status sample failed.", { cause }),
+                        ),
+                        Effect.forkIn(sessionScope),
+                      );
+                    // SCIENT-FORK:END
                     if (
                       !requiresClaudeReauthentication(message) ||
                       message.session_id !== nativeThreadId
@@ -10396,7 +10589,14 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      | "scopedLimitNames"
+      | "onUsageLimits"
+      // SCIENT-FORK:START Scient Extensions native inventory
+      | "onNativeInventory"
+      // SCIENT-FORK:END
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

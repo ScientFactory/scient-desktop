@@ -347,6 +347,10 @@ export const ExtensionDeliverySkipReason = Schema.Literals([
   "project-deselected",
   "transport-unsupported",
   "name-collision",
+  /** The agent could not say which MCP servers it already has, so no connector name was safe. */
+  "native-servers-unknown",
+  /** The agent was given the connector but could not register or connect it. */
+  "registration-failed",
 ]);
 export type ExtensionDeliverySkipReason = typeof ExtensionDeliverySkipReason.Type;
 

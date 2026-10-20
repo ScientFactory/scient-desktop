@@ -92,6 +92,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             endpoint,
             authorizationHeader: `Bearer ${token}`,
             capabilities: new Set(["orchestration"] as const),
+            connectors: [],
           });
         }
         yield* Effect.addFinalizer(() =>

@@ -508,6 +508,7 @@ it.effect(
             endpoint: "http://127.0.0.1/mcp",
             authorizationHeader: "Bearer skill-steer-fixture",
             capabilities: new Set(["skills:read"]),
+            connectors: [],
           });
           return previous;
         }),

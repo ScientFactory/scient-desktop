@@ -4,6 +4,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
+  T3_MCP_CONNECTORS_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -24,6 +25,7 @@ const mcpSession = {
   endpoint: "http://127.0.0.1:43123/mcp",
   authorizationHeader: "Bearer secret-pi-token",
   capabilities: new Set(["preview"] as const),
+  connectors: [],
 };
 
 describe("pi T3 MCP injection", () => {
@@ -102,6 +104,79 @@ describe("pi T3 MCP injection", () => {
     });
 
     assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
+  });
+
+  it("passes delivered connectors as a JSON list authenticated by the session bearer", () => {
+    const launch = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_MCP_CONNECTORS_ENV]: '[{"serverName":"stale","url":"http://stale"}]' },
+      mcpSession: {
+        ...mcpSession,
+        connectors: [
+          {
+            connectorId: "connector-linear",
+            serverName: "linear",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+          },
+          {
+            connectorId: "connector-notion",
+            serverName: "notion_2",
+            displayName: "Notion",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-notion",
+          },
+        ],
+      },
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    const connectorsJson = launch.env[T3_MCP_CONNECTORS_ENV];
+    assert.isDefined(connectorsJson);
+    assert.deepEqual(JSON.parse(connectorsJson!), [
+      { serverName: "linear", url: "http://127.0.0.1:43123/mcp/connectors/connector-linear" },
+      { serverName: "notion_2", url: "http://127.0.0.1:43123/mcp/connectors/connector-notion" },
+    ]);
+    assert.notInclude(connectorsJson!, "secret-pi-token");
+    assert.notInclude(launch.args.join(" "), "secret-pi-token");
+    assert.equal(launch.env[T3_MCP_BEARER_ENV], "secret-pi-token");
+  });
+
+  it("omits the connector list without connectors, MCP, or the extension", () => {
+    const stale = { [T3_MCP_CONNECTORS_ENV]: '[{"serverName":"stale","url":"http://stale"}]' };
+    const withConnectors = {
+      ...mcpSession,
+      connectors: [
+        {
+          connectorId: "connector-linear",
+          serverName: "linear",
+          displayName: "Linear",
+          url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+        },
+      ],
+    };
+    const launches = [
+      buildPiRpcLaunch({
+        launchArgs: [],
+        environment: stale,
+        mcpSession,
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      }),
+      buildPiRpcLaunch({
+        launchArgs: [],
+        environment: stale,
+        mcpSession: undefined,
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      }),
+      buildPiRpcLaunch({
+        launchArgs: [],
+        environment: stale,
+        mcpSession: withConnectors,
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+        disableExtensions: true,
+      }),
+    ];
+    for (const launch of launches) {
+      assert.notProperty(launch.env, T3_MCP_CONNECTORS_ENV);
+    }
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {
