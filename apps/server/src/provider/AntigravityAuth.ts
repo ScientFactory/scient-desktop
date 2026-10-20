@@ -501,7 +501,9 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             }).pipe(
               Effect.scoped,
               Effect.timeoutOrElse({
-                duration: "90 seconds",
+                // SCIENT-FORK:START — Antigravity unpacks itself (~320 MiB) on every start; slow disks need minutes.
+                duration: "5 minutes",
+                // SCIENT-FORK:END
                 orElse: () => Effect.fail(setupError("logout", "Antigravity sign-out timed out.")),
               }),
             ),

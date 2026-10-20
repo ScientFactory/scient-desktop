@@ -780,7 +780,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         .logout(Effect.void)
         .pipe(Effect.exit, Effect.forkScoped);
       yield* Deferred.await(entered);
-      yield* TestClock.adjust("90 seconds");
+      yield* TestClock.adjust("5 minutes");
       assert.isTrue(Exit.isFailure(yield* Fiber.join(logout)));
       yield* Deferred.await(harness.closed);
       assert.notInclude(harness.events, "logout");

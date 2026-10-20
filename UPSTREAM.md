@@ -1,5 +1,14 @@
 # Upstream maintenance
 
+Mobile diff grammar tests: `apps/mobile/src/features/diffs/nativeReviewDiffHighlighter.test.ts`
+disables Shiki's per-line wall-clock timeout in its real-highlighter test wrapper.
+The inherited 500ms cutoff can return partial tokens and incomplete grammar state
+under runner contention, so equivalent inputs can produce different highlighting.
+Keep this test-only override when syncing upstream: these tests cover grammar
+boundaries, line/character batching, and cancellation, not elapsed-time fallback.
+Production retains the timeout and its partial-highlighting behavior; changing
+that behavior needs a separate decision about responsiveness and grammar recovery.
+
 Scient owns desktop/web reader-position policy. The owners are Scient-only files in
 `apps/web/src/components/chat/`: `readerScrollPolicy.ts` (the reading end),
 `readerScrolling.ts` (reader input, the one position writer, per-frame bookkeeping and
@@ -190,6 +199,10 @@ A marked line in `apps/server/vite.config.ts` adds `src/testUtils/checkoutIsolat
 sets `GIT_CEILING_DIRECTORIES` to the checkout root, so Git started below the root cannot find the
 repository.
 Upstream's harness has the same fallback, so this is worth upstreaming.
+A marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps a prompt that
+runtime teardown interrupts before its transport failure arrives as that failure, not as a
+successful `cancelled` response. Upstream converts every interrupt-only cause there, so this is
+worth upstreaming.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
@@ -1139,6 +1152,18 @@ The web defines its command in `scient/providerConnection/providerSignInCommands
 presentation comes from a Scient hook (its import and its call), so a sign-in started here reads
 as starting from the click, and a failed sign-in or setup takes the error status dot. See
 [provider lifecycle](docs/internals/provider-lifecycle.md#opening-sign-in-pages).
+
+One marked seam in `packages/provider-acp/src/server/AcpSessionRuntime.ts` keeps an agent that owns
+its process tree attached on Windows: `ownDetachedProcessGroup` spawns detached only off Windows,
+where `taskkill /T` already stops the tree. A detached agent has no console, so every console
+program it starts opens a visible window; Antigravity's own inner process is one. This is an
+upstream bug (T3's Grok uses the same path) worth proposing. In Scient's retained
+`AntigravityInstallation.ts`, a runtime check that runs out of time reports that instead of the
+install's catch-all disk-space advice.
+The install check, model refresh (`AntigravityDriver.ts`) and sign-out (`AntigravityAuth.ts`)
+allow 5 minutes instead of T3's 90 seconds, each in a marked line: the
+official Windows agent unpacks about 7,300 files (320 MiB) into a fresh folder on every start, which
+took about 35 s on a development machine and can exceed 90 s on slower disks.
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized

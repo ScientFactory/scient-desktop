@@ -157,7 +157,8 @@ function filterItem(label: string) {
 
 async function toggleFilter(label: string) {
   if (!document.querySelector('[role="menuitemcheckbox"]')) await userEvent.click(filterButton());
-  await userEvent.click(filterItem(label));
+  // SCIENT-FORK: the menu's items can mount after the opening click resolves.
+  await userEvent.click(await vi.waitFor(() => filterItem(label)));
 }
 
 it("hides bot and resolved comments until the filter shows them, and remembers the choice", async () => {
@@ -217,5 +218,7 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   await render({ ...value, url: `${value.url}0`, number: 10 });
   expect(commentTexts()).toContain("Bot report 11");
   await userEvent.click(filterButton());
-  expect(filterItem("Bot comments").getAttribute("aria-checked")).toBe("true");
+  expect((await vi.waitFor(() => filterItem("Bot comments"))).getAttribute("aria-checked")).toBe(
+    "true",
+  );
 });

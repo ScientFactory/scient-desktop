@@ -847,7 +847,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         yield* Deferred.await(spawned);
         expect(nativeLaunches(h)).toHaveLength(2);
         expect(yield* nativeLaunches(h)[1]!.handle.isRunning).toBe(true);
-        yield* TestClock.adjust("90 seconds");
+        yield* TestClock.adjust("5 minutes");
         expect(Exit.isFailure(yield* Fiber.join(logout))).toBe(true);
         yield* assertProcessesClosed(h, oldLaunches);
         yield* assertProcessesClosed(h);

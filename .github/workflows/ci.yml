@@ -16,10 +16,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Reuse is an optimization only: an absent/failed probe must run normal CI.
+  # Reuse is an optimization only: an absent/failed probe must run normal CI. A queue entry
+  # reuses its PR run, and a main push its queue runs, only for the exact same content and base.
   queue_ci:
-    name: Reuse exact queue CI
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Reuse exact CI
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     continue-on-error: true
@@ -28,12 +29,13 @@ jobs:
       actions: read
     outputs:
       reused: ${{ steps.complete.outputs.reused }}
+      source_run_id: ${{ steps.restore.outputs.source_run_id }}
       source_url: ${{ steps.restore.outputs.source_url }}
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
-      - name: Verify queue evidence and restore reports
+      - name: Verify qualification and restore reports
         id: restore
         uses: actions/github-script@v8
         with:
@@ -110,7 +112,7 @@ jobs:
           SOURCE_URL: ${{ steps.restore.outputs.source_url }}
         run: |
           echo "reused=true" >> "$GITHUB_OUTPUT"
-          printf 'Reused successful [merge-queue CI](%s) for this exact commit and comparison base. All seven reporting artifacts were preserved.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Reused successful [CI](%s) of this exact content and comparison base. All seven reporting artifacts were preserved.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
 
   check:
     needs: queue_ci
@@ -313,7 +315,7 @@ jobs:
         if: needs.queue_ci.outputs.reused == 'true'
         env:
           SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
-        run: printf 'Test suites passed in [exact-commit queue CI](%s). Reporting artifacts are attached to this run.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+        run: printf 'Test suites passed in [exact-content CI](%s). Reporting artifacts are attached to this run.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
       - name: Require applicable test suites
         if: needs.queue_ci.outputs.reused != 'true'
         env:
@@ -529,6 +531,39 @@ jobs:
           overwrite: true
           retention-days: 30
 
+  # A matrix job skipped as a whole reports one unexpanded name, never `Test Web 1` to `3` or
+  # `Test Server 1` to `3`. When a queue entry reuses its PR run, these report the required
+  # shard names for the shards that run qualified.
+  test_web_reused:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    name: Test Web ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Report reused shard
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+
+  test_server_reused:
+    needs: queue_ci
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    name: Test Server ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Report reused shard
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+
   transfer-report:
     name: Transfer report artifact
     needs: [queue_ci, test_server]
@@ -601,16 +636,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: .github/scripts
       - name: Detect mobile native changes
         id: detect
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BEFORE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
+          # The same immutable comparison as the other change gates on every event. A PR's live
+          # file list can change during a run, and the merge queue reuses this decision.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           set -uo pipefail
 
@@ -620,40 +658,15 @@ jobs:
             exit 0
           }
 
-          count_rows() {
-            printf '%s\n' "$1" | grep -c . || true
-          }
+          # Match bytes, not characters: a Git filename need not be valid UTF-8.
+          export LC_ALL=C
 
-          # One row per changed file, holding the new path and, for a rename,
-          # the path it replaced: renaming a matched file out of the matched
-          # paths removes a lint input just like editing it.
-          row='[.filename, (.previous_filename // empty)] | @tsv'
-
-          if [[ -n "${PR_NUMBER}" ]]; then
-            # The PR files endpoint stops at 3000 files and pagination cannot
-            # extend it, so cross-check against the count the PR itself reports.
-            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
-              || fail_open "Could not read the pull request."
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -lt "$expected" ]]; then
-              fail_open "GitHub listed only ${listed} of ${expected} changed files."
-            fi
-          else
-            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
-              || fail_open "Could not resolve changed files."
-
-            # The compare endpoint reports at most 300 files and pagination does
-            # not extend that list, so a full list may be hiding native changes.
-            listed=$(count_rows "$rows")
-            if [[ "$listed" -ge 300 ]]; then
-              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
-            fi
-          fi
-
-          paths=$(tr '\t' '\n' <<< "$rows")
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
+          # Without rename detection a rename lists both paths: renaming a matched file
+          # out of the matched paths removes a lint input just like editing it. A newline
+          # inside a filename becomes `?`, so each path stays on one line for the matcher.
+          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\n\0' '?\n') \
+            || fail_open "Could not resolve changed files."
 
           # Sources scripts/mobile-native-static-check.ts lints, plus the tool
           # and rule configuration that decides how it lints them, plus the
@@ -739,28 +752,32 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  queue_qualification:
-    name: Queue qualification receipt
-    needs: [check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' }}
+  # Records the exact content and base a fully successful queue run, or same-repository PR run,
+  # qualified. Fork PRs never record one, so their queue entries always run normal CI.
+  qualification:
+    name: Qualification receipt
+    needs: [queue_ci, check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
-      - name: Record complete queue qualification
+      - name: Record complete qualification
+        id: receipt
         uses: actions/github-script@v8
         env:
           QUALIFICATION_NEEDS: ${{ toJSON(needs) }}
         with:
           script: |
-            require('./.github/scripts/ci-queue-reuse.cjs').writeReceipt({
-              context, core, needs: JSON.parse(process.env.QUALIFICATION_NEEDS),
+            return await require('./.github/scripts/ci-queue-reuse.cjs').writeReceipt({
+              github, context, core, needs: JSON.parse(process.env.QUALIFICATION_NEEDS),
             });
-      - uses: actions/upload-artifact@v7
+      - if: steps.receipt.outputs.result == 'true'
+        uses: actions/upload-artifact@v7
         with:
-          name: ci-queue-qualification-attempt-${{ github.run_attempt }}
+          name: ci-${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}-qualification-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-queue-reuse/receipt.json
           if-no-files-found: error
           retention-days: 14

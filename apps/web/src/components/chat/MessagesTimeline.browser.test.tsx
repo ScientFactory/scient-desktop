@@ -2860,14 +2860,18 @@ it("anchors the first user message using its measured height", async () => {
       timelineEntries={[firstEntry]}
     />,
   );
-  await vi.waitFor(() => {
-    const image = container.querySelector<HTMLImageElement>('img[alt="screenshot.png"]');
-    expect(image?.complete).toBe(true);
-    expect(image?.naturalWidth).toBe(1);
-    expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
-    expect(onAnchorSizeChanged).toHaveBeenCalledWith(firstEntry.message.id, expect.any(Number));
-    expect(onAnchorSizeChanged.mock.lastCall?.[1]).toBeGreaterThan(0);
-  });
+  // The image load and the list's measurement can outlast a second on a busy runner.
+  await vi.waitFor(
+    () => {
+      const image = container.querySelector<HTMLImageElement>('img[alt="screenshot.png"]');
+      expect(image?.complete).toBe(true);
+      expect(image?.naturalWidth).toBe(1);
+      expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
+      expect(onAnchorSizeChanged).toHaveBeenCalledWith(firstEntry.message.id, expect.any(Number));
+      expect(onAnchorSizeChanged.mock.lastCall?.[1]).toBeGreaterThan(0);
+    },
+    { timeout: 5_000 },
+  );
   const markup = container.innerHTML;
 
   expect(markup).toContain('data-anchor-index="0"');

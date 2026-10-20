@@ -2214,7 +2214,8 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
         yield* Deferred.await(h.writeBlocked);
         yield* h.signal("die");
         yield* h.nativeTerminated;
-        yield* Deferred.succeed(h.releaseWrite, undefined);
+        // Keep the RPC outside the transport until teardown interrupts it. Releasing
+        // it here lets the transport error race the runtime scope's interruption.
         assert.equal((yield* h.terminal).status, "failed");
         const settled = h.recorded.findLast((event) => event.type === "provider_turn.updated");
         if (settled?.type !== "provider_turn.updated")
