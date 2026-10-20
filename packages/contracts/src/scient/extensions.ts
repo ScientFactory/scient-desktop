@@ -74,7 +74,11 @@ export const ConnectorAuthSummary = Schema.Union([
 ]);
 export type ConnectorAuthSummary = typeof ConnectorAuthSummary.Type;
 
-export const ConnectorStatus = Schema.Literals(["connected", "needs-auth"]);
+/**
+ * `needs-auth`: OAuth sign-in required. `needs-credential`: the bound or owned
+ * credential is gone (for example unbound in Settings → Secrets); never falls back.
+ */
+export const ConnectorStatus = Schema.Literals(["connected", "needs-auth", "needs-credential"]);
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 
 export const ConnectorProjectPolicy = Schema.Literals(["all-projects", "selected-projects"]);
@@ -338,6 +342,7 @@ export type ScientPluginSetEnabledInput = typeof ScientPluginSetEnabledInput.Typ
 
 export const ExtensionDeliverySkipReason = Schema.Literals([
   "needs-auth",
+  "needs-credential",
   "disabled",
   "project-deselected",
   "transport-unsupported",
