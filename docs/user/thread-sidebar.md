@@ -44,6 +44,49 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Keep the computer awake
+
+In the desktop app, **Settings > General > Behavior > Keep computer awake**
+is a toggle, off by default. Turn it on to prevent automatic system sleep while
+threads are running; turn it off to follow system sleep settings. This preference
+applies to this computer, across projects. The display can still turn off.
+
+Right-click a thread and open **Keep computer awake** to select:
+
+- **Use app setting**: follow the desktop default, including later changes.
+- **Until work finishes**: temporarily keep awake through one batch of work,
+  including queued additions, steered messages, linked subagents and active
+  monitoring. If selected before any work is submitted, it stays selected for
+  the next batch without keeping an idle computer awake. Once all related work
+  finishes or is cancelled and the queue is empty, the checkmark quietly returns
+  to **Use app setting** after fresh updates confirm completion. New messages
+  sent after that reset follow the app setting. Select **Use app setting** to
+  clear the temporary override immediately.
+
+A held queue or unanswered approval allows normal sleep when no related work can
+continue. The temporary choice remains saved for resumption. Queued work that
+advances automatically and result saving remain protected. Persistent background
+shell commands, such as a development server, do not alone keep the computer awake.
+Pull request watches count as monitoring until they finish or are stopped.
+A remote environment's work can request protection for this desktop's connection
+and follow-up actions; it cannot change the remote machine's sleep settings.
+
+Keep-awake has no maximum session duration and no configurable timeout.
+
+Scient releases protection after 120 seconds without a fresh execution update,
+without cancelling the work. Fresh updates can restore protection while work
+continues. Completion is confirmed across fresh updates, with a short grace period
+to avoid dropping protection
+between queued runs. Closing Scient releases its request. Preferences are
+stored in the desktop profile, independently of project settings.
+
+Keep-awake is subject to operating-system power policies, including Windows
+Modern Standby restrictions on battery and Linux desktop-service availability.
+Scient does not change Windows power plans or lid-close settings. If Windows is
+configured to sleep when the lid closes, closing it can pause local work even
+while keep-awake is enabled. Manual sleep and critical-power sleep can also
+override protection. Work on this computer may pause if the operating system sleeps.
+
 ## Pin and reorder threads
 
 A settings change affects future settlement and does not reopen a settled thread. Settings saved
