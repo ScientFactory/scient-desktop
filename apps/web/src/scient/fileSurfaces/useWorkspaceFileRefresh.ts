@@ -3,6 +3,7 @@ import { useLayoutEffect } from "react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   ProjectWriteFileError,
+  ProjectFilePublicationAttention,
   type EnvironmentId,
   type ProjectFileWatchEvent,
 } from "@t3tools/contracts";
@@ -10,6 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
+import type { DocumentPersistenceAttention } from "@scientfactory/scient-document";
+import { classifyMarkdownPersistenceFailure } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
 import {
   clearProjectFileQueryData,
@@ -19,6 +22,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 
 import { hasExternalFileConflict } from "./fileRefreshPolicy";
+const isPublicationAttention = Schema.is(ProjectFilePublicationAttention);
 
 const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
 const EMPTY_FILE_CHANGES_ATOM = Atom.make(
@@ -85,6 +89,8 @@ export interface FileReloadNotice {
 export interface FileSaveErrorNotice {
   readonly message: string;
   readonly relativePath: string;
+  readonly attention?: DocumentPersistenceAttention;
+  readonly error?: unknown;
 }
 
 /**
@@ -129,6 +135,9 @@ export function useWorkspaceFileRefresh(input: {
     readonly contents: string;
     readonly revision: string;
   } | null>(null);
+  const publicationBlocked =
+    saveError?.attention !== undefined ||
+    file.authoritativeData?.publicationAttention !== undefined;
 
   const refreshAuthoritativeFile = () => {
     if (input.relativePath === null) return;
@@ -164,6 +173,26 @@ export function useWorkspaceFileRefresh(input: {
     lastObservedChangeRef.current = null;
     lastConfirmedSaveRef.current = null;
   }, [input.relativePath]);
+
+  // A retained publication read with the file blocks saving until it is reviewed.
+  const publicationAttention = file.authoritativeData?.publicationAttention;
+  const [observedAttention, setObservedAttention] = useState<{
+    readonly attention: typeof publicationAttention;
+    readonly relativePath: string | null;
+  }>({ attention: undefined, relativePath: input.relativePath });
+  if (
+    observedAttention.attention !== publicationAttention ||
+    observedAttention.relativePath !== input.relativePath
+  ) {
+    setObservedAttention({ attention: publicationAttention, relativePath: input.relativePath });
+    if (publicationAttention && input.relativePath !== null)
+      setSaveError({
+        relativePath: input.relativePath,
+        message: publicationAttention.message,
+        attention: "recovery_required",
+        error: publicationAttention,
+      });
+  }
 
   useEffect(() => {
     if (fileChanges.change === null || lastObservedChangeRef.current === fileChanges.change) {
@@ -232,6 +261,18 @@ export function useWorkspaceFileRefresh(input: {
   const handleSaveFailure = (path: string, error: unknown) => {
     if (path !== input.relativePath) return;
     if (
+      publicationBlocked &&
+      !(
+        isProjectWriteFileError(error) &&
+        (error.failure === "target_changed" ||
+          error.failure === "recovery_required" ||
+          error.failure === "mutation_unavailable" ||
+          error.failure === "mutation_intent_conflict")
+      ) &&
+      !isPublicationAttention(error)
+    )
+      return;
+    if (
       isProjectWriteFileError(error) &&
       error.failure === "revision_conflict" &&
       error.currentRevision !== undefined
@@ -247,10 +288,24 @@ export function useWorkspaceFileRefresh(input: {
       refreshAuthoritativeFile();
       return;
     }
+    const kind = classifyMarkdownPersistenceFailure(error);
     setSaveError({
       relativePath: path,
-      message:
-        error instanceof Error && error.message.trim().length > 0
+      error,
+      ...(isPublicationAttention(error)
+        ? { attention: "recovery_required" as const }
+        : kind === "terminal" || kind === "operation"
+          ? { attention: "outcome_unknown" as const }
+          : kind === "target_changed" ||
+              kind === "recovery_required" ||
+              kind === "mutation_unavailable" ||
+              kind === "mutation_intent_conflict" ||
+              kind === "outcome_unknown"
+            ? { attention: kind }
+            : {}),
+      message: isPublicationAttention(error)
+        ? error.message
+        : error instanceof Error && error.message.trim().length > 0
           ? error.message
           : "The workspace write failed.",
     });
@@ -259,7 +314,9 @@ export function useWorkspaceFileRefresh(input: {
   const handleSaveConfirmed = useStableCallback(
     (path: string, contents: string, revision: string) => {
       lastConfirmedSaveRef.current = { relativePath: path, contents, revision };
-      setSaveError((current) => (current?.relativePath === path ? null : current));
+      setSaveError((current) =>
+        current?.relativePath === path && current.attention === undefined ? null : current,
+      );
       setReloadNotice((current) => (current?.relativePath === path ? null : current));
     },
   );
@@ -267,7 +324,7 @@ export function useWorkspaceFileRefresh(input: {
   /** A surface-observed external change conflicts with the local draft. */
   const handleExternalConflict = (path: string, contents: string, revision: string) => {
     if (path !== input.relativePath) return;
-    setSaveError(null);
+    setSaveError((current) => (current?.attention ? current : null));
     setReloadNotice({ kind: "external-change", relativePath: path, contents, revision });
     refreshAuthoritativeFile();
   };
@@ -283,10 +340,12 @@ export function useWorkspaceFileRefresh(input: {
           : current,
       );
     }
+    refreshAuthoritativeFile();
   });
 
   const requestRetrySave = () => {
     if (input.relativePath === null || saveError?.relativePath !== input.relativePath) return;
+    if (publicationBlocked) return;
     const authoritative = file.authoritativeData;
     if (authoritative === null) {
       refreshAuthoritativeFile();
@@ -305,6 +364,10 @@ export function useWorkspaceFileRefresh(input: {
   const requestManualReload = () => {
     if (input.relativePath === null) return;
     fileChanges.refresh();
+    if (publicationBlocked) {
+      refreshViewer();
+      return;
+    }
     if (input.sourcePending && file.data !== null) {
       setReloadNotice({
         kind: "manual-reload",
@@ -321,6 +384,7 @@ export function useWorkspaceFileRefresh(input: {
   };
 
   const resolveReloadNotice = (action: "discard" | "retry") => {
+    if (publicationBlocked) return;
     if (reloadNotice === null || reloadNotice.contents === null || input.relativePath === null)
       return;
     setSaveResolution({
@@ -369,7 +433,7 @@ export function useWorkspaceFileRefresh(input: {
     resolveReloadNotice,
     saveResolution,
     saveError,
-    saveRetryReady: file.authoritativeData !== null,
+    saveRetryReady: file.authoritativeData !== null && !publicationBlocked,
     viewerRefreshKey,
   };
 }

@@ -7,8 +7,8 @@
  * one itself: download the pinned TinyTeX bundle, check it against the digest
  * in `tinytexManifest.ts`, expand it into app-owned state, and only then swap
  * it into place. Nothing outside `<latexDir>/managed` is touched, no elevation
- * is asked for, and an existing system TeX keeps precedence — the probe only
- * falls back to this install when PATH has nothing.
+ * is asked for. A fully capable system TeX keeps precedence; this distribution
+ * fills missing compiler capabilities before a partial system fallback.
  *
  * The install runs on a supervised fiber and reports itself through a single
  * state value that clients poll, because the work outlives the request that
@@ -59,6 +59,8 @@ export class LatexManagedToolchain extends Context.Service<
   {
     /** Scient has a pinned distribution for this platform. */
     readonly canInstall: boolean;
+    /** Pinned base archive size for this host, excluding additional package downloads. */
+    readonly downloadBytes: number | null;
     /** Starts an install, or reports the one already running. */
     readonly install: Effect.Effect<ScientLatexManagedInstallState>;
     readonly status: Effect.Effect<ScientLatexManagedInstallState>;
@@ -90,18 +92,20 @@ const ENGINE_VALIDATION_TIMEOUT = "30 seconds";
 const ENGINE_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /**
- * The two collections that make an ordinary paper compile on the first try.
- * TinyTeX-1 is TeX Live's infrastructure plus roughly a hundred packages,
- * which is not what a real document uses: `mathtools`, `siunitx`, and most of
- * the fonts live in these. Fetching them once, here, is the difference between
- * a first build that works and a first build that stops on a missing `.sty`
- * while the per-build resolver catches up one package at a time.
+ * Collections for ordinary papers and all three compilers, plus the
+ * Unicode/Hebrew packages needed by XeLaTeX documents. Fetching these during
+ * installation avoids stopping the first build on a missing compiler or package.
  */
 const RECOMMENDED_PACKAGES: ReadonlyArray<string> = [
   "collection-latexrecommended",
   "collection-fontsrecommended",
+  "collection-xetex",
+  "collection-luatex",
+  "fontspec",
+  "polyglossia",
+  "bidi",
 ];
-/** Two collections over a slow connection; the ceiling above accommodates it. */
+/** Collections over a slow connection; the ceiling above accommodates it. */
 const COLLECTIONS_TIMEOUT = "15 minutes";
 const COLLECTIONS_WARNING =
   "Some recommended LaTeX tools or packages could not be preinstalled; document packages may still install on first use.";
@@ -687,6 +691,7 @@ export const make = Effect.gen(function* () {
 
   return LatexManagedToolchain.of({
     canInstall: asset !== null,
+    downloadBytes: asset?.sizeBytes ?? null,
     install,
     status: Ref.get(stateRef),
   });

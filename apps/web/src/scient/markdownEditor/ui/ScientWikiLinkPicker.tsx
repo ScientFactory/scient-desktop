@@ -15,7 +15,7 @@ import {
   wikiLinkCandidateName,
   wikiLinkTargetForSelection,
 } from "../wikiLinkPicker";
-import { dockButtonClass } from "./dockChrome";
+import { dockButtonClass } from "../../writing/dockChrome";
 
 interface ScientWikiLinkPickerProps {
   readonly candidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;

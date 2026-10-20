@@ -1,0 +1,44 @@
+.scient-reader-page-thumbnail {
+  display: flex;
+  width: 148px;
+  margin: 6px auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: 10px/1.35 var(--font-sans);
+  cursor: pointer;
+}
+.scient-reader-page-thumbnail:hover,
+.scient-reader-page-thumbnail[data-active] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-reader-page-thumbnail-preview {
+  display: flex;
+  min-height: 80px;
+  max-width: 136px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+}
+.scient-reader-page-thumbnail-preview canvas {
+  display: block;
+  max-width: 132px;
+}
+.scient-reader-page-thumbnail:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+@media (forced-colors: active) {
+  .scient-reader-page-thumbnail-preview {
+    border-color: CanvasText;
+  }
+}

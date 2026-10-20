@@ -4149,6 +4149,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
     addAgentsSurface,
+    addDocumentsSurface,
     addSourcesSurface,
     addComputeSurface,
     openScientSourcePdf,
@@ -8904,6 +8905,7 @@ function ChatViewContent(props: ChatViewProps) {
         keybindings={keybindings}
         closeRightPanelSurface={closeRightPanelSurface}
         openScientSourcePdf={openScientSourcePdf}
+        openFileSourceSurface={openFileSourceSurface}
       />
     ) : (
       // SCIENT-FORK:END
@@ -8961,6 +8963,8 @@ function ChatViewContent(props: ChatViewProps) {
               workspaceRoot: activeWorkspaceRoot,
               onCiteFile: (citation, anchor) =>
                 composerRef.current?.citeText(citation, anchor) ?? false,
+              onFileRenamed: (fromPath, toPath) =>
+                useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath),
               onFileMoved: (fromPath, toPath) =>
                 useRightPanelStore
                   .getState()
@@ -9937,6 +9941,8 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          onAddDocuments={addDocumentsSurface}
+          documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}
           onAddDevice={addDeviceSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
@@ -10000,6 +10006,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddAgents={addAgentsSurface}
             onAddSources={addSourcesSurface}
+            onAddDocuments={addDocumentsSurface}
+            documentsAvailable={activeWorkspaceRoot !== undefined}
             onAddCompute={addComputeSurface}
             onAddDevice={addDeviceSurfaceStable}
             browserAvailable={canOperatePreview && browserAvailable}

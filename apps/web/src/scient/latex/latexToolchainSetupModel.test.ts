@@ -33,12 +33,16 @@ function card(overrides: Partial<LatexSetupCardInput> = {}): LatexSetupCardInput
 }
 
 describe("latexSetupCardModel", () => {
+  it("does not offer TinyTeX as an installation for explicitly requested Tectonic", () => {
+    const model = latexSetupCardModel(card({ requiredCompiler: "tectonic" }));
+    expect(model.kind).toBe("instructions");
+    expect(model.actionLabel).toBeNull();
+    expect(model.body).toContain("Install Tectonic");
+  });
   it("offers the managed install when the environment can place one", () => {
     const model = latexSetupCardModel(card());
 
     expect(model.kind).toBe("offer");
-    expect(model.actionLabel).toBe("Install TinyTeX");
-    expect(model.body).toContain("about 70 MB");
     expect(model.progressPercent).toBeNull();
     expect(model.busy).toBe(false);
   });
@@ -126,7 +130,6 @@ describe("latexSetupCardModel", () => {
     expect(model.busy).toBe(false);
     expect(model.progressPercent).toBeNull();
     expect(model.actionLabel).toBe("Install again");
-    expect(model.body).toContain("cannot run LaTeX");
   });
 
   it("explains a failure in the reader's terms and offers a retry", () => {

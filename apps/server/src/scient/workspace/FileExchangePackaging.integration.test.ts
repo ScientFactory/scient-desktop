@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real binary, filesystem and restart/update fixtures.
+import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -17,10 +18,16 @@ import {
   mutateRetainedFile,
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
-import { fileExchangeTestHelper } from "./fileExchange.testkit.ts";
+import {
+  fileExchangeTestHelper,
+  filePublicationTestHelper,
+  nativePublicationHost,
+} from "./fileExchange.testkit.ts";
 import { layerKnownWorkspacesAllowAll } from "./knownWorkspaces.testkit.ts";
 
 const compiled = await fileExchangeTestHelper();
+const publication = await filePublicationTestHelper();
+const qualified = await nativePublicationHost();
 const bytes = (s: string) => Buffer.from(s);
 const configuredFiles = (root: string, helper: string | undefined) =>
   WorkspaceFileSystem.layer.pipe(
@@ -32,15 +39,19 @@ const configuredFiles = (root: string, helper: string | undefined) =>
         ServerConfig.ServerConfig,
         Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
-          return ServerConfig.make({ ...config, fileExchangePath: helper });
+          return ServerConfig.make({
+            ...config,
+            filePublicationHelperPath: helper,
+            filePublicationRetentionRoot: NodePath.join(root, "private-retention"),
+          });
         }),
       ).pipe(Layer.provide(ServerConfig.layerTest(root, { prefix: "scient-exchange-config-" }))),
     ),
   );
 
-describe.skipIf(compiled === undefined)("host-configured file exchange", () => {
+describe.skipIf(!qualified)("host-configured file publication", () => {
   it.live.each(["checked", "displaced", "installed", "done"] as MutationPoint[])(
-    "resumes %s through an updated resource path",
+    "recovers %s through an updated resource path without repeating ambiguous publication",
     (point) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -50,18 +61,18 @@ describe.skipIf(compiled === undefined)("host-configured file exchange", () => {
         const cwd = NodePath.join(root, "paper"),
           target = NodePath.join(cwd, "main.tex");
         yield* fs.makeDirectory(cwd);
-        yield* fs.makeDirectory(NodePath.join(root, "records"));
+        yield* fs.makeDirectory(NodePath.join(root, "records"), { mode: 0o700 });
         const oldHelper = NodePath.join(
           root,
-          "Old.app/Contents/Resources/file-exchange/scient-file-exchange",
+          "Old.app/Contents/Resources/file-exchange/scient-file-publication",
         );
         const newHelper = NodePath.join(
           root,
-          "Updated.app/Contents/Resources/file-exchange/scient-file-exchange",
+          "Updated.app/Contents/Resources/file-exchange/scient-file-publication",
         );
         for (const helper of [oldHelper, newHelper]) {
           yield* fs.makeDirectory(NodePath.dirname(helper), { recursive: true });
-          yield* fs.copyFile(compiled!, helper);
+          yield* fs.copyFile(publication!, helper);
           yield* fs.chmod(helper, 0o755);
         }
         yield* fs.writeFileString(target, "captured");
@@ -75,14 +86,23 @@ describe.skipIf(compiled === undefined)("host-configured file exchange", () => {
         };
         let interrupted = false;
         yield* Effect.promise(() =>
-          mutateRetainedFile({ ...input, exchangeHelper: oldHelper }, target, {
-            at: async (p) => {
-              if (!interrupted && p === point) {
-                interrupted = true;
-                throw new Error("crash");
-              }
+          mutateRetainedFile(
+            {
+              ...input,
+              requestedPath: target,
+              mutationId: `overleaf-${NodeCrypto.createHash("sha256").update(`${input.retentionDirectory}\0${input.id}`).digest("hex")}`,
+              nativePublicationHelper: oldHelper,
             },
-          }),
+            target,
+            {
+              at: async (p) => {
+                if (!interrupted && p === point) {
+                  interrupted = true;
+                  throw new Error("crash");
+                }
+              },
+            },
+          ),
         ).pipe(Effect.exit);
         expect(interrupted).toBe(true);
         yield* fs.remove(NodePath.join(root, "Old.app"), { recursive: true });
@@ -96,20 +116,32 @@ describe.skipIf(compiled === undefined)("host-configured file exchange", () => {
           expect(
             decodeRetainedRecord(
               yield* fs.readFileString(NodePath.join(root, "records/sync/record.json")),
-            ).mechanism,
-          ).toBe("exchange");
+            ),
+          ).toMatchObject({ version: 2, publication: "exchange" });
         }
         const result = yield* Effect.gen(function* () {
           const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
           return yield* files.replaceFileRetained({ ...input, bytes: undefined });
         }).pipe(Effect.provide(configuredFiles(root, newHelper)));
-        expect(result.outcome).toBe("done");
-        expect(yield* fs.readFileString(target)).toBe("merged");
+        if (point === "checked") {
+          // The new protocol parks an ambiguous boundary for review instead of reapplying it.
+          expect(result.outcome).toBe("attention");
+          expect(result.failure).toBe("recovery");
+          expect(yield* fs.readFileString(target)).toBe("captured");
+          const retained = yield* Effect.promise(() =>
+            Promise.all((result.retainedPaths ?? []).map((path) => NodeFSP.readFile(path, "utf8"))),
+          );
+          expect(retained).toContain("merged");
+        } else {
+          expect(result.outcome).toBe("done");
+          expect(yield* fs.readFileString(target)).toBe("merged");
+          expect(yield* fs.readFileString(result.retainedPath!)).toBe("captured");
+        }
         expect(
           decodeRetainedRecord(
             yield* fs.readFileString(NodePath.join(root, "records/sync/record.json")),
-          ).mechanism,
-        ).toBe("exchange");
+          ),
+        ).toMatchObject({ version: 2, publication: "exchange" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -120,7 +152,7 @@ describe.skipIf(compiled === undefined)("host-configured file exchange", () => {
       const cwd = NodePath.join(root, "paper"),
         target = NodePath.join(cwd, "main.tex");
       yield* fs.makeDirectory(cwd);
-      yield* fs.makeDirectory(NodePath.join(root, "records"));
+      yield* fs.makeDirectory(NodePath.join(root, "records"), { mode: 0o700 });
       yield* fs.writeFileString(target, "captured");
       const incompatible = NodePath.join(root, "wrong-helper");
       yield* fs.writeFileString(incompatible, "#!/bin/sh\necho scient-file-exchange/2\n", {

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   renderHtmlPdf: vi.fn(),
   openFile: vi.fn(),
   openScient: vi.fn(),
+  byThreadKey: {},
   httpBaseUrl: "http://localhost:3773",
 }));
 vi.mock("~/components/preview/previewBridge", () => ({
@@ -60,7 +61,10 @@ const latexRequest = (requestId: string): ScientDocumentHostRequest => ({
   threadId,
   timeoutMs: 15_000,
   operation: "documentLatexPresent",
-  input: { rootSourcePath: `papers/${requestId}.tex` },
+  input: {
+    sourcePath: `papers/${requestId}.tex`,
+    rootSourcePath: `papers/${requestId}.tex`,
+  },
 });
 const renderRequest = (requestId: string): ScientDocumentHostRequest => ({
   requestId,
@@ -193,7 +197,7 @@ describe("mounted controlled document host", () => {
       { environmentId, threadId },
       "papers/current.tex",
       undefined,
-      { latexPreviewMode: "split" },
+      { latexPreviewMode: "split", latexRootRelativePath: "papers/current.tex" },
     );
     expect(mocks.respond).toHaveBeenCalledExactlyOnceWith({
       environmentId,

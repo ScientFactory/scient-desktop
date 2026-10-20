@@ -34,6 +34,11 @@ const REFUSED_RERUN_TRANSCRIPT = [
 ].join("\n");
 
 describe("parseLatexLog", () => {
+  it("preserves warning severity when a package location has no message", () => {
+    expect(parseLatexLog("warning: algorithm.sty:11:\n")).toEqual([
+      { severity: "warning", file: "algorithm.sty", line: 11, message: "TeX warning" },
+    ]);
+  });
   it("does not attach the next diagnostic or engine note to a file-line warning", () => {
     expect(
       parseLatexLog(
@@ -321,6 +326,21 @@ describe("transcriptFailureDiagnostic", () => {
     expect(transcriptFailureDiagnostic({ transcript: "   \n\n", exitCode: null }).message).toBe(
       "The LaTeX engine was stopped before it reported anything.",
     );
+  });
+
+  it("reports a filename failure instead of latexmk's trailing help suggestion", () => {
+    expect(
+      transcriptFailureDiagnostic({
+        transcript: [
+          "Latexmk: Wildcards in file names didn't match any files",
+          "Use",
+          "   latexmk -help",
+          "to get usage information",
+          "Reverting Windows console CPs to (in,out) = (437,65001)",
+        ].join("\n"),
+        exitCode: 10,
+      }).message,
+    ).toBe("Latexmk: Wildcards in file names didn't match any files");
   });
 });
 

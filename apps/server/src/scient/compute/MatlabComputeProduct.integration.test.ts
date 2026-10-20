@@ -139,6 +139,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
           Layer.provide(layerKnownWorkspacesAllowAll),
           Layer.provide(WorkspacePaths.layer),
           Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+          Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),
           Layer.provide(NodeServices.layer),
         );
 

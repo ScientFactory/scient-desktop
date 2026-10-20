@@ -24,7 +24,7 @@ const request = (requestId: string): ScientDocumentHostRequest => ({
   requestId,
   threadId,
   operation: "documentLatexPresent",
-  input: { rootSourcePath: "papers/main.tex" },
+  input: { sourcePath: "papers/main.tex", rootSourcePath: "papers/main.tex" },
   timeoutMs: 15_000,
 });
 const event = (

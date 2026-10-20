@@ -84,6 +84,7 @@ describe("Markdown draft and persistence coherence", () => {
     expect(await h.coordinator.resolveWithLocal("r-agent")).toBe(true);
     expect(h.persist).toHaveBeenLastCalledWith({
       source: "Original!new",
+      mutationId: expect.any(String),
       expectedRevision: "r-agent",
       editVersion: 2,
     });

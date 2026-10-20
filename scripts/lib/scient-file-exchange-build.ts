@@ -147,7 +147,9 @@ export async function stageFileExchangeForDesktopBuild(input: {
   readonly arch: "arm64" | "x64" | "universal";
 }): Promise<void> {
   const directory = NodePath.join(input.stageResourcesDir, FILE_EXCHANGE_RESOURCE.to);
-  await NodeFSP.rm(directory, { recursive: true, force: true });
+  // Publication shares this resource directory; retire only this helper's artifacts.
+  for (const leaf of ["scient-file-exchange", "provenance.json"])
+    await NodeFSP.rm(NodePath.join(directory, leaf), { force: true });
   if (input.platform !== "mac") return;
   await buildFileExchange({
     repoRoot: input.repoRoot,

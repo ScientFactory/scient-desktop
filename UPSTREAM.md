@@ -1351,12 +1351,18 @@ native page handling and focused-guest checks remain authoritative.
 
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
-`packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
-outside those roots. The inherited-host seams are limited to file-preview
+`packages/client-runtime/src/state/scientLatexHttp.ts` as owned contracts and
+transport. The pure source-preserving visual projection lives in
+`packages/shared/src/latexVisual.ts`. Settings and installation helpers, file-editor
+bindings, preview and glyph generators, and standalone selection qualification
+are also Scient-owned files, enumerated in `scient-latex-seams.json`. The inherited-host seams are limited to file-preview
 recognition, the file-panel surface mount, server config and service wiring, and
 the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
+Visual mode reuses the existing controlled file editor and save coordinator;
+preserve the controlled-editor export and optional save debounce rather than
+forking persistence. Its interaction host stays in the source-neutral PDF reader.
 
 Browser HTML-to-PDF export prints the selected live tab through its physical owner:
 `apps/desktop/src/scient/documentExport` for native desktop tabs, or the environment's
@@ -1523,12 +1529,14 @@ The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
 compositor rules and approved shortcuts.
 
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
-retained mutation implementation in `apps/server/src/scient/workspace`. Its two
-additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
-retain that shared ownership with editor saves. macOS packaging, signing and the
-private desktop bootstrap also carry the owned protocol-1 file-exchange helper.
-Keep it outside ASAR, resolve it only from the server host, and preserve journaled
-mechanisms across app updates. No Overleaf routes or UI are mounted yet. See
+retained mutation implementation in `apps/server/src/scient/workspace`. Its
+`WorkspaceFileSystem` methods share physical-file publication ownership with
+editor saves. Desktop resources carry `scient-file-publication` for retained
+publication; macOS also carries the protocol-1 `scient-file-exchange` helper for
+Overleaf volume probes. Staging either helper must preserve the other's files.
+Keep both outside ASAR and resolve them only from the server host. Preserve
+journaled recovery across app updates, including review of ambiguous publication
+boundaries. No Overleaf routes or UI are mounted yet. See
 [Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels
