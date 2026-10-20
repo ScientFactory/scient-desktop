@@ -7384,7 +7384,8 @@ function LatexVisualEditorReady(
   const refreshReadingContext = useEffectEvent((..._changes: readonly unknown[]) => {
     if (editor && !editor.isDestroyed) refreshMathReadingContext(editor);
   });
-  useLayoutEffect(() => refreshReadingContext(editor, commandContext), [editor, commandContext]);
+  // A context refresh cancels staged math admission; only a preamble change needs one.
+  useLayoutEffect(() => refreshReadingContext(editor, mathSetupSource), [editor, mathSetupSource]);
   const guidancePluginFactory = useRef(latexGuidancePlaceholders);
   useLayoutEffect(() => {
     if (!editor || editor.isDestroyed) return;
