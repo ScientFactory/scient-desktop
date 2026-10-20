@@ -301,9 +301,9 @@ function repositoryFolder(paths: Iterable<string>) {
 }
 
 /**
- * A path in `before` (the base) spelled differently, by letter case or Unicode form
- * alone, in `before` or `after`, or null. Folders are not compared: files in folders
- * spelled two ways are different files unless their whole paths collide.
+ * Two whole paths, the first from `before` where either is, spelled differently by
+ * letter case or Unicode form alone, or null. Folders are not compared: files in
+ * folders spelled two ways are different files unless their whole paths collide.
  */
 function respelling(before: Iterable<string>, after: Iterable<string>) {
   const seen = new Map<string, string>();
@@ -477,6 +477,34 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     renames,
     trees: { base, local, remote, merged },
   }).toSorted((left, right) => byPath(left.paths.join("\0"), right.paths.join("\0")));
+  // The applier also checks the paths conflict groups add: names kept from an
+  // interrupted apply, and names Git makes up for a file meeting a folder. On a disk
+  // that ignores letter case or Unicode form, one spelled like another path here, or
+  // like anything on disk, reads that other file. Checked before any choice applies:
+  // the target is drawn from the capture, Overleaf's tree and the merge.
+  const guardAlias = respelling(
+    [
+      ...base.keys(),
+      ...remote.keys(),
+      ...local.keys(),
+      ...merged.keys(),
+      ...renames.flatMap((rename) => [rename.from, rename.to]),
+      ...groups.flatMap((group) => group.paths),
+    ],
+    [
+      ...inventory.additions.map((entry) => entry.path),
+      ...inventory.localOnly,
+      ...inventory.folders,
+      ...inventory.excluded.map((entry) => entry.path),
+    ],
+  );
+  if (guardAlias !== null)
+    return refused({
+      reason: "path-alias",
+      ...(guardAlias.from < guardAlias.to
+        ? { first: guardAlias.from, second: guardAlias.to }
+        : { first: guardAlias.to, second: guardAlias.from }),
+    });
 
   const conflicts: OverleafReviewConflict[] = [];
   for (const group of groups) {
