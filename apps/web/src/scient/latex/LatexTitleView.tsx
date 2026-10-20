@@ -5,7 +5,7 @@ import {
 } from "./latexContextEvents";
 import {
   useEffect,
-  useCallback,
+  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -50,15 +50,12 @@ export function LatexTitleView({
     authorEditable?: boolean;
     dateEditable?: boolean;
   } | null;
-  const focusField = useCallback(
-    (field: "title" | "author" | "date") =>
-      requestAnimationFrame(() =>
-        root.current
-          ?.querySelector<HTMLTextAreaElement>(`[aria-label="Document ${field}"]`)
-          ?.focus({ preventScroll: true }),
-      ),
-    [],
-  );
+  const focusField = (field: "title" | "author" | "date") =>
+    requestAnimationFrame(() =>
+      root.current
+        ?.querySelector<HTMLTextAreaElement>(`[aria-label="Document ${field}"]`)
+        ?.focus({ preventScroll: true }),
+    );
   const exit = (direction: -1 | 1) => {
     const position = getPos();
     if (typeof position !== "number") return;
@@ -107,10 +104,18 @@ export function LatexTitleView({
     activateLatexContext(editor.view.dom, id);
     setActive(true);
   };
-  const activation = useRef(activate);
-  activation.current = activate;
+  const activateLatest = useEffectEvent(() => activate());
+  // Selecting the block activates it: the state now, the context announcement after commit.
+  const [activatedSelection, setActivatedSelection] = useState(false);
+  if (activatedSelection !== selected) {
+    setActivatedSelection(selected);
+    if (selected && editable) setActive(true);
+  }
+  const announceSelectedContext = useEffectEvent(() => {
+    if (editable) activateLatexContext(editor.view.dom, id);
+  });
   useEffect(() => {
-    if (selected) activation.current();
+    if (selected) announceSelectedContext();
   }, [selected]);
   useEffect(() => {
     const deactivate = (event: Event) => {
@@ -146,7 +151,7 @@ export function LatexTitleView({
       const field = (event as CustomEvent<"title" | "author" | "date">).detail;
       if (field === "author") setAddingAuthor(true);
       if (field === "date") setAddingDate(true);
-      activation.current();
+      activateLatest();
       focusField(field);
     };
     element.addEventListener("scient-latex-edit-title", edit);

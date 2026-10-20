@@ -76,7 +76,6 @@ it.each(["workspace-file", "media-file"] as const)(
     state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
     expect(useAssetUrlState(environmentId, { ...resource, _tag })).toEqual({
       _tag: "Success",
-      waiting: false,
       expiresAt: 1,
       refresh: state.refresh,
       url: "https://host.test/api/assets/image.png",
@@ -94,7 +93,6 @@ it("hides host assets with a denied grant while preserving attachments", () => {
   expect(state.assetQuery).not.toHaveBeenCalled();
   expect(useAssetUrlState(environmentId, { _tag: "attachment", attachmentId: "upload" })).toEqual({
     _tag: "Success",
-    waiting: false,
     expiresAt: 1,
     refresh: state.refresh,
     url: "https://host.test/api/assets/image.png",

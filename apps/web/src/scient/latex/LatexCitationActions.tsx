@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { FileCitation, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
@@ -8,6 +7,7 @@ import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { retainLatexSelection } from "./latexSelectionSession";
 import { latexCitationRevision, type LatexVisualSelectionSnapshot } from "./latexVisualSelection";
 
+const isFileCitation = Schema.is(FileCitation);
 const acceptsSelection = (target: EventTarget | null) =>
   target instanceof Element &&
   target.closest("math-field,[data-table-selection],textarea,.ProseMirror") !== null;
@@ -26,7 +26,7 @@ export function LatexCitationActions({
   ownerId: string;
 }) {
   const { environmentId, threadId, cwd } = source;
-  const captureCitation = useCallback(() => {
+  const captureCitation = () => {
     const selection = capture();
     const content = selection?.content;
     if (
@@ -66,7 +66,7 @@ export function LatexCitationActions({
         sourceHash: latexCitationRevision(owner.source.slice(owner.from, owner.to)),
       },
     };
-    if (!Schema.is(FileCitation)(citation)) return null;
+    if (!isFileCitation(citation)) return null;
     const range = selection.element.ownerDocument.createRange();
     range.selectNodeContents(selection.element);
     const anchor: AssistantCitationSourceAnchor = {
@@ -78,15 +78,12 @@ export function LatexCitationActions({
       retainSelection: () => retainLatexSelection(viewport),
     };
     return { citation, sourceAnchor: anchor };
-  }, [capture, viewport, environmentId, threadId, cwd, ownerId]);
-  const subscribe = useCallback(
-    (changed: () => void) => {
-      if (!viewport) return () => {};
-      viewport.addEventListener("scient-latex-selection-scope", changed);
-      return () => viewport.removeEventListener("scient-latex-selection-scope", changed);
-    },
-    [viewport],
-  );
+  };
+  const subscribe = (changed: () => void) => {
+    if (!viewport) return () => {};
+    viewport.addEventListener("scient-latex-selection-scope", changed);
+    return () => viewport.removeEventListener("scient-latex-selection-scope", changed);
+  };
   return (
     <SelectionCitationToolbar
       viewport={viewport}

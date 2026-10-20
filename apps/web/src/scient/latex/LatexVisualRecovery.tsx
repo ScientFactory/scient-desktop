@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
@@ -38,13 +38,8 @@ export function LatexVisualRecoveryBar({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [notApplied, setNotApplied] = useState(false);
-  const differences = useMemo(
-    () =>
-      open && recovery.source !== null
-        ? compareRecoveredSource(currentSource, recovery.source)
-        : [],
-    [open, currentSource, recovery.source],
-  );
+  const differences =
+    open && recovery.source !== null ? compareRecoveredSource(currentSource, recovery.source) : [];
   const convertible = recovery.source !== null;
   // Said on the line itself, for as long as the offer lasts: closing loses it.
   const unstored = isRecoveryUnstored(recovery);

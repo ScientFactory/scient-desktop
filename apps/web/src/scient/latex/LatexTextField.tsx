@@ -131,7 +131,7 @@ export function LatexTextField({
     };
     element?.addEventListener("scient-latex-replace-field-draft", replace);
     return () => element?.removeEventListener("scient-latex-replace-field-draft", replace);
-  }, [draftKey, id, reportDraft]);
+  }, [draftKey, id, journal, publication, reportDraft]);
   useEffect(() => {
     const persist = () => {
       cancelJournal.current?.();
@@ -151,7 +151,7 @@ export function LatexTextField({
       window.removeEventListener("scient-latex-checkpoint-fields", checkpoint);
       persist();
     };
-  }, []);
+  }, [journal]);
   useLayoutEffect(() => {
     reportDraft(id, pending.current !== null || composing.current);
   }, [id, reportDraft]);
@@ -180,7 +180,7 @@ export function LatexTextField({
       }
     }
     previousValue.current = value;
-  }, [draft, draftKey, value, id, reportDraft]);
+  }, [draft, draftKey, value, id, journal, reportDraft]);
   const retain = (text: string) => {
     const entry = pending.current ?? { key: draftKey, base: value, text };
     pending.current =

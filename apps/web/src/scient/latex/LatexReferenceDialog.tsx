@@ -2,7 +2,7 @@ import { Button } from "~/components/ui/button";
 import { LatexSelect } from "./LatexSelect";
 import { processVisualDocument, processVisualDocumentAsync } from "./visualProcessing";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { memo, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   Dialog,
   DialogPopup,
@@ -78,28 +78,35 @@ export const LatexReferenceDialog = memo(
       reportFailure: false,
       refresh: true,
     });
-    const paths = useMemo(
-      () => bibliographyPaths(props.setupSource ?? props.source, props.relativePath ?? ""),
-      [props.source, props.setupSource, props.relativePath],
-    );
+    const paths = bibliographyPaths(props.setupSource ?? props.source, props.relativePath ?? "");
+    const readsBibliographies =
+      mode === "citation" && !!props.environmentId && !!props.cwd && paths.length > 0;
+    // Opening, or a different bibliography, starts the dialog over.
+    const loadInputs = [props.open, props.environmentId, props.cwd, paths, readFile, mode] as const;
+    const [previousLoadInputs, setPreviousLoadInputs] = useState<readonly unknown[] | null>(null);
+    if (
+      previousLoadInputs === null ||
+      loadInputs.some((value, index) => value !== previousLoadInputs[index])
+    ) {
+      setPreviousLoadInputs(loadInputs);
+      if (props.open) {
+        setQuery("");
+        setSelected([]);
+        setForm("automatic");
+        setKey("");
+        setReferences([]);
+        setUnavailable([]);
+        setPending(readsBibliographies);
+      }
+    }
     useEffect(() => {
       if (!props.open) return;
       let cancelled = false;
       const controller = new AbortController();
-      setQuery("");
-      setSelected([]);
-      setForm("automatic");
       pendingInsert.current = null;
-      setKey("");
-      setReferences([]);
-      setUnavailable([]);
-      if (mode !== "citation" || !props.environmentId || !props.cwd || !paths.length) {
-        setPending(false);
-        return;
-      }
+      if (mode !== "citation" || !props.environmentId || !props.cwd || !paths.length) return;
       const environmentId = props.environmentId,
         cwd = props.cwd;
-      setPending(true);
       void (async () => {
         const choices: LatexReferenceChoice[] = [],
           failures: string[] = [];
@@ -137,29 +144,32 @@ export const LatexReferenceDialog = memo(
     }, [props.open, props.environmentId, props.cwd, paths, readFile, mode]);
     const [documentObjects, setDocumentObjects] = useState<LatexReferenceChoice[]>([]);
     const [objectsPending, setObjectsPending] = useState(false);
-    useEffect(() => {
-      if (!props.open || mode !== "reference") return;
-      if (props.source.length < 12_000 || typeof Worker === "undefined") {
-        setDocumentObjects(documentReferenceChoices(props.source));
-        setObjectsPending(false);
-        return;
+    const objectsInWorker = props.source.length >= 12_000 && typeof Worker !== "undefined";
+    // A short document is read here; a long one waits for the worker below.
+    const objectInputs = [props.open, props.source, mode] as const;
+    const [previousObjectInputs, setPreviousObjectInputs] = useState<readonly unknown[] | null>(
+      null,
+    );
+    if (
+      previousObjectInputs === null ||
+      objectInputs.some((value, index) => value !== previousObjectInputs[index])
+    ) {
+      setPreviousObjectInputs(objectInputs);
+      if (props.open && mode === "reference") {
+        setDocumentObjects(objectsInWorker ? [] : documentReferenceChoices(props.source));
+        setObjectsPending(objectsInWorker);
       }
-      setDocumentObjects([]);
-      setObjectsPending(true);
+    }
+    useEffect(() => {
+      if (!props.open || mode !== "reference" || !objectsInWorker) return;
       return processVisualDocument({ kind: "references", source: props.source }, (result) => {
         setDocumentObjects(result?.kind === "references" ? result.choices : []);
         setObjectsPending(false);
       });
-    }, [props.open, props.source, mode]);
-    const inlineSources = useMemo(() => {
-      if (!props.open) return [];
-      const choices = inlineBibliographyChoices(props.source);
-      if (props.setupSource && props.setupSource !== props.source) {
-        for (const entry of inlineBibliographyChoices(props.setupSource))
-          if (!choices.some((choice) => choice.key === entry.key)) choices.push(entry);
-      }
-      return choices;
-    }, [props.open, props.source, props.setupSource]);
+    }, [props.open, props.source, mode, objectsInWorker]);
+    const inlineSources = props.open
+      ? mergedInlineBibliographyChoices(props.source, props.setupSource)
+      : [];
     const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
     const choices = candidates.filter((entry) =>
       `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
@@ -331,3 +341,12 @@ export const LatexReferenceDialog = memo(
   },
   (before, after) => !before.open && !after.open,
 );
+
+function mergedInlineBibliographyChoices(source: string, setupSource: string | undefined) {
+  const choices = inlineBibliographyChoices(source);
+  if (setupSource && setupSource !== source) {
+    for (const entry of inlineBibliographyChoices(setupSource))
+      if (!choices.some((choice) => choice.key === entry.key)) choices.push(entry);
+  }
+  return choices;
+}

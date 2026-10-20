@@ -1,7 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
 import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
-import { useContext, useMemo } from "react";
+import { useContext } from "react";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 
@@ -15,7 +15,7 @@ export function LatexHeadingToolbar({
   onRename: (before: string, after: string, fieldId?: string) => boolean;
 }) {
   const { source } = useContext(LatexAuthoringContext);
-  const labels = useMemo(() => latexLabelInventory(source), [source]);
+  const labels = latexLabelInventory(source);
   const heading = useEditorState({
     editor,
     selector: ({ editor: current }) => {

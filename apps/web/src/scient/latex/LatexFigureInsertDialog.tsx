@@ -1,6 +1,6 @@
 import { LatexSelect } from "./LatexSelect";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogPopup,
@@ -96,20 +96,17 @@ function FigurePicker(
       live.current = false;
     };
   }, []);
-  useEffect(() => {
-    if (!localFile) {
-      setLocalUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(localFile);
-    setLocalUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [localFile]);
-  const resource = useMemo<AssetResource | null>(
-    () =>
-      path && !localFile ? { _tag: "workspace-file", cwd: props.cwd, relativePath: path } : null,
-    [path, localFile, props.cwd],
+  // The preview URL lives as long as its file is chosen.
+  const chooseLocalFile = (file: File | null) => {
+    setLocalFile(file);
+    setLocalUrl(file ? URL.createObjectURL(file) : null);
+  };
+  useEffect(
+    () => (localUrl === null ? undefined : () => URL.revokeObjectURL(localUrl)),
+    [localUrl],
   );
+  const resource: AssetResource | null =
+    path && !localFile ? { _tag: "workspace-file", cwd: props.cwd, relativePath: path } : null;
   const asset = useAssetUrlState(props.environmentId, resource);
   const preview = localUrl ?? (asset._tag === "Success" ? asset.url : null);
   const input = useRef<HTMLInputElement>(null);
@@ -174,7 +171,7 @@ function FigurePicker(
           accept="image/png,image/jpeg"
           disabled={pendingUpload}
           onChange={(event) => {
-            setLocalFile(event.target.files?.[0] ?? null);
+            chooseLocalFile(event.target.files?.[0] ?? null);
             setPath("");
             setError(null);
           }}
@@ -199,7 +196,7 @@ function FigurePicker(
               disabled={pendingUpload}
               onClick={() => {
                 setPath(image.path);
-                setLocalFile(null);
+                chooseLocalFile(null);
               }}
             >
               <span>

@@ -1,11 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
@@ -58,10 +59,7 @@ function BibliographyFile(props: {
 }) {
   const { environmentId, cwd, path } = props;
   const query = useProjectFileQuery(environmentId, cwd, path);
-  const target = useMemo(
-    () => ({ environmentId, cwd, relativePath: path }),
-    [environmentId, cwd, path],
-  );
+  const target = { environmentId, cwd, relativePath: path };
   const { lease, snapshot, admissionError, retryAdmission } = useMarkdownPersistenceLease({
     target,
     authoritativeSnapshot: query.authoritativeData,
@@ -91,27 +89,23 @@ function BibliographyFile(props: {
     props.callbacks?.onSaved();
   });
   useEffect(() => (lease === null ? undefined : onDocumentSaved(lease, () => saved())), [lease]);
-  const apply = useCallback(
-    async (expected: string, next: string) => {
-      if (lease === null) return false;
-      const current = lease.getSnapshot();
-      if (current.editingBlocked || current.error !== null || current.conflict !== null)
-        return false;
-      const merged = mergeBibliographySourceEdit(expected, next, current.draftSource, "bibtex");
-      if (merged === null) return false;
-      if (
-        current.draftSource !== merged.source &&
-        !lease.applyEdit({ basedOnVersion: current.editVersion, patches: merged.edit.patches })
-          .accepted
-      )
-        return false;
-      return (
-        (await lease.flushNow()) &&
-        bibliographyChangePublished(expected, next, lease.getSnapshot().baselineSource, "bibtex")
-      );
-    },
-    [lease],
-  );
+  const apply = useStableCallback(async (expected: string, next: string) => {
+    if (lease === null) return false;
+    const current = lease.getSnapshot();
+    if (current.editingBlocked || current.error !== null || current.conflict !== null) return false;
+    const merged = mergeBibliographySourceEdit(expected, next, current.draftSource, "bibtex");
+    if (merged === null) return false;
+    if (
+      current.draftSource !== merged.source &&
+      !lease.applyEdit({ basedOnVersion: current.editVersion, patches: merged.edit.patches })
+        .accepted
+    )
+      return false;
+    return (
+      (await lease.flushNow()) &&
+      bibliographyChangePublished(expected, next, lease.getSnapshot().baselineSource, "bibtex")
+    );
+  });
   const disk = query.authoritativeData;
   const error =
     saveError ??
@@ -221,6 +215,15 @@ function draftSource(draft: EntryDraft) {
   return raw;
 }
 
+// React Compiler cannot lower finally inside a component's event handler.
+async function withSavingCleanup(save: () => Promise<void>, setSaving: (saving: boolean) => void) {
+  try {
+    await save();
+  } finally {
+    setSaving(false);
+  }
+}
+
 /** Document-scoped reference management; insertion remains in the writing menu. */
 export function LatexReferencesPanel(props: {
   open: boolean;
@@ -254,49 +257,33 @@ export function LatexReferencesPanel(props: {
   const [removeConfirm, setRemoveConfirm] = useState(false);
   const [containerIndex, setContainerIndex] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-  const paths = useMemo(
-    () => bibliographyPaths(props.setupSource, props.rootRelativePath),
-    [props.setupSource, props.rootRelativePath],
+  const paths = bibliographyPaths(props.setupSource, props.rootRelativePath);
+  const updateFile = useStableCallback((file: BibliographyDocument) =>
+    setFiles((current) => ({ ...current, [file.id]: file })),
   );
-  const updateFile = useCallback(
-    (file: BibliographyDocument) => setFiles((current) => ({ ...current, [file.id]: file })),
-    [],
-  );
-  const documents = useMemo(
-    () => [
-      ...props.documents.filter(
-        (document) => manualBibliography(document.source).containers.length > 0,
-      ),
-      ...paths
-        .slice(0, 24)
-        .flatMap((path) => (files[`bib:${path}`] ? [files[`bib:${path}`]!] : [])),
-    ],
-    [props.documents, paths, files],
-  );
-  const indexed = useMemo(
-    () =>
-      documents.map((document) => ({
-        document,
-        parsed:
-          document.kind === "bibtex"
-            ? bibtexEntries(document.source)
-            : manualBibliography(document.source),
-      })),
-    [documents],
-  );
-  const candidates = useMemo(
-    () =>
-      indexed.flatMap(({ document, parsed }) =>
-        parsed.entries.map((entry) => ({ document, entry })),
-      ),
-    [indexed],
+  const documents = [
+    ...props.documents.filter(
+      (document) => manualBibliography(document.source).containers.length > 0,
+    ),
+    ...paths.slice(0, 24).flatMap((path) => (files[`bib:${path}`] ? [files[`bib:${path}`]!] : [])),
+  ];
+  const indexed = documents.map((document) => ({
+    document,
+    parsed:
+      document.kind === "bibtex"
+        ? bibtexEntries(document.source)
+        : manualBibliography(document.source),
+  }));
+  const candidates = indexed.flatMap(({ document, parsed }) =>
+    parsed.entries.map((entry) => ({ document, entry })),
   );
   const catalogChanged = props.onCatalogChange;
   const publishedCatalog = useRef<{
     listener: typeof catalogChanged;
     entries: BibliographyDetails[];
   } | null>(null);
-  useEffect(() => {
+  // The catalog is published only when its listener or entries changed.
+  const publishCatalog = useEffectEvent((..._changes: readonly unknown[]) => {
     const entries = candidates.map(({ document, entry }) => ({
       key: entry.key,
       title: bibliographyEntryTitle(entry),
@@ -316,7 +303,8 @@ export function LatexReferencesPanel(props: {
       return;
     publishedCatalog.current = { listener: catalogChanged, entries };
     catalogChanged(entries);
-  }, [candidates, catalogChanged]);
+  });
+  useEffect(() => publishCatalog(candidates, catalogChanged), [candidates, catalogChanged]);
   const target = draft
     ? documents.find(
         (document) => document.id === draft.documentId && document.path === draft.documentPath,
@@ -338,54 +326,50 @@ export function LatexReferencesPanel(props: {
     draftReporter(dirty || saving || filePending);
     return () => draftReporter(false);
   }, [dirty, saving, filePending, draftReporter]);
-  const requestSeen = useRef(-1);
-  useEffect(() => {
-    if (!props.open || requestSeen.current === props.request.sequence) return;
+  // Each open request is handled once: it selects its entry, or waits for the
+  // bibliography files that could hold it, or leaves an unsaved draft alone.
+  const [handledRequest, setHandledRequest] = useState(-1);
+  const [focusRequest, setFocusRequest] = useState(0);
+  if (props.open && handledRequest !== props.request.sequence) {
     if (dirty) {
-      requestSeen.current = props.request.sequence;
+      setHandledRequest(props.request.sequence);
       if (props.request.key && props.request.key !== draft?.key)
         setNotice("Save or cancel the current entry before opening another reference.");
-      return;
-    }
-    const selected = props.request.key
-      ? candidates.find(({ entry }) => entry.key === props.request.key)
-      : null;
-    if (
-      props.request.key &&
-      !selected &&
-      props.environmentId &&
-      props.cwd &&
-      paths.slice(0, 24).some((path) => !files[`bib:${path}`] || files[`bib:${path}`]?.pending)
-    )
-      return;
-    requestSeen.current = props.request.sequence;
-    setQuery("");
-    setNotice(null);
-    setRemoveConfirm(false);
-    if (selected) {
-      setDocumentId(selected.document.id);
-      const selectedDraft = entryDraft(selected.document, selected.entry);
-      setDraft(selectedDraft);
-      setContainerIndex(selectedDraft.containerIndex);
     } else {
-      setDraft(null);
-      if (props.request.key) {
-        setQuery(props.request.key);
-        setNotice(`No bibliography entry was found for ${props.request.key}.`);
+      const selected = props.request.key
+        ? candidates.find(({ entry }) => entry.key === props.request.key)
+        : null;
+      const waitingForFiles =
+        props.request.key &&
+        !selected &&
+        props.environmentId &&
+        props.cwd &&
+        paths.slice(0, 24).some((path) => !files[`bib:${path}`] || files[`bib:${path}`]?.pending);
+      if (!waitingForFiles) {
+        setHandledRequest(props.request.sequence);
+        setQuery("");
+        setNotice(null);
+        setRemoveConfirm(false);
+        if (selected) {
+          setDocumentId(selected.document.id);
+          const selectedDraft = entryDraft(selected.document, selected.entry);
+          setDraft(selectedDraft);
+          setContainerIndex(selectedDraft.containerIndex);
+        } else {
+          setDraft(null);
+          if (props.request.key) {
+            setQuery(props.request.key);
+            setNotice(`No bibliography entry was found for ${props.request.key}.`);
+          }
+        }
+        setFocusRequest((request) => request + 1);
       }
     }
-    requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
-  }, [
-    props.open,
-    props.request,
-    props.environmentId,
-    props.cwd,
-    candidates,
-    files,
-    paths,
-    dirty,
-    draft,
-  ]);
+  }
+  useEffect(() => {
+    if (focusRequest > 0)
+      requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
+  }, [focusRequest]);
   // Once read, keep the leases through closing the panel so pending/error
   // reports continue to describe the same bibliography sessions.
   const resourcePaths = [
@@ -502,23 +486,23 @@ export function LatexReferencesPanel(props: {
     }
     setSaving(true);
     setNotice(null);
-    try {
-      if (await target.apply(draft.original, next)) {
-        setDraft(null);
-        setRemoveConfirm(false);
-        props.onSaved();
-        setNotice(
-          remove ? "Reference removed. Existing citations keep their keys." : "Reference saved.",
-        );
-      } else
-        setNotice(
-          "The file changed before the reference was saved, or the save failed. Your entry draft is retained.",
-        );
-    } catch {
-      setNotice("Could not save this reference. Your draft is retained.");
-    } finally {
-      setSaving(false);
-    }
+    await withSavingCleanup(async () => {
+      try {
+        if (await target.apply(draft.original, next)) {
+          setDraft(null);
+          setRemoveConfirm(false);
+          props.onSaved();
+          setNotice(
+            remove ? "Reference removed. Existing citations keep their keys." : "Reference saved.",
+          );
+        } else
+          setNotice(
+            "The file changed before the reference was saved, or the save failed. Your entry draft is retained.",
+          );
+      } catch {
+        setNotice("Could not save this reference. Your draft is retained.");
+      }
+    }, setSaving);
   };
   const change = (patch: Partial<EntryDraft>) => {
     setDraft((current) => current && { ...current, ...patch });

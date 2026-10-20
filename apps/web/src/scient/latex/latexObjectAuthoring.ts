@@ -1,13 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { Selection } from "@tiptap/pm/state";
-import {
-  createContext,
-  createElement,
-  useCallback,
-  useContext,
-  type ContextType,
-  type ReactNode,
-} from "react";
+import { createContext, createElement, useContext, type ContextType, type ReactNode } from "react";
 import { projectLatexVisualDocument, serializeLatexVisualBlock } from "./latexVisualDocument";
 
 export const LatexAuthoringContext = createContext<{
@@ -42,7 +35,7 @@ export function LatexDocumentAuthoring({
 /** Object menus report action failures through the document's notice area. */
 export function useLatexActionNotice() {
   const reportError = useContext(LatexActionNoticeContext);
-  return useCallback((message: string | null) => reportError?.(message || null), [reportError]);
+  return (message: string | null) => reportError?.(message || null);
 }
 
 /** One editor transaction, with fresh source ownership and the existing preservation gate. */

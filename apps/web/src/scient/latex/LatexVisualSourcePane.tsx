@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownSourceSurface, useFileLineReveal } from "~/components/files/FilePreviewPanel";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
@@ -43,10 +43,7 @@ export function LatexVisualSourcePane(
 ) {
   const { environmentId, cwd, reveal } = props;
   const query = useProjectFileQuery(environmentId, cwd, reveal.path);
-  const target = useMemo(
-    () => ({ environmentId, cwd, relativePath: reveal.path }),
-    [environmentId, cwd, reveal.path],
-  );
+  const target = { environmentId, cwd, relativePath: reveal.path };
   const { lease, snapshot, admissionError } = useMarkdownPersistenceLease({
     target,
     authoritativeSnapshot: query.authoritativeData,
@@ -71,27 +68,24 @@ export function LatexVisualSourcePane(
           snapshot.baselineRevision === reveal.sourceRevision &&
           snapshot.draftSource === snapshot.baselineSource)));
   const [rejectedCompiledReveal, setRejectedCompiledReveal] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    if (
-      reveal.sourceRevision !== undefined &&
-      disk !== null &&
-      !query.isPending &&
-      !snapshot?.reading &&
-      (lease !== null || disk.readOnly) &&
-      !compiledRevealCurrent
-    )
-      setRejectedCompiledReveal(reveal.requestId);
-  }, [reveal, disk, query.isPending, snapshot?.reading, lease, compiledRevealCurrent]);
+  // Once a settled read refuses the compiled position, this reveal stays refused.
+  if (
+    reveal.sourceRevision !== undefined &&
+    disk !== null &&
+    !query.isPending &&
+    !snapshot?.reading &&
+    (lease !== null || disk.readOnly) &&
+    !compiledRevealCurrent &&
+    rejectedCompiledReveal !== reveal.requestId
+  )
+    setRejectedCompiledReveal(reveal.requestId);
   const revealCurrent = compiledRevealCurrent && rejectedCompiledReveal !== reveal.requestId;
-  const range = useMemo(
-    () =>
-      source === undefined || !revealCurrent
-        ? null
-        : reveal.citation
-          ? resolveLatexCitationSource(source, reveal.citation)
-          : latexSourceRevealRange(source, reveal),
-    [source, reveal, revealCurrent],
-  );
+  const range =
+    source === undefined || !revealCurrent
+      ? null
+      : reveal.citation
+        ? resolveLatexCitationSource(source, reveal.citation)
+        : latexSourceRevealRange(source, reveal);
   const line =
     source !== undefined && range
       ? source.slice(0, range.from).split("\n").length
@@ -110,13 +104,10 @@ export function LatexVisualSourcePane(
     reveal.citation,
     !!reveal.citation,
   );
-  const selectionReveal = useMemo(
-    () =>
-      navigationMarked && range && source !== undefined
-        ? { source, ...range, requestId: reveal.requestId }
-        : undefined,
-    [navigationMarked, range, source, reveal.requestId],
-  );
+  const selectionReveal =
+    navigationMarked && range && source !== undefined
+      ? { source, ...range, requestId: reveal.requestId }
+      : undefined;
   const dismissNavigation = () => {
     if (!reveal.citation) setDismissedRequest(reveal.requestId);
   };

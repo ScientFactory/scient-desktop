@@ -97,27 +97,35 @@ import {
   Fragment,
   createContext,
   useContext,
-  useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type ComponentProps,
   type FocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
 
-import { EditorState, Plugin, NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
+import {
+  EditorState,
+  Plugin,
+  NodeSelection,
+  Selection,
+  TextSelection,
+  type Transaction,
+} from "@tiptap/pm/state";
 import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { closeHistory, undoDepth } from "@tiptap/pm/history";
 import {
@@ -459,15 +467,12 @@ const LatexSourceAttributes = Extension.create({
 });
 
 function useEditorEditable(editor: Editor): boolean {
-  const subscribe = useCallback(
-    (changed: () => void) => {
-      editor.on("update", changed);
-      return () => {
-        editor.off("update", changed);
-      };
-    },
-    [editor],
-  );
+  const subscribe = (changed: () => void) => {
+    editor.on("update", changed);
+    return () => {
+      editor.off("update", changed);
+    };
+  };
   return useSyncExternalStore(
     subscribe,
     () => editor.isEditable,
@@ -651,24 +656,21 @@ function LatexMathView({
     completionContext.current = commandContext;
   }, [commandContext]);
 
-  const dismiss = useCallback(
-    (keepDocumentSelection = false) => {
-      mathField.current?.clearSelection();
-      if (!keepDocumentSelection && !editor.isDestroyed && activeMath.get()?.id === activationId) {
-        const position = getPos();
-        const selection = editor.state.selection;
-        // Activation uses a node selection as the math field's edit anchor.
-        // Release only that anchor, never a range made by dragging out of math.
-        if (selection instanceof NodeSelection && selection.from === position)
-          preserveLatexCaret(editor.view);
-      }
-      setEditing(false);
-      setSourceOpen(false);
-      setPaletteRequest(0);
-      activeMath.deactivate(activationId);
-    },
-    [editor, getPos, activeMath, activationId],
-  );
+  const dismiss = (keepDocumentSelection = false) => {
+    mathField.current?.clearSelection();
+    if (!keepDocumentSelection && !editor.isDestroyed && activeMath.get()?.id === activationId) {
+      const position = getPos();
+      const selection = editor.state.selection;
+      // Activation uses a node selection as the math field's edit anchor.
+      // Release only that anchor, never a range made by dragging out of math.
+      if (selection instanceof NodeSelection && selection.from === position)
+        preserveLatexCaret(editor.view);
+    }
+    setEditing(false);
+    setSourceOpen(false);
+    setPaletteRequest(0);
+    activeMath.deactivate(activationId);
+  };
 
   useEffect(() => {
     const deactivate = (event: Event) => {
@@ -1142,7 +1144,7 @@ function LatexMathView({
   });
 
   const sourceShortcut = useRef<(id: string) => boolean>(() => false);
-  sourceShortcut.current = (id) => {
+  const runSourceShortcut = (id: string) => {
     const field = sourceEditor.current;
     if (!field || !editor.isEditable) return false;
     if (id === "math.palette") {
@@ -1178,6 +1180,9 @@ function LatexMathView({
     });
     return true;
   };
+  useLayoutEffect(() => {
+    sourceShortcut.current = runSourceShortcut;
+  });
   useEffect(() => {
     const field = sourceEditor.current;
     if (!field || !sourceOpen || !editing) return;
@@ -1187,7 +1192,7 @@ function LatexMathView({
       accepts: (event) => editor.isEditable && !event.isComposing,
       execute: (id) => sourceShortcut.current(id),
     });
-  }, [sourceOpen, editing, editor]);
+  }, [sourceOpen, editing, editor, setShortcutHint]);
 
   const numbered = Boolean(attributes.environment && !attributes.environment.endsWith("*"));
   const equationSource = latexVisualMathSource(attributes, display);
@@ -1718,10 +1723,7 @@ function LatexInlineCommandView({
       : `equation ${equationReference?.number ?? argument}`;
   const root = useRef<HTMLSpanElement>(null);
   const footnoteText = name === "footnote" ? metadataText(argument) : null;
-  const footnoteEditable = useMemo(
-    () => name === "footnote" && latexTableInlineContent(argument) !== null,
-    [name, argument],
-  );
+  const footnoteEditable = name === "footnote" && latexTableInlineContent(argument) !== null;
   const linkText = String(node.attrs.linkText ?? "");
   const linkPlain = metadataText(linkText);
   const isLink = ["href", "url", "hyperref", "hyperlink"].includes(name);
@@ -2246,12 +2248,34 @@ const LatexBlockSourceContext = createContext<{
   remove: (position: number, original: string) => void;
 } | null>(null);
 
+function readNodePosition(getPos: () => number | undefined): number | undefined {
+  try {
+    return getPos();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The node's current position. getPos reads live ProseMirror state while keeping one
+ * identity, so a cached call would go stale; this re-reads it after every transaction.
+ */
+function useLiveNodePosition(editor: Editor, getPos: () => number | undefined) {
+  const subscribe = (changed: () => void) => {
+    editor.on("transaction", changed);
+    return () => {
+      editor.off("transaction", changed);
+    };
+  };
+  const read = () => readNodePosition(getPos);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
 function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
-  "use no memo";
-  // getPos reads live ProseMirror state despite retaining the same function identity.
   const raw = String(node.attrs.raw ?? "");
   const source = useContext(LatexBlockSourceContext);
-  const active = source?.active?.position === getPos();
+  const livePosition = useLiveNodePosition(editor, getPos);
+  const active = source?.active?.position === livePosition;
   const sourceField = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const field = sourceField.current;
@@ -2412,51 +2436,44 @@ function LatexFigureImage(props: {
 }) {
   const rootRelativePath = useContext(LatexRootContext);
   const searchPaths = useContext(LatexGraphicsPathsContext);
-  const candidates = useMemo(
-    () =>
-      rootRelativePath === null
-        ? []
-        : [
-            ...new Set(
-              ["", ...searchPaths]
-                .map((base) =>
-                  normalizeFigurePath(
-                    rootRelativePath,
-                    `${base}${base && !base.endsWith("/") ? "/" : ""}${props.path}`,
-                  ),
-                )
-                .filter((value): value is string => value !== null),
-            ),
-          ],
-    [rootRelativePath, props.path, searchPaths],
-  );
+  const candidates =
+    rootRelativePath === null
+      ? []
+      : [
+          ...new Set(
+            ["", ...searchPaths]
+              .map((base) =>
+                normalizeFigurePath(
+                  rootRelativePath,
+                  `${base}${base && !base.endsWith("/") ? "/" : ""}${props.path}`,
+                ),
+              )
+              .filter((value): value is string => value !== null),
+          ),
+        ];
   const identity = JSON.stringify(candidates);
   const [attempt, setAttempt] = useState({ identity, index: 0 });
   const candidateIndex = attempt.identity === identity ? attempt.index : 0;
   const relativePath = candidates[candidateIndex] ?? null;
-  const resource = useMemo<AssetResource | null>(
-    () =>
-      props.workspace.cwd === null || relativePath === null
-        ? null
-        : {
-            _tag: "workspace-file",
-            cwd: props.workspace.cwd,
-            relativePath,
-          },
-    [props.workspace.cwd, relativePath],
-  );
+  const resource: AssetResource | null =
+    props.workspace.cwd === null || relativePath === null
+      ? null
+      : {
+          _tag: "workspace-file",
+          cwd: props.workspace.cwd,
+          relativePath,
+        };
   const asset = useAssetUrlState(props.workspace.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [intrinsic, setIntrinsic] = useState<{ url: string; width: number; height: number } | null>(
     null,
   );
-  useEffect(() => {
-    if (
-      candidateIndex + 1 < candidates.length &&
-      (asset._tag === "Failure" || (asset._tag === "Success" && failedUrl === asset.url))
-    )
-      setAttempt({ identity, index: candidateIndex + 1 });
-  }, [asset, failedUrl, candidates.length, candidateIndex, identity]);
+  // A candidate that failed hands over to the next search path.
+  if (
+    candidateIndex + 1 < candidates.length &&
+    (asset._tag === "Failure" || (asset._tag === "Success" && failedUrl === asset.url))
+  )
+    setAttempt({ identity, index: candidateIndex + 1 });
   const previewIdentity = JSON.stringify([
     props.workspace.cwd,
     relativePath,
@@ -2465,24 +2482,21 @@ function LatexFigureImage(props: {
   const [timedOutIdentity, setTimedOutIdentity] = useState<string | null>(null);
   const timedOut = timedOutIdentity === previewIdentity;
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
-  const attachPreview = useCallback(
-    (element: HTMLElement | SVGElement | null) => {
-      if (!element) return;
-      const fallback = () => setTimedOutIdentity(previewIdentity);
-      const retry = () => {
-        setTimedOutIdentity(null);
-        setFailedUrl(null);
-        asset.refresh();
-      };
-      element.addEventListener("scient-latex-preview-fallback", fallback);
-      element.addEventListener("scient-latex-preview-retry", retry);
-      return () => {
-        element.removeEventListener("scient-latex-preview-fallback", fallback);
-        element.removeEventListener("scient-latex-preview-retry", retry);
-      };
-    },
-    [asset, previewIdentity],
-  );
+  const attachPreview = (element: HTMLElement | SVGElement | null) => {
+    if (!element) return;
+    const fallback = () => setTimedOutIdentity(previewIdentity);
+    const retry = () => {
+      setTimedOutIdentity(null);
+      setFailedUrl(null);
+      asset.refresh();
+    };
+    element.addEventListener("scient-latex-preview-fallback", fallback);
+    element.addEventListener("scient-latex-preview-retry", retry);
+    return () => {
+      element.removeEventListener("scient-latex-preview-fallback", fallback);
+      element.removeEventListener("scient-latex-preview-retry", retry);
+    };
+  };
   const graphics = latexGraphicsOptions(props.options ?? "");
   const imageUrl = asset._tag === "Success" ? asset.url : null;
   const trimIdentity = JSON.stringify(graphics?.trim ?? null);
@@ -2734,22 +2748,15 @@ function LatexRichPreviewView({
   const itemIds = Array.isArray(node.attrs.itemIds)
     ? (node.attrs.itemIds as unknown[]).map(String)
     : [];
-  const rows = useMemo(
-    () =>
-      Array.isArray(node.attrs.rows)
-        ? (node.attrs.rows as unknown[]).filter(Array.isArray).map((row) => row.map(String))
-        : [],
-    [node.attrs.rows],
-  );
-  const rowIds = useMemo(
-    () => (Array.isArray(node.attrs.rowIds) ? (node.attrs.rowIds as unknown[]).map(String) : []),
-    [node.attrs.rowIds],
-  );
-  const columnIds = useMemo(
-    () =>
-      Array.isArray(node.attrs.columnIds) ? (node.attrs.columnIds as unknown[]).map(String) : [],
-    [node.attrs.columnIds],
-  );
+  const rows = Array.isArray(node.attrs.rows)
+    ? (node.attrs.rows as unknown[]).filter(Array.isArray).map((row) => row.map(String))
+    : [];
+  const rowIds = Array.isArray(node.attrs.rowIds)
+    ? (node.attrs.rowIds as unknown[]).map(String)
+    : [];
+  const columnIds = Array.isArray(node.attrs.columnIds)
+    ? (node.attrs.columnIds as unknown[]).map(String)
+    : [];
   const columnAlignments = Array.isArray(node.attrs.columnAlignments)
     ? (node.attrs.columnAlignments as unknown[]).map((alignment) =>
         alignment === "center" || alignment === "right" ? alignment : "left",
@@ -2774,11 +2781,11 @@ function LatexRichPreviewView({
   const structureEditable = node.attrs.editable === true;
   const controlsVisible = kind === "table" ? objectActive : selected || objectActive;
   const tableEditable = kind === "table" && structureEditable;
-  const tablePresentation = useMemo(
-    () => latexVisualTablePresentation(String(node.attrs.raw ?? ""), tablePreamble),
-    [node.attrs.raw, tablePreamble],
+  const tablePresentation = latexVisualTablePresentation(
+    String(node.attrs.raw ?? ""),
+    tablePreamble,
   );
-  const tableFormatting = useMemo(() => latexVisualTableFormatting(node.toJSON()), [node]);
+  const tableFormatting = latexVisualTableFormatting(node.toJSON());
   const tableColumnKinds = node.attrs.tableCanonical
     ? (rows[0]?.map(() => (node.attrs.tableKind === "stretch" ? "flexible" : "natural")) ?? [])
     : tablePresentation.columnKinds;
@@ -2786,14 +2793,18 @@ function LatexRichPreviewView({
     node.attrs.tableKind === "stretch" &&
     tableColumnKinds.includes("flexible") &&
     tableColumnKinds.includes("natural");
-  useEffect(() => {
-    if (kind !== "table") return;
-    setSelectedCell((cell) => {
-      const row = Math.max(0, Math.min(cell.row, rows.length - 1));
-      const column = Math.max(0, Math.min(cell.column, (rows[0]?.length ?? 1) - 1));
-      return row === cell.row && column === cell.column ? cell : { row, column };
-    });
-  }, [kind, rows.length, rows[0]?.length]);
+  // A row or column removed under the selected cell moves the selection inside the table.
+  const tableShape = `${kind}:${rows.length}:${rows[0]?.length ?? ""}`;
+  const [clampedTableShape, setClampedTableShape] = useState<string | null>(null);
+  if (clampedTableShape !== tableShape) {
+    setClampedTableShape(tableShape);
+    if (kind === "table")
+      setSelectedCell((cell) => {
+        const row = Math.max(0, Math.min(cell.row, rows.length - 1));
+        const column = Math.max(0, Math.min(cell.column, (rows[0]?.length ?? 1) - 1));
+        return row === cell.row && column === cell.column ? cell : { row, column };
+      });
+  }
   const descriptionEditable = kind === "description" && structureEditable;
   const sourceMeta =
     node.attrs.sourceMeta && typeof node.attrs.sourceMeta === "object"
@@ -2816,10 +2827,7 @@ function LatexRichPreviewView({
     | undefined;
   const [pagination, setPagination] = useState<PagedTableLayout>({ breaks: [], offsets: [] });
   const pageBreaks = pagination.breaks;
-  const pageLeft = useMemo(
-    () => new Map(pagination.offsets.map(({ row, left }) => [row, left])),
-    [pagination.offsets],
-  );
+  const pageLeft = new Map(pagination.offsets.map(({ row, left }) => [row, left]));
   useEffect(() => {
     const element = objectRoot.current?.parentElement;
     if (!element || !longtable) return;
@@ -3176,7 +3184,8 @@ function LatexRichPreviewView({
       );
     } else field.focus({ preventScroll: true });
   };
-  const addTableRow = (after = selectedCell.row) => {
+  const addTableRow = (afterRow?: number) => {
+    const after = afterRow ?? selectedCell.row;
     if (!editorEditable || !tableStructureEditable || rows.length === 0) return;
     const insertion = Math.min(rows.length, Math.max(0, after + 1));
     const nextRows = rows.map((row) => [...row]);
@@ -3201,7 +3210,8 @@ function LatexRichPreviewView({
     setSelectedCell(nextSelection);
     focusTableCell(nextSelection.row, nextSelection.column);
   };
-  const addTableColumn = (after = selectedCell.column) => {
+  const addTableColumn = (afterColumn?: number) => {
+    const after = afterColumn ?? selectedCell.column;
     if (!tableStructureEditable || rows.length === 0) return;
     const insertion = Math.min(rows[0]!.length, Math.max(0, after + 1));
     const nextRows = rows.map((row) => {
@@ -3286,7 +3296,7 @@ function LatexRichPreviewView({
     focusTableCell(selectedCell.row, to);
   };
   const tableShortcut = useRef<(id: string) => boolean>(() => false);
-  tableShortcut.current = (id) => {
+  const runTableShortcut = (id: string) => {
     if (!editorEditable || !tableStructureEditable) return false;
     if (id === "table.addRow") addTableRow();
     else if (id === "table.deleteRow" && rows.length > 1) removeTableRow();
@@ -3295,6 +3305,9 @@ function LatexRichPreviewView({
     else return false;
     return true;
   };
+  useLayoutEffect(() => {
+    tableShortcut.current = runTableShortcut;
+  });
   useEffect(() => {
     const root = tableRoot.current;
     if (!root || !tableEditable) return;
@@ -3306,7 +3319,7 @@ function LatexRichPreviewView({
         Boolean(event.target.closest("[data-table-cell]")),
       execute: (id) => tableShortcut.current(id),
     });
-  }, [tableEditable, editor]);
+  }, [tableEditable, editor, tableShortcut]);
   if (kind === "title") {
     return (
       <LatexTitleView
@@ -5765,6 +5778,17 @@ export interface LatexVisualEditorProps {
   readonly registerFinishEditing?: (finish: (() => boolean) | null) => void;
 }
 
+/** Projects in this thread when no worker is available; null when the source cannot be projected. */
+function projectWithoutWorker(source: string, setup: string): LatexVisualDocument | null {
+  try {
+    const projection = projectLatexVisualDocument(source, 0, setup);
+    visualProjectionCache.put(source, setup, projection);
+    return projection;
+  } catch {
+    return null;
+  }
+}
+
 export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const identity = props.editorInstanceKey ?? props.draftKey;
   const requestIdentity = useRef(props);
@@ -5784,10 +5808,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [retry, setRetry] = useState(0);
   const [recoveryPrepared, setRecoveryPrepared] = useState<string | null>(null);
   const [recoveryFailure, setRecoveryFailure] = useState(false);
+  // A new document, or Retry, starts recovery preparation again from a clean state.
+  const recoveryRequest = JSON.stringify([identity, props.draftKey, retry]);
+  const [startedRecoveryRequest, setStartedRecoveryRequest] = useState(recoveryRequest);
+  if (startedRecoveryRequest !== recoveryRequest) {
+    setStartedRecoveryRequest(recoveryRequest);
+    if (recoveryPrepared !== identity) setRecoveryFailure(false);
+  }
   useEffect(() => {
-    if (recoveryPrepared === identity) return;
+    if (recoveryPrepared === identity || recoveryFailure) return;
     let active = true;
-    setRecoveryFailure(false);
     void prepareVisualTypingRecovery(props.draftKey)
       .then(() => {
         if (active) setRecoveryPrepared(identity);
@@ -5798,42 +5828,49 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     return () => {
       active = false;
     };
-  }, [identity, props.draftKey, recoveryPrepared, retry]);
-  useEffect(() => {
-    if (prepared?.key === identity) return;
+  }, [identity, props.draftKey, recoveryPrepared, recoveryFailure]);
+  // A cached projection, or one made here without a worker, is adopted while rendering;
+  // a worker prepares the rest.
+  const preparationRequest = JSON.stringify([
+    identity,
+    props.source,
+    props.sourceSnapshot.id,
+    retry,
+  ]);
+  const [startedPreparation, setStartedPreparation] = useState<string | null>(null);
+  if (prepared?.key !== identity && startedPreparation !== preparationRequest) {
+    setStartedPreparation(preparationRequest);
     setFailure(false);
     const setup = props.sourceSnapshot.setupSource;
     const cached = visualProjectionCache.get(props.source, setup);
-    if (cached) {
-      setPrepared({ key: identity, projection: cached });
-      return;
+    if (cached) setPrepared({ key: identity, projection: cached });
+    else if (typeof Worker === "undefined") {
+      const projection = projectWithoutWorker(props.source, setup);
+      if (projection) setPrepared({ key: identity, projection });
+      else setFailure(true);
     }
-    if (typeof Worker === "undefined") {
-      try {
-        const projection = projectLatexVisualDocument(props.source, 0, setup);
-        visualProjectionCache.put(props.source, setup, projection);
-        setPrepared({ key: identity, projection });
-      } catch {
-        setFailure(true);
-      }
-      return;
-    }
+  }
+  const setupSource = props.sourceSnapshot.setupSource;
+  const sourceSnapshotId = props.sourceSnapshot.id;
+  useEffect(() => {
+    if (prepared?.key === identity || failure || typeof Worker === "undefined") return;
+    if (visualProjectionCache.get(props.source, setupSource)) return;
     return processVisualDocument(
-      { kind: "project", source: props.source, setupSource: setup },
+      { kind: "project", source: props.source, setupSource },
       (result) => {
         const current = requestIdentity.current;
         if (
           (current.editorInstanceKey ?? current.draftKey) !== identity ||
-          current.sourceSnapshot.id !== props.sourceSnapshot.id
+          current.sourceSnapshot.id !== sourceSnapshotId
         )
           return;
         if (result?.kind === "project") {
-          visualProjectionCache.put(props.source, setup, result.projection);
+          visualProjectionCache.put(props.source, setupSource, result.projection);
           setPrepared({ key: identity, projection: result.projection });
         } else setFailure(true);
       },
     );
-  }, [prepared, identity, props.source, props.sourceSnapshot.id, retry]);
+  }, [prepared, failure, identity, props.source, setupSource, sourceSnapshotId]);
   if (recoveryFailure)
     return (
       <div className="scient-latex-placeholder" role="status">
@@ -5864,44 +5901,136 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   );
 }
 
+// The React Compiler cannot compile `finally` or a `throw` inside `try` in a
+// component, so those control flows live in these helpers.
+
+/** Runs `work`, then `cleanup` even when `work` throws. */
+function runThenCleanUp(work: () => void, cleanup: () => void): void {
+  try {
+    work();
+  } finally {
+    cleanup();
+  }
+}
+
+/** Whether `work` finished without throwing. */
+function completes(work: () => void): boolean {
+  try {
+    work();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The authoring context; `source` reads the newest setup each time it is read. */
+function latexAuthoringContext(context: {
+  readonly readSource: () => string;
+  readonly preamble: string;
+  readonly prepare: () => boolean;
+  readonly reportError: (message: string | null) => void;
+  readonly renameLabel: (before: string, after: string, fieldId?: string) => boolean;
+}) {
+  return {
+    get source() {
+      return context.readSource();
+    },
+    preamble: context.preamble,
+    prepare: context.prepare,
+    reportError: context.reportError,
+    renameLabel: context.renameLabel,
+  };
+}
+
+/**
+ * Whether the active math field applies a text format. The field reports changes as
+ * `formatting`, which keys this read so it follows each announced change.
+ */
+function activeMathFormat(
+  target: ActiveMathEditor | null,
+  format: Parameters<ActiveMathEditor["textFormatActive"]>[0],
+  _formatting: string,
+): boolean {
+  return Boolean(target?.textFormatActive(format));
+}
+
+function LatexTextBlockItems(props: {
+  ids: readonly string[];
+  actions: readonly LatexInsertAction[];
+  disabled: boolean;
+}) {
+  return props.ids.map((id) => {
+    const action = props.actions.find((item) => item.id === id);
+    if (!action) return null;
+    return (
+      <DockCommandItem
+        key={id}
+        disabled={props.disabled || action.disabled || Boolean(action.disabledReason)}
+        title={action.disabledReason}
+        onClick={action.run}
+      >
+        <MenuRow label={action.label} />
+      </DockCommandItem>
+    );
+  });
+}
+
+function documentInsertActions(actions: readonly LatexInsertAction[]) {
+  return actions.filter(
+    (action) =>
+      !action.id.startsWith("heading-") &&
+      action.id !== "paragraph" &&
+      !action.id.startsWith("document-") &&
+      action.group !== "Math",
+  );
+}
+
+function LatexDocumentInsertMenu(props: ComponentProps<typeof LatexInsertMenu>) {
+  return <LatexInsertMenu {...props} actions={documentInsertActions(props.actions)} />;
+}
+
+function LatexDocumentInsertMenuContent(props: ComponentProps<typeof LatexInsertMenuContent>) {
+  return <LatexInsertMenuContent {...props} actions={documentInsertActions(props.actions)} />;
+}
+
+function ownerSourceNotice(pendingFields: ReadonlySet<string>) {
+  return [...pendingFields].some((id) => id !== "source-publication")
+    ? "The source changed elsewhere. Your unsaved writing is retained here; resolve the source change before saving."
+    : null;
+}
+
 function LatexVisualEditorReady(
   props: LatexVisualEditorProps & { initialProjection: LatexVisualDocument },
 ) {
-  const mathSetupSource = useMemo(() => {
-    const source = props.sourceSnapshot.setupSource;
-    return source.slice(0, latexPreambleEnd(source));
-  }, [props.sourceSnapshot.setupSource]);
-  const documentMathSetup = useMemo(
-    () => latexDocumentMathSetup(mathSetupSource),
-    [mathSetupSource],
+  const mathSetupSource = props.sourceSnapshot.setupSource.slice(
+    0,
+    latexPreambleEnd(props.sourceSnapshot.setupSource),
   );
-  const documentLanguage = useMemo(() => latexDocumentLanguage(mathSetupSource), [mathSetupSource]);
+  const documentMathSetup = latexDocumentMathSetup(mathSetupSource);
+  const documentLanguage = latexDocumentLanguage(mathSetupSource);
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
-  const commandContext = useMemo(
-    () => ({
-      source: mathSetupSource,
-      referenceSource: () => currentSetupSource.current,
-      macros: documentMathSetup.macros,
-      colors: latexDocumentColors(mathSetupSource),
-    }),
-    [documentMathSetup.macros, mathSetupSource],
-  );
+  // Plugins and fields live as long as the editor and read the newest setup through this.
+  const readSetupSource = useStableCallback(() => currentSetupSource.current);
+  const commandContext = {
+    source: mathSetupSource,
+    referenceSource: readSetupSource,
+    macros: documentMathSetup.macros,
+    colors: latexDocumentColors(mathSetupSource),
+  };
   const completionContext = useRef(commandContext);
   useLayoutEffect(() => {
     completionContext.current = commandContext;
-  }, [commandContext]);
-  const projectionSetupKey = useMemo(() => {
-    const declarations = latexEnvironmentDeclarations(mathSetupSource);
-    // Title metadata changes do not invalidate the parser or its undo history.
-    return JSON.stringify({
-      macros: documentMathSetup.macros,
-      unsupportedMath: documentMathSetup.unsupported,
-      environments: [...declarations.environments],
-      unsupportedEnvironments: [...declarations.unsupported],
-      defaultProofEnd: declarations.defaultProofEnd,
-      listingDefaults: [...(latexListingDefaults(mathSetupSource) ?? [])],
-    });
-  }, [documentMathSetup, mathSetupSource]);
+  }, [commandContext, completionContext]);
+  const setupDeclarations = latexEnvironmentDeclarations(mathSetupSource);
+  // Title metadata changes do not invalidate the parser or its undo history.
+  const projectionSetupKey = JSON.stringify({
+    macros: documentMathSetup.macros,
+    unsupportedMath: documentMathSetup.unsupported,
+    environments: [...setupDeclarations.environments],
+    unsupportedEnvironments: [...setupDeclarations.unsupported],
+    defaultProofEnd: setupDeclarations.defaultProofEnd,
+    listingDefaults: [...(latexListingDefaults(mathSetupSource) ?? [])],
+  });
   const [mathActive, setMathActive] = useState(false);
   const [mathPicker, setMathPicker] = useState<"matrix" | "symbols" | null>(null);
   const [matrixEnvironment, setMatrixEnvironment] = useState<MatrixEnvironment>("bmatrix");
@@ -5917,43 +6046,48 @@ function LatexVisualEditorReady(
     action?: MathSymbol["action"];
   } | null>(null);
   const mathTarget = useRef<ActiveMathEditor | null>(null);
+  const readMathTarget = useStableCallback(() => mathTarget.current);
+  // The active field for rendering: replaced when another field activates or its
+  // formatting availability changes; its methods read the field live.
+  const [renderedMathTarget, setRenderedMathTarget] = useState<ActiveMathEditor | null>(null);
   const [mathFormattingState, setMathFormattingState] = useState("");
-  const activeMath = useMemo(
-    () => ({
-      draftKey: props.draftKey,
-      setupSource: () => currentSetupSource.current,
-      get: () => mathTarget.current,
-      activate: (controls: ActiveMathEditor) => {
-        mathTarget.current = controls;
-        setMathActive(true);
-      },
-      update: (controls: ActiveMathEditor) => {
-        if (mathTarget.current?.id !== controls.id) return;
-        const availabilityChanged =
-          mathTarget.current.formattingAvailable !== controls.formattingAvailable;
-        mathTarget.current = controls;
-        if (availabilityChanged)
-          setMathFormattingState(
-            `${controls.id}:${controls.formattingAvailable ? "visual" : "source"}`,
-          );
-      },
-      formatChanged: (id: string, state: string) => {
-        if (mathTarget.current?.id === id) setMathFormattingState(`${id}:${state}`);
-      },
-      deactivate: (id: string) => {
-        if (mathTarget.current?.id !== id) return;
-        mathTarget.current = null;
-        setMathActive(false);
-      },
-    }),
-    [props.draftKey],
-  );
+  const activeMath = {
+    draftKey: props.draftKey,
+    setupSource: readSetupSource,
+    get: readMathTarget,
+    activate: (controls: ActiveMathEditor) => {
+      mathTarget.current = controls;
+      setRenderedMathTarget(controls);
+      setMathActive(true);
+    },
+    update: (controls: ActiveMathEditor) => {
+      if (mathTarget.current?.id !== controls.id) return;
+      const availabilityChanged =
+        mathTarget.current.formattingAvailable !== controls.formattingAvailable;
+      mathTarget.current = controls;
+      if (availabilityChanged) {
+        setRenderedMathTarget(controls);
+        setMathFormattingState(
+          `${controls.id}:${controls.formattingAvailable ? "visual" : "source"}`,
+        );
+      }
+    },
+    formatChanged: (id: string, state: string) => {
+      if (mathTarget.current?.id === id) setMathFormattingState(`${id}:${state}`);
+    },
+    deactivate: (id: string) => {
+      if (mathTarget.current?.id !== id) return;
+      mathTarget.current = null;
+      setRenderedMathTarget(null);
+      setMathActive(false);
+    },
+  };
   const pendingFields = useRef(new Set<string>());
   const localDraftReporter = useRef(props.onLocalDraftChange);
   const [localDraftState, setLocalDraftState] = useState({ pending: false, version: 0 });
   const hasLocalDraft = localDraftState.pending;
   const cancelDraftReport = useRef<(() => void) | null>(null);
-  const reportDraft = useCallback((id: string, pending: boolean) => {
+  const reportDraft = useStableCallback((id: string, pending: boolean) => {
     if (pendingFields.current.has(id) === pending) return;
     if (pending) pendingFields.current.add(id);
     else pendingFields.current.delete(id);
@@ -5966,7 +6100,7 @@ function LatexVisualEditorReady(
           version: previous.version + 1,
         }));
       });
-  }, []);
+  });
   useEffect(() => () => cancelDraftReport.current?.(), []);
   const onLocalDraftChange = props.onLocalDraftChange;
   useLayoutEffect(() => {
@@ -6007,32 +6141,35 @@ function LatexVisualEditorReady(
   /** Ends progressive loading at once; set while it runs. */
   const stopLoading = useRef<(() => void) | null>(null);
   /** A whole document replaces the opening blocks: nothing is left to load. */
-  const endLoading = useCallback(() => {
+  const endLoading = useStableCallback(() => {
     if (stopLoading.current) stopLoading.current();
     else if (loadingPlan.current) {
       loadingPlan.current = null;
       setLoading(false);
     }
-  }, []);
+  });
   const surfaceReadOnly =
     props.disabled || unsynced || rereadStartup || (recovery !== null && !recovery.parked);
   const readOnly = surfaceReadOnly || loading;
   const editBlocked = useRef(readOnly);
-  editBlocked.current = readOnly;
+  useLayoutEffect(() => {
+    editBlocked.current = readOnly;
+  });
   const refusedChanges = useRef(0);
   const ordinaryDocuments = useRef(new WeakSet<ProseMirrorNode>());
   const textReadOnly = readOnly || mathActive;
   const mathFormattingUnavailable =
     mathActive &&
-    (!mathTarget.current?.formattingAvailable || mathFormattingState.endsWith(":latex"));
+    (!renderedMathTarget?.formattingAvailable || mathFormattingState.endsWith(":latex"));
   const [initial] = useState(props.initialProjection);
   // While the document loads, its references are numbered from all of it.
-  const loadingReferences = useCallback(
-    () =>
-      loadingPlan.current ? { document: initial.content, start: loadingPlan.current.start } : null,
-    [initial],
+  const loadingReferences = useStableCallback(() =>
+    loadingPlan.current ? { document: initial.content, start: loadingPlan.current.start } : null,
   );
   const projection = useRef<LatexVisualDocument>(initial);
+  const [displayedTitle, setDisplayedTitle] = useState(() =>
+    initial.blocks.some((block) => block.node.attrs?.kind === "title"),
+  );
   const currentSource = useRef(initial.source);
   const currentSnapshot = useRef(props.sourceSnapshot);
   const ownedSnapshots = useRef(new Set([props.sourceSnapshot.id]));
@@ -6044,7 +6181,11 @@ function LatexVisualEditorReady(
   } | null>(null);
   const queuedSourceHistory = useRef<LatexSourceHistory[]>([]);
   const compiledBibliographySource = useRef(props.compiledBibliography ?? null);
-  compiledBibliographySource.current = props.compiledBibliography ?? null;
+  useLayoutEffect(() => {
+    compiledBibliographySource.current = props.compiledBibliography ?? null;
+  });
+  const readCompiledBibliography = useStableCallback(() => compiledBibliographySource.current);
+  const readProjection = useStableCallback(() => projection.current);
   // The file revision that `currentSource` descends from. It moves only when
   // the editor adopts a source, so a draft kept over an older source is never
   // stamped with a newer file's revision.
@@ -6061,44 +6202,36 @@ function LatexVisualEditorReady(
   // the document may have stored a different one since; only ours is removed.
   const ownTyping = useRef<string | null>(null);
   const draftKey = props.draftKey;
-  const typingJournal = useMemo(() => createVisualTypingJournal(draftKey), [draftKey]);
+  // One journal per storage key, kept in state so it is never recreated for the same key.
+  const [journalState, setJournalState] = useState(() => ({
+    draftKey,
+    journal: createVisualTypingJournal(draftKey),
+  }));
+  if (journalState.draftKey !== draftKey)
+    setJournalState({ draftKey, journal: createVisualTypingJournal(draftKey) });
+  const typingJournal = journalState.journal;
   useEffect(
     () => () => {
       void typingJournal.release();
     },
     [typingJournal],
   );
-  const retainOwnTyping = useCallback(
-    (baseSource: string, doc: ProseMirrorNode) => {
-      ownTyping.current =
-        retainTypingDraft(draftKey, baseSource, doc, ownTyping.current) ?? ownTyping.current;
-    },
-    [draftKey],
-  );
-  const discardOwnTyping = useCallback(
-    (doc?: ProseMirrorNode) => {
-      if (ownTyping.current === null || discardTypingDraft(draftKey, ownTyping.current))
-        ownTyping.current = null;
-      if (doc) void typingJournal.confirm();
-      else void typingJournal.discard();
-    },
-    [draftKey, typingJournal],
-  );
+  const retainOwnTyping = useStableCallback((baseSource: string, doc: ProseMirrorNode) => {
+    ownTyping.current =
+      retainTypingDraft(draftKey, baseSource, doc, ownTyping.current) ?? ownTyping.current;
+  });
+  const discardOwnTyping = useStableCallback((doc?: ProseMirrorNode) => {
+    if (ownTyping.current === null || discardTypingDraft(draftKey, ownTyping.current))
+      ownTyping.current = null;
+    if (doc) void typingJournal.confirm();
+    else void typingJournal.discard();
+  });
   const onEdit = useRef(props.onEdit);
   const applying = useRef(false);
   // The ProseMirror plugins live for the editor's lifetime. Keep their source
   // adapter current across renderer hot updates without resetting user edits.
   const applyDocumentChange = useRef(applyLatexVisualDocumentChange);
   const explicitSourceChange = useRef(projectLatexSourceEdit);
-  explicitSourceChange.current = (edit, content) =>
-    projectLatexSourceEdit(edit, content, currentSetupSource.current, projection.current);
-  applyDocumentChange.current = (source, document, content) =>
-    applyLatexVisualDocumentChange(source, document, content, {
-      rootSource: currentSnapshot.current.rootSource ?? null,
-      setupSource: currentSetupSource.current,
-      allowRootUpdates: props.canEditRoot === true,
-      onMissingRequirement: (message) => setNotice(message),
-    });
   const accepted = useRef<{
     doc: ProseMirrorNode;
     expected: string;
@@ -6117,7 +6250,7 @@ function LatexVisualEditorReady(
     setupSource: props.sourceSnapshot.setupSource,
     allowRootUpdates: props.canEditRoot === true,
   });
-  useLayoutEffect(() => {
+  const updateProcessingContext = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!ownedSnapshots.current.has(props.sourceSnapshot.id)) return;
     if (props.sourceSnapshot.id === currentSnapshot.current.id) {
       currentSetupSource.current = props.sourceSnapshot.setupSource;
@@ -6132,6 +6265,9 @@ function LatexVisualEditorReady(
       previous.allowRootUpdates !== allowRootUpdates
     )
       processingContext.current = { rootSource, setupSource, allowRootUpdates };
+  });
+  useLayoutEffect(() => {
+    updateProcessingContext(props.sourceSnapshot.id, props.canEditRoot);
   }, [props.sourceSnapshot.id, props.canEditRoot]);
   const [typingTask] = useState(createEditorBackgroundTask);
   const flushTypingRef = useRef<() => boolean>(() => true);
@@ -6162,10 +6298,23 @@ function LatexVisualEditorReady(
   const cancelToolbarRefresh = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelToolbarRefresh.current?.(), []);
   const [notice, setNotice] = useState<string | null>(null);
+  const canEditRoot = props.canEditRoot === true;
+  useLayoutEffect(() => {
+    explicitSourceChange.current = (edit, content) =>
+      projectLatexSourceEdit(edit, content, currentSetupSource.current, projection.current);
+    applyDocumentChange.current = (source, document, content) =>
+      applyLatexVisualDocumentChange(source, document, content, {
+        rootSource: currentSnapshot.current.rootSource ?? null,
+        setupSource: currentSetupSource.current,
+        allowRootUpdates: canEditRoot,
+        onMissingRequirement: (message) => setNotice(message),
+      });
+  });
   const rawInputRecovery = useRef<LatexVisualRecovery | null>(null);
   const rawInputPersistedRecovery = useRef<LatexVisualRecovery | null>(null);
   const rawInputInteraction = useRef("");
   const rawInputAccepted = useRef(false);
+  const [rawCheckpointPending, setRawCheckpointPending] = useState(false);
   const finishRawCheckpoint = useRef<() => boolean>(() => true);
   const [blockSource, setBlockSource] = useState<{
     id: string;
@@ -6205,16 +6354,14 @@ function LatexVisualEditorReady(
     commandKeys(id)
       .map((keys) => labelKeys(keys))
       .join(" / ");
-  const shortcutAction = useRef<(id: string) => boolean>(() => false);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [referencesOpen, setReferencesOpen] = useState(false);
   const [referencesRequest, setReferencesRequest] = useState<{ key?: string; sequence: number }>({
     sequence: 0,
   });
   const [referenceCatalog, setReferenceCatalog] = useState<BibliographyDetails[]>([]);
-  const referenceDraftChanged = useCallback(
-    (pending: boolean) => reportDraft("references", pending),
-    [reportDraft],
+  const referenceDraftChanged = useStableCallback((pending: boolean) =>
+    reportDraft("references", pending),
   );
   const [bibliographyDialog, setBibliographyDialog] = useState<{ open: boolean } | null>(null);
   const [referenceMode, setReferenceMode] = useState<"reference" | "citation">("reference");
@@ -6233,8 +6380,10 @@ function LatexVisualEditorReady(
   const selectionActionOwnerId = useId();
   const [selectionViewport, setSelectionViewport] = useState<HTMLElement | null>(null);
   const selectionProps = useRef(props);
-  selectionProps.current = props;
-  const captureSelection = useCallback(
+  useLayoutEffect(() => {
+    selectionProps.current = props;
+  });
+  const captureSelection = useStableCallback(
     (target?: HTMLElement, point?: { left: number; top: number }) => {
       const view = editorRef.current?.view;
       const root = workspaceRef.current;
@@ -6250,7 +6399,6 @@ function LatexVisualEditorReady(
         point,
       );
     },
-    [],
   );
   const sourceNavigationFrame = useRef<number | null>(null);
   const sourceNavigationRequest = useRef(0);
@@ -6293,9 +6441,10 @@ function LatexVisualEditorReady(
     onEdit.current = props.onEdit;
   }, [props.onEdit]);
 
-  const installProjection = useCallback(
+  const installProjection = useStableCallback(
     (next: LatexVisualDocument, resetEditor: boolean, acceptedRepair = false) => {
       projection.current = next;
+      setDisplayedTitle(next.blocks.some((block) => block.node.attrs?.kind === "title"));
       const editor = editorRef.current;
       if (!resetEditor || !editor || editor.isDestroyed) return;
       // A projection replaces the partial document; loading and its opening
@@ -6307,20 +6456,26 @@ function LatexVisualEditorReady(
       const scrollTop = scroll?.scrollTop ?? 0;
       const scrollLeft = scroll?.scrollLeft ?? 0;
       applying.current = true;
-      try {
-        editor.view.dispatch(transaction);
-        // Replacing blocks can move the reading position; restore it only if so.
-        if (scroll && scroll.scrollTop !== scrollTop) scroll.scrollTop = scrollTop;
-        if (scroll && scroll.scrollLeft !== scrollLeft) scroll.scrollLeft = scrollLeft;
-      } finally {
-        applying.current = false;
-      }
+      runThenCleanUp(
+        () => {
+          editor.view.dispatch(transaction);
+          // Replacing blocks can move the reading position; restore it only if so.
+          if (scroll && scroll.scrollTop !== scrollTop) scroll.scrollTop = scrollTop;
+          if (scroll && scroll.scrollLeft !== scrollLeft) scroll.scrollLeft = scrollLeft;
+        },
+        () => {
+          applying.current = false;
+        },
+      );
     },
-    [endLoading],
   );
 
-  const acceptSourceEdit = useCallback(
-    (edit: LatexSourceEdit, snapshot = currentSnapshot.current): LatexVisualEditOutcome => {
+  const acceptSourceEdit = useStableCallback(
+    (
+      edit: LatexSourceEdit,
+      requestedSnapshot?: LatexEditorSourceSnapshot,
+    ): LatexVisualEditOutcome => {
+      const snapshot = requestedSnapshot ?? currentSnapshot.current;
       if (
         deferredSource.current ||
         snapshot.id !== currentSnapshot.current.id ||
@@ -6341,9 +6496,8 @@ function LatexVisualEditorReady(
       }
       return outcome;
     },
-    [],
   );
-  const adoptAcceptedProjection = useCallback(
+  const adoptAcceptedProjection = useStableCallback(
     (
       change: LatexVisualDocumentChange,
       outcome: Extract<LatexVisualEditOutcome, { accepted: true }>,
@@ -6385,10 +6539,9 @@ function LatexVisualEditorReady(
         });
       }
     },
-    [installProjection],
   );
 
-  const flushSourceEdit = useCallback(() => {
+  const flushSourceEdit = useStableCallback(() => {
     cancelSourcePublish.current?.();
     cancelSourcePublish.current = null;
     const pending = pendingSourceEdit.current;
@@ -6428,9 +6581,9 @@ function LatexVisualEditorReady(
       "The source changed elsewhere. This edit could not be saved; check the current source.",
     );
     return false;
-  }, [installProjection, reportDraft, props.draftKey, acceptSourceEdit, adoptAcceptedProjection]);
+  });
   const flushSourceEditRef = useRef(flushSourceEdit);
-  const revealSourceAtPoint = useCallback(
+  const revealSourceAtPoint = useStableCallback(
     (target: HTMLElement, point: { left: number; top: number }) => {
       if (!selectionProps.current.onRevealSource) return;
       if (sourceNavigationFrame.current !== null)
@@ -6471,7 +6624,6 @@ function LatexVisualEditorReady(
         });
       });
     },
-    [activeMath, captureSelection],
   );
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -6515,7 +6667,7 @@ function LatexVisualEditorReady(
     };
   }, [props.draftKey]);
 
-  const pendingVisualContent = useCallback(
+  const pendingVisualContent = useStableCallback(
     (document: ProseMirrorNode, before?: ProseMirrorNode): JSONContent | null => {
       const repair = acceptedProjectionRepair.current;
       const canvas =
@@ -6529,10 +6681,9 @@ function LatexVisualEditorReady(
         ? rebindVisualTypingContent(reconciled, projection.current.content, baseline)
         : null;
     },
-    [],
   );
 
-  const handleUpdate = useCallback(
+  const handleUpdate = useStableCallback(
     (doc: ProseMirrorNode, retainLiveText = false): boolean => {
       if (applying.current) return true;
       const expected = currentSource.current;
@@ -6590,14 +6741,13 @@ function LatexVisualEditorReady(
       );
       return true;
     },
-    [installProjection, reportDraft, props.draftKey, pendingVisualContent],
   );
   const handleUpdateRef = useRef(handleUpdate);
   useLayoutEffect(() => {
     handleUpdateRef.current = handleUpdate;
   }, [handleUpdate]);
 
-  const flushTyping = useCallback(() => {
+  const flushTyping = useStableCallback(() => {
     cancelConversion.current?.();
     cancelConversion.current = null;
     cancelTyping.current?.();
@@ -6637,404 +6787,367 @@ function LatexVisualEditorReady(
     if (flushVisualDraft(props.draftKey)) discardOwnTyping(doc);
     else retainOwnTyping(base, doc);
     return true;
-  }, [props.draftKey, reportDraft]);
+  });
   useLayoutEffect(() => {
     flushTypingRef.current = flushTyping;
   }, [flushTyping]);
 
-  const queueTyping = useCallback(
-    (doc: ProseMirrorNode) => {
-      cancelConversion.current?.();
-      cancelConversion.current = null;
-      pendingTyping.current = doc;
-      accepted.current = null;
-      reportDraft("ordinary-text", true);
-      cancelTyping.current = typingTask.cancel;
-      typingTask.schedule(() => {
-        cancelTyping.current = null;
-        const finish = () => {
-          if (!flushTypingRef.current()) return;
-          const editor = editorRef.current;
-          if (!editor || editor.isDestroyed || editor.view.composing || editor.state.doc !== doc)
-            return;
-          // Structured math is recognized after publication, using the existing
-          // guarded structural transaction and document undo path.
-          const { $from } = editor.state.selection;
-          if (
-            $from.parent.type.name !== "paragraph" ||
-            !$from.parent.content.content.every((child) => child.isText)
-          )
-            return;
-          const tex = parseStructuredMathEnvironment($from.parent.textContent);
-          const math =
-            tex === null
-              ? null
-              : editor.schema.nodes.latexDisplayMath?.create({ tex, wrapper: "bracket" });
-          if (math)
-            editor.view.dispatch(editor.state.tr.replaceWith($from.before(), $from.after(), math));
-        };
-        if (pendingTypingEvents.current.length) {
-          finish();
-          return;
-        }
-        if (typeof Worker === "undefined") {
-          finish();
-          return;
-        }
+  const queueTyping = useStableCallback((doc: ProseMirrorNode) => {
+    cancelConversion.current?.();
+    cancelConversion.current = null;
+    pendingTyping.current = doc;
+    accepted.current = null;
+    reportDraft("ordinary-text", true);
+    cancelTyping.current = typingTask.cancel;
+    typingTask.schedule(() => {
+      cancelTyping.current = null;
+      const finish = () => {
+        if (!flushTypingRef.current()) return;
         const editor = editorRef.current;
-        if (!editor || editor.isDestroyed || editor.view.composing || !flushSourceEditRef.current())
+        if (!editor || editor.isDestroyed || editor.view.composing || editor.state.doc !== doc)
           return;
-        const expected = currentSource.current;
-        const snapshot = currentSnapshot.current;
-        const document = projection.current;
-        const context = processingContext.current;
-        // Recovery is durable before the asynchronous conversion starts. Only
-        // this exact immutable document/source pair may accept its result.
-        const content = pendingVisualContent(doc);
-        if (!content) {
-          retainOwnTyping(expected, doc);
-          setUnsynced(true);
-          setNotice(
-            "Your writing is retained in the editor and its recovery copy. Its source changed before conversion.",
-          );
+        // Structured math is recognized after publication, using the existing
+        // guarded structural transaction and document undo path.
+        const { $from } = editor.state.selection;
+        if (
+          $from.parent.type.name !== "paragraph" ||
+          !$from.parent.content.content.every((child) => child.isText)
+        )
           return;
-        }
-        const convert = () => {
-          // Recovery may finish after another keystroke, source adoption or
-          // unmount. That snapshot stays recoverable but cannot start publication.
-          if (
-            editor.isDestroyed ||
-            editor.state.doc !== doc ||
-            pendingTyping.current !== doc ||
-            currentSource.current !== expected ||
-            currentSnapshot.current.id !== snapshot.id ||
-            projection.current !== document ||
-            processingContext.current !== context ||
-            deferredSource.current ||
-            editBlocked.current ||
-            editor.view.composing
-          )
-            return;
-          cancelConversion.current = processVisualDocument(
-            {
-              kind: "change",
-              source: expected,
-              snapshotId: snapshot.id,
-              projection: document,
-              content,
-              ...context,
-            },
-            (result) => {
-              cancelConversion.current = null;
-              if (
-                editor.isDestroyed ||
-                editor.view.composing ||
-                editor.state.doc !== doc ||
-                pendingTyping.current !== doc ||
-                currentSource.current !== expected ||
-                currentSnapshot.current.id !== snapshot.id ||
-                projection.current !== document ||
-                processingContext.current !== context ||
-                deferredSource.current ||
-                editBlocked.current
-              )
-                return;
-              if (
-                result?.kind !== "change" ||
-                result.snapshotId !== snapshot.id ||
-                result.change === null
-              ) {
-                setNotice(
-                  result?.kind === "change" && result.notices.length
-                    ? result.notices.join(" ")
-                    : "Your writing is retained in the editor and its recovery copy. Visual could not synchronize it yet.",
-                );
-                return;
-              }
-              accepted.current = { doc, expected, snapshot, change: result.change };
-              finish();
-            },
-            // Superseded typing cannot publish, but its bounded worker job can
-            // finish without repeatedly loading the parser and dropping its caches.
-            { keepWorkerOnCancel: true },
-          );
-        };
-        void typingJournal.checkpoint(expected, doc).then((stored) => {
-          if (!stored) retainOwnTyping(expected, doc);
-          convert();
-        });
+        const tex = parseStructuredMathEnvironment($from.parent.textContent);
+        const math =
+          tex === null
+            ? null
+            : editor.schema.nodes.latexDisplayMath?.create({ tex, wrapper: "bracket" });
+        if (math)
+          editor.view.dispatch(editor.state.tr.replaceWith($from.before(), $from.after(), math));
+      };
+      if (pendingTypingEvents.current.length) {
+        finish();
+        return;
+      }
+      if (typeof Worker === "undefined") {
+        finish();
+        return;
+      }
+      const editor = editorRef.current;
+      if (!editor || editor.isDestroyed || editor.view.composing || !flushSourceEditRef.current())
+        return;
+      const expected = currentSource.current;
+      const snapshot = currentSnapshot.current;
+      const document = projection.current;
+      const context = processingContext.current;
+      // Recovery is durable before the asynchronous conversion starts. Only
+      // this exact immutable document/source pair may accept its result.
+      const content = pendingVisualContent(doc);
+      if (!content) {
+        retainOwnTyping(expected, doc);
+        setUnsynced(true);
+        setNotice(
+          "Your writing is retained in the editor and its recovery copy. Its source changed before conversion.",
+        );
+        return;
+      }
+      const convert = () => {
+        // Recovery may finish after another keystroke, source adoption or
+        // unmount. That snapshot stays recoverable but cannot start publication.
+        if (
+          editor.isDestroyed ||
+          editor.state.doc !== doc ||
+          pendingTyping.current !== doc ||
+          currentSource.current !== expected ||
+          currentSnapshot.current.id !== snapshot.id ||
+          projection.current !== document ||
+          processingContext.current !== context ||
+          deferredSource.current ||
+          editBlocked.current ||
+          editor.view.composing
+        )
+          return;
+        cancelConversion.current = processVisualDocument(
+          {
+            kind: "change",
+            source: expected,
+            snapshotId: snapshot.id,
+            projection: document,
+            content,
+            ...context,
+          },
+          (result) => {
+            cancelConversion.current = null;
+            if (
+              editor.isDestroyed ||
+              editor.view.composing ||
+              editor.state.doc !== doc ||
+              pendingTyping.current !== doc ||
+              currentSource.current !== expected ||
+              currentSnapshot.current.id !== snapshot.id ||
+              projection.current !== document ||
+              processingContext.current !== context ||
+              deferredSource.current ||
+              editBlocked.current
+            )
+              return;
+            if (
+              result?.kind !== "change" ||
+              result.snapshotId !== snapshot.id ||
+              result.change === null
+            ) {
+              setNotice(
+                result?.kind === "change" && result.notices.length
+                  ? result.notices.join(" ")
+                  : "Your writing is retained in the editor and its recovery copy. Visual could not synchronize it yet.",
+              );
+              return;
+            }
+            accepted.current = { doc, expected, snapshot, change: result.change };
+            finish();
+          },
+          // Superseded typing cannot publish, but its bounded worker job can
+          // finish without repeatedly loading the parser and dropping its caches.
+          { keepWorkerOnCancel: true },
+        );
+      };
+      void typingJournal.checkpoint(expected, doc).then((stored) => {
+        if (!stored) retainOwnTyping(expected, doc);
+        convert();
       });
+    });
+  });
+
+  const workspaceContext: LatexVisualWorkspace = {
+    draftKey: props.draftKey,
+    environmentId: props.environmentId ?? null,
+    cwd: props.cwd ?? null,
+    relativePath: props.relativePath ?? null,
+  };
+  const richPreviewExtension = LatexRichPreview.configure({
+    draftKey: props.draftKey,
+    environmentId: props.environmentId ?? null,
+    cwd: props.cwd ?? null,
+    relativePath: props.relativePath ?? null,
+  });
+
+  // The editor's plugins outlive renders; they read through these stable functions.
+  const readCompletionContext = useStableCallback(() => completionContext.current);
+  const structuredSelectionSource = useStableCallback((node: ProseMirrorNode) => {
+    const block = projection.current.blocks.find((block) => block.id === node.attrs.sourceId);
+    return block?.node.type === "paragraph" &&
+      latexVisualNodeSignature(block.node) === latexVisualNodeSignature(node.toJSON())
+      ? block.source
+      : null;
+  });
+  const syncZoomLayout = useStableCallback(() => syncZoomFrameRef.current());
+  const guardSourceAppend = useStableCallback(
+    (transactions: readonly Transaction[], previousState: EditorState, nextState: EditorState) => {
+      if (!transactions.some((transaction) => transaction.docChanged)) return null;
+      if (transactions.some(isLatexVisualLoading)) return null;
+      const repair = acceptedProjectionRepair.current;
+      if (
+        repair?.snapshotId === currentSnapshot.current.id &&
+        repair.document === nextState.doc &&
+        !editorRef.current?.view.composing
+      ) {
+        acceptedProjectionRepair.current = null;
+        const transaction = latexProjectionTransaction(nextState, repair.projection, true);
+        if (transaction)
+          return transaction.setMeta("scientLatexAcceptedProjection", repair.snapshotId);
+      }
+      if (ordinaryDocuments.current.has(nextState.doc)) {
+        // Conversion may coalesce typing, never separate native PM
+        // undo events. Settle the previous event before this one is queued.
+        if (
+          pendingTyping.current &&
+          pendingTyping.current !== nextState.doc &&
+          undoDepth(previousState) !== undoDepth(nextState)
+        ) {
+          const previous = pendingTyping.current;
+          if (!flushTypingRef.current() && pendingTypingEvents.current.at(-1) !== previous)
+            pendingTypingEvents.current.push(previous);
+        }
+        return null;
+      }
+      const { $from } = nextState.selection;
+      if ($from.parent.type.name !== "paragraph") return null;
+      if (!$from.parent.content.content.every((child) => child.isText)) return null;
+      const tex = parseStructuredMathEnvironment($from.parent.textContent);
+      if (tex === null) return null;
+      const from = $from.before();
+      const to = $from.after();
+      const math = nextState.schema.nodes.latexDisplayMath?.create({
+        tex,
+        wrapper: "bracket",
+      });
+      return math ? nextState.tr.replaceWith(from, to, math) : null;
     },
-    [reportDraft, typingTask, retainOwnTyping, pendingVisualContent, typingJournal],
   );
-
-  const workspaceContext = useMemo<LatexVisualWorkspace>(
-    () => ({
-      draftKey: props.draftKey,
-      environmentId: props.environmentId ?? null,
-      cwd: props.cwd ?? null,
-      relativePath: props.relativePath ?? null,
-    }),
-    [props.cwd, props.environmentId, props.relativePath, props.draftKey],
-  );
-  const richPreviewExtension = useMemo(
-    () =>
-      LatexRichPreview.configure({
-        draftKey: props.draftKey,
-        environmentId: props.environmentId ?? null,
-        cwd: props.cwd ?? null,
-        relativePath: props.relativePath ?? null,
-      }),
-    [props.cwd, props.environmentId, props.relativePath, props.draftKey],
-  );
-
-  const guardedExtensions = useMemo(
-    () => [
-      ...baseExtensions.map((extension) =>
-        extension.name === "latexInlineMath" || extension.name === "latexDisplayMath"
-          ? extension.configure({ readingContext: () => completionContext.current })
-          : extension,
-      ),
-      LatexProseCompletion.configure({ context: () => completionContext.current }),
-      LatexStructuredSelection.configure({
-        source: (node) => {
-          const block = projection.current.blocks.find((block) => block.id === node.attrs.sourceId);
-          return block?.node.type === "paragraph" &&
-            latexVisualNodeSignature(block.node) === latexVisualNodeSignature(node.toJSON())
-            ? block.source
-            : null;
-        },
-      }),
-      LatexVisualSearch,
-      LatexInputPriority,
-      LatexPageMarkers,
-      LatexPagedPresentation.configure({ source: () => currentSetupSource.current }),
-      LatexReadingAnchor.configure({ syncLayout: () => syncZoomFrameRef.current() }),
-      richPreviewExtension,
-      Extension.create({
-        name: "latexEquationReferences",
-        addProseMirrorPlugins: () => [
-          latexEquationReferences(
-            () => currentSetupSource.current,
-            () => compiledBibliographySource.current,
-            loadingReferences,
+  const guardSourceFilter = useStableCallback((transaction: Transaction) => {
+    if (isLatexVisualLoading(transaction)) return true;
+    if (transaction.getMeta("scientLatexAcceptedProjection") === currentSnapshot.current.id)
+      return true;
+    if (!transaction.docChanged || applying.current) return true;
+    if (editBlocked.current) {
+      refusedChanges.current++;
+      setNotice(
+        (previous) =>
+          previous ??
+          "Editing is paused. Resolve the document's save or recovery status, then retry.",
+      );
+      return false;
+    }
+    const sourceSteps = transaction.steps.filter(
+      (step): step is LatexSourceStep => step instanceof LatexSourceStep,
+    );
+    if (
+      !sourceSteps.length &&
+      !deferredSource.current &&
+      isSourceOwnedTyping(
+        transaction,
+        (index) => projection.current.blocks[index]?.editable === true,
+      )
+    ) {
+      const history: LatexSourceHistory = { edit: null, inverse: null };
+      transaction.step(new LatexSourceStep(0, 0, Slice.empty, history));
+      sourceHistory.current.set(transaction.doc, history);
+      queuedSourceHistory.current.push(history);
+      ordinaryDocuments.current.add(transaction.doc);
+      return true;
+    }
+    // Settle pending typing before validating a structural command.
+    if (!flushTypingRef.current() || !flushSourceEditRef.current()) {
+      refusedChanges.current++;
+      setNotice(
+        (previous) =>
+          previous ??
+          "Finish the pending text edit before saving this formula. Your input is kept here.",
+      );
+      return false;
+    }
+    const expected = currentSource.current;
+    const snapshot = currentSnapshot.current;
+    const edits = sourceSteps.flatMap((step) => (step.edit ? [step.edit] : []));
+    const nativeEdit = edits.length ? composeLatexSourceEdits(expected, edits) : null;
+    const content = edits.length ? null : pendingVisualContent(transaction.doc, transaction.before);
+    let change =
+      sourceSteps.length && edits.length
+        ? nativeEdit && !nativeEdit.physical?.length
+          ? explicitSourceChange.current(nativeEdit, visualDocumentJson(transaction.doc))
+          : null
+        : content
+          ? applyDocumentChange.current(expected, projection.current, content)
+          : null;
+    const edit = nativeEdit ?? change?.edit;
+    if (
+      edit &&
+      !edit.patches.length &&
+      !edit.root?.patches.length &&
+      !edit.physical?.length &&
+      change
+    ) {
+      accepted.current = {
+        doc: transaction.doc,
+        expected,
+        snapshot,
+        change,
+        published: true,
+      };
+      installProjection(change.projection, false);
+      return true;
+    }
+    const outcome = edit ? acceptSourceEdit(edit, snapshot) : null;
+    const supported = outcome?.accepted === true;
+    if (outcome?.accepted && edit) {
+      if (!change)
+        change = {
+          source: outcome.snapshot.source,
+          edit,
+          structural: true,
+          projection: projectLatexVisualDocument(
+            outcome.snapshot.source,
+            0,
+            outcome.snapshot.setupSource,
           ),
-        ],
-      }),
-      LatexFootnotes,
-      LatexColumnBreaks,
-      Extension.create({
-        name: "latexImageUploads",
-        addProseMirrorPlugins: () => [latexImageUploads()],
-      }),
-      Extension.create({
-        name: "latexGuidance",
-        addProseMirrorPlugins: () => [latexGuidancePlaceholders(() => projection.current)],
-      }),
-      Extension.create({
-        name: "latexSourceGuard",
-        addProseMirrorPlugins() {
-          return [
-            new Plugin({
-              appendTransaction(transactions, previousState, nextState) {
-                if (!transactions.some((transaction) => transaction.docChanged)) return null;
-                if (transactions.some(isLatexVisualLoading)) return null;
-                const repair = acceptedProjectionRepair.current;
-                if (
-                  repair?.snapshotId === currentSnapshot.current.id &&
-                  repair.document === nextState.doc &&
-                  !editorRef.current?.view.composing
-                ) {
-                  acceptedProjectionRepair.current = null;
-                  const transaction = latexProjectionTransaction(
-                    nextState,
-                    repair.projection,
-                    true,
-                  );
-                  if (transaction)
-                    return transaction.setMeta("scientLatexAcceptedProjection", repair.snapshotId);
-                }
-                if (ordinaryDocuments.current.has(nextState.doc)) {
-                  // Conversion may coalesce typing, never separate native PM
-                  // undo events. Settle the previous event before this one is queued.
-                  if (
-                    pendingTyping.current &&
-                    pendingTyping.current !== nextState.doc &&
-                    undoDepth(previousState) !== undoDepth(nextState)
-                  ) {
-                    const previous = pendingTyping.current;
-                    if (
-                      !flushTypingRef.current() &&
-                      pendingTypingEvents.current.at(-1) !== previous
-                    )
-                      pendingTypingEvents.current.push(previous);
-                  }
-                  return null;
-                }
-                const { $from } = nextState.selection;
-                if ($from.parent.type.name !== "paragraph") return null;
-                if (!$from.parent.content.content.every((child) => child.isText)) return null;
-                const tex = parseStructuredMathEnvironment($from.parent.textContent);
-                if (tex === null) return null;
-                const from = $from.before();
-                const to = $from.after();
-                const math = nextState.schema.nodes.latexDisplayMath?.create({
-                  tex,
-                  wrapper: "bracket",
-                });
-                return math ? nextState.tr.replaceWith(from, to, math) : null;
-              },
-            }),
-            // ProseMirror skips a plugin's own filter for transactions it
-            // appends. Keep recognition separate so its edits are guarded too.
-            new Plugin({
-              filterTransaction(transaction) {
-                if (isLatexVisualLoading(transaction)) return true;
-                if (
-                  transaction.getMeta("scientLatexAcceptedProjection") ===
-                  currentSnapshot.current.id
-                )
-                  return true;
-                if (!transaction.docChanged || applying.current) return true;
-                if (editBlocked.current) {
-                  refusedChanges.current++;
-                  setNotice(
-                    (previous) =>
-                      previous ??
-                      "Editing is paused. Resolve the document's save or recovery status, then retry.",
-                  );
-                  return false;
-                }
-                const sourceSteps = transaction.steps.filter(
-                  (step): step is LatexSourceStep => step instanceof LatexSourceStep,
-                );
-                if (
-                  !sourceSteps.length &&
-                  !deferredSource.current &&
-                  isSourceOwnedTyping(
-                    transaction,
-                    (index) => projection.current.blocks[index]?.editable === true,
-                  )
-                ) {
-                  const history: LatexSourceHistory = { edit: null, inverse: null };
-                  transaction.step(new LatexSourceStep(0, 0, Slice.empty, history));
-                  sourceHistory.current.set(transaction.doc, history);
-                  queuedSourceHistory.current.push(history);
-                  ordinaryDocuments.current.add(transaction.doc);
-                  return true;
-                }
-                // Settle pending typing before validating a structural command.
-                if (!flushTypingRef.current() || !flushSourceEditRef.current()) {
-                  refusedChanges.current++;
-                  setNotice(
-                    (previous) =>
-                      previous ??
-                      "Finish the pending text edit before saving this formula. Your input is kept here.",
-                  );
-                  return false;
-                }
-                const expected = currentSource.current;
-                const snapshot = currentSnapshot.current;
-                const edits = sourceSteps.flatMap((step) => (step.edit ? [step.edit] : []));
-                const nativeEdit = edits.length ? composeLatexSourceEdits(expected, edits) : null;
-                const content = edits.length
-                  ? null
-                  : pendingVisualContent(transaction.doc, transaction.before);
-                let change =
-                  sourceSteps.length && edits.length
-                    ? nativeEdit && !nativeEdit.physical?.length
-                      ? explicitSourceChange.current(
-                          nativeEdit,
-                          visualDocumentJson(transaction.doc),
-                        )
-                      : null
-                    : content
-                      ? applyDocumentChange.current(expected, projection.current, content)
-                      : null;
-                const edit = nativeEdit ?? change?.edit;
-                if (
-                  edit &&
-                  !edit.patches.length &&
-                  !edit.root?.patches.length &&
-                  !edit.physical?.length &&
-                  change
-                ) {
-                  accepted.current = {
-                    doc: transaction.doc,
-                    expected,
-                    snapshot,
-                    change,
-                    published: true,
-                  };
-                  installProjection(change.projection, false);
-                  return true;
-                }
-                const outcome = edit ? acceptSourceEdit(edit, snapshot) : null;
-                const supported = outcome?.accepted === true;
-                if (outcome?.accepted && edit) {
-                  if (!change)
-                    change = {
-                      source: outcome.snapshot.source,
-                      edit,
-                      structural: true,
-                      projection: projectLatexVisualDocument(
-                        outcome.snapshot.source,
-                        0,
-                        outcome.snapshot.setupSource,
-                      ),
-                    };
-                  let history = sourceSteps[0]?.history;
-                  if (history) {
-                    for (const step of sourceSteps) {
-                      step.history.edit = null;
-                      step.history.inverse = null;
-                    }
-                    if (sourceSteps[0]!.reversed) {
-                      history.inverse = edit;
-                      history.edit = outcome.inverseEdit;
-                    } else {
-                      history.edit = edit;
-                      history.inverse = outcome.inverseEdit;
-                    }
-                  } else {
-                    history = { edit, inverse: outcome.inverseEdit };
-                    transaction.step(new LatexSourceStep(0, 0, Slice.empty, history));
-                  }
-                  accepted.current = {
-                    doc: transaction.doc,
-                    expected,
-                    snapshot,
-                    change,
-                    published: true,
-                  };
-                  adoptAcceptedProjection(change, outcome, transaction.doc);
-                  checkpointVisualDraft(
-                    draftKeyRef.current,
-                    outcome.snapshot.source,
-                    sourceRevision.current,
-                  );
-                  setUnsynced(false);
-                  setNotice(
-                    change.materializedGenerator ? "The edited loop is now ordinary LaTeX." : null,
-                  );
-                } else refusedChanges.current++;
-                if (!supported)
-                  setNotice(
-                    (previous) =>
-                      previous ??
-                      (outcome && !outcome.accepted
-                        ? outcome.reason
-                        : "This edit is unavailable in Visual. Edit this part in Source."),
-                  );
-                return supported;
-              },
-            }),
-          ];
-        },
-      }),
-    ],
-    [richPreviewExtension, loadingReferences],
-  );
+        };
+      let history = sourceSteps[0]?.history;
+      if (history) {
+        for (const step of sourceSteps) {
+          step.history.edit = null;
+          step.history.inverse = null;
+        }
+        if (sourceSteps[0]!.reversed) {
+          history.inverse = edit;
+          history.edit = outcome.inverseEdit;
+        } else {
+          history.edit = edit;
+          history.inverse = outcome.inverseEdit;
+        }
+      } else {
+        history = { edit, inverse: outcome.inverseEdit };
+        transaction.step(new LatexSourceStep(0, 0, Slice.empty, history));
+      }
+      accepted.current = {
+        doc: transaction.doc,
+        expected,
+        snapshot,
+        change,
+        published: true,
+      };
+      adoptAcceptedProjection(change, outcome, transaction.doc);
+      checkpointVisualDraft(draftKeyRef.current, outcome.snapshot.source, sourceRevision.current);
+      setUnsynced(false);
+      setNotice(change.materializedGenerator ? "The edited loop is now ordinary LaTeX." : null);
+    } else refusedChanges.current++;
+    if (!supported)
+      setNotice(
+        (previous) =>
+          previous ??
+          (outcome && !outcome.accepted
+            ? outcome.reason
+            : "This edit is unavailable in Visual. Edit this part in Source."),
+      );
+    return supported;
+  });
+
+  const guardedExtensions = [
+    ...baseExtensions.map((extension) =>
+      extension.name === "latexInlineMath" || extension.name === "latexDisplayMath"
+        ? extension.configure({ readingContext: readCompletionContext })
+        : extension,
+    ),
+    LatexProseCompletion.configure({ context: readCompletionContext }),
+    LatexStructuredSelection.configure({ source: structuredSelectionSource }),
+    LatexVisualSearch,
+    LatexInputPriority,
+    LatexPageMarkers,
+    LatexPagedPresentation.configure({ source: readSetupSource }),
+    LatexReadingAnchor.configure({ syncLayout: syncZoomLayout }),
+    richPreviewExtension,
+    Extension.create({
+      name: "latexEquationReferences",
+      addProseMirrorPlugins: () => [
+        latexEquationReferences(readSetupSource, readCompiledBibliography, loadingReferences),
+      ],
+    }),
+    LatexFootnotes,
+    LatexColumnBreaks,
+    Extension.create({
+      name: "latexImageUploads",
+      addProseMirrorPlugins: () => [latexImageUploads()],
+    }),
+    Extension.create({
+      name: "latexGuidance",
+      addProseMirrorPlugins: () => [latexGuidancePlaceholders(readProjection)],
+    }),
+    Extension.create({
+      name: "latexSourceGuard",
+      addProseMirrorPlugins: () => [
+        new Plugin({ appendTransaction: guardSourceAppend }),
+        // ProseMirror skips a plugin's own filter for transactions it
+        // appends. Keep recognition separate so its edits are guarded too.
+        new Plugin({ filterTransaction: guardSourceFilter }),
+      ],
+    }),
+  ];
 
   const handleImageTransfer = (view: EditorView, data: DataTransfer | null, position?: number) => {
     if (!data || !view.editable) return false;
@@ -7267,9 +7380,11 @@ function LatexVisualEditorReady(
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
-  useLayoutEffect(() => {
+  // A new document setup re-reads the math in place.
+  const refreshReadingContext = useEffectEvent((..._changes: readonly unknown[]) => {
     if (editor && !editor.isDestroyed) refreshMathReadingContext(editor);
-  }, [editor, commandContext]);
+  });
+  useLayoutEffect(() => refreshReadingContext(editor, commandContext), [editor, commandContext]);
   const guidancePluginFactory = useRef(latexGuidancePlaceholders);
   useLayoutEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -7280,12 +7395,13 @@ function LatexVisualEditorReady(
     ) {
       // By name: a hot update makes a new key, and the old plugin keeps the old one.
       editor.unregisterPlugin("scientLatexGuidance");
-      editor.registerPlugin(latexGuidancePlaceholders(() => projection.current));
+      editor.registerPlugin(latexGuidancePlaceholders(readProjection));
       guidancePluginFactory.current = latexGuidancePlaceholders;
     }
-  }, [editor, latexGuidancePlaceholders]);
+  }, [editor, readProjection]);
   const referencePluginFactory = useRef(latexEquationReferences);
-  useLayoutEffect(() => {
+  // A new setup or compiled bibliography renumbers references.
+  const refreshEquationReferences = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!editor || editor.isDestroyed) return;
     // A renderer hot update keeps the existing editor and its original plugins.
     if (
@@ -7298,25 +7414,24 @@ function LatexVisualEditorReady(
     ) {
       editor.unregisterPlugin("latexEquationReferences");
       editor.registerPlugin(
-        latexEquationReferences(
-          () => currentSetupSource.current,
-          () => compiledBibliographySource.current,
-          loadingReferences,
-        ),
+        latexEquationReferences(readSetupSource, readCompiledBibliography, loadingReferences),
       );
       referencePluginFactory.current = latexEquationReferences;
     }
     editor.view.dispatch(editor.state.tr.setMeta(latexEquationReferencesKey, true));
-  }, [
-    editor,
-    props.sourceSnapshot.setupSource,
-    props.compiledBibliography,
-    latexEquationReferences,
-  ]);
+  });
+  useLayoutEffect(
+    () =>
+      refreshEquationReferences(
+        editor,
+        props.sourceSnapshot.setupSource,
+        props.compiledBibliography,
+      ),
+    [editor, props.sourceSnapshot.setupSource, props.compiledBibliography],
+  );
   // Replace all writes each text block to the source before it edits the next.
-  const commitTyping = useCallback(
+  const commitTyping = useStableCallback(
     () => flushTypingRef.current() && flushSourceEditRef.current(),
-    [],
   );
   const find = useLatexVisualSearch(editor, !readOnly, commitTyping);
   // Search is a field in the reader controls; the full find and replace bar
@@ -7393,7 +7508,7 @@ function LatexVisualEditorReady(
   useLayoutEffect(() => {
     if (!editor || !typingRecovery || restoredTyping.current === typingRecovery) return;
     restoredTyping.current = typingRecovery;
-    try {
+    const installed = completes(() => {
       const rebound = rebindVisualTypingContent(
         typingRecovery.draft.content,
         projection.current.content,
@@ -7420,68 +7535,39 @@ function LatexVisualEditorReady(
       editor.view.dispatch(transaction);
       ownTyping.current = typingRecovery.identity;
       queueTyping(editor.state.doc);
-    } catch {
-      // Not loadable into this editor: keep it as readable text in the
-      // recovery line, where ordinary editing cannot clear it.
-      setRecovery(parkUninstalledTypingDraft(props.draftKey, typingRecovery));
-    } finally {
-      applying.current = false;
-    }
+    });
+    applying.current = false;
+    // Not loadable into this editor: keep it as readable text in the
+    // recovery line, where ordinary editing cannot clear it.
+    if (!installed) setRecovery(parkUninstalledTypingDraft(props.draftKey, typingRecovery));
   }, [editor, endLoading, props.draftKey, queueTyping, typingRecovery]);
 
-  useEffect(() => {
-    if (!editor) return;
-    return attachShortcutHost(editor.view.dom, ["latex", "math"], {
-      capture: true,
-      feedback: setShortcutHint,
-      accepts: (event, command) => {
-        const target = latexEditingTarget(editor);
-        return (
-          editor.isEditable &&
-          target.isEditable &&
-          !target.view.composing &&
-          event.target instanceof Element &&
-          !event.target.closest("input, textarea, select, math-field") &&
-          (event.target.closest("[contenteditable]") === target.view.dom ||
-            Boolean(command && latexSelectionCommand(command)))
-        );
-      },
-      execute: (id) => shortcutAction.current(id),
-    });
-  }, [editor]);
-
-  const fieldContext = useMemo(
-    () => ({
-      reportDraft,
-      saveError: props.sourceError ?? notice,
-      commit: (change: () => void | boolean) => {
-        if (editBlocked.current) return false;
-        const before = refusedChanges.current;
-        return change() !== false && before === refusedChanges.current;
-      },
-      undo: (redo: boolean) => {
-        if (redo) editor?.commands.redo();
-        else editor?.commands.undo();
-      },
-    }),
-    [editor, reportDraft, props.sourceError, notice],
-  );
+  const fieldContext = {
+    reportDraft,
+    saveError: props.sourceError ?? notice,
+    commit: (change: () => void | boolean) => {
+      if (editBlocked.current) return false;
+      const before = refusedChanges.current;
+      return change() !== false && before === refusedChanges.current;
+    },
+    undo: (redo: boolean) => {
+      if (redo) editor?.commands.redo();
+      else editor?.commands.undo();
+    },
+  };
   const renameLabelRef = useRef<(before: string, after: string, fieldId?: string) => boolean>(
     () => false,
   );
-  const authoringContext = useMemo(
-    () => ({
-      get source() {
-        return currentSetupSource.current;
-      },
-      preamble: mathSetupSource,
-      prepare: () => flushTypingRef.current() && flushSourceEditRef.current(),
-      reportError: setNotice,
-      renameLabel: (before: string, after: string, fieldId?: string) =>
-        renameLabelRef.current(before, after, fieldId),
-    }),
-    [mathSetupSource],
+  const renameLabel = useStableCallback((before: string, after: string, fieldId?: string) =>
+    renameLabelRef.current(before, after, fieldId),
   );
+  const authoringContext = latexAuthoringContext({
+    readSource: readSetupSource,
+    preamble: mathSetupSource,
+    prepare: commitTyping,
+    reportError: setNotice,
+    renameLabel,
+  });
 
   // Briefly read-only (an in-place rename holds the document): give the caret
   // back where it was once editing resumes, in the editor or in one of its
@@ -7527,7 +7613,8 @@ function LatexVisualEditorReady(
         if (active !== null && active !== document.body && active !== field) return;
         const disabled = "disabled" in field && (field as { disabled?: boolean }).disabled === true;
         if (disabled) {
-          if (++frames < 10) requestAnimationFrame(restore);
+          frames += 1;
+          if (frames < 10) requestAnimationFrame(restore);
           return;
         }
         field.focus({ preventScroll: true });
@@ -7541,7 +7628,8 @@ function LatexVisualEditorReady(
     }
   }, [editor, surfaceReadOnly]);
 
-  useLayoutEffect(() => {
+  // A source from the file owner: a local acknowledgement, or an outside change to adopt.
+  const adoptOwnerSource = useEffectEvent((..._changes: readonly unknown[]) => {
     // Identity, not equal bytes, proves a local acknowledgement. A→B→A is
     // still a new owner version and must invalidate work captured over A.
     if (ownedSnapshots.current.has(props.sourceSnapshot.id)) {
@@ -7570,18 +7658,17 @@ function LatexVisualEditorReady(
     // Field callbacks are relative to the displayed node and original source.
     // Keep that context until its input is accepted or explicitly discarded;
     // replacing it here would let a delayed callback overwrite the new source.
-    if ([...pendingFields.current].some((id) => id !== "source-publication")) {
+    const sourceNotice = ownerSourceNotice(pendingFields.current);
+    if (sourceNotice !== null) {
       deferredSource.current = true;
       if (pendingTyping.current) retainOwnTyping(currentSource.current, pendingTyping.current);
       window.dispatchEvent(
         new CustomEvent("scient-latex-checkpoint-fields", { detail: props.draftKey }),
       );
-      const fields = parkVisualFieldDrafts(props.draftKey);
+      const fields = parkVisualFieldDrafts(draftKeyRef.current);
       if (fields) setRecovery(fields);
 
-      setNotice(
-        "The source changed elsewhere. Your unsaved writing is retained here; resolve the source change before saving.",
-      );
+      setNotice(sourceNotice);
       return;
     }
     deferredSource.current = false;
@@ -7636,16 +7723,23 @@ function LatexVisualEditorReady(
         }),
       );
     }
-    setNotice(null);
+    if (notice !== null) setNotice(sourceNotice);
+  });
+  useLayoutEffect(() => {
+    adoptOwnerSource(
+      editor,
+      props.source,
+      props.fileRevision,
+      props.sourceSnapshot,
+      props.draftKey,
+      localDraftState.version,
+    );
   }, [
     editor,
-    installProjection,
     props.source,
     props.fileRevision,
     props.sourceSnapshot,
     props.draftKey,
-    reportDraft,
-
     localDraftState.version,
   ]);
 
@@ -7659,17 +7753,22 @@ function LatexVisualEditorReady(
   });
   // Runs after the effect above, so the editor has adopted the source that the
   // stored work is judged against.
-  useEffect(() => {
+  const rereadStartupRecovery = useEffectEvent((..._changes: readonly unknown[]) => {
     if (!rereadStartup || props.source !== currentSource.current) return;
     const next = readStartupRecovery(props.draftKey, { source: props.source });
     setRereadStartup(false);
     setTypingRecovery(typingToReinstall(next));
     setRecovery(next.recovery);
-  }, [rereadStartup, props.draftKey, props.source]);
+  });
+  useEffect(
+    () => rereadStartupRecovery(rereadStartup, props.draftKey, props.source),
+    [rereadStartup, props.draftKey, props.source],
+  );
 
   const projectionParser = useRef(projectLatexVisualDocument);
   const projectionPreamble = useRef(projectionSetupKey);
-  useEffect(() => {
+  // Root declarations and parser hot updates can unlock formerly opaque blocks.
+  const reprojectForSetup = useEffectEvent((..._changes: readonly unknown[]) => {
     const parserChanged = projectionParser.current !== projectLatexVisualDocument;
     const changed =
       parserChanged ||
@@ -7710,15 +7809,18 @@ function LatexVisualEditorReady(
         plugins: editor.state.plugins,
       }),
     );
-  }, [
-    editor,
-    installProjection,
-    projectionSetupKey,
-    props.sourceSnapshot.setupSource,
-    recovery,
-    hasLocalDraft,
-    projectLatexVisualDocument,
-  ]);
+  });
+  useEffect(
+    () =>
+      reprojectForSetup(
+        editor,
+        projectionSetupKey,
+        props.sourceSnapshot.setupSource,
+        recovery,
+        hasLocalDraft,
+      ),
+    [editor, projectionSetupKey, props.sourceSnapshot.setupSource, recovery, hasLocalDraft],
+  );
 
   const registerFinishEditing = props.registerFinishEditing;
   const composingFields = useRef(new Set<EventTarget>());
@@ -8152,7 +8254,10 @@ function LatexVisualEditorReady(
       const inner = (field as (HTMLElement & { editor?: Editor }) | null)?.editor;
       if (inner) inner.commands.focus("start");
       else if (field) field.focus({ preventScroll: true });
-      else if (++attempts < 10) requestAnimationFrame(focusFirstCell);
+      else {
+        attempts += 1;
+        if (attempts < 10) requestAnimationFrame(focusFirstCell);
+      }
     };
     requestAnimationFrame(focusFirstCell);
   };
@@ -8414,7 +8519,7 @@ function LatexVisualEditorReady(
       run: () => insertVisualSource("\\newpage"),
     },
   ];
-  shortcutAction.current = (id) => {
+  const shortcutAction = useStableCallback((id: string) => {
     if (!editor || readOnly) return false;
     const selectionCommand = latexSelectionCommand(id);
     if (selectionCommand) return runLatexSelectionCommand(editor.view.dom, selectionCommand);
@@ -8484,7 +8589,27 @@ function LatexVisualEditorReady(
     if (!action || action.disabled || action.disabledReason) return false;
     action.run();
     return true;
-  };
+  });
+  useEffect(() => {
+    if (!editor) return;
+    return attachShortcutHost(editor.view.dom, ["latex", "math"], {
+      capture: true,
+      feedback: setShortcutHint,
+      accepts: (event, command) => {
+        const target = latexEditingTarget(editor);
+        return (
+          editor.isEditable &&
+          target.isEditable &&
+          !target.view.composing &&
+          event.target instanceof Element &&
+          !event.target.closest("input, textarea, select, math-field") &&
+          (event.target.closest("[contenteditable]") === target.view.dom ||
+            Boolean(command && latexSelectionCommand(command)))
+        );
+      },
+      execute: (id) => shortcutAction(id),
+    });
+  }, [editor, shortcutAction]);
   const commitDocumentSource = (edit: LatexSourceEdit, owner?: string, caret?: number) => {
     if (
       !editor ||
@@ -8581,18 +8706,15 @@ function LatexVisualEditorReady(
       root?.dispatchEvent(new CustomEvent("scient-latex-edit-title", { detail: field }));
     });
   };
-  const openReferenceManager = useCallback(
-    (key?: string) => {
-      if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
-      setReferencesRequest((previous) => ({
-        ...(key ? { key } : {}),
-        sequence: previous.sequence + 1,
-      }));
-      setReferencesOpen(true);
-    },
-    [setReferencesOpen],
-  );
-  const applyBibliographyDocument = useCallback(
+  const openReferenceManager = useStableCallback((key?: string) => {
+    if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
+    setReferencesRequest((previous) => ({
+      ...(key ? { key } : {}),
+      sequence: previous.sequence + 1,
+    }));
+    setReferencesOpen(true);
+  });
+  const applyBibliographyDocument = useStableCallback(
     async (id: string, expected: string, next: string) => {
       if (readOnly || !flushTypingRef.current() || !flushSourceEditRef.current()) return false;
       if ([...pendingFields.current].some((field) => field !== "references")) {
@@ -8625,63 +8747,39 @@ function LatexVisualEditorReady(
       if (merged === null || !commitDocumentSource(merged.edit, "references")) return false;
       return confirm();
     },
-    [
-      readOnly,
-      props.canEditRoot,
-      props.rootRelativePath,
-      props.relativePath,
-      props.flushReferenceEdits,
-      props.confirmedReferenceSource,
-      props.documentPersistence,
-      installProjection,
-    ],
   );
-  const bibliographyDocuments = useMemo<BibliographyDocument[]>(() => {
-    const documents: BibliographyDocument[] = [
-      {
-        id: "document",
-        path: props.relativePath ?? "Current document",
-        source: props.source,
-        kind: "bibitem",
-        readOnly,
-        apply: (expected, next) => applyBibliographyDocument("document", expected, next),
-      },
-    ];
-    if (
-      !props.source.includes("\\begin{document}") &&
-      props.sourceSnapshot.rootSource &&
-      props.sourceSnapshot.rootSource !== props.source
-    ) {
-      documents.push({
-        id: "root",
-        path: props.rootRelativePath ?? "Root document",
-        source: props.sourceSnapshot.rootSource,
-        kind: "bibitem",
-        readOnly: readOnly || !props.canEditRoot,
-        apply: (expected, next) => applyBibliographyDocument("root", expected, next),
-      });
-    }
-    return documents;
-  }, [
-    props.source,
-    props.sourceSnapshot.rootSource,
-    props.relativePath,
-    props.rootRelativePath,
-    props.canEditRoot,
-    readOnly,
-    applyBibliographyDocument,
-  ]);
+  const bibliographyDocuments: BibliographyDocument[] = [
+    {
+      id: "document",
+      path: props.relativePath ?? "Current document",
+      source: props.source,
+      kind: "bibitem",
+      readOnly,
+      apply: (expected, next) => applyBibliographyDocument("document", expected, next),
+    },
+  ];
+  if (
+    !props.source.includes("\\begin{document}") &&
+    props.sourceSnapshot.rootSource &&
+    props.sourceSnapshot.rootSource !== props.source
+  ) {
+    bibliographyDocuments.push({
+      id: "root",
+      path: props.rootRelativePath ?? "Root document",
+      source: props.sourceSnapshot.rootSource,
+      kind: "bibitem",
+      readOnly: readOnly || !props.canEditRoot,
+      apply: (expected, next) => applyBibliographyDocument("root", expected, next),
+    });
+  }
   const openReferenceManagerRef = useRef(openReferenceManager);
   useLayoutEffect(() => {
     openReferenceManagerRef.current = openReferenceManager;
   }, [openReferenceManager]);
-  const referencesContext = useMemo(
-    () => ({
-      open: (key?: string) => openReferenceManagerRef.current(key),
-      entries: referenceCatalog,
-    }),
-    [referenceCatalog],
-  );
+  const referencesContext = {
+    open: (key?: string) => openReferenceManagerRef.current(key),
+    entries: referenceCatalog,
+  };
   const selectedCitation = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -8727,7 +8825,7 @@ function LatexVisualEditorReady(
       }}
     />
   );
-  const layout = useMemo(() => latexVisualLayoutProfile(mathSetupSource), [mathSetupSource]);
+  const layout = latexVisualLayoutProfile(mathSetupSource);
   const titlePage = useEditorState({
     editor,
     selector: ({ editor: current }) =>
@@ -8779,30 +8877,29 @@ function LatexVisualEditorReady(
     if (node.type.name === "bulletList" || node.type.name === "orderedList") return "List";
     return "Body text";
   })();
-  useLayoutEffect(() => {
+  const notifyLayoutConfig = useEffectEvent((..._changes: readonly unknown[]) => {
     editor?.view.dom.dispatchEvent(new Event("scient-latex-layout-config"));
+  });
+  useLayoutEffect(() => {
+    notifyLayoutConfig(editor, layout);
   }, [editor, layout]);
   const pageHeight = layout.paperHeightIn * CSS_PIXELS_PER_INCH;
   const paperWidth = layout.paperWidthIn * CSS_PIXELS_PER_INCH;
-  const landscapePages = useMemo(() => {
+  const landscapePages = (() => {
     const contains = (node: JSONContent): boolean =>
       node.attrs?.layout?.kind === "landscape" || (node.content?.some(contains) ?? false);
     return contains(initial.content);
-  }, [initial]);
+  })();
   const canvasWidth = landscapePages ? Math.max(paperWidth, pageHeight) : paperWidth;
   const texPixels = (points: number) => `${(points * CSS_PIXELS_PER_INCH) / TEX_POINTS_PER_INCH}px`;
-  const paperColors = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(latexDocumentColors(mathSetupSource)).map(([name, value]) => [
-          `--scient-color-${name}`,
-          value,
-        ]),
-      ),
-    [mathSetupSource],
+  const paperColors = Object.fromEntries(
+    Object.entries(latexDocumentColors(mathSetupSource)).map(([name, value]) => [
+      `--scient-color-${name}`,
+      value,
+    ]),
   );
-  const documentLinks = useMemo(() => latexDocumentLinkColors(mathSetupSource), [mathSetupSource]);
-  const graphicSearchPaths = useMemo(() => latexGraphicsPaths(mathSetupSource), [mathSetupSource]);
+  const documentLinks = latexDocumentLinkColors(mathSetupSource);
+  const graphicSearchPaths = latexGraphicsPaths(mathSetupSource);
   const paperStyle = {
     ...paperColors,
     "--scient-latex-link-color": documentLinks.link,
@@ -8880,26 +8977,26 @@ function LatexVisualEditorReady(
     "--scient-latex-theorem-head-sep": texPixels(5),
   } as CSSProperties;
 
-  const measureFitZoom = useCallback(() => {
+  const measureFitZoom = useStableCallback(() => {
     const scroll = visualScroll.current;
     if (!scroll) return null;
     const scale = pdfFitWidthScale(scroll.clientWidth, canvasWidth);
     // Hidden or temporarily collapsed panes must not replace the last usable fit.
     if (scale === null || Math.round(scale * 100) <= 0) return null;
     return scale;
-  }, [canvasWidth]);
+  });
 
   useLayoutEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll) return;
     // Fit before the first paint rather than waiting for ResizeObserver delivery.
-    const scale = measureFitZoom();
-    if (scale !== null) setFitZoom(scale);
+    const scale = pdfFitWidthScale(scroll.clientWidth, canvasWidth);
+    if (scale !== null && Math.round(scale * 100) > 0) setFitZoom(scale);
     return observeLatexWidth(scroll, (width) => {
       const scale = pdfFitWidthScale(width, canvasWidth);
       if (scale !== null && Math.round(scale * 100) > 0) setFitZoom(scale);
     });
-  }, [measureFitZoom, canvasWidth]);
+  }, [canvasWidth]);
 
   const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
   const changeZoom = useLatexPinchZoom(visualScroll, zoom, setZoomMode);
@@ -8911,7 +9008,7 @@ function LatexVisualEditorReady(
       setZoomMode("fit");
     });
   };
-  readerAction.current = (command) => {
+  const runReaderAction = (command: string) => {
     if (command === "pdf.find") setSearchFocus((request) => request + 1);
     else if (command === "pdf.zoomIn") changeZoom(stepPdfZoom(zoom, "in"));
     else if (command === "pdf.zoomOut") changeZoom(stepPdfZoom(zoom, "out"));
@@ -8919,8 +9016,11 @@ function LatexVisualEditorReady(
     else return false;
     return true;
   };
+  useLayoutEffect(() => {
+    readerAction.current = runReaderAction;
+  });
   // The zoomed paper is scaled by a transform, which does not size its frame.
-  const syncZoomFrame = useCallback(() => {
+  const syncZoomFrame = useStableCallback(() => {
     const frame = zoomFrame.current;
     const stage = paperStage.current;
     if (!frame || !stage) return;
@@ -8928,7 +9028,7 @@ function LatexVisualEditorReady(
       measuredStage.current = { element: stage, height: stage.offsetHeight };
     const height = `${measuredStage.current.height * zoom}px`;
     if (frame.style.height !== height) frame.style.height = height;
-  }, [zoom]);
+  });
   useLayoutEffect(() => {
     syncZoomFrameRef.current = syncZoomFrame;
     const stage = paperStage.current;
@@ -9017,7 +9117,7 @@ function LatexVisualEditorReady(
       if (!editor.isDestroyed) rememberLatexReadingPosition(readingKey, editor.view);
     };
     const scrolled = () => {
-      frame ||= requestAnimationFrame(remember);
+      if (!frame) frame = requestAnimationFrame(remember);
     };
     scroll.addEventListener("scroll", scrolled, { passive: true });
     return () => {
@@ -9072,7 +9172,7 @@ function LatexVisualEditorReady(
         setCurrentPage((current) => (pages.includes(current) ? current : pages[0]!));
     };
     const scrolled = () => {
-      frame ||= requestAnimationFrame(update);
+      if (!frame) frame = requestAnimationFrame(update);
     };
     scroll.addEventListener("scroll", scrolled, { passive: true });
     update();
@@ -9099,7 +9199,7 @@ function LatexVisualEditorReady(
       mathFormat: "bold" as const,
       label: WRITING_COMMAND_LABELS.bold,
       icon: <WritingCommandIcon command="bold" />,
-      action: () => shortcutAction.current("latex.bold"),
+      action: () => shortcutAction("latex.bold"),
       active: editingPresentation.bold,
       preserveIconWeight: true,
       disabled: !formattingAvailable,
@@ -9109,7 +9209,7 @@ function LatexVisualEditorReady(
       mathFormat: "italic" as const,
       label: WRITING_COMMAND_LABELS.italic,
       icon: <WritingCommandIcon command="italic" />,
-      action: () => shortcutAction.current("latex.italic"),
+      action: () => shortcutAction("latex.italic"),
       active: editingPresentation.italic,
       preserveIconWeight: false,
       disabled: !formattingAvailable,
@@ -9119,7 +9219,7 @@ function LatexVisualEditorReady(
       mathFormat: "monospace" as const,
       label: mathActive ? "Monospace" : WRITING_COMMAND_LABELS.inlineCode,
       icon: <WritingCommandIcon command="inlineCode" />,
-      action: () => shortcutAction.current("latex.inlineCode"),
+      action: () => shortcutAction("latex.inlineCode"),
       active: editingPresentation.code,
       preserveIconWeight: true,
       disabled: !formattingAvailable,
@@ -9163,21 +9263,26 @@ function LatexVisualEditorReady(
           .content,
       );
       applying.current = true;
-      try {
-        editor.view.dispatch(
-          closeHistory(editor.state.tr)
-            .step(
-              new LatexSourceStep(0, editor.state.doc.content.size, new Slice(next.content, 0, 0), {
-                edit,
-                inverse: outcome.inverseEdit,
-              }),
-            )
-            .setMeta("preventUpdate", true),
-        );
-        editor.view.dispatch(closeHistory(editor.state.tr));
-      } finally {
-        applying.current = false;
-      }
+      runThenCleanUp(
+        () => {
+          editor.view.dispatch(
+            closeHistory(editor.state.tr)
+              .step(
+                new LatexSourceStep(
+                  0,
+                  editor.state.doc.content.size,
+                  new Slice(next.content, 0, 0),
+                  { edit, inverse: outcome.inverseEdit },
+                ),
+              )
+              .setMeta("preventUpdate", true),
+          );
+          editor.view.dispatch(closeHistory(editor.state.tr));
+        },
+        () => {
+          applying.current = false;
+        },
+      );
     }
     installProjection(
       projectLatexVisualDocument(outcome.snapshot.source, 0, outcome.snapshot.setupSource),
@@ -9240,6 +9345,7 @@ function LatexVisualEditorReady(
     rawInputRecovery.current = null;
     rawInputPersistedRecovery.current = null;
     rawInputAccepted.current = false;
+    setRawCheckpointPending(false);
     setBlockSource({
       id: block.id,
       position,
@@ -9255,6 +9361,7 @@ function LatexVisualEditorReady(
   };
   const retireRawInput = () => {
     rawInputAccepted.current = false;
+    setRawCheckpointPending(false);
     const retained = rawInputRecovery.current;
     if (retained === null) return;
     removeRecovery(props.draftKey, retained);
@@ -9268,7 +9375,7 @@ function LatexVisualEditorReady(
       shown?.identity === retained.identity ? readStoredRecovery(props.draftKey) : shown,
     );
   };
-  finishRawCheckpoint.current = () => {
+  const finishRawInputCheckpoint = () => {
     if (!rawInputAccepted.current) return true;
     if (!flushVisualDraft(props.draftKey)) return false;
     retireRawInput();
@@ -9276,10 +9383,13 @@ function LatexVisualEditorReady(
     setBlockSource(null);
     return true;
   };
+  useLayoutEffect(() => {
+    finishRawCheckpoint.current = finishRawInputCheckpoint;
+  });
   const blockSourceContext = {
     active: blockSource,
     disabled: readOnly,
-    checkpointPending: rawInputAccepted.current,
+    checkpointPending: rawCheckpointPending,
     open: openBlockSource,
     remove: (position: number, original: string) => {
       if (!editor || readOnly || !editor.isEditable || editor.isDestroyed) return;
@@ -9380,6 +9490,7 @@ function LatexVisualEditorReady(
       const saved = currentSnapshot.current.source;
       checkpointVisualDraft(props.draftKey, saved, sourceRevision.current);
       rawInputAccepted.current = true;
+      setRawCheckpointPending(true);
       if (!finishRawCheckpoint.current())
         setNotice(
           "The source accepted this draft, but its recovery checkpoint is not durable yet.",
@@ -9397,21 +9508,6 @@ function LatexVisualEditorReady(
   const activeStyle = textStyle?.value ?? "paragraph";
   // Inside a list item the LaTeX source cannot hold a quote.
   const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
-  const textBlockItems = (ids: readonly string[]) =>
-    ids.map((id) => {
-      const action = insertActions.find((item) => item.id === id);
-      if (!action) return null;
-      return (
-        <DockCommandItem
-          key={id}
-          disabled={textReadOnly || action.disabled || Boolean(action.disabledReason)}
-          title={action.disabledReason}
-          onClick={action.run}
-        >
-          <MenuRow label={action.label} />
-        </DockCommandItem>
-      );
-    });
   const writingStyleItems = (
     <>
       <MenuRadioGroup value={activeStyle}>
@@ -9445,7 +9541,7 @@ function LatexVisualEditorReady(
           </DockCommandRadioItem>
         ))}
       </MenuRadioGroup>
-      {textBlockItems(["part"])}
+      <LatexTextBlockItems ids={["part"]} actions={insertActions} disabled={textReadOnly} />
       {/* Whether headings are numbered: the last line of the headings, a small switch. */}
       <MenuCheckboxItem
         variant="switch"
@@ -9475,7 +9571,7 @@ function LatexVisualEditorReady(
           />
         </DockCommandRadioItem>
       </MenuRadioGroup>
-      {textBlockItems(["quotation"])}
+      <LatexTextBlockItems ids={["quotation"]} actions={insertActions} disabled={textReadOnly} />
     </>
   );
   const writingFormattingItems = (
@@ -9485,7 +9581,7 @@ function LatexVisualEditorReady(
           key={action.id}
           checked={
             mathActive
-              ? Boolean(mathTarget.current?.textFormatActive(action.mathFormat))
+              ? activeMathFormat(renderedMathTarget, action.mathFormat, mathFormattingState)
               : Boolean(action.active)
           }
           disabled={
@@ -9510,7 +9606,13 @@ function LatexVisualEditorReady(
         getSource={() => currentSource.current}
       />
     ),
-    alignment: textBlockItems(["left-text", "right-text"]),
+    alignment: (
+      <LatexTextBlockItems
+        ids={["left-text", "right-text"]}
+        actions={insertActions}
+        disabled={textReadOnly}
+      />
+    ),
     commandScope: "latex",
   };
   const writingTextTools = <TextMenu {...writingTextContents} disabled={readOnly} />;
@@ -9596,16 +9698,10 @@ function LatexVisualEditorReady(
   );
   const writingInsertTools = (
     <div ref={linkAnchor} className="scient-latex-toolbar-group">
-      <LatexInsertMenu
+      <LatexDocumentInsertMenu
         open={insertOpen && !readOnly}
         onOpenChange={setInsertOpen}
-        actions={insertActions.filter(
-          (action) =>
-            !action.id.startsWith("heading-") &&
-            action.id !== "paragraph" &&
-            !action.id.startsWith("document-") &&
-            action.group !== "Math",
-        )}
+        actions={insertActions}
         disabled={readOnly}
         unavailableReason={
           mathActive
@@ -9713,20 +9809,7 @@ function LatexVisualEditorReady(
     scroll.scrollTop +=
       target.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 24;
   };
-  const overflowInsertActions = insertActions.filter(
-    (action) =>
-      !action.id.startsWith("heading-") &&
-      action.id !== "paragraph" &&
-      !action.id.startsWith("document-") &&
-      action.group !== "Math",
-  );
-  const displayedTitle = projection.current.blocks.some(
-    (block) => block.node.attrs?.kind === "title",
-  );
-  const canAddTitle = useMemo(
-    () => !displayedTitle && prepareLatexDocumentTitle(props.source) !== null,
-    [displayedTitle, props.source],
-  );
+  const canAddTitle = !displayedTitle && prepareLatexDocumentTitle(props.source) !== null;
   const openDocumentSettings = (section: LatexDocumentSettingsSection) => {
     if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
     setSettingsSection(section);
@@ -9819,10 +9902,7 @@ function LatexVisualEditorReady(
   })();
   // Counted only where the footer shows it.
   const hostsFooter = readerHost !== null && readerHost.slot !== null;
-  const sourceWords = useMemo(
-    () => (hostsFooter ? countLatexWords(props.source) : 0),
-    [hostsFooter, props.source],
-  );
+  const sourceWords = hostsFooter ? countLatexWords(props.source) : 0;
   const selectedWords = editingPresentation.selectedWords;
   const footerWords = {
     // The total is an estimate from the source; it never reads below the selection.
@@ -10015,8 +10095,8 @@ function LatexVisualEditorReady(
                                   bar: writingInsertTools,
                                   overflowLabel: "Insert",
                                   overflow: (
-                                    <LatexInsertMenuContent
-                                      actions={overflowInsertActions}
+                                    <LatexDocumentInsertMenuContent
+                                      actions={insertActions}
                                       onInsertTable={insertTable}
                                       unavailableReason={
                                         readOnly

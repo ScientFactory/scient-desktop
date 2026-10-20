@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { HighlightStyle, LanguageDescription, type Language } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { highlightTree, tags } from "@lezer/highlight";
@@ -34,6 +34,41 @@ function textStyle(style: LatexListingPresentation["basic"], base = 1): CSSPrope
           ? { fontFamily: "sans-serif" }
           : {}),
   };
+}
+
+/** Highlighted pieces of each line; plain lines past 100k characters. */
+function highlightedLines(
+  live: string,
+  syntax: { readonly name: string; readonly language: Language } | null,
+  name: string,
+) {
+  const ranges: { from: number; to: number; classes: string }[] = [];
+  if (syntax?.name === name && live.length <= 100000)
+    highlightTree(syntax.language.parser.parse(live), highlighting, (from, to, classes) =>
+      ranges.push({ from, to, classes }),
+    );
+  let offset = 0,
+    rangeIndex = 0;
+  return live.split(/\r?\n/u).map((line, lineIndex) => {
+    const from = offset,
+      to = from + line.length;
+    offset = to + (live[to] === "\r" ? 2 : 1);
+    const pieces: { text: string; classes: string; from: number }[] = [];
+    let cursor = from;
+    while (rangeIndex < ranges.length && ranges[rangeIndex]!.to <= from) rangeIndex++;
+    for (let index = rangeIndex; index < ranges.length && ranges[index]!.from < to; index++) {
+      const range = ranges[index]!;
+      const start = Math.max(cursor, range.from),
+        end = Math.min(to, range.to);
+      if (start > cursor)
+        pieces.push({ text: live.slice(cursor, start), classes: "", from: cursor });
+      if (end > start)
+        pieces.push({ text: live.slice(start, end), classes: range.classes, from: start });
+      cursor = Math.max(cursor, end);
+    }
+    if (cursor < to) pieces.push({ text: live.slice(cursor, to), classes: "", from: cursor });
+    return { line, lineIndex, pieces };
+  });
 }
 
 /** Native fields retain the existing draft/save/undo path; the backdrop only paints code. */
@@ -76,35 +111,7 @@ export function LatexLiteralCodeView(props: {
     const field = host.current?.querySelector<HTMLTextAreaElement>("textarea");
     setLive(field?.value ?? props.body);
   }, [props.body]);
-  const lines = useMemo(() => {
-    const ranges: { from: number; to: number; classes: string }[] = [];
-    if (syntax?.name === name && live.length <= 100000)
-      highlightTree(syntax.language.parser.parse(live), highlighting, (from, to, classes) =>
-        ranges.push({ from, to, classes }),
-      );
-    let offset = 0,
-      rangeIndex = 0;
-    return live.split(/\r?\n/u).map((line, lineIndex) => {
-      const from = offset,
-        to = from + line.length;
-      offset = to + (live[to] === "\r" ? 2 : 1);
-      const pieces: { text: string; classes: string; from: number }[] = [];
-      let cursor = from;
-      while (rangeIndex < ranges.length && ranges[rangeIndex]!.to <= from) rangeIndex++;
-      for (let index = rangeIndex; index < ranges.length && ranges[index]!.from < to; index++) {
-        const range = ranges[index]!;
-        const start = Math.max(cursor, range.from),
-          end = Math.min(to, range.to);
-        if (start > cursor)
-          pieces.push({ text: live.slice(cursor, start), classes: "", from: cursor });
-        if (end > start)
-          pieces.push({ text: live.slice(start, end), classes: range.classes, from: start });
-        cursor = Math.max(cursor, end);
-      }
-      if (cursor < to) pieces.push({ text: live.slice(cursor, to), classes: "", from: cursor });
-      return { line, lineIndex, pieces };
-    });
-  }, [live, syntax, name]);
+  const lines = highlightedLines(live, syntax, name);
   const settings = props.presentation;
   const base = sizeFactors[settings?.basic.size ?? "inherit"] ?? 1;
   const paint = (classes: string) =>

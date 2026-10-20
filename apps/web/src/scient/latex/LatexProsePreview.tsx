@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useEffectEvent, useLayoutEffect, useRef } from "react";
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
 import {
@@ -142,9 +142,14 @@ export function LatexProsePreview({
     editor: editor ?? null,
     selector: ({ editor: current }) => (current ? latexReferencePresentation(current.state) : null),
   });
-  useLayoutEffect(() => {
+  // Reference numbering changes repaint the preview.
+  const paintPreview = useEffectEvent((..._changes: readonly unknown[]) => {
     if (element.current)
       return appendLatexProsePreview(element.current, source, editor, rootSource);
-  }, [source, editor, rootSource, references]);
+  });
+  useLayoutEffect(
+    () => paintPreview(source, editor, rootSource, references),
+    [source, editor, rootSource, references],
+  );
   return <span ref={element} />;
 }

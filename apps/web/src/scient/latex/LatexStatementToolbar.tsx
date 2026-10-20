@@ -1,4 +1,4 @@
-import { useContext, useMemo, type RefObject } from "react";
+import { useContext, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
 import { dockButtonClass } from "../writing/dockChrome";
@@ -24,7 +24,7 @@ export function LatexStatementToolbar(props: {
 }) {
   const { active, bar } = useLatexObjectContext(props.editor, props.root, props.selected);
   const { source, renameLabel } = useContext(LatexAuthoringContext);
-  const inventory = useMemo(() => latexLabelInventory(source), [source]);
+  const inventory = latexLabelInventory(source);
   const host = active
     ? props.editor.view.dom
         .closest(".scient-latex-visual-workspace")

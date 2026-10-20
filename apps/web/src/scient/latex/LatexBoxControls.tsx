@@ -1,4 +1,4 @@
-import { useContext, useId, useMemo, useState, type ReactNode } from "react";
+import { useContext, useId, useState, type ReactNode } from "react";
 import { Input } from "~/components/ui/input";
 import {
   MenuCheckboxItem,
@@ -40,7 +40,7 @@ function BoxSubmenu(props: { label: string; contentSized?: boolean; children: Re
 /** Literal document colors and xcolor mixtures retain their original source names. */
 function BoxColor(props: { label: string; value: string; onChange: (value: string) => void }) {
   const { source } = useContext(LatexAuthoringContext);
-  const colors = useMemo(() => latexDocumentColors(source), [source]);
+  const colors = latexDocumentColors(source);
   const [value, setValue] = useState(props.value);
   const id = useId();
   const valid = latexColorCss(value, colors) !== null;

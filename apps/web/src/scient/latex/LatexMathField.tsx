@@ -21,6 +21,7 @@ import {
   forwardRef,
   useContext,
   useEffect,
+  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -121,6 +122,15 @@ export interface LatexMathFieldHandle {
       | "undo"
       | "redo",
   ) => boolean;
+}
+
+/** `try`/`finally` outside the component, where the React Compiler cannot follow it. */
+function runWithCleanup(body: () => void, cleanup: () => void) {
+  try {
+    body();
+  } finally {
+    cleanup();
+  }
 }
 
 export const LatexMathField = forwardRef<
@@ -762,23 +772,26 @@ export const LatexMathField = forwardRef<
           geometry,
         );
         applyingSelection = true;
-        try {
-          rectangle = selected.kind === "rectangle" ? selected.rectangle : null;
-          if (selected.kind === "rectangle") selectMathRectangle(math, selected.rectangle);
-          else
-            applyMathSelection(math, {
-              ranges: [[...selected.range]],
-              direction: selected.direction,
-            });
-          selectionContinuation = {
-            anchor: anchor.offset,
-            head: head.offset,
-            revision: mathSelectionRevision(math),
-            selection: selectionKey(),
-          };
-        } finally {
-          applyingSelection = false;
-        }
+        runWithCleanup(
+          () => {
+            rectangle = selected.kind === "rectangle" ? selected.rectangle : null;
+            if (selected.kind === "rectangle") selectMathRectangle(math, selected.rectangle);
+            else
+              applyMathSelection(math, {
+                ranges: [[...selected.range]],
+                direction: selected.direction,
+              });
+            selectionContinuation = {
+              anchor: anchor.offset,
+              head: head.offset,
+              revision: mathSelectionRevision(math),
+              selection: selectionKey(),
+            };
+          },
+          () => {
+            applyingSelection = false;
+          },
+        );
       };
       const selectionSession = installMathSelectionSession(math, {
         rectangle: () => rectangle,
@@ -818,12 +831,10 @@ export const LatexMathField = forwardRef<
         selectionContinuation = null;
         const previous = applyingSelection;
         applyingSelection = true;
-        try {
-          insert();
-        } finally {
+        runWithCleanup(insert, () => {
           applyingSelection = previous;
           selectionSession.refresh();
-        }
+        });
       };
       const selectEnvironment = (
         environment: MathCellSelection["environment"],
@@ -1545,10 +1556,15 @@ export const LatexMathField = forwardRef<
   useEffect(() => {
     if (editing) mountField.current();
   }, [editing]);
-  useEffect(() => {
+  const refreshPreview = useEffectEvent((..._changes: readonly unknown[]) => {
     renderPreview.current();
-  }, [value, display, documentMacros, commandContext.colors]);
-  useEffect(() => {
+  });
+  useEffect(
+    () => refreshPreview(value, display, documentMacros, commandContext.colors),
+    [value, display, documentMacros, commandContext.colors],
+  );
+  // A remounted field (new draft or reporter) takes the document macros again.
+  const applyDocumentMacros = useEffectEvent((..._changes: readonly unknown[]) => {
     const math = field.current;
     if (!math) return;
     const signature = JSON.stringify({ macros: documentMacros, colors: commandContext.colors });
@@ -1578,7 +1594,11 @@ export const LatexMathField = forwardRef<
     apply();
     math.addEventListener("mode-change", apply);
     return () => math.removeEventListener("mode-change", apply);
-  }, [documentMacros, commandContext.colors, draftId, reportDraft]);
+  });
+  useEffect(
+    () => applyDocumentMacros(documentMacros, commandContext.colors, draftId, reportDraft),
+    [documentMacros, commandContext.colors, draftId, reportDraft],
+  );
   useEffect(() => {
     if (!field.current) return;
     field.current.setAttribute("aria-label", display ? "Display equation" : "Inline equation");

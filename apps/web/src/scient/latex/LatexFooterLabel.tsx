@@ -1,4 +1,4 @@
-import { useContext, useMemo } from "react";
+import { useContext } from "react";
 import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { LatexAuthoringContext } from "./latexObjectAuthoring";
 import { latexLabelInventory } from "./latexLabelAuthoring";
@@ -13,7 +13,7 @@ export function LatexFooterLabel(props: {
   onCommit: (value: string) => void;
 }) {
   const { source, renameLabel } = useContext(LatexAuthoringContext);
-  const inventory = useMemo(() => latexLabelInventory(source), [source]);
+  const inventory = latexLabelInventory(source);
   return (
     <LatexReferenceLabelControl
       label={props.label ?? "Reference label"}

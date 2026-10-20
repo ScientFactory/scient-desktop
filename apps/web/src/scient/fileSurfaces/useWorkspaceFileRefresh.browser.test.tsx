@@ -27,9 +27,10 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => mocks.watcher,
-  useAtomRefresh: () => mocks.refreshWatcher,
+vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomValue: (() => mocks.watcher) as never,
+  useAtomRefresh: (() => mocks.refreshWatcher) as never,
 }));
 vi.mock("~/state/projects", () => ({
   projectEnvironment: { fileChanges: vi.fn() },

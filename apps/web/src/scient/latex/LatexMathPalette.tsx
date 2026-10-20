@@ -3,10 +3,10 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import {
   memo,
   useEffect,
+  useEffectEvent,
   useContext,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -179,6 +179,30 @@ function SymbolCommand({
   );
 }
 
+const NO_SHORTCUTS = new Map<string, string[]>();
+
+function paletteShortcuts(preferences: ReturnType<typeof getKeyboardPreferences>["preferences"]) {
+  const bindings = effectiveSurfaceBindings(preferences, isMacKeyboard());
+  return new Map(MATH_SYMBOLS.map((symbol) => [symbol.id, mathSymbolShortcuts(symbol, bindings)]));
+}
+
+/** The built-in symbols and the document's own macros. */
+function documentMathPalette(preamble: string) {
+  return mathPaletteSymbols([
+    ...MATH_SYMBOLS,
+    ...Object.entries(latexDocumentMathSetup(preamble).macros).map(([name, macro]): MathSymbol => ({
+      id: `document:${name}`,
+      category: "document",
+      label: `\\${name}`,
+      command: `\\${name}`,
+      latex: `\\${name}${Array.from({ length: macro.args }, (_, index) => `{${index === 0 ? "#0" : ""}}`).join("")}`,
+      preview: macro.def.replace(/#[1-9]/gu, "x"),
+      packages: [],
+      search: `document macro ${name.toLowerCase()}`,
+    })),
+  ]);
+}
+
 export function LatexMathPalette({
   onInsert,
   onReturnToMath,
@@ -202,29 +226,8 @@ export function LatexMathPalette({
 }) {
   const documentSetup = useContext(LatexAuthoringContext);
   const preamble = latexPackageInventory(documentSetup.source).preamble;
-  const catalog = useMemo(
-    () =>
-      mathPaletteSymbols([
-        ...MATH_SYMBOLS,
-        ...Object.entries(latexDocumentMathSetup(preamble).macros).map(
-          ([name, macro]): MathSymbol => ({
-            id: `document:${name}`,
-            category: "document",
-            label: `\\${name}`,
-            command: `\\${name}`,
-            latex: `\\${name}${Array.from({ length: macro.args }, (_, index) => `{${index === 0 ? "#0" : ""}}`).join("")}`,
-            preview: macro.def.replace(/#[1-9]/gu, "x"),
-            packages: [],
-            search: `document macro ${name.toLowerCase()}`,
-          }),
-        ),
-      ]),
-    [preamble],
-  );
-  const paletteById = useMemo(
-    () => new Map(catalog.map((symbol) => [symbol.id, symbol])),
-    [catalog],
-  );
+  const catalog = documentMathPalette(preamble);
+  const paletteById = new Map(catalog.map((symbol) => [symbol.id, symbol]));
   const [open, setOpen] = useState(picker);
   const [category, setCategory] = useState("common");
   const [query, setQuery] = useState("");
@@ -235,15 +238,9 @@ export function LatexMathPalette({
     getKeyboardPreferences,
     getKeyboardPreferences,
   );
-  const shortcuts = useMemo(() => {
-    // Hints are shown only inside the panel. Activating a formula should not
-    // prepare the entire symbol catalog while that panel is closed.
-    if (!open) return new Map<string, string[]>();
-    const bindings = effectiveSurfaceBindings(keyboard.preferences, isMacKeyboard());
-    return new Map(
-      MATH_SYMBOLS.map((symbol) => [symbol.id, mathSymbolShortcuts(symbol, bindings)]),
-    );
-  }, [keyboard, open]);
+  // Hints are shown only inside the panel. Activating a formula should not
+  // prepare the entire symbol catalog while that panel is closed.
+  const shortcuts = open ? paletteShortcuts(keyboard.preferences) : NO_SHORTCUTS;
   const panelId = useId();
   const ownerId = useId();
   const panelRoot = useRef<HTMLElement>(null);
@@ -256,7 +253,8 @@ export function LatexMathPalette({
   useLayoutEffect(() => {
     setPortalHost(root.current?.closest(".scient-latex-reader-footer") ?? null);
   }, []);
-  useLayoutEffect(() => {
+  // A panel moved into the footer portal is a new element to position.
+  const positionPanel = useEffectEvent((..._changes: readonly unknown[]) => {
     const panel = panelRoot.current;
     const handle = dragHandle.current;
     if (!open || !panel || !handle) return;
@@ -400,15 +398,28 @@ export function LatexMathPalette({
       stopResize();
       panel.style.removeProperty("translate");
     };
-  }, [open, portalHost]);
-  useEffect(() => {
-    if (!openRequest) return;
-    setOpen(true);
-    onOpenRequestHandled?.(openRequest);
-  }, [openRequest, onOpenRequestHandled]);
-  useEffect(() => {
+  });
+  useLayoutEffect(() => positionPanel(open, portalHost), [open, portalHost]);
+  // An open request opens the panel; opening Source closes it.
+  const requestInputs = [openRequest, onOpenRequestHandled] as const;
+  const [previousRequestInputs, setPreviousRequestInputs] = useState<readonly unknown[] | null>(
+    null,
+  );
+  if (
+    previousRequestInputs === null ||
+    requestInputs.some((value, index) => value !== previousRequestInputs[index])
+  ) {
+    setPreviousRequestInputs(requestInputs);
+    if (openRequest) setOpen(true);
+  }
+  const [previousSourceOpen, setPreviousSourceOpen] = useState<boolean | null>(null);
+  if (previousSourceOpen !== sourceOpen) {
+    setPreviousSourceOpen(sourceOpen);
     if (sourceOpen) setOpen(false);
-  }, [sourceOpen]);
+  }
+  useEffect(() => {
+    if (openRequest) onOpenRequestHandled?.(openRequest);
+  }, [openRequest, onOpenRequestHandled]);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -428,12 +439,11 @@ export function LatexMathPalette({
     const frame = requestAnimationFrame(() => search.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [open]);
-  const symbols = useMemo(() => {
-    if (query.trim()) return searchMathPalette(catalog, query);
-    if (category === "recent" || category === "favorites")
-      return preferences[category].map((id) => paletteById.get(id)!).filter(Boolean);
-    return mathPaletteGroup(catalog, category);
-  }, [category, preferences, query, catalog, paletteById]);
+  const symbols = query.trim()
+    ? searchMathPalette(catalog, query)
+    : category === "recent" || category === "favorites"
+      ? preferences[category].map((id) => paletteById.get(id)!).filter(Boolean)
+      : mathPaletteGroup(catalog, category);
   const active = symbols.find((symbol) => symbol.id === activeId) ?? symbols[0];
   const hasQuery = Boolean(query.trim());
   const categoryLabel = hasQuery

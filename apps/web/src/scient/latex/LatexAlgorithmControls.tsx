@@ -1,4 +1,4 @@
-import { useContext, useId, useMemo, type ReactNode } from "react";
+import { useContext, useId, type ReactNode } from "react";
 import { useEditorState, type NodeViewProps } from "@tiptap/react";
 import {
   MenuCheckboxItem,
@@ -70,7 +70,7 @@ export function LatexAlgorithmControls({
 }) {
   const context = useContext(LatexAuthoringContext);
   const report = useLatexActionNotice();
-  const labels = useMemo(() => latexLabelInventory(context.source), [context.source]);
+  const labels = latexLabelInventory(context.source);
   const active = useEditorState({
     editor,
     selector: ({ editor }) => {

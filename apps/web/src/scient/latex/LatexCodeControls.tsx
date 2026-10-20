@@ -1,4 +1,4 @@
-import { useContext, useId, useMemo, useState, type ReactNode } from "react";
+import { useContext, useId, useState, type ReactNode } from "react";
 import type { NodeViewProps } from "@tiptap/react";
 import { Input } from "~/components/ui/input";
 import {
@@ -126,7 +126,7 @@ export function LatexCodeControls({
 }) {
   const context = useContext(LatexAuthoringContext);
   const report = useLatexActionNotice();
-  const inventory = useMemo(() => latexLabelInventory(context.source), [context.source]);
+  const inventory = latexLabelInventory(context.source);
   const settings = node.attrs.sourceMeta?.listingPresentation as LatexListingPresentation;
   const option = (changes: Record<string, string | null>) => {
     if (!editable || !editor.isEditable || !context.prepare()) return;
