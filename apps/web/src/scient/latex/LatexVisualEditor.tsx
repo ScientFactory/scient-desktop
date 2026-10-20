@@ -6442,7 +6442,7 @@ function LatexVisualEditorReady(
   }, [props.onEdit]);
 
   const installProjection = useStableCallback(
-    (next: LatexVisualDocument, resetEditor: boolean, acceptedRepair = false) => {
+    (next: LatexVisualDocument, resetEditor: boolean, acceptedRepair: boolean = false) => {
       projection.current = next;
       setDisplayedTitle(next.blocks.some((block) => block.node.attrs?.kind === "title"));
       const editor = editorRef.current;
@@ -6684,7 +6684,7 @@ function LatexVisualEditorReady(
   );
 
   const handleUpdate = useStableCallback(
-    (doc: ProseMirrorNode, retainLiveText = false): boolean => {
+    (doc: ProseMirrorNode, retainLiveText: boolean = false): boolean => {
       if (applying.current) return true;
       const expected = currentSource.current;
       const previousProjection = projection.current;
