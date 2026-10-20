@@ -148,6 +148,12 @@ export type OverleafReviewRefusal =
   /** Two paths differ only by letter case or Unicode form; one would silently replace the other. */
   | { readonly reason: "path-alias"; readonly first: string; readonly second: string }
   /**
+   * Applying would check `path`, which on disk is `onDisk`: an unchecked, local-only or
+   * skipped entry, or something inside one, that this review never read. Check it,
+   * move it, or rename it on Overleaf.
+   */
+  | { readonly reason: "unreviewed-path"; readonly path: string; readonly onDisk: string }
+  /**
    * A file's name changed by letter case or Unicode form alone since the last
    * synchronization (`from` was synchronized, `to` is the new spelling), whether or not
    * Git saw a rename. Undo it, or rename through another name with a synchronization
@@ -316,6 +322,40 @@ function respelling(before: Iterable<string>, after: Iterable<string>) {
   return null;
 }
 
+/**
+ * A path the applier would check that reaches something on disk this review did not
+ * read, and what it reaches, or null. Unchecked, local-only and skipped entries are
+ * listed but never read; a walked folder is read entry by entry, so only another
+ * spelling of it is refused; and nothing below a skipped entry was listed at all.
+ * Matching is by collision key, so the same spelling and another one both count.
+ */
+function unreviewedOccupant(paths: Iterable<string>, inventory: OverleafInventory) {
+  const unread = new Map<string, string>();
+  for (const path of [
+    ...inventory.additions.map((entry) => entry.path),
+    ...inventory.localOnly,
+    ...inventory.excluded.map((entry) => entry.path),
+  ])
+    if (!inventory.captured.has(path)) unread.set(manuscriptCollisionKey(path), path);
+  const folders = new Map(inventory.folders.map((path) => [manuscriptCollisionKey(path), path]));
+  const skipped = new Map(
+    inventory.excluded.map((entry) => [manuscriptCollisionKey(entry.path), entry.path]),
+  );
+  for (const path of paths) {
+    if (inventory.captured.has(path)) continue;
+    const key = manuscriptCollisionKey(path);
+    const file = unread.get(key);
+    if (file !== undefined) return { path, onDisk: file };
+    const folder = folders.get(key);
+    if (folder !== undefined && folder !== path) return { path, onDisk: folder };
+    for (const above of ancestors(path)) {
+      const entry = skipped.get(manuscriptCollisionKey(above));
+      if (entry !== undefined) return { path, onDisk: entry };
+    }
+  }
+  return null;
+}
+
 /** Two different spellings of one path, by letter case or Unicode form, or null. */
 function findAlias(paths: Iterable<string>) {
   const seen = new Map<string, string>();
@@ -478,33 +518,28 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     trees: { base, local, remote, merged },
   }).toSorted((left, right) => byPath(left.paths.join("\0"), right.paths.join("\0")));
   // The applier also checks the paths conflict groups add: names kept from an
-  // interrupted apply, and names Git makes up for a file meeting a folder. On a disk
-  // that ignores letter case or Unicode form, one spelled like another path here, or
-  // like anything on disk, reads that other file. Checked before any choice applies:
-  // the target is drawn from the capture, Overleaf's tree and the merge.
-  const guardAlias = respelling(
-    [
-      ...base.keys(),
-      ...remote.keys(),
-      ...local.keys(),
-      ...merged.keys(),
-      ...renames.flatMap((rename) => [rename.from, rename.to]),
-      ...groups.flatMap((group) => group.paths),
-    ],
-    [
-      ...inventory.additions.map((entry) => entry.path),
-      ...inventory.localOnly,
-      ...inventory.folders,
-      ...inventory.excluded.map((entry) => entry.path),
-    ],
-  );
-  if (guardAlias !== null)
+  // interrupted apply, and names Git makes up for a file meeting a folder. Every path
+  // it can check must be one this review read, or empty on disk; anything else would
+  // make it read a file nobody reviewed and stop partway. Checked before any choice
+  // applies: the target is drawn from the capture, Overleaf's tree and the merge.
+  const applied = new Set([
+    ...base.keys(),
+    ...remote.keys(),
+    ...local.keys(),
+    ...merged.keys(),
+    ...renames.flatMap((rename) => [rename.from, rename.to]),
+    ...groups.flatMap((group) => group.paths),
+  ]);
+  const twoSpellings = respelling(applied, []);
+  if (twoSpellings !== null)
     return refused({
       reason: "path-alias",
-      ...(guardAlias.from < guardAlias.to
-        ? { first: guardAlias.from, second: guardAlias.to }
-        : { first: guardAlias.to, second: guardAlias.from }),
+      ...(twoSpellings.from < twoSpellings.to
+        ? { first: twoSpellings.from, second: twoSpellings.to }
+        : { first: twoSpellings.to, second: twoSpellings.from }),
     });
+  const occupied = unreviewedOccupant(applied, inventory);
+  if (occupied !== null) return refused({ reason: "unreviewed-path", ...occupied });
 
   const conflicts: OverleafReviewConflict[] = [];
   for (const group of groups) {

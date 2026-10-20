@@ -635,22 +635,45 @@ describe("buildOverleafReview", () => {
             });
           }),
       );
-      // Git names the file side of a file meeting a folder `p~Scient`; an unchecked
-      // file on disk is spelled like it.
-      yield* withScenario(
-        {
-          base: null,
-          local: { p: "file", "P~scient": "unchecked" },
-          remote: { "p/x.tex": "x" },
-        },
-        ({ review }) =>
-          Effect.gen(function* () {
-            expect(yield* review({ select: ["p"] })).toEqual({
-              _tag: "refused",
-              refusal: { reason: "path-alias", first: "P~scient", second: "p~Scient" },
-            });
-          }),
-      );
+    }),
+  );
+
+  it.live("refuses a path the applier would check that reaches something never read", () =>
+    Effect.gen(function* () {
+      // Git names the file side of a file meeting a folder `p~Scient`. An unchecked file
+      // on disk under that name, or spelled like it, was never read.
+      for (const unchecked of ["p~Scient", "P~scient"])
+        yield* withScenario(
+          {
+            base: null,
+            local: { p: "file", [unchecked]: "unchecked" },
+            remote: { "p/x.tex": "x" },
+          },
+          ({ review }) =>
+            Effect.gen(function* () {
+              expect(yield* review({ select: ["p"] })).toEqual({
+                _tag: "refused",
+                refusal: { reason: "unreviewed-path", path: "p~Scient", onDisk: unchecked },
+              });
+            }),
+        );
+      // A group kept from an interrupted apply names a path inside a nested repository,
+      // which the walk skipped without listing.
+      for (const kept of ["p/x.tex", "P/x.tex"])
+        yield* withScenario(
+          {
+            base: { "b.tex": "x" },
+            local: { "p/.git/HEAD": "ref", "p/x.tex": "theirs" },
+            remote: { "a.tex": "x", "b.tex": "b" },
+          },
+          ({ review }) =>
+            Effect.gen(function* () {
+              expect(yield* review({ interrupted: [[kept, "b.tex"]] })).toEqual({
+                _tag: "refused",
+                refusal: { reason: "unreviewed-path", path: kept, onDisk: "p" },
+              });
+            }),
+        );
     }),
   );
 
