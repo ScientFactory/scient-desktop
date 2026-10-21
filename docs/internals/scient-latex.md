@@ -635,9 +635,10 @@ Only libarchive's tar
 does that, though, so which `tar` cannot be left to `PATH` on Windows, where
 Git for Windows and MSYS2 both place a GNU tar that rejects the bundle: the
 unpacker resolves `%SystemRoot%\System32\tar.exe` (the bsdtar Windows 10+
-ships) by absolute path and fails with `unpacker-unavailable` if it is not
-there, which also keeps PATH — the one input on this path a user's other
-software can rewrite — out of the install entirely. Elsewhere the command
+ships) by absolute path and never a `tar` from PATH, which keeps PATH — the
+one input on this path a user's other software can rewrite — out of the
+install entirely. If that file is absent, the bundle unpacks itself instead
+(below). Elsewhere the command
 stays `tar`: macOS ships bsdtar under that name, and Linux only ever reads the
 `.tar.xz` asset.
 
@@ -648,8 +649,9 @@ unpacker clears the half-written destination and runs the bundle itself as
 7-Zip's console self-extractor, `x -y -o<destination>`: it carries its own
 decoder, shows no window, and handles Unicode paths. The bundle's SHA-256 was
 already checked against the pin, and it is the same reviewed release whose
-`latexmk.exe` the install runs next, so this trusts nothing new. Both
-failures are reported together if the self-extractor fails too. Computers
+`latexmk.exe` the install runs next, so this trusts nothing new. If the self-extractor fails too, its exit code and complaint lead the
+reported detail, followed by a shortened tar complaint; both appear in full
+in the server log. Computers
 where the system tar works keep exactly the path they had.
 
 The install downloads to a staging directory under

@@ -89,6 +89,35 @@ export function windowsSystemTarPath(env: NodeJS.ProcessEnv): string {
   return `${env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`;
 }
 
+const MAX_TAR_DETAIL_LENGTH = 120;
+
+const boundedDetail = (detail: string): string => {
+  const line = detail.replace(/\s+/gu, " ").trim();
+  return line.length > MAX_TAR_DETAIL_LENGTH
+    ? `${line.slice(0, MAX_TAR_DETAIL_LENGTH - 1)}…`
+    : line;
+};
+
+/**
+ * What a failed 7-Zip extraction said, led by its exit code (2 fatal, 7 bad
+ * command line, 8 out of memory). 7-Zip reports errors on stderr and keeps
+ * its banner and progress on stdout, so stderr's last line is preferred.
+ */
+export function selfExtractorComplaint(result: {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}): string {
+  const lastLine = (text: string) =>
+    text
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .at(-1);
+  const said = lastLine(result.stderr) ?? lastLine(result.stdout);
+  return `exit ${String(result.code)}${said === undefined ? "" : `, ${said}`}`;
+}
+
 /** How the 7-Zip console self-extractor is told to unpack into `destination` without asking. */
 export function sevenZipSelfExtractArguments(
   input: LatexArchiveUnpackInput,
@@ -160,10 +189,12 @@ export const make = Effect.gen(function* () {
   /** The Windows bundle unpacking itself, into a destination cleared of tar's partial output. */
   const runSelfExtractor = (input: LatexArchiveUnpackInput, tarFailure: LatexArchiveUnpackError) =>
     Effect.gen(function* () {
+      // The extractor's failure is the final one, so it leads; tar's, which
+      // may repeat per entry, follows in brief and stays complete in the log.
       const failed = (detail: string) =>
         new LatexArchiveUnpackError({
           reason: "unpack-failed",
-          detail: `${tarFailure.detail} The download's own extractor also failed: ${detail}`,
+          detail: `The download's own extractor failed: ${/[.!?:]$/u.test(detail) ? detail : `${detail}.`} Before that, ${boundedDetail(tarFailure.detail)}`,
         });
       yield* fileSystem.remove(input.destination, { recursive: true, force: true }).pipe(
         Effect.andThen(fileSystem.makeDirectory(input.destination, { recursive: true })),
@@ -183,12 +214,13 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => failed(cause.message)));
       if (result.timedOut) return yield* failed("it took too long and was stopped.");
       if (result.code !== 0) {
-        // 7-Zip prints its banner first; the reason is at the end.
-        const lines = `${result.stderr}\n${result.stdout}`
-          .split(/\r?\n/u)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
-        return yield* failed(lines.at(-1) ?? `it exited with ${String(result.code)}`);
+        yield* Effect.logWarning("scient latex bundle could not unpack itself", {
+          code: result.code,
+          stderr: result.stderr,
+          stdout: result.stdout,
+          tarFailure: tarFailure.detail,
+        });
+        return yield* failed(selfExtractorComplaint(result));
       }
       yield* Effect.logInfo("scient latex bundle unpacked itself after the system tar failed", {
         tarFailure: tarFailure.detail,

@@ -19,6 +19,7 @@ import {
   LatexArchiveUnpacker,
   layer as unpackerLayer,
   make,
+  selfExtractorComplaint,
   sevenZipSelfExtractArguments,
   tinyTexUnpackArguments,
   windowsSystemTarPath,
@@ -134,6 +135,22 @@ describe("sevenZipSelfExtractArguments", () => {
   });
 });
 
+describe("selfExtractorComplaint", () => {
+  it("prefers what 7-Zip said on stderr over its banner, and leads with the exit code", () => {
+    expect(
+      selfExtractorComplaint({
+        code: 2,
+        stdout: "7-Zip SFX 26.02 (x86)\r\n\r\nExtracting archive\r\n",
+        stderr: "ERROR: Data Error : TinyTeX\\bin\\windows\\pdftex.exe\r\n",
+      }),
+    ).toBe("exit 2, ERROR: Data Error : TinyTeX\\bin\\windows\\pdftex.exe");
+    expect(selfExtractorComplaint({ code: 7, stdout: "Command Line Error:\n", stderr: "" })).toBe(
+      "exit 7, Command Line Error:",
+    );
+    expect(selfExtractorComplaint({ code: 8, stdout: "", stderr: "" })).toBe("exit 8");
+  });
+});
+
 describe("windowsSystemTarPath", () => {
   it("addresses the OS bsdtar rather than whatever tar PATH offers", () => {
     expect(windowsSystemTarPath({ SystemRoot: "D:\\Windows" })).toBe(
@@ -227,9 +244,9 @@ describe("LatexArchiveUnpacker", () => {
       }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(failure.reason).toBe("unpack-failed");
-      expect(failure.detail).toContain("Z:\\scient-latex-no-such-windows\\System32\\tar.exe");
-      expect(failure.detail).toContain(
-        "The download's own extractor also failed: ERROR: There is not enough space on the disk.",
+      // The final failure leads; tar's follows.
+      expect(failure.detail).toMatch(
+        /^The download's own extractor failed: exit 2, ERROR: There is not enough space on the disk\. Before that, This computer has no Z:\\scient-latex-no-such-windows\\System32\\tar\.exe/u,
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

@@ -32,12 +32,15 @@ const HOST_PLATFORM = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- native runner selection happens at collection time, before an Effect runtime exists.
 const HOST_ARCHITECTURE = NodeOS.arch();
 
+interface DownloadedAsset {
+  readonly archivePath: string;
+  readonly asset: TinyTexAsset;
+}
+
 interface NativeAsset {
   readonly executable: string;
   readonly binDirectory: string;
   readonly workspace: string;
-  readonly archivePath: string;
-  readonly asset: TinyTexAsset;
 }
 
 /**
@@ -120,7 +123,7 @@ async function writeBrokenEngine(directory: string, name: string): Promise<strin
  * app uses, starts its real `latexmk`, and proves SyncTeX navigation over its
  * output. `null` where this host has nothing pinned.
  */
-async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | null> {
+async function downloadPinnedAsset(temporaryRoot: string): Promise<DownloadedAsset | null> {
   const lookup = resolveTinyTexAsset(HOST_PLATFORM, HOST_ARCHITECTURE);
   expect(lookup.supported, `No asset is pinned for ${HOST_PLATFORM}-${HOST_ARCHITECTURE}`).toBe(
     true,
@@ -131,7 +134,6 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   expect(NodeFS.existsSync(SYNCTEX_RUNTIME)).toBe(true);
 
   const archivePath = NodePath.join(temporaryRoot, lookup.asset.fileName);
-  const payloadPath = NodePath.join(temporaryRoot, "payload");
   const response = await fetch(lookup.asset.url);
   expect(response.ok).toBe(true);
   expect(response.body).not.toBeNull();
@@ -152,7 +154,20 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   }
   expect(bytes).toBe(lookup.asset.sizeBytes);
   expect(digest.digest("hex")).toBe(lookup.asset.sha256);
+  return { archivePath, asset: lookup.asset };
+}
 
+/**
+ * Expands the download with the same host `tar` the app tries first, starts
+ * its real `latexmk`, and proves SyncTeX navigation over its output.
+ */
+async function verifyNativeAsset(
+  temporaryRoot: string,
+  downloaded: DownloadedAsset,
+): Promise<NativeAsset | null> {
+  const { archivePath, asset } = downloaded;
+  if (!SYNCTEX_RUNTIME) return null;
+  const payloadPath = NodePath.join(temporaryRoot, "payload");
   await NodeFSP.mkdir(payloadPath, { recursive: true });
   const tarCommand =
     HOST_PLATFORM === "win32"
@@ -166,7 +181,7 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   expect(unpacked.error).toBeUndefined();
   expect(unpacked.status, unpacked.stderr || unpacked.stdout).toBe(0);
 
-  const executable = NodePath.join(payloadPath, lookup.asset.executableRelativePath);
+  const executable = NodePath.join(payloadPath, asset.executableRelativePath);
   expect(NodeFS.existsSync(executable)).toBe(true);
   if (HOST_PLATFORM !== "win32") await NodeFSP.chmod(executable, 0o755);
   const binDirectory = NodePath.dirname(executable);
@@ -264,7 +279,7 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
       (location) => /chapters[\\/]body\.tex$/iu.test(location.input) && location.line >= 1,
     ),
   ).toBe(true);
-  return { executable, binDirectory, workspace, archivePath, asset: lookup.asset };
+  return { executable, binDirectory, workspace };
 }
 
 /**
@@ -345,9 +360,10 @@ const brokenFirstOnPath = (temporaryRoot: string, native: NativeAsset) =>
  * reach, the real unpacker must hand the verified download to its own 7-Zip
  * extractor and still leave an engine that starts.
  */
-const selfExtractWithoutSystemTar = (temporaryRoot: string, native: NativeAsset) =>
+const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAsset) =>
   Effect.gen(function* () {
-    const destination = NodePath.join(temporaryRoot, "self-extracted");
+    // A profile path can have spaces and letters outside the system code page.
+    const destination = NodePath.join(temporaryRoot, "self extracted ü שלום");
     yield* Effect.promise(() => NodeFSP.mkdir(destination, { recursive: true }));
     yield* LatexArchiveUnpacker.use((unpacker) =>
       unpacker.unpack({
@@ -403,11 +419,17 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         ),
         (temporaryRoot) =>
           Effect.gen(function* () {
-            const native = yield* Effect.promise(() => verifyNativeAsset(temporaryRoot));
+            const downloaded = yield* Effect.promise(() => downloadPinnedAsset(temporaryRoot));
+            if (downloaded === null) return;
+            // First, and on its own: it is the path a Windows 10 tar cannot take.
+            if (HOST_PLATFORM === "win32") {
+              yield* selfExtractWithoutSystemTar(temporaryRoot, downloaded);
+            }
+            const native = yield* Effect.promise(() =>
+              verifyNativeAsset(temporaryRoot, downloaded),
+            );
             if (native === null) return;
             yield* brokenFirstOnPath(temporaryRoot, native);
-            if (HOST_PLATFORM === "win32")
-              yield* selfExtractWithoutSystemTar(temporaryRoot, native);
           }),
         (temporaryRoot) =>
           Effect.promise(() => NodeFSP.rm(temporaryRoot, { recursive: true, force: true })),
