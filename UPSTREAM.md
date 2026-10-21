@@ -587,7 +587,8 @@ allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
 `81dea7821dca30b417182db6fa0cb99a0195bfd8` is recorded in
-[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md).
+[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
+([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
 Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` has exact owned base
 `8d7e8b956dc24e3cdfc01d4655013c41a5871125` and the frozen official target as
 parents, retaining all 607 donor commits. Native V2, scientific capabilities,
