@@ -566,7 +566,7 @@ its read-acknowledgement policy, its revert dialog, the original database (which
 SQLite durability and Scient-only update repositories; upstream's workspace write
 authorization also covers Scient's own file writes. Release remains separate.
 
-The current alignment through
+The previous alignment through
 `f34ba437a5dec23a205ef5f670f7b10439ae98eb` is recorded in
 [the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-f34ba437a5.md)
 ([Scient PR #607](https://github.com/ScientFactory/scient-desktop/pull/607)).
@@ -584,6 +584,17 @@ Scient's HTML-print export rejects a browser PDF fallback before printing or
 publishing it, and workspace image refresh reaches both inline and Scient-card
 renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
+
+The current alignment through
+`81dea7821dca30b417182db6fa0cb99a0195bfd8` is recorded in
+[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md).
+Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` has exact owned base
+`8d7e8b956dc24e3cdfc01d4655013c41a5871125` and the frozen official target as
+parents, retaining all 607 donor commits. Native V2, scientific capabilities,
+immutable migrations and database durability remain; cloud, telemetry, relay,
+updater, mobile publication and release holds are unchanged. Complete web
+qualification passes; remaining workspace and native/visual limits are explicit
+in the receipt. Release remains separate.
 
 ## Receiving T3 updates
 

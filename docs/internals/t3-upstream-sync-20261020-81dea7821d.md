@@ -1,41 +1,36 @@
 # T3 upstream alignment, 2026-10-20 (through 81dea7821d)
 
-## Receiving state
+## Integration state
 
-This is an in-progress alignment, not a completed integration or release.
-The literal merge is uncommitted, there is no PR from this pass, and the
-qualified upstream cursor has not advanced. The existing candidate, live
+Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` receives the exact
+official target. It has the intended two parents and unchanged qualified tree;
+the introduced history passes provenance. All 78 web source resolutions and reviewed
+follow-ups were accepted into actual index tree
+`007fde67d789fd22ec9c8ff6d7c5138d83d238b6`; all five staged seam checks pass.
+
+Normal complete web qualification passes all 1,225 files and 16,866 cases on
+that tree, without diagnostic hooks. All nine non-test gates pass on its
+code-identical predecessor; the only intervening edit is this maintainer
+receipt, whose formatting and whitespace were rechecked.
+
+Complete non-web qualification remains pending. This is not release,
+platform, live-provider or visual acceptance. The existing candidate, live
 profiles and unrelated checkouts remain untouched.
 
-Reviewed non-web resolutions are staged. The real index retains 78 unresolved
-web paths (232 stage entries). Completed independent reviews reconcile their
-source lineage, including the later right-panel keyboard fixture, through
-private-index tree `5c2295db15d9bf169c842d96d08a0c664c1f78b9`.
-That source coverage does not accept the real index, complete tests or this
-documentation.
+## Generated boundaries
 
-Complete web attempt 09 failed. All nine non-test gates passed on the same
-frozen source. The complete browser diagnostic passes unchanged; normal
-complete-web qualification remains pending, with no conclusive failure cause.
+- Owned base: `8d7e8b956dc24e3cdfc01d4655013c41a5871125`.
+- Previous official boundary: `f34ba437a5dec23a205ef5f670f7b10439ae98eb`.
+- Frozen official target: `81dea7821dca30b417182db6fa0cb99a0195bfd8`, no tag at the target (nearest reachable: `v0.0.46-nightly.20261009.2861`).
+- Range: 607 official commits, 1677 incoming paths, 707 same-path overlaps with Scient, 322 initially unmerged paths.
+- Literal integration merge: `c66c948db02a3db7b293ecb9838d96413099f1af`, tree `007fde67d789fd22ec9c8ff6d7c5138d83d238b6`; parents are the owned base and the frozen official target.
 
-## Frozen boundaries
-
-| Boundary                      | Value                                                     |
-| ----------------------------- | --------------------------------------------------------- |
-| Owned base                    | `8d7e8b956dc24e3cdfc01d4655013c41a5871125`                |
-| Previous official integration | `f34ba437a5dec23a205ef5f670f7b10439ae98eb`                |
-| Official target               | `81dea7821dca30b417182db6fa0cb99a0195bfd8`                |
-| Official range                | 607 commits; 1,677 incoming paths; 707 same-path overlaps |
-| Initial textual conflicts     | 322 paths                                                 |
-| Nearest reachable tag         | `v0.0.46-nightly.20261009.2861`                           |
-| Alignment branch              | `codex/t3-sync-81dea7821d-20261020`                       |
-| Official remote push          | `DISABLED`                                                |
+- Alignment branch: `codex/t3-sync-81dea7821d-20261020`.
+- Official remote push: `DISABLED`.
 
 The later observed official commit
-`2893437f261dd50b96010dda3cbf518a28765b80` is outside this pass.
-These are frozen plan inputs, not generated facts about a committed merge.
-Generate `alignment:facts` after the literal merge exists. A subsequent
-advancement requires another frozen target on this same alignment branch.
+`2893437f261dd50b96010dda3cbf518a28765b80` remains outside this pass.
+No later owned-main catch-up or official extension is part of this merge.
 
 ## Composition and protected decisions
 
@@ -150,6 +145,28 @@ Final staged seam and simplicity checks remain required.
 - Model-settings/envMap/project shallow-array RCA is deferred and outside this
   alignment. No product redesign is inferred from fixture failures.
 
+### Source ownership and structural limits
+
+Three independent static reviews of the 80 late production paths found no
+blocking reuse, simplicity or efficiency issue. The optional repeated skill
+lookup stays unchanged rather than duplicate the canonical metadata policy.
+
+Against exact official `81dea7821dca30b417182db6fa0cb99a0195bfd8`, compare owned
+base `8d7e8b956dc24e3cdfc01d4655013c41a5871125` with code tree
+`5c2295db15d9bf169c842d96d08a0c664c1f78b9` (code-identical to the merge).
+Using the protocol's `apps/` and `packages/` non-test exclusions:
+
+- Added lines inside upstream files: 82,744 to 54,197.
+- Aggregate added non-test lines: 502,681 to 475,061.
+- Default advisory `new-debt` findings: 24,214 to 13,820; unresolved: 157 to 127.
+
+This broad comparison includes adopting upstream mechanics, not just extraction.
+It is not zero debt, behavioral proof or ratchet activation. The narrower 25-path
+late-web interval from `4ebad890e2faa0980e2735908a4d6e0552d311fa` to the code
+tree grows by 101 host lines, 131 aggregate lines and 44 advisory findings,
+including deletion/formatting hunks. Those follow-up fixes are not claimed as
+an extraction sweep or a nonincreasing result for that narrower interval.
+
 ## Qualification
 
 Environment: macOS 25.6.0, Node 24.19.0, pnpm 11.10.0.
@@ -157,11 +174,12 @@ Environment: macOS 25.6.0, Node 24.19.0, pnpm 11.10.0.
 variables. Provider peers and recordings are synthetic; no live credentials,
 provider sessions or user data were accessed.
 
-Private indexes freeze composed source without accepting real-index conflicts.
-Raw index metadata has refreshed unexpectedly. All 32,379 mode/blob/stage/path
-entries and ownership flags still match the independently reconstructed
-baseline. Temporary runners require those exact semantic identities; they do
-not rewrite the index or turn failed raw-strict runs into passes.
+Private indexes froze composed source without accepting real-index conflicts.
+Raw index metadata refreshed unexpectedly. Before source acceptance, all 32,379
+mode/blob/stage/path entries and ownership flags matched the independently
+reconstructed baseline. Temporary runners fenced those exact identities without
+rewriting the index or converting failed raw-strict runs into passes. After
+acceptance, the actual staged tree matched the qualified receiving tree exactly.
 
 ### Latest complete non-test checkpoint
 
@@ -177,7 +195,23 @@ All nine gates pass on `5c2295db15d9bf169c842d96d08a0c664c1f78b9`:
 - `git diff --cached --check`
 - `git diff --check`
 
-These checks are not complete test or visual acceptance.
+These checks do not establish complete-workspace or visual acceptance. The
+maintainer-only receipt edit preserves runtime evidence. Actual staged seam
+and whitespace checks pass on the qualified merge tree.
+
+### Complete web qualification
+
+Normal web10 passes all 1,225 files and 16,866 cases on
+`007fde67d789fd22ec9c8ff6d7c5138d83d238b6` (778 unit files/12,317 cases and
+447 browser files/4,549 cases), with the original test timeouts and no
+`NODE_OPTIONS` or temporary diagnostic Vite configuration:
+
+```sh
+pnpm exec vp test run --passWithNoTests --project unit --project browser --maxWorkers=1 --no-file-parallelism
+```
+
+Earlier web09 remains failed; the unchanged diagnostic and normal rerun did not
+establish a conclusive cause for its table-picker/mock failures.
 
 ### Named scoped evidence
 
@@ -222,29 +256,26 @@ The early thumbnail aggregate failure has no conclusive causal stack.
 
 ### Still required
 
-1. Qualify the normal complete web suite on stable source. Browser diagnosis
-   did not reproduce web09's table-picker/mock failures or prove their cause.
-2. Run all non-web workspace tests serially on that same source:
+1. Run all non-web workspace tests serially:
    `pnpm -r --no-bail --workspace-concurrency=1 --filter '!@t3tools/web' run test`.
-   This partition is not a waiver of complete web qualification.
-3. Complete final documentation review, actual-index seam checks and whitespace;
-   commit the literal merge and check its generated facts/provenance.
-4. Perform isolated exact-head app interaction and proportional visual review
+   Combine them with the complete web result on unchanged product source;
+   this partition is not a waiver.
+2. Qualify the final pushed revision in hosted CI and read its first result.
+   A draft PR does not authorize merging or release.
+3. Perform isolated exact-head app interaction and proportional visual review
    when the required built-in Browser tools are available. No alternative
    automation system is presented as equivalent acceptance.
-
-No Windows native installer, iOS/Android device interaction, signing,
-notarization, live-provider compatibility or user visual acceptance is claimed.
-Mobile lint exits zero, but SwiftLint, ktlint and detekt are unavailable;
-20 Swift and 26 Kotlin files are discovered, not natively qualified.
-Electron smoke is not a substitute for those checks.
+   No Windows native installer, iOS/Android device interaction, signing,
+   notarization, live-provider compatibility or user visual acceptance is claimed.
+   Mobile lint exits zero, but SwiftLint, ktlint and detekt are unavailable;
+   20 Swift and 26 Kotlin files are discovered, not natively qualified.
+   Electron smoke is not a substitute for those checks.
 
 ## Publication boundary
 
 The task authorizes a new draft PR only, not merge/auto-merge to owned main,
 release, service activation or live-profile access. Preserve the official
-target as the literal merge's second parent. Once source acceptance permits
-that merge, generate boundary facts and verify provenance; only then may the
-upstream cursor advance. Publish the authorized draft and read its first hosted
+target as the literal merge's second parent. Its boundary facts were generated and provenance passed before advancing the
+upstream cursor. Publish the authorized draft and read its first hosted
 result, with remaining qualification gaps explicit. Do not extend the frozen
 official range during this pass or disturb the existing candidate.
