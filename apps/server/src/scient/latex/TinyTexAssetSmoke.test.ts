@@ -362,8 +362,10 @@ const brokenFirstOnPath = (temporaryRoot: string, native: NativeAsset) =>
  */
 const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAsset) =>
   Effect.gen(function* () {
-    // A profile path can have spaces and letters outside the system code page.
-    const destination = NodePath.join(temporaryRoot, "self extracted ü שלום");
+    // A profile path can have spaces and accented letters. Not letters outside
+    // the system code page: TeX Live's own launcher (runscript.dll) cannot
+    // start from such a folder, whichever way the tree was unpacked.
+    const destination = NodePath.join(temporaryRoot, "self extracted ü");
     yield* Effect.promise(() => NodeFSP.mkdir(destination, { recursive: true }));
     yield* LatexArchiveUnpacker.use((unpacker) =>
       unpacker.unpack({
