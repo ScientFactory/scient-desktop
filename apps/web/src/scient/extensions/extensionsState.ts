@@ -6,7 +6,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import type { Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -83,6 +83,14 @@ export function createExtensionsAtoms<R, E>(
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
     }),
+    /** One curated or registry entry by exact name, whether or not any preview lists it. */
+    discoverEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:discover-entry",
+      tag: WS_METHODS.extensionsDiscoverEntry,
+      staleTimeMs: 10 * 60_000,
+      idleTtlMs: 10 * 60_000,
+      refreshTrigger: changesOf,
+    }),
     /** One registry page per `{ query, category, cursor }`; the server caches registry reads. */
     discoverPage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:discover",
@@ -145,12 +153,46 @@ export function createExtensionsAtoms<R, E>(
   };
 }
 
+/**
+ * The running action of one item and what it left to show. It lives outside
+ * the item's component because a successful add replaces the entry's row with
+ * its connector's row while that connector's sign-in is still opening.
+ */
+export interface ExtensionItemOperation {
+  readonly busy: string | null;
+  readonly error: string | null;
+  /** The sign-in page the browser refused to open; offered as a link. */
+  readonly blockedSignInUrl: string | null;
+  /** The connector's `updatedAt` when its sign-in page opened. */
+  readonly signInStartedAt: string | null;
+}
+
+export const IDLE_EXTENSION_ITEM_OPERATION: ExtensionItemOperation = {
+  busy: null,
+  error: null,
+  blockedSignInUrl: null,
+  signInStartedAt: null,
+};
+
+/** Keyed by `extensionItemOperationKey`; one per environment and item. */
+export const extensionItemOperation = Atom.family((key: string) =>
+  Atom.make<ExtensionItemOperation>(IDLE_EXTENSION_ITEM_OPERATION).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`extensions:item-operation:${key}`),
+  ),
+);
+
+export function extensionItemOperationKey(environmentId: EnvironmentId, item: string): string {
+  return JSON.stringify([environmentId, item]);
+}
+
 const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 
 export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
 export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;
+export const extensionsDiscoverEntry = extensionsAtoms.discoverEntry;
 export const extensionsDiscoverPage = extensionsAtoms.discoverPage;
 export const addConnector = extensionsAtoms.addConnector;
 export const updateConnector = extensionsAtoms.updateConnector;

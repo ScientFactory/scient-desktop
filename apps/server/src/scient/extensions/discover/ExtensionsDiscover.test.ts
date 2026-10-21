@@ -1,4 +1,11 @@
-import { ConnectorId, type ConnectorSummary } from "@t3tools/contracts";
+import {
+  ConnectorId,
+  ConnectorSummary,
+  DiscoverCatalog,
+  DiscoverEntry,
+  DiscoverPage,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -41,6 +48,11 @@ const installedConnector = connector({
   url: "https://api.inference.sh/mcp",
   source: { type: "registry", name: "ac.inference.sh/mcp", version: "2.0.1" },
 });
+
+const isDiscoverPage = Schema.is(DiscoverPage);
+const isDiscoverCatalog = Schema.is(DiscoverCatalog);
+const isDiscoverEntry = Schema.is(DiscoverEntry);
+const isConnectorSummary = Schema.is(ConnectorSummary);
 
 const unused = Effect.die("not used by Discover");
 const listOnlyConnectorRuntime = (
@@ -644,5 +656,166 @@ describe("curated names for connectors", () => {
     expect(curatedServerForUrl("https://mcp.deepwiki.com/mcp#tools")?.displayName).toBe("DeepWiki");
     expect(curatedServerForUrl("https://mcp.deepwiki.com/other")).toBeUndefined();
     expect(curatedServerForUrl("https://pubmed.mcp.claude.com/mcp")).toBeUndefined();
+  });
+});
+
+/** The registry answers search pages, one known server by name, and 404 otherwise. */
+const registryRoutes = (url: URL) => {
+  const byName = url.pathname.match(/^\/v0\.1\/servers\/([^/]+)\/versions\/latest$/u);
+  if (byName === null) return Response.json(recordedPage);
+  const known = recordedPage.servers.find(
+    (entry) => entry.server.name === decodeURIComponent(byName[1]!),
+  );
+  return known === undefined
+    ? Response.json({ error: "not found" }, { status: 404 })
+    : Response.json(known);
+};
+
+describe("Discover entry lookup and global search", () => {
+  it.effect("resolves a curated entry outside every home-page preview", () => {
+    const http = harness(registryRoutes, CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const previews = (yield* discover.catalog()).sections.flatMap((section) =>
+        section.entries.map((entry) => entry.name),
+      );
+      expect(previews).not.toContain("scient.curated/paper-6");
+      const entry = yield* discover.entry({ name: "scient.curated/paper-6" });
+      expect(entry).toMatchObject({
+        name: "scient.curated/paper-6",
+        title: "paper-6",
+        tagline: "paper-6 tagline",
+        categories: ["research"],
+        installable: true,
+      });
+      // Curated names never reach the registry.
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(http.layer()));
+  });
+
+  it.effect("resolves registry entries by exact name, with curated presentation", () => {
+    const http = harness(registryRoutes, CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      // Curated and registry-listed: answered from the curated catalog.
+      expect(yield* discover.entry({ name: "ac.inference.sh/mcp" })).toMatchObject({
+        title: "hub",
+        tagline: "hub tagline",
+        installedConnectorId: installedConnector.connectorId,
+      });
+      expect(http.requests).toHaveLength(0);
+      const registryOnly = yield* discover.entry({ name: "ae.easyvoice/tts" });
+      expect(registryOnly).toMatchObject({
+        name: "ae.easyvoice/tts",
+        categories: [],
+        installable: false,
+      });
+      expect(http.requests.map((url) => url.pathname)).toEqual([
+        "/v0.1/servers/ae.easyvoice%2Ftts/versions/latest",
+      ]);
+    }).pipe(Effect.provide(http.layer(() => [installedConnector])));
+  });
+
+  it.effect("answers not-found for unknown names", () => {
+    const http = harness(registryRoutes, CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      expect((yield* Effect.flip(discover.entry({ name: "scient.curated/missing" }))).reason).toBe(
+        "not-found",
+      );
+      expect(http.requests).toHaveLength(0);
+      expect((yield* Effect.flip(discover.entry({ name: "io.example/missing" }))).reason).toBe(
+        "not-found",
+      );
+      // Inactive registry servers are not entries either.
+      expect((yield* Effect.flip(discover.entry({ name: "ac.inference.sh/retired" }))).reason).toBe(
+        "not-found",
+      );
+    }).pipe(Effect.provide(http.layer()));
+  });
+
+  it.effect("searches the whole curated catalog first, without duplicates", () => {
+    const http = harness(registryRoutes, CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const outside = yield* discover.search({ query: "paper-6" });
+      expect(outside.entries[0]).toMatchObject({ name: "scient.curated/paper-6" });
+      // The registry page follows (the stub ignores the query), each entry once.
+      expect(
+        outside.entries.filter((entry) => entry.name === "scient.curated/paper-6"),
+      ).toHaveLength(1);
+      const names = outside.entries.map((entry) => entry.name);
+      expect(new Set(names).size).toBe(names.length);
+
+      // "hub" is curated and in the registry page: listed once, as the curated entry.
+      const hub = yield* discover.search({ query: "hub" });
+      expect(hub.entries.filter((entry) => entry.name === "ac.inference.sh/mcp")).toHaveLength(1);
+      expect(hub.entries[0]).toMatchObject({ name: "ac.inference.sh/mcp", title: "hub" });
+
+      // Curated matches lead only the first page; later pages stay registry pages.
+      const next = yield* discover.search({ query: "paper-6", cursor: "next:1.0.0" });
+      expect(next.entries.some((entry) => entry.name.startsWith("scient.curated/"))).toBe(false);
+      // Browsing without a query is the plain registry page.
+      const browse = yield* discover.search({});
+      expect(browse.entries.some((entry) => entry.name.startsWith("scient.curated/"))).toBe(false);
+      expect(isDiscoverPage(outside)).toBe(true);
+    }).pipe(Effect.provide(http.layer()));
+  });
+});
+
+describe("rejected icons", () => {
+  it.effect("never reach Discover entries or connector summaries", () => {
+    const poisoned = [
+      "data:constructor;base64,bm90IGFuIGltYWdl",
+      "data:image/png;base64,not base64!",
+      "data:text/html;base64,PGh0bWw+",
+      `data:image/png;base64,${"A".repeat(100_000)}`,
+    ];
+    let index = 0;
+    const layer = Layer.effect(
+      ExtensionsDiscover,
+      Discover.makeWith({
+        servers: CURATED_FIXTURE,
+        // Stands in for a fetch whose result would bypass the MIME allowlist.
+        fetchIcon: async () => poisoned[index++ % poisoned.length],
+      }),
+    ).pipe(
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(recordedPage))),
+          ),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ConnectorRuntime,
+          listOnlyConnectorRuntime(() => []),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const catalog = yield* discover.catalog();
+      expect(isDiscoverCatalog(catalog)).toBe(true);
+      expect(
+        catalog.sections.flatMap((section) => section.entries).some((entry) => entry.iconUrl),
+      ).toBe(false);
+      const entry = yield* discover.entry({ name: "scient.curated/semantic" });
+      expect(isDiscoverEntry(entry)).toBe(true);
+      // The inventory decorates connectors from this map; nothing invalid can enter it.
+      const icons = yield* discover.connectorIcons(["https://semantic.example/mcp"]);
+      expect(icons).toEqual(new Map());
+      const summary = connector({
+        connectorId: ConnectorId.make("con_semantic0001"),
+        url: "https://semantic.example/mcp",
+        source: { type: "url" },
+      });
+      const iconUrl = icons.get(summary.url);
+      expect(isConnectorSummary(iconUrl === undefined ? summary : { ...summary, iconUrl })).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
   });
 });

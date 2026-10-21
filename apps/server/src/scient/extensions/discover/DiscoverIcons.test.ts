@@ -1,3 +1,4 @@
+import { isExtensionIconDataUri } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import type { ConnectorFetch } from "../connectors/ConnectorOutbound.ts";
@@ -92,5 +93,41 @@ describe("Discover icons", () => {
       return new Response(PNG, { headers: { "content-type": "image/png" } });
     }, "https://icons.example/icon.png");
     expect(accept).toBe("image/png, image/jpeg, image/webp, image/svg+xml");
+  });
+
+  it("rejects inherited object keys as content types", async () => {
+    const bytes = new TextEncoder().encode("not an image");
+    for (const contentType of [
+      "constructor",
+      "__proto__",
+      "toString",
+      "hasOwnProperty",
+      "valueOf",
+      "Constructor; charset=utf-8",
+    ]) {
+      expect(iconDataUri(contentType, bytes), contentType).toBeUndefined();
+      expect(iconDataUri(contentType, PNG), contentType).toBeUndefined();
+      expect(
+        await fetchIconDataUri(
+          respondWith(() => new Response(bytes, { headers: { "content-type": contentType } })),
+          "https://icons.example/icon.png",
+        ),
+        contentType,
+      ).toBeUndefined();
+    }
+  });
+
+  it("only produces URIs that satisfy the shared icon schema", () => {
+    for (const [type, bytes] of [
+      ["image/png", PNG],
+      ["image/jpeg", JPEG],
+      ["image/webp", WEBP],
+      ["image/svg+xml", SVG],
+    ] as const) {
+      expect(isExtensionIconDataUri(iconDataUri(type, bytes))).toBe(true);
+    }
+    expect(isExtensionIconDataUri("data:constructor;base64,bm90")).toBe(false);
+    expect(isExtensionIconDataUri("data:image/png;base64,a b")).toBe(false);
+    expect(isExtensionIconDataUri(`data:image/png;base64,${"A".repeat(90_000)}`)).toBe(false);
   });
 });

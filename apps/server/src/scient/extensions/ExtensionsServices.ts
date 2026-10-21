@@ -15,6 +15,8 @@ import type {
   ConnectorTestResult,
   ConnectorUpdateInput,
   DiscoverCatalog,
+  DiscoverEntry,
+  DiscoverEntryInput,
   DiscoverPage,
   DiscoverSearchInput,
   ExtensionDeliveryReceipt,
@@ -184,6 +186,11 @@ export interface ExtensionsDiscoverShape {
   readonly search: (input: DiscoverSearchInput) => Effect.Effect<DiscoverPage, ExtensionsError>;
   /** Curated home page: non-empty categories in fixed order, each with preview entries. */
   readonly catalog: () => Effect.Effect<DiscoverCatalog, ExtensionsError>;
+  /**
+   * One entry by name from the complete curated catalog, else the MCP Registry
+   * by exact name; `not-found` otherwise.
+   */
+  readonly entry: (input: DiscoverEntryInput) => Effect.Effect<DiscoverEntry, ExtensionsError>;
   /**
    * Curated icons (`data:` URIs) for connector URLs that match a curated
    * server, keyed by the given URL. Never waits: icons still loading are left

@@ -12,6 +12,8 @@ import {
   ConnectorTestResult,
   ConnectorUpdateInput,
   DiscoverCatalog,
+  DiscoverEntry,
+  DiscoverEntryInput,
   DiscoverPage,
   DiscoverSearchInput,
   ExtensionDeliveryReceiptInput,
@@ -38,6 +40,7 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsConnectorTest: "extensions.connectors.test",
   extensionsDiscoverSearch: "extensions.discover.search",
   extensionsDiscoverCatalog: "extensions.discover.catalog",
+  extensionsDiscoverEntry: "extensions.discover.entry",
   extensionsPluginInstall: "extensions.plugins.install",
   extensionsPluginRemove: "extensions.plugins.remove",
   extensionsPluginSetEnabled: "extensions.plugins.setEnabled",
@@ -56,6 +59,11 @@ export const WsExtensionsListRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.extensio
 export const WsExtensionsDiscoverCatalogRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsDiscoverCatalog,
   { payload: Schema.Struct({}), success: DiscoverCatalog, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsDiscoverEntryRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsDiscoverEntry,
+  { payload: DiscoverEntryInput, success: DiscoverEntry, error: ExtensionsRpcError },
 );
 
 export const WsExtensionsSubscribeChangesRpc = Rpc.make(

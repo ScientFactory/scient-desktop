@@ -4,6 +4,7 @@ import {
   type ConnectorStatus,
   type ConnectorSummary,
   type ConnectorTestResult,
+  type ConnectorToolSummary,
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
@@ -109,15 +110,76 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
   }
 }
 
-export function connectorSourceLabel(source: ConnectorSummary["source"]): string {
+/**
+ * Where a connector came from. Curated servers are added by their URL, so the
+ * entry they match decides between "Scient catalog" and "Added by URL".
+ */
+export function connectorSourceLabel(
+  source: ConnectorSummary["source"],
+  curated: boolean,
+  pluginName: string | undefined,
+): string {
   switch (source.type) {
     case "registry":
-      return `MCP Registry · ${source.name}`;
+      return curated ? "Scient catalog" : "MCP Registry";
     case "url":
-      return "Added by URL";
+      return curated ? "Scient catalog" : "Added by URL";
     case "plugin":
-      return `From plugin ${source.pluginId}`;
+      return `Plugin ${pluginName ?? source.pluginId}`;
   }
+}
+
+export function entrySourceLabel(entry: DiscoverEntry): string {
+  return isCatalogOnlyEntry(entry) || entry.categories.length > 0
+    ? "Scient catalog"
+    : "MCP Registry";
+}
+
+/** "All your agents", "10 of 11 agents": agents with limits still count as working. */
+export function worksWithSummary(support: ReadonlyArray<ConnectorProviderSupport>): string {
+  const working = support.filter((entry) => entry.status !== "unsupported").length;
+  if (support.length === 0) return "No agents reported";
+  if (working === support.length) return "All your agents";
+  if (working === 0) return "None of your agents";
+  return `${working} of ${support.length} agents`;
+}
+
+export const PROVIDER_SUPPORT_TEXT: Readonly<Record<ConnectorProviderSupport["status"], string>> = {
+  supported: "Works",
+  conditional: "Works, with limits",
+  unsupported: "Not supported",
+};
+
+export interface ToolGroups {
+  readonly read: ReadonlyArray<ConnectorToolSummary>;
+  readonly write: ReadonlyArray<ConnectorToolSummary>;
+  /** Tools whose server gave no read-only or destructive hint. */
+  readonly other: ReadonlyArray<ConnectorToolSummary>;
+}
+
+/** Read: read-only. Write: not read-only, or destructive. Other: no hint at all. */
+export function groupTools(tools: ReadonlyArray<ConnectorToolSummary>): ToolGroups {
+  const write = tools.filter((tool) => tool.destructive === true || tool.readOnly === false);
+  const read = tools.filter((tool) => tool.readOnly === true && tool.destructive !== true);
+  const other = tools.filter((tool) => tool.readOnly === undefined && tool.destructive !== true);
+  return { read, write, other };
+}
+
+/** "The Linear app contains 28 tools (14 write, 14 read)". */
+export function toolSummary(name: string, groups: ToolGroups): string {
+  const total = groups.read.length + groups.write.length + groups.other.length;
+  const parts = [
+    groups.write.length > 0 ? `${groups.write.length} write` : null,
+    groups.read.length > 0 ? `${groups.read.length} read` : null,
+    groups.other.length > 0 ? `${groups.other.length} other` : null,
+  ].filter((part) => part !== null);
+  const count = `${total} ${total === 1 ? "tool" : "tools"}`;
+  return `The ${name} app contains ${parts.length > 1 ? `${count} (${parts.join(", ")})` : count}`;
+}
+
+/** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
+export function urlHost(url: string): string | null {
+  return URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : null;
 }
 
 const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {

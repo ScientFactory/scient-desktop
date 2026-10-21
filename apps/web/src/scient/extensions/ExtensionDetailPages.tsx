@@ -1,23 +1,39 @@
-import type {
-  ConnectorSummary,
-  DiscoverEntry,
-  ExtensionComponent,
-  ProjectId,
-  ScientPluginSummary,
-  ServerProviderMcpServer,
-  ServerProviderPlugin,
+import {
+  type ConnectorProviderSupport,
+  type ConnectorSummary,
+  type ConnectorTestResult,
+  type DiscoverCatalog,
+  type DiscoverEntry,
+  type ExtensionComponent,
+  ExtensionsError,
+  type ProjectId,
+  type ScientPluginSummary,
+  type ServerProviderMcpServer,
+  type ServerProviderPlugin,
 } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, EllipsisIcon, type LucideIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
+import { ChevronRightIcon, EllipsisIcon, type LucideIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { Button, InlineButton } from "../../components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
+import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import {
+  type ActionFeedbackState,
   type ConnectorActionsState,
   useAddEntry,
   useConnectorActions,
@@ -25,31 +41,40 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
+import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
 import {
-  ActionFeedback,
-  ConnectorMenuItems,
-  mcpServerSummary,
-  PluginMenuItems,
-} from "./ExtensionItems";
-import { BackLink, ExtensionsPage, MutedLine, useExtensionsEnvironment } from "./ExtensionsPage";
+  BackLink,
+  ExtensionsPage,
+  MutedLine,
+  SECTION_HEADING_CLASS,
+  useExtensionsEnvironment,
+} from "./ExtensionsPage";
 import { ExtensionIcon } from "./ExtensionRow";
-import { extensionsDiscoverPage } from "./extensionsState";
+import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
+  type ToolGroups,
   catalogEntries,
   collectProviderExtensionGroups,
   connectorActions,
   connectorAuthLabel,
   connectorSourceLabel,
-  CONNECTOR_STATUS_TEXT,
   entryName,
+  entrySourceLabel,
   entryTagline,
+  groupTools,
   isCatalogOnlyEntry,
-  pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
+  pluginGlyph,
+  PROVIDER_SUPPORT_TEXT,
   TEST_OUTCOME_LABELS,
+  toolSummary,
+  urlHost,
   workspaceLabel,
+  worksWithSummary,
 } from "./extensionsView";
+
+const isExtensionsError = Schema.is(ExtensionsError);
 
 type BackTo = "discover" | "installed";
 
@@ -61,63 +86,90 @@ function DetailBack({ to }: { readonly to: BackTo }) {
   );
 }
 
-/** Large icon, name and tagline, then the primary action and a "⋯" menu. */
+/**
+ * Every detail page: a header with the item's actions, an optional longer
+ * description and feedback, then its cards.
+ */
+function DetailLayout({
+  back,
+  header,
+  description,
+  feedback,
+  children,
+}: {
+  readonly back: BackTo;
+  readonly header: ReactNode;
+  readonly description?: string | undefined;
+  readonly feedback?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  return (
+    <>
+      <DetailBack to={back} />
+      <article className="grid gap-6">
+        <div className="grid gap-4">
+          {header}
+          {description ? (
+            <p className="max-w-prose whitespace-pre-line text-sm text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
+          {feedback ? <div className="grid gap-1 empty:hidden">{feedback}</div> : null}
+        </div>
+        <div className="grid gap-8">{children}</div>
+      </article>
+    </>
+  );
+}
+
+/** 64px icon, name and tagline; the item's buttons on the right. */
 function DetailHeader({
   name,
   iconUrl,
   glyph,
   tagline,
-  status,
-  primary,
-  menu,
+  actions,
 }: {
   readonly name: string;
   readonly iconUrl?: string | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
-  readonly status?: string | null | undefined;
-  readonly primary: ReactNode;
-  readonly menu?: ReactNode;
+  readonly actions: ReactNode;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-4">
       <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} size="large" />
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-xl font-semibold tracking-[-0.02em] text-foreground">
-            {name}
-          </h1>
-          {status ? <span className="shrink-0 text-sm text-muted-foreground">{status}</span> : null}
-        </div>
+        <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
         {tagline ? <p className="text-sm text-muted-foreground">{tagline}</p> : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {primary}
-        {menu}
-      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
     </header>
   );
 }
 
-function DetailMenu({ name, children }: { readonly name: string; readonly children: ReactNode }) {
+/** A longer description only when it says more than the tagline. */
+function extraDescription(description: string | undefined, tagline: string | undefined) {
+  const text = description?.trim();
+  return text && text !== tagline?.trim() ? text : undefined;
+}
+
+function ViewDetailsButton({ onClick }: { readonly onClick: () => void }) {
+  return (
+    <Button variant="outline" onClick={onClick}>
+      View details
+    </Button>
+  );
+}
+
+function MoreMenu({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <Menu>
-      <MenuTrigger
-        render={<Button size="icon-sm" variant="ghost-muted" aria-label={`More for ${name}`} />}
-      >
+      <MenuTrigger render={<Button size="icon-sm" variant="ghost-muted" aria-label={label} />}>
         <EllipsisIcon aria-hidden />
       </MenuTrigger>
       <MenuPopup align="end">{children}</MenuPopup>
     </Menu>
-  );
-}
-
-function Done({ children }: { readonly children: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-      <CheckIcon aria-hidden className="size-4" />
-      {children}
-    </span>
   );
 }
 
@@ -129,126 +181,293 @@ function DetailSection({
   readonly children: ReactNode;
 }) {
   return (
-    <section className="grid gap-2" aria-label={title}>
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <section className="grid gap-3" aria-label={title}>
+      <h2 className={SECTION_HEADING_CLASS}>{title}</h2>
       {children}
     </section>
   );
 }
 
-function Facts({ rows }: { readonly rows: ReadonlyArray<readonly [string, ReactNode]> }) {
+const CARD_CLASS = "divide-y divide-border overflow-hidden rounded-xl border bg-card";
+
+function CardRow({ children }: { readonly children: ReactNode }) {
+  return <div className="flex min-h-14 items-center gap-3 px-4 py-3">{children}</div>;
+}
+
+/** A row inside a card that belongs to the row above it. */
+function NestedRow({ children }: { readonly children: ReactNode }) {
   return (
-    <dl className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-sm">
-      {rows.map(([label, value]) => (
-        <div key={label} className="contents">
-          <dt className="text-muted-foreground">{label}</dt>
-          <dd className="min-w-0 break-words text-foreground">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="flex min-h-11 items-center justify-between gap-3 py-2 pr-4 pl-8 text-sm">
+      {children}
+    </div>
   );
 }
 
-function ExternalLink({ href, children }: { readonly href: string; readonly children: string }) {
+type Fact = readonly [label: string, value: ReactNode];
+
+function fact(label: string, value: ReactNode | null | undefined): Fact | null {
+  return value === null || value === undefined || value === "" ? null : [label, value];
+}
+
+/** Key/value rows in a card; rows without data are left out. */
+function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
+  const shown = rows.filter((row) => row !== null);
+  if (shown.length === 0) return null;
+  return (
+    <DetailSection title="About">
+      <dl className={cn(CARD_CLASS, "text-sm")}>
+        {shown.map(([label, value]) => (
+          <div key={label} className="grid grid-cols-[35%_minmax(0,1fr)] gap-4 px-4 py-3">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words text-foreground">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </DetailSection>
+  );
+}
+
+function ExternalLink({ href }: { readonly href: string }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-foreground underline underline-offset-2"
+      className="text-foreground underline-offset-2 hover:underline"
     >
-      {children}
+      {urlHost(href) ?? href}
     </a>
   );
 }
 
-/**
- * Which agents of this environment can use a connected service: one summary
- * line, then only the agents with limits or no support, each with its reason.
- */
-function WorksWithSection() {
+function Mono({ children }: { readonly children: string }) {
+  return <span className="font-mono text-xs leading-5">{children}</span>;
+}
+
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
+function formatDate(iso: string | undefined): string | undefined {
+  return iso === undefined ? undefined : DATE_FORMAT.format(new Date(iso));
+}
+
+/** Curated categories by their section titles; "featured" is a shelf, not a category. */
+function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalog | null) {
+  const categories = entry?.categories.filter((category) => category !== "featured") ?? [];
+  if (categories.length === 0) return undefined;
+  return categories
+    .map(
+      (category) =>
+        catalog?.sections.find((section) => section.category === category)?.title ??
+        category.charAt(0).toUpperCase() + category.slice(1),
+    )
+    .join(", ");
+}
+
+function agentReason(entry: ConnectorProviderSupport): string {
+  return entry.reason ?? PROVIDER_SUPPORT_TEXT[entry.status];
+}
+
+/** "All your agents", with every agent and its reason one click away. */
+function WorksWithValue() {
   const { inventory } = useExtensionsEnvironment();
-  const [showAll, setShowAll] = useState(false);
+  const [open, setOpen] = useState(false);
   const support = inventory?.providerSupport ?? [];
-  const working = support.filter((entry) => entry.status !== "unsupported").length;
-  // Agents with limits still work, so they count; they are listed with their limit.
-  const exceptions = support.filter((entry) => entry.status !== "supported");
-  const summary =
-    working === support.length
-      ? "Works with all your agents."
-      : working === 0
-        ? "Doesn't work with your agents."
-        : `Works with ${working} of ${support.length} agents.`;
-  const listed = showAll ? support : exceptions;
   return (
-    <DetailSection title="Works with">
-      {support.length === 0 ? (
-        <MutedLine>No agents reported.</MutedLine>
-      ) : (
-        <>
-          <p className="text-sm text-foreground">{summary}</p>
-          {listed.length > 0 ? (
-            <ul className="grid gap-1 text-sm" aria-label="Agents">
-              {listed.map((entry) => (
-                <li key={entry.providerInstanceId} data-support={entry.status}>
-                  <span className="text-foreground">{entry.displayName}</span>
-                  <span className="text-muted-foreground">
-                    {" — "}
-                    {entry.reason ??
-                      (entry.status === "supported"
-                        ? "Works"
-                        : entry.status === "conditional"
-                          ? "Works, with limits"
-                          : "Not supported")}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {exceptions.length < support.length ? (
-            <div className="text-sm">
-              <InlineButton
-                tone="muted"
-                aria-expanded={showAll}
-                onClick={() => setShowAll((current) => !current)}
-              >
-                {showAll ? "Show fewer" : `Show all ${support.length}`}
-              </InlineButton>
-            </div>
-          ) : null}
-        </>
-      )}
-    </DetailSection>
+    <div className="grid gap-2">
+      <span className="flex flex-wrap items-baseline gap-x-2">
+        {worksWithSummary(support)}
+        {support.length > 0 ? (
+          <InlineButton
+            tone="muted"
+            aria-expanded={open}
+            onClick={() => setOpen((current) => !current)}
+          >
+            {open ? "Hide agents" : "Show agents"}
+          </InlineButton>
+        ) : null}
+      </span>
+      {open ? (
+        <ul className="grid gap-1" aria-label="Agents">
+          {support.map((entry) => (
+            <li key={entry.providerInstanceId} data-support={entry.status}>
+              {entry.displayName}
+              <span className="text-muted-foreground"> — {agentReason(entry)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
-function AboutSection({
-  description,
-  websiteUrl,
-  repositoryUrl,
+interface DetailRow {
+  readonly key: string;
+  readonly name: ReactNode;
+  readonly detail?: ReactNode;
+}
+
+interface DetailGroup {
+  readonly label: string;
+  readonly rows: ReadonlyArray<DetailRow>;
+}
+
+function DetailGroupRow({ group }: { readonly group: DetailGroup }) {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-foreground/[0.035]">
+        <span className="font-medium text-foreground">{group.label}</span>
+        <span className="flex items-center gap-1.5 text-muted-foreground tabular-nums">
+          {group.rows.length}
+          <ChevronRightIcon
+            aria-hidden
+            className="size-4 transition-transform group-data-[panel-open]:rotate-90"
+          />
+        </span>
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <ul aria-label={group.label} className="divide-y divide-border border-t">
+          {group.rows.map((row) => (
+            <li
+              key={row.key}
+              className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 px-4 py-2.5 text-sm"
+            >
+              <span className="min-w-0 break-words text-foreground">{row.name}</span>
+              <span className="min-w-0 break-words text-muted-foreground">{row.detail}</span>
+            </li>
+          ))}
+        </ul>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
+/** Name and kind, a summary line, then collapsible groups (tools, parts, agents). */
+function DetailsDialog({
+  open,
+  onOpenChange,
+  name,
+  kind,
+  iconUrl,
+  glyph,
+  tagline,
+  summary,
+  groups,
 }: {
-  readonly description: string | undefined;
-  readonly websiteUrl?: string | undefined;
-  readonly repositoryUrl?: string | undefined;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly name: string;
+  readonly kind: "App" | "Plugin";
+  readonly iconUrl?: string | undefined;
+  readonly glyph?: LucideIcon | undefined;
+  readonly tagline?: string | undefined;
+  readonly summary: string;
+  readonly groups: ReadonlyArray<DetailGroup>;
 }) {
-  if (!description && !websiteUrl && !repositoryUrl) return null;
+  const shown = groups.filter((group) => group.rows.length > 0);
   return (
-    <DetailSection title="About">
-      {description ? (
-        <p className="max-w-prose whitespace-pre-line text-sm text-foreground/90">{description}</p>
-      ) : null}
-      {websiteUrl || repositoryUrl ? (
-        <p className="flex gap-4 text-sm">
-          {websiteUrl ? <ExternalLink href={websiteUrl}>Website</ExternalLink> : null}
-          {repositoryUrl ? <ExternalLink href={repositoryUrl}>Source code</ExternalLink> : null}
-        </p>
-      ) : null}
-    </DetailSection>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup className="max-w-xl">
+        <DialogHeader>
+          <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} size="dialog" />
+          <DialogTitle size="large">
+            <span className="font-semibold">{name}</span>{" "}
+            <span className="font-normal text-muted-foreground">{kind}</span>
+          </DialogTitle>
+          {tagline ? <DialogDescription>{tagline}</DialogDescription> : null}
+          <p className="text-sm text-muted-foreground" data-details-summary="">
+            {summary}
+          </p>
+        </DialogHeader>
+        {shown.length > 0 ? (
+          <DialogPanel>
+            <div className={CARD_CLASS} aria-label={`Details of ${name}`}>
+              {shown.map((group) => (
+                <DetailGroupRow key={group.label} group={group} />
+              ))}
+            </div>
+          </DialogPanel>
+        ) : null}
+      </DialogPopup>
+    </Dialog>
   );
 }
 
-/** All projects, or the projects picked here; each switch sends the whole new list. */
-function AvailabilitySection({
+function agentsGroup(support: ReadonlyArray<ConnectorProviderSupport>): DetailGroup {
+  return {
+    label: "Works with",
+    rows: support.map((entry) => ({
+      key: entry.providerInstanceId,
+      name: entry.displayName,
+      detail: agentReason(entry),
+    })),
+  };
+}
+
+function toolRows(tools: ToolGroups["read"]): ReadonlyArray<DetailRow> {
+  return tools.map((tool) => ({
+    key: tool.name,
+    name: <span className="font-mono text-xs leading-5">{tool.name}</span>,
+    detail: tool.description?.trim() || tool.title,
+  }));
+}
+
+const TOOLS_AFTER_SIGN_IN = "Tools appear after you add and sign in.";
+
+/** What the details dialog says about a connector's tools, from its last test. */
+function connectorToolsView(
+  name: string,
+  canTest: boolean,
+  testResult: ConnectorTestResult | null,
+  testing: boolean,
+  feedback: ActionFeedbackState,
+): { readonly summary: string; readonly groups: ReadonlyArray<DetailGroup> } {
+  if (!canTest) return { summary: TOOLS_AFTER_SIGN_IN, groups: [] };
+  if (testResult === null) {
+    return {
+      summary: testing ? "Listing tools…" : (feedback.error ?? "Tools appear after a test."),
+      groups: [],
+    };
+  }
+  if (testResult.outcome !== "ok") {
+    const message = testResult.message ? ` · ${testResult.message}` : "";
+    return { summary: `${TEST_OUTCOME_LABELS[testResult.outcome]}${message}`, groups: [] };
+  }
+  const grouped = groupTools(testResult.tools);
+  return {
+    summary: toolSummary(name, grouped),
+    groups: [
+      { label: "Write", rows: toolRows(grouped.write) },
+      { label: "Read", rows: toolRows(grouped.read) },
+      { label: "Other", rows: toolRows(grouped.other) },
+    ],
+  };
+}
+
+function connectionState(connector: ConnectorSummary): string {
+  if (connector.status === "needs-auth") return "Needs sign-in";
+  if (connector.status === "needs-credential") return "Key missing";
+  return connector.auth.type === "none" ? "No sign-in needed" : "Signed in";
+}
+
+function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
+  if (busy === "sign-in") return "Opening sign-in…";
+  if (connector.status === "needs-credential") {
+    return connector.auth.type === "credential" && connector.auth.storage === "bound"
+      ? "The secret this service used is no longer available."
+      : "The stored key is gone. Remove this service and add it again.";
+  }
+  return connector.auth.type === "none"
+    ? (urlHost(connector.url) ?? connector.url)
+    : connectorAuthLabel(connector.auth);
+}
+
+/**
+ * "Available in" with the projects it names. A saved project deleted since
+ * shows as "Deleted project". Every change leaves deleted projects out: the
+ * server refuses a list that names one, and dropping it only narrows where
+ * the service is available.
+ */
+function AvailabilityRows({
   connector,
   name,
   locked,
@@ -259,48 +478,62 @@ function AvailabilitySection({
   readonly locked: boolean;
   readonly setAvailability: ConnectorActionsState["setAvailability"];
 }) {
-  const { projects } = useExtensionsEnvironment();
+  const { projects, projectsKnown } = useExtensionsEnvironment();
   const availability = connector.availability;
   const selectedIds = availability.type === "projects" ? availability.projectIds : [];
-  const toggle = (projectId: ProjectId, enabled: boolean) =>
-    void setAvailability({
-      type: "projects",
-      projectIds: enabled
-        ? [...selectedIds.filter((id) => id !== projectId), projectId]
-        : selectedIds.filter((id) => id !== projectId),
-    });
+  const existing = new Set(projects.map((project) => project.id));
+  // Until the project list arrives, an id missing from it proves nothing.
+  const deletedIds = projectsKnown ? selectedIds.filter((id) => !existing.has(id)) : [];
+  const liveIds = selectedIds.filter((id) => !deletedIds.includes(id));
+  const sendProjects = (projectIds: ReadonlyArray<ProjectId>) =>
+    void setAvailability({ type: "projects", projectIds });
+  const toggle = (projectId: ProjectId, enabled: boolean) => {
+    const others = liveIds.filter((id) => id !== projectId);
+    sendProjects(enabled ? [...others, projectId] : others);
+  };
   return (
-    <DetailSection title="Available in">
-      <span className="w-48">
-        <NativeSelect
-          size="sm"
-          aria-label={`Where ${name} is available`}
-          value={availability.type}
-          disabled={locked}
-          onChange={(event) =>
-            void setAvailability(
+    <div role="group" aria-label="Available in" className="divide-y divide-border">
+      <CardRow>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Available in</span>
+        <span className="w-44">
+          <NativeSelect
+            size="sm"
+            aria-label={`Where ${name} is available`}
+            value={availability.type}
+            disabled={locked}
+            onChange={(event) =>
               event.target.value === "all-projects"
-                ? { type: "all-projects" }
-                : { type: "projects", projectIds: selectedIds },
-            )
-          }
-        >
-          <option value="all-projects">All projects</option>
-          <option value="projects">Selected projects</option>
-        </NativeSelect>
-      </span>
+                ? void setAvailability({ type: "all-projects" })
+                : sendProjects(liveIds)
+            }
+          >
+            <option value="all-projects">All projects</option>
+            <option value="projects">Selected projects</option>
+          </NativeSelect>
+        </span>
+      </CardRow>
       {availability.type === "projects" ? (
         <>
-          {selectedIds.length === 0 ? <MutedLine>Not available in any project.</MutedLine> : null}
-          {projects.length === 0 ? (
-            <MutedLine>No projects yet.</MutedLine>
-          ) : (
-            <ul className="grid max-w-md gap-1.5" aria-label="Projects">
-              {projects.map((project) => {
-                const enabled = selectedIds.includes(project.id);
+          {liveIds.length === 0 ? (
+            <NestedRow>
+              <span className="text-muted-foreground">Not available in any project.</span>
+            </NestedRow>
+          ) : null}
+          {!projectsKnown ? (
+            <NestedRow>
+              <span className="text-muted-foreground">Loading projects…</span>
+            </NestedRow>
+          ) : projects.length === 0 && deletedIds.length === 0 ? (
+            <NestedRow>
+              <span className="text-muted-foreground">No projects yet.</span>
+            </NestedRow>
+          ) : null}
+          {projectsKnown
+            ? projects.map((project) => {
+                const enabled = liveIds.includes(project.id);
                 return (
-                  <li key={project.id} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="truncate">{project.title}</span>
+                  <NestedRow key={project.id}>
+                    <span className="min-w-0 truncate text-foreground">{project.title}</span>
                     <Switch
                       size="sm"
                       checked={enabled}
@@ -308,18 +541,31 @@ function AvailabilitySection({
                       aria-label={`${enabled ? "Turn off" : "Turn on"} in ${project.title}`}
                       onCheckedChange={(checked) => toggle(project.id, Boolean(checked))}
                     />
-                  </li>
+                  </NestedRow>
                 );
-              })}
-            </ul>
-          )}
+              })
+            : null}
+          {deletedIds.map((projectId) => (
+            <NestedRow key={projectId}>
+              <span className="min-w-0 truncate text-muted-foreground">Deleted project</span>
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                disabled={locked}
+                aria-label={`Remove deleted project ${projectId}`}
+                onClick={() => sendProjects(liveIds)}
+              >
+                Remove
+              </Button>
+            </NestedRow>
+          ))}
         </>
       ) : null}
-    </DetailSection>
+    </div>
   );
 }
 
-/** A connected service, optionally with the registry entry it came from. */
+/** A connected service, optionally with the catalog or registry entry it came from. */
 function ConnectorDetail({
   connector,
   entry,
@@ -329,167 +575,158 @@ function ConnectorDetail({
   readonly entry: DiscoverEntry | undefined;
   readonly back: BackTo;
 }) {
+  const { inventory, catalog } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
   const allowed = connectorActions(connector);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = entry ? entryName(entry) : connector.displayName;
-  // One pattern for every added connector: an On/Off switch, plus "Sign in"
-  // while the service needs it. Status text says what is wrong, never "Off"
-  // beside a contradicting "Connected".
-  const primary = (
-    <>
-      {connector.status === "needs-auth" ? (
-        <Button disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-          Sign in
-        </Button>
-      ) : null}
-      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Switch
-          checked={connector.enabled}
-          disabled={actions.locked}
-          aria-label={`${connector.enabled ? "Turn off" : "Turn on"} ${name}`}
-          onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
-        />
-        <span className="w-6">{connector.enabled ? "On" : "Off"}</span>
-      </label>
-    </>
+  const iconUrl = entry?.iconUrl ?? connector.iconUrl;
+  const tagline = (entry ? entryTagline(entry) : undefined) ?? connector.description;
+  const source = connector.source;
+  const pluginId = source.type === "plugin" ? source.pluginId : null;
+  const pluginName = inventory?.plugins.find((plugin) => plugin.pluginId === pluginId)?.displayName;
+  const curated = entry !== undefined && (isCatalogOnlyEntry(entry) || entry.categories.length > 0);
+  const tools = connectorToolsView(
+    name,
+    allowed.canTest,
+    actions.testResult,
+    actions.busy === "test",
+    actions.feedback,
   );
+  const openDetails = () => {
+    setDetailsOpen(true);
+    // The dialog lists tools from a test; run one when there is no result yet.
+    if (actions.testResult === null && allowed.canTest && !actions.locked) void actions.test();
+  };
   return (
-    <>
-      <DetailBack to={back} />
-      <DetailHeader
-        name={name}
-        iconUrl={entry?.iconUrl ?? connector.iconUrl}
-        tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description}
-        status={connector.enabled ? CONNECTOR_STATUS_TEXT[connector.status] : null}
-        primary={primary}
-        menu={
-          <DetailMenu name={name}>
-            <ConnectorMenuItems connector={connector} actions={actions} toggle={false} />
-          </DetailMenu>
-        }
-      />
-      <div className="grid gap-1 empty:hidden">
-        <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
-      </div>
-      <AboutSection
-        description={entry?.description ?? connector.description}
-        websiteUrl={entry?.websiteUrl}
-        repositoryUrl={entry?.repositoryUrl}
-      />
-      <WorksWithSection />
-      <DetailSection title="Tools">
-        <div>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={actions.locked || !allowed.canTest}
-            onClick={() => void actions.test()}
-          >
-            {actions.busy === "test" ? "Testing…" : "Test"}
-          </Button>
-        </div>
-        {!allowed.canTest ? <MutedLine>Sign in first to list its tools.</MutedLine> : null}
-        {actions.testResult ? (
-          <div className="grid gap-1 text-sm" role="status">
-            <p className="text-muted-foreground">
-              {TEST_OUTCOME_LABELS[actions.testResult.outcome]}
-              {actions.testResult.serverName ? ` · ${actions.testResult.serverName}` : ""}
-              {actions.testResult.serverVersion ? ` ${actions.testResult.serverVersion}` : ""}
-              {actions.testResult.message ? ` · ${actions.testResult.message}` : ""}
-            </p>
-            {actions.testResult.tools.length > 0 ? (
-              <ul className="grid gap-1" aria-label={`Tools of ${name}`}>
-                {actions.testResult.tools.map((tool) => (
-                  <li key={tool.name} className="flex min-w-0 gap-2">
-                    <span className="shrink-0 font-mono text-xs">{tool.name}</span>
-                    {tool.destructive ? (
-                      <span className="shrink-0 text-xs text-destructive-foreground">
-                        changes data
-                      </span>
-                    ) : tool.readOnly ? (
-                      <span className="shrink-0 text-xs text-muted-foreground">read-only</span>
-                    ) : null}
-                    {tool.description ? (
-                      <span className="truncate text-xs text-muted-foreground">
-                        {tool.description}
-                      </span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : actions.testResult.outcome === "ok" ? (
-              <MutedLine>No tools reported.</MutedLine>
+    <DetailLayout
+      back={back}
+      header={
+        <DetailHeader
+          name={name}
+          iconUrl={iconUrl}
+          tagline={tagline}
+          actions={
+            <>
+              <ViewDetailsButton onClick={openDetails} />
+              <Button
+                variant="destructive-outline"
+                disabled={actions.locked}
+                onClick={() => void actions.remove()}
+              >
+                Remove
+              </Button>
+            </>
+          }
+        />
+      }
+      description={extraDescription(entry?.description ?? connector.description, tagline)}
+    >
+      <DetailSection title="Connection">
+        <div className={CARD_CLASS}>
+          <CardRow>
+            <ExtensionIcon name={name} iconUrl={iconUrl} size="avatar" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">{connectionState(connector)}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {connectionDetail(connector, actions.busy)}
+              </p>
+            </div>
+            {connector.status === "needs-auth" ? (
+              <Button size="sm" disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
+                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
+              </Button>
             ) : null}
-          </div>
-        ) : null}
-      </DetailSection>
-      <AvailabilitySection
-        connector={connector}
-        name={name}
-        locked={actions.locked}
-        setAvailability={actions.setAvailability}
-      />
-      <DetailSection title="Sign-in">
-        <Facts rows={[["Method", connectorAuthLabel(connector.auth)]]} />
-        {connector.status === "needs-credential" ? (
-          <MutedLine>
-            {connector.auth.type === "credential" && connector.auth.storage === "bound"
-              ? "The secret this service used is no longer available."
-              : "The stored key is gone. Remove this service and add it again."}
-          </MutedLine>
-        ) : null}
+            <MoreMenu label={`More for ${name} connection`}>
+              <MenuItem
+                disabled={actions.locked || !allowed.canTest}
+                onClick={() => void actions.test()}
+              >
+                Test
+              </MenuItem>
+              {allowed.signIn ? (
+                <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
+                  {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
+                </MenuItem>
+              ) : null}
+            </MoreMenu>
+          </CardRow>
+          <CardRow>
+            <span className="min-w-0 flex-1 text-sm text-foreground">Use with agents</span>
+            <Switch
+              checked={connector.enabled}
+              disabled={actions.locked}
+              aria-label={`${connector.enabled ? "Turn off" : "Turn on"} ${name}`}
+              onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
+            />
+          </CardRow>
+          <AvailabilityRows
+            connector={connector}
+            name={name}
+            locked={actions.locked}
+            setAvailability={actions.setAvailability}
+          />
+        </div>
         {connector.lastError ? (
           <p className="text-sm text-destructive-foreground">{connector.lastError}</p>
         ) : null}
-        {allowed.signIn ? (
-          <div>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!actions.canSignIn}
-              onClick={() => void actions.signIn()}
-            >
-              {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
-            </Button>
-          </div>
-        ) : null}
-      </DetailSection>
-      <DetailSection title="Advanced">
-        <Facts
-          rows={[
-            [
-              "URL",
-              <span key="url" className="font-mono text-xs">
-                {connector.url}
-              </span>,
-            ],
-            [
-              "Server name",
-              <span key="server-name" className="font-mono text-xs">
-                {connector.serverName}
-              </span>,
-            ],
-            ["Source", connectorSourceLabel(connector.source)],
-          ]}
-        />
-        <div>
-          <Button
-            size="xs"
-            variant="destructive-outline"
-            disabled={actions.locked}
-            onClick={() => void actions.remove()}
-          >
-            Remove
-          </Button>
+        <div className="grid gap-1 empty:hidden">
+          <ActionFeedback
+            feedback={actions.feedback}
+            waitingForSignIn={actions.waitingForSignIn}
+            testResult={actions.testResult}
+          />
         </div>
       </DetailSection>
-    </>
+      <AboutCard
+        rows={[
+          fact("Added on", formatDate(connector.createdAt)),
+          fact("Category", categoryLabel(entry, catalog)),
+          fact("Website", entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
+          fact(
+            "Repository",
+            entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
+          ),
+          ["Works with", <WorksWithValue key="works-with" />],
+          ["Sign-in used", connectorAuthLabel(connector.auth)],
+          ["URL", <Mono key="url">{connector.url}</Mono>],
+          ["Server name", <Mono key="server-name">{connector.serverName}</Mono>],
+          ["Source", connectorSourceLabel(source, curated, pluginName)],
+        ]}
+      />
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        name={name}
+        kind="App"
+        iconUrl={iconUrl}
+        tagline={tagline}
+        summary={tools.summary}
+        groups={[...tools.groups, agentsGroup(inventory?.providerSupport ?? [])]}
+      />
+    </DetailLayout>
   );
 }
 
+/**
+ * The connector, with the entry it came from when one is known: curated
+ * entries carry its id, registry connectors are looked up by registry name.
+ */
 function ConnectorDetailContent({ connectorId }: { readonly connectorId: string }) {
-  const { inventory, inventoryError, catalog } = useExtensionsEnvironment();
+  const { environmentId, inventory, inventoryError, catalog } = useExtensionsEnvironment();
   const connector = inventory?.connectors.find((item) => item.connectorId === connectorId);
+  const fromCatalog = catalogEntries(catalog).find(
+    (item) => item.installedConnectorId === connectorId,
+  );
+  const registryName =
+    fromCatalog === undefined && connector?.source.type === "registry"
+      ? connector.source.name
+      : null;
+  const registryEntry = useEnvironmentQuery(
+    registryName === null
+      ? null
+      : extensionsDiscoverEntry({ environmentId, input: { name: registryName } }),
+  );
   if (!connector) {
     return (
       <>
@@ -500,7 +737,7 @@ function ConnectorDetailContent({ connectorId }: { readonly connectorId: string 
       </>
     );
   }
-  const entry = catalogEntries(catalog).find((item) => item.installedConnectorId === connectorId);
+  const entry = fromCatalog ?? registryEntry.data ?? undefined;
   return <ConnectorDetail connector={connector} entry={entry} back="installed" />;
 }
 
@@ -512,75 +749,131 @@ export function ConnectorDetailPage({ connectorId }: { readonly connectorId: str
   );
 }
 
-/** A registry or curated server that is not added yet. */
-function ServerDetail({ entry }: { readonly entry: DiscoverEntry }) {
-  const { environmentId, callbackOrigin } = useExtensionsEnvironment();
+/** A catalog or registry server that is not added yet. */
+function ServerDetail({
+  entry,
+  onAddWithOptions,
+}: {
+  readonly entry: DiscoverEntry;
+  readonly onAddWithOptions: () => void;
+}) {
+  const { inventory, catalog } = useExtensionsEnvironment();
   const actions = useAddEntry(entry);
-  const [withOptions, setWithOptions] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = entryName(entry);
+  const tagline = entryTagline(entry);
+  const catalogOnly = isCatalogOnlyEntry(entry);
+  return (
+    <DetailLayout
+      back="discover"
+      header={
+        <DetailHeader
+          name={name}
+          iconUrl={entry.iconUrl}
+          tagline={tagline}
+          actions={
+            <>
+              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
+              <Button
+                disabled={!actions.canAdd || actions.locked}
+                onClick={() => void actions.add()}
+              >
+                {actions.busy === "add" ? "Adding…" : "Add"}
+              </Button>
+              {actions.canAdd ? (
+                <MoreMenu label={`More for ${name}`}>
+                  <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
+                    Add with options…
+                  </MenuItem>
+                </MoreMenu>
+              ) : null}
+            </>
+          }
+        />
+      }
+      description={extraDescription(entry.description, tagline)}
+      feedback={
+        <>
+          {!actions.canAdd ? (
+            <MutedLine>
+              {entry.unsupportedReason ??
+                "Scient can't add this server: it has no remote endpoint to connect to."}
+            </MutedLine>
+          ) : null}
+          <ActionFeedback feedback={actions.feedback} />
+        </>
+      }
+    >
+      <AboutCard
+        rows={[
+          fact("Category", categoryLabel(entry, catalog)),
+          fact("Website", entry.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
+          fact(
+            "Repository",
+            entry.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
+          ),
+          ["Works with", <WorksWithValue key="works-with" />],
+          fact(
+            "URL",
+            entry.remotes.length > 0 ? (
+              <span className="grid gap-1">
+                {entry.remotes.map((remote) => (
+                  <Mono key={remote.url}>{remote.url}</Mono>
+                ))}
+              </span>
+            ) : null,
+          ),
+          catalogOnly ? null : ["Registry name", <Mono key="registry-name">{entry.name}</Mono>],
+          catalogOnly ? null : ["Version", entry.version],
+          ["Source", entrySourceLabel(entry)],
+        ]}
+      />
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        name={name}
+        kind="App"
+        iconUrl={entry.iconUrl}
+        tagline={tagline}
+        summary={TOOLS_AFTER_SIGN_IN}
+        groups={[agentsGroup(inventory?.providerSupport ?? [])]}
+      />
+    </DetailLayout>
+  );
+}
+
+/**
+ * Any catalog or registry server by its exact name, looked up on the server
+ * so entries no preview lists still open. Once added it is its connector.
+ * "Add with options" stays open across that switch, for its sign-in step.
+ */
+function ServerDetailContent({ name }: { readonly name: string }) {
+  const { environmentId, callbackOrigin, inventory } = useExtensionsEnvironment();
+  const [withOptions, setWithOptions] = useState(false);
+  const lookup = useEnvironmentQuery(extensionsDiscoverEntry({ environmentId, input: { name } }));
+  const entry = lookup.data;
+  if (entry === null) {
+    const notFound = isExtensionsError(lookup.failure) && lookup.failure.reason === "not-found";
+    return (
+      <>
+        <DetailBack to="discover" />
+        <MutedLine>
+          {notFound ? "This server was not found." : (lookup.error ?? "Loading…")}
+        </MutedLine>
+      </>
+    );
+  }
+  const connector =
+    entry.installedConnectorId === undefined
+      ? undefined
+      : inventory?.connectors.find((item) => item.connectorId === entry.installedConnectorId);
   return (
     <>
-      <DetailBack to="discover" />
-      <DetailHeader
-        name={name}
-        iconUrl={entry.iconUrl}
-        tagline={entryTagline(entry)}
-        primary={
-          <Button disabled={!actions.canAdd || actions.locked} onClick={() => void actions.add()}>
-            {actions.busy === "add" ? "Adding…" : "Add"}
-          </Button>
-        }
-        menu={
-          actions.canAdd ? (
-            <DetailMenu name={name}>
-              <MenuItem disabled={actions.locked} onClick={() => setWithOptions(true)}>
-                Add with options…
-              </MenuItem>
-            </DetailMenu>
-          ) : null
-        }
-      />
-      <div className="grid gap-1 empty:hidden">
-        {!actions.canAdd ? (
-          <MutedLine>
-            {entry.unsupportedReason ??
-              "Scient can't add this server: it has no remote endpoint to connect to."}
-          </MutedLine>
-        ) : null}
-        <ActionFeedback feedback={actions.feedback} />
-      </div>
-      <AboutSection
-        description={entry.description}
-        websiteUrl={entry.websiteUrl}
-        repositoryUrl={entry.repositoryUrl}
-      />
-      <WorksWithSection />
-      <DetailSection title="Advanced">
-        <Facts
-          rows={[
-            ...(isCatalogOnlyEntry(entry)
-              ? [["Listed by", "Scient catalog"] as const]
-              : [
-                  [
-                    "Registry name",
-                    <span key="registry-name" className="font-mono text-xs">
-                      {entry.name}
-                    </span>,
-                  ] as const,
-                  ["Version", entry.version] as const,
-                ]),
-            ...entry.remotes.map(
-              (remote, index) =>
-                [
-                  entry.remotes.length > 1 ? `Endpoint ${index + 1}` : "Endpoint",
-                  <span key={remote.url} className="font-mono text-xs">
-                    {remote.url} ({remote.type})
-                  </span>,
-                ] as const,
-            ),
-          ]}
-        />
-      </DetailSection>
+      {connector ? (
+        <ConnectorDetail connector={connector} entry={entry} back="discover" />
+      ) : (
+        <ServerDetail entry={entry} onAddWithOptions={() => setWithOptions(true)} />
+      )}
       {withOptions ? (
         <AddConnectorDialog
           open
@@ -596,35 +889,6 @@ function ServerDetail({ entry }: { readonly entry: DiscoverEntry }) {
   );
 }
 
-/** Curated entries come with the catalog; others are looked up by name. */
-function ServerDetailContent({ name }: { readonly name: string }) {
-  const { environmentId, catalog, inventory } = useExtensionsEnvironment();
-  const curated = catalogEntries(catalog).find((entry) => entry.name === name);
-  const search = useEnvironmentQuery(
-    curated || catalog === null
-      ? null
-      : extensionsDiscoverPage({ environmentId, input: { query: name } }),
-  );
-  const entry = curated ?? search.data?.entries.find((candidate) => candidate.name === name);
-  if (!entry) {
-    return (
-      <>
-        <DetailBack to="discover" />
-        <MutedLine>
-          {search.error ??
-            (catalog === null || search.isPending ? "Loading…" : "This server was not found.")}
-        </MutedLine>
-      </>
-    );
-  }
-  const connector =
-    entry.installedConnectorId === undefined
-      ? undefined
-      : inventory?.connectors.find((item) => item.connectorId === entry.installedConnectorId);
-  if (connector) return <ConnectorDetail connector={connector} entry={entry} back="discover" />;
-  return <ServerDetail entry={entry} />;
-}
-
 export function ServerDetailPage({ name }: { readonly name: string }) {
   return (
     <ExtensionsPage>
@@ -633,112 +897,155 @@ export function ServerDetailPage({ name }: { readonly name: string }) {
   );
 }
 
-const COMPONENT_LABELS: Readonly<Record<ExtensionComponent["type"], string>> = {
-  skill: "Skill",
-  "mcp-tools": "Tools",
-  connector: "Connected service",
-  settings: "Settings",
-  panel: "Panel",
+type ComponentGroupLabel = "Skills" | "Connected services" | "Tools" | "Other";
+
+const COMPONENT_KINDS: Readonly<
+  Record<
+    ExtensionComponent["type"],
+    { readonly group: ComponentGroupLabel; readonly one: string; readonly many: string }
+  >
+> = {
+  skill: { group: "Skills", one: "skill", many: "skills" },
+  connector: { group: "Connected services", one: "connected service", many: "connected services" },
+  "mcp-tools": { group: "Tools", one: "tool set", many: "tool sets" },
+  settings: { group: "Other", one: "settings page", many: "settings pages" },
+  panel: { group: "Other", one: "panel", many: "panels" },
 };
+
+const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
+  "Skills",
+  "Connected services",
+  "Tools",
+  "Other",
+];
+
+function joinWithAnd(parts: ReadonlyArray<string>): string {
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+const COMPONENT_TYPE_ORDER: ReadonlyArray<ExtensionComponent["type"]> = [
+  "skill",
+  "connector",
+  "mcp-tools",
+  "settings",
+  "panel",
+];
+
+/** "The Sources plugin contains 2 tool sets and 1 panel". */
+function componentSummary(name: string, components: ReadonlyArray<ExtensionComponent>): string {
+  if (components.length === 0) return `The ${name} plugin doesn't list what it contains.`;
+  const counts = COMPONENT_TYPE_ORDER.flatMap((type) => {
+    const kind = COMPONENT_KINDS[type];
+    const count = components.filter((component) => component.type === type).length;
+    return count === 0 ? [] : [`${count} ${count === 1 ? kind.one : kind.many}`];
+  });
+  return `The ${name} plugin contains ${joinWithAnd(counts)}`;
+}
+
+function componentGroups(
+  components: ReadonlyArray<ExtensionComponent>,
+): ReadonlyArray<DetailGroup> {
+  return COMPONENT_GROUP_ORDER.map((label) => ({
+    label,
+    rows: components
+      .filter((component) => COMPONENT_KINDS[component.type].group === label)
+      .map((component) => ({
+        key: `${component.type}:${component.name}`,
+        name:
+          component.type === "skill" ? (
+            <Link
+              to="/settings/skills"
+              className="text-foreground underline-offset-2 hover:underline"
+            >
+              {component.name}
+            </Link>
+          ) : component.type === "mcp-tools" ? (
+            <span className="font-mono text-xs leading-5">{component.name}</span>
+          ) : (
+            component.name
+          ),
+        detail:
+          component.detail ?? (label === "Other" ? COMPONENT_KINDS[component.type].one : undefined),
+      })),
+  }));
+}
 
 function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
   const actions = usePluginActions(plugin);
-  const navigate = useNavigate();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const builtIn = plugin.origin === "built-in";
-  const settingsPath = plugin.settingsPath;
-  const hasMenu = plugin.canSetEnabled || plugin.canRemove;
+  const glyph = pluginGlyph(plugin);
+  const settingsPath = plugin.settingsPath?.startsWith("/settings/") ? plugin.settingsPath : null;
   return (
-    <>
-      <DetailBack to={builtIn ? "discover" : "installed"} />
-      <DetailHeader
-        name={plugin.displayName}
-        glyph={pluginGlyph(plugin)}
-        tagline={plugin.description}
-        status={!builtIn && !plugin.enabled ? "Off" : null}
-        primary={
-          builtIn && settingsPath?.startsWith("/settings/") ? (
-            <Button variant="outline" onClick={() => void navigate({ to: settingsPath })}>
-              Open settings
-            </Button>
-          ) : (
-            <Done>{builtIn ? "Built in" : "Installed"}</Done>
-          )
-        }
-        menu={
-          hasMenu ? (
-            <DetailMenu name={plugin.displayName}>
-              <PluginMenuItems plugin={plugin} actions={actions} />
-            </DetailMenu>
-          ) : null
-        }
-      />
-      <div className="grid gap-1 empty:hidden">
-        <ActionFeedback feedback={actions.feedback} />
-      </div>
-      <DetailSection title="About">
-        <Facts
-          rows={[
-            ["Publisher", plugin.publisher],
-            ["Version", plugin.version],
-          ]}
+    <DetailLayout
+      back={builtIn ? "discover" : "installed"}
+      header={
+        <DetailHeader
+          name={plugin.displayName}
+          glyph={glyph}
+          tagline={plugin.description}
+          actions={
+            <>
+              {plugin.canSetEnabled ? (
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Switch
+                    checked={plugin.enabled}
+                    disabled={actions.locked}
+                    aria-label={`${plugin.enabled ? "Turn off" : "Turn on"} ${plugin.displayName}`}
+                    onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
+                  />
+                  <span className="w-6">{plugin.enabled ? "On" : "Off"}</span>
+                </label>
+              ) : null}
+              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
+              {plugin.canRemove ? (
+                <Button
+                  variant="destructive-outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.remove()}
+                >
+                  Uninstall
+                </Button>
+              ) : null}
+            </>
+          }
         />
-      </DetailSection>
-      {plugin.components.length > 0 ? (
-        <DetailSection title="Includes">
-          <ul className="grid gap-1.5 text-sm" aria-label="Includes">
-            {plugin.components.map((component) => (
-              <li key={`${component.type}:${component.name}`}>
-                <span className="text-muted-foreground">{COMPONENT_LABELS[component.type]} · </span>
-                {component.type === "skill" ? (
-                  <Link
-                    to="/settings/skills"
-                    className="text-foreground underline underline-offset-2"
-                  >
-                    {component.name}
-                  </Link>
-                ) : (
-                  <span className="text-foreground">{component.name}</span>
-                )}
-                {component.detail ? (
-                  <span className="block text-xs text-muted-foreground">{component.detail}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </DetailSection>
-      ) : null}
-      {!builtIn ? (
-        <DetailSection title="Advanced">
-          <Facts
-            rows={[
-              ...(plugin.digest
-                ? [
-                    [
-                      "SHA-256",
-                      <span key="digest" className="font-mono text-xs">
-                        {plugin.digest}
-                      </span>,
-                    ] as const,
-                  ]
-                : []),
-              ...(plugin.installedAt ? [["Installed", plugin.installedAt] as const] : []),
-            ]}
-          />
-          {plugin.canRemove ? (
-            <div>
-              <Button
-                size="xs"
-                variant="destructive-outline"
-                disabled={actions.locked}
-                onClick={() => void actions.remove()}
+      }
+      feedback={<ActionFeedback feedback={actions.feedback} />}
+    >
+      <AboutCard
+        rows={[
+          ["Developer", plugin.publisher],
+          ["Version", plugin.version],
+          fact("Installed on", formatDate(plugin.installedAt)),
+          fact(
+            "Settings",
+            settingsPath ? (
+              <Link
+                to={settingsPath}
+                className="text-foreground underline-offset-2 hover:underline"
               >
-                Remove
-              </Button>
-            </div>
-          ) : null}
-        </DetailSection>
-      ) : null}
-    </>
+                Open settings
+              </Link>
+            ) : null,
+          ),
+          ["Source", builtIn ? "Built into Scient" : "Plugin bundle"],
+          fact("SHA-256", plugin.digest ? <Mono>{plugin.digest}</Mono> : null),
+        ]}
+      />
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        name={plugin.displayName}
+        kind="Plugin"
+        glyph={glyph}
+        tagline={plugin.description}
+        summary={componentSummary(plugin.displayName, plugin.components)}
+        groups={componentGroups(plugin.components)}
+      />
+    </DetailLayout>
   );
 }
 
@@ -771,6 +1078,10 @@ function useProviderGroup(instanceId: string): ProviderExtensionGroup | undefine
   return collectProviderExtensionGroups(providers, null).find(
     (group) => group.provider.instanceId === instanceId,
   );
+}
+
+function ManagedBy({ label }: { readonly label: string }) {
+  return <span className="text-sm text-muted-foreground">Managed by {label}</span>;
 }
 
 function ProviderPluginDetailContent({
@@ -807,56 +1118,64 @@ function ProviderPluginDetail({
   readonly workspace: string | undefined;
 }) {
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = plugin.displayName ?? plugin.name;
-  const uninstall =
-    plugin.canUninstall === true ? (
-      <Button
-        size="xs"
-        variant="destructive-outline"
-        disabled={actions.locked}
-        onClick={() => void actions.uninstall()}
-      >
-        Uninstall
-      </Button>
-    ) : null;
+  const servers = group.mcpServers.filter((server) => server.pluginId === plugin.id);
   return (
-    <>
-      <DetailBack to="installed" />
-      <DetailHeader
-        name={name}
-        tagline={plugin.description}
-        status={plugin.enabled ? null : "Off"}
-        primary={<Done>Installed</Done>}
-        menu={
-          plugin.canUninstall === true ? (
-            <DetailMenu name={name}>
-              <MenuItem
-                variant="destructive"
-                disabled={actions.locked}
-                onClick={() => void actions.uninstall()}
-              >
-                Uninstall
-              </MenuItem>
-            </DetailMenu>
-          ) : null
-        }
-      />
-      <div className="grid gap-1 empty:hidden">
-        <ActionFeedback feedback={actions.feedback} />
-      </div>
-      <DetailSection title={`Managed by ${group.label}`}>
-        <Facts
-          rows={[
-            ...(plugin.version ? [["Version", plugin.version] as const] : []),
-            ...(plugin.marketplace ? [["Marketplace", plugin.marketplace] as const] : []),
-            ...(workspace ? [["Workspace", workspaceLabel(workspace)] as const] : []),
-            ["State", plugin.enabled ? "On" : "Off"],
-          ]}
+    <DetailLayout
+      back="installed"
+      header={
+        <DetailHeader
+          name={name}
+          tagline={plugin.description}
+          actions={
+            <>
+              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
+              {plugin.canUninstall === true ? (
+                <Button
+                  variant="destructive-outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.uninstall()}
+                >
+                  Uninstall
+                </Button>
+              ) : (
+                <ManagedBy label={group.label} />
+              )}
+            </>
+          }
         />
-        <MutedLine>{group.label} installs and updates this plugin.</MutedLine>
-        {uninstall ? <div>{uninstall}</div> : null}
-      </DetailSection>
-    </>
+      }
+      feedback={<ActionFeedback feedback={actions.feedback} />}
+    >
+      <AboutCard
+        rows={[
+          ["Managed by", group.label],
+          fact("Version", plugin.version),
+          fact("Marketplace", plugin.marketplace),
+          fact("Workspace", workspace ? workspaceLabel(workspace) : null),
+          ["State", plugin.enabled ? "On" : "Off"],
+        ]}
+      />
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        name={name}
+        kind="Plugin"
+        tagline={plugin.description}
+        summary={`${group.label} installs and updates this plugin.`}
+        groups={[
+          {
+            label: "MCP servers",
+            rows: servers.map((server) => ({
+              key: server.name,
+              name: server.name,
+              detail: mcpServerSummary(server),
+            })),
+          },
+        ]}
+      />
+    </DetailLayout>
   );
 }
 
@@ -900,56 +1219,68 @@ function ProviderServerDetail({
   readonly server: ServerProviderMcpServer;
 }) {
   const actions = useProviderServerActions(group.provider, group.label, server);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const canSignIn = server.canStartSignIn === true;
+  const status =
+    server.status === "connected"
+      ? "Connected"
+      : (MCP_SERVER_STATUS_TEXT[server.status] ?? "Unknown");
   return (
-    <>
-      <DetailBack to="installed" />
-      <DetailHeader
-        name={server.name}
-        tagline={mcpServerSummary(server)}
-        status={server.status === "connected" ? null : MCP_SERVER_STATUS_TEXT[server.status]}
-        primary={
-          server.status === "connected" ? (
-            <Done>Connected</Done>
-          ) : canSignIn ? (
-            <Button disabled={actions.locked} onClick={() => void actions.signIn()}>
-              Sign in
-            </Button>
-          ) : null
-        }
-      />
-      <div className="grid gap-1 empty:hidden">
-        <ActionFeedback feedback={actions.feedback} />
-      </div>
-      <DetailSection title={`Managed by ${group.label}`}>
-        <Facts
-          rows={[
-            ["Status", MCP_SERVER_STATUS_TEXT[server.status] ?? "Connected"],
-            ...(server.toolCount === undefined
-              ? []
-              : [["Tools", String(server.toolCount)] as const]),
-            ...(server.scope ? [["Scope", server.scope] as const] : []),
-            ...(server.pluginId ? [["From plugin", server.pluginId] as const] : []),
-          ]}
+    <DetailLayout
+      back="installed"
+      header={
+        <DetailHeader
+          name={server.name}
+          tagline={mcpServerSummary(server)}
+          actions={
+            <>
+              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
+              {canSignIn ? (
+                <Button
+                  variant={server.status === "connected" ? "outline" : "default"}
+                  disabled={actions.locked}
+                  onClick={() => void actions.signIn()}
+                >
+                  {server.status === "connected" ? "Sign in again" : "Sign in"}
+                </Button>
+              ) : null}
+              <ManagedBy label={group.label} />
+            </>
+          }
         />
-        {server.error ? (
-          <p className="text-sm text-destructive-foreground">{server.error}</p>
-        ) : null}
-        <MutedLine>{group.label} configures and runs this server.</MutedLine>
-        {canSignIn && server.status === "connected" ? (
-          <div>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={actions.locked}
-              onClick={() => void actions.signIn()}
-            >
-              Sign in again
-            </Button>
-          </div>
-        ) : null}
-      </DetailSection>
-    </>
+      }
+      feedback={
+        <>
+          {server.error ? (
+            <p className="text-sm text-destructive-foreground">{server.error}</p>
+          ) : null}
+          <ActionFeedback feedback={actions.feedback} />
+        </>
+      }
+    >
+      <AboutCard
+        rows={[
+          ["Managed by", group.label],
+          ["Status", status],
+          fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
+          fact("Scope", server.scope),
+          fact("From plugin", server.pluginId),
+        ]}
+      />
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        name={server.name}
+        kind="App"
+        tagline={mcpServerSummary(server)}
+        summary={
+          server.toolCount === undefined
+            ? `${group.label} doesn't report this server's tools.`
+            : `${group.label} reports ${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}; it doesn't list them.`
+        }
+        groups={[]}
+      />
+    </DetailLayout>
   );
 }
 

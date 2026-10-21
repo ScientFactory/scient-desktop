@@ -221,13 +221,6 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
     matchesQuery(query, [plugin.displayName, plugin.description, plugin.publisher]),
   );
   const shownConnectorIds = new Set(connectors.map((connector) => connector.connectorId));
-  const curated = catalogEntries(catalog).filter(
-    (entry) =>
-      (entry.installedConnectorId === undefined ||
-        !shownConnectorIds.has(entry.installedConnectorId)) &&
-      matchesQuery(query, [entry.name, entry.title, entry.tagline, entry.description]),
-  );
-  const shownNames = new Set(curated.map((entry) => entry.name));
   return (
     <ExtensionGrid label="Search results">
       {connectors.map((connector) => (
@@ -242,15 +235,12 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
       {plugins.map((plugin) => (
         <PluginItem key={plugin.pluginId} plugin={plugin} />
       ))}
-      {curated.map((entry) => (
-        <EntryItem key={entry.name} entry={entry} />
-      ))}
+      {/* The server's search lists every matching curated entry first, then the registry's. */}
       <DiscoverPager
         input={{ query }}
         hide={(entry) =>
-          shownNames.has(entry.name) ||
-          (entry.installedConnectorId !== undefined &&
-            shownConnectorIds.has(entry.installedConnectorId))
+          entry.installedConnectorId !== undefined &&
+          shownConnectorIds.has(entry.installedConnectorId)
         }
       />
     </ExtensionGrid>

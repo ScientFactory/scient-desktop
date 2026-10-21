@@ -1,3 +1,4 @@
+import { isExtensionIconDataUri } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -96,10 +97,27 @@ export function ExtensionLink({
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
+type ExtensionIconSize = "row" | "large" | "avatar" | "dialog";
+
+/** Tile size and inner padding; avatar and dialog icons are round. */
+const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
+  row: "size-10 p-1.5 rounded-[25%]",
+  large: "size-16 p-2.5 rounded-[25%]",
+  avatar: "size-10 p-1.5 rounded-full",
+  dialog: "size-14 p-2.5 rounded-full",
+};
+
+const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
+  row: "size-10",
+  large: "size-16",
+  avatar: "size-10 rounded-full",
+  dialog: "size-14 rounded-full",
+};
+
 /**
- * A rounded-square icon: the entry's own image when it has one (always an
- * inline `data:` URI, so nothing loads from elsewhere), otherwise its first
- * letter on a tint derived from its name.
+ * The entry's own image when it is an allowed inline image
+ * (`data:image/png|jpeg|webp|svg+xml;base64`, so nothing loads from
+ * elsewhere), otherwise its first letter on a tint derived from its name.
  */
 export function ExtensionIcon({
   name,
@@ -111,10 +129,10 @@ export function ExtensionIcon({
   readonly iconUrl?: string | undefined;
   /** A Scient-drawn symbol, for built-in features that have no logo. */
   readonly glyph?: LucideIcon | undefined;
-  readonly size?: "row" | "large";
+  readonly size?: ExtensionIconSize;
 }) {
-  const large = size === "large";
-  if (iconUrl?.startsWith("data:") || Glyph) {
+  const image = iconUrl !== undefined && isExtensionIconDataUri(iconUrl) ? iconUrl : undefined;
+  if (image !== undefined || Glyph) {
     // Logos come in every shape and colour, and most are drawn for a light
     // background: some are dark marks that vanish on a dark tile, others are
     // SVGs that recolour themselves for dark mode. Logos therefore always sit
@@ -125,17 +143,17 @@ export function ExtensionIcon({
         aria-hidden
         data-extension-icon={Glyph ? "glyph" : "image"}
         className={cn(
-          "flex shrink-0 items-center justify-center overflow-hidden rounded-[25%] border",
+          "flex shrink-0 items-center justify-center overflow-hidden border",
           Glyph
             ? "border-border bg-white dark:bg-card"
             : "border-border bg-white [color-scheme:light] dark:border-white/10",
-          large ? "size-16 p-2.5" : "size-10 p-1.5",
+          ICON_FRAME[size],
         )}
       >
         {Glyph ? (
           <Glyph className="size-full text-foreground/75" strokeWidth={1.75} />
         ) : (
-          <img alt="" src={iconUrl} className="size-full object-contain" />
+          <img alt="" src={image} className="size-full object-contain" />
         )}
       </span>
     );
@@ -145,7 +163,7 @@ export function ExtensionIcon({
     <ProjectMonogram
       text={first.toLocaleUpperCase()}
       color={iconTint(name)}
-      className={large ? "size-16" : "size-10"}
+      className={MONOGRAM_FRAME[size]}
     />
   );
 }

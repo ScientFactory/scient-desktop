@@ -1,7 +1,10 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type {
+  ConnectorAddResult,
   ConnectorSummary,
   ConnectorTestResult,
   DiscoverEntry,
+  EnvironmentId,
   GrantScope,
   ScientPluginSummary,
   ServerProvider,
@@ -9,7 +12,8 @@ import type {
   ServerProviderPlugin,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { useState } from "react";
+import type { AtomRegistry } from "effect/reactivity";
+import { useContext, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { ensureLocalApi } from "../../localApi";
@@ -19,6 +23,9 @@ import { useExtensionsEnvironment } from "./ExtensionsPage";
 import {
   actOnProviderPlugin,
   addConnector,
+  type ExtensionItemOperation,
+  extensionItemOperation,
+  extensionItemOperationKey,
   removeConnector,
   removeScientPlugin,
   setScientPluginEnabled,
@@ -27,7 +34,7 @@ import {
   updateConnector,
 } from "./extensionsState";
 import { entryAddTarget, entryName, installableRemotes } from "./extensionsView";
-import { openAuthorizationPage } from "./openAuthorizationPage";
+import { openAuthorizationPage, type SignInOpening } from "./openAuthorizationPage";
 
 /**
  * What one item's last action left to show. Nothing here predicts the server:
@@ -64,12 +71,48 @@ export interface PluginActionsState extends ItemActionsState {
   readonly remove: () => Promise<void>;
 }
 
-function useActionLock() {
-  const { canWrite } = useExtensionsEnvironment();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [blockedSignInUrl, setBlockedSignInUrl] = useState<string | null>(null);
-  const locked = !canWrite || busy !== null;
+type OperationPatch = (patch: Partial<ExtensionItemOperation>) => void;
+
+/** Writes one item's shared operation state, whichever component shows that item now. */
+function operationPatch(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  item: string,
+): OperationPatch {
+  const atom = extensionItemOperation(extensionItemOperationKey(environmentId, item));
+  return (patch) => registry.set(atom, { ...registry.get(atom), ...patch });
+}
+
+const connectorItem = (connectorId: string) => `connector:${connectorId}`;
+
+/**
+ * Records how opening a sign-in page ended. `startedAt` is the connector's
+ * `updatedAt`, so its views can wait for the server to report a change; null
+ * for sign-ins that no connector tracks.
+ */
+function finishSignIn(patch: OperationPatch, opening: SignInOpening, startedAt: string | null) {
+  patch({
+    blockedSignInUrl: opening.outcome === "blocked" ? opening.url : null,
+    ...(opening.outcome === "not-started" || startedAt === null
+      ? {}
+      : { signInStartedAt: startedAt }),
+  });
+}
+
+/**
+ * One action at a time for `item` (a connector, entry or plugin key), with its
+ * outcome. The state is shared per environment and item, so it survives the
+ * component that started the action being replaced by another view of the
+ * same item.
+ */
+function useActionLock(item: string) {
+  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const registry = useContext(RegistryContext);
+  const operation = useAtomValue(
+    extensionItemOperation(extensionItemOperationKey(environmentId, item)),
+  );
+  const patch = operationPatch(registry, environmentId, item);
+  const locked = !canWrite || operation.busy !== null;
 
   /** Runs one command for this item; the item unlocks whatever happens. */
   const run = async <A>(
@@ -77,13 +120,11 @@ function useActionLock() {
     execute: () => Promise<AtomCommandResult<A, unknown>>,
   ): Promise<AtomCommandResult<A, unknown> | null> => {
     if (locked) return null;
-    setBusy(action);
-    setError(null);
-    setBlockedSignInUrl(null);
+    patch({ busy: action, error: null, blockedSignInUrl: null });
     // `Promise#finally`, not a `finally` block: React Compiler cannot compile
     // `try`/`finally`, and the item must unlock even on a defect.
-    const result = await execute().finally(() => setBusy(null));
-    setError(commandFailureMessage(result));
+    const result = await execute().finally(() => patch({ busy: null }));
+    patch({ error: commandFailureMessage(result) });
     return result;
   };
 
@@ -91,21 +132,28 @@ function useActionLock() {
    * Starts a sign-in whose URL `request` obtains. The page opens in the user's
    * browser, or its URL stays here as a link when the browser blocks it.
    */
-  const signIn = async (action: string, request: () => Promise<string | null>) => {
-    if (locked) return "not-started" as const;
-    setBusy(action);
-    setError(null);
-    setBlockedSignInUrl(null);
-    const opening = await openAuthorizationPage(request).finally(() => setBusy(null));
-    if (opening.outcome === "blocked") setBlockedSignInUrl(opening.url);
+  const signIn = async (
+    action: string,
+    request: () => Promise<string | null>,
+    startedAt: string | null,
+  ): Promise<SignInOpening["outcome"]> => {
+    if (locked) return "not-started";
+    patch({ busy: action, error: null, blockedSignInUrl: null });
+    const opening = await openAuthorizationPage(request).finally(() => patch({ busy: null }));
+    finishSignIn(patch, opening, startedAt);
     return opening.outcome;
   };
 
   return {
-    busy,
+    busy: operation.busy,
     locked,
-    feedback: { error, blockedSignInUrl } satisfies ActionFeedbackState,
-    setError,
+    feedback: {
+      error: operation.error,
+      blockedSignInUrl: operation.blockedSignInUrl,
+    } satisfies ActionFeedbackState,
+    signInStartedAt: operation.signInStartedAt,
+    patch,
+    setError: (error: string | null) => patch({ error }),
     run,
     signIn,
   };
@@ -117,32 +165,36 @@ async function confirmDestructive(message: string): Promise<boolean> {
 
 export function useConnectorActions(connector: ConnectorSummary): ConnectorActionsState {
   const { environmentId, callbackOrigin } = useExtensionsEnvironment();
-  const lock = useActionLock();
+  const connectorId = connector.connectorId;
+  const lock = useActionLock(connectorItem(connectorId));
   const update = useAtomCommand(updateConnector, { reportFailure: true });
   const remove = useAtomCommand(removeConnector, { reportFailure: true });
   const test = useAtomCommand(testConnector, { reportFailure: true });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   const [testResult, setTestResult] = useState<ConnectorTestResult | null>(null);
-  const [signInStartedAt, setSignInStartedAt] = useState<string | null>(null);
-  const connectorId = connector.connectorId;
 
   return {
-    ...lock,
+    busy: lock.busy,
+    locked: lock.locked,
+    feedback: lock.feedback,
     testResult,
     /** Sign-in opened and the server has not reported a change since. */
-    waitingForSignIn: signInStartedAt !== null && signInStartedAt === connector.updatedAt,
+    waitingForSignIn: lock.signInStartedAt !== null && lock.signInStartedAt === connector.updatedAt,
     canSignIn: !lock.locked && callbackOrigin !== null,
     signIn: async () => {
       if (callbackOrigin === null) return;
-      const outcome = await lock.signIn("sign-in", async () => {
-        const result = await startSignIn({
-          environmentId,
-          input: { connectorId, callbackOrigin },
-        });
-        lock.setError(commandFailureMessage(result));
-        return result._tag === "Success" ? result.value.authorizationUrl : null;
-      });
-      if (outcome !== "not-started") setSignInStartedAt(connector.updatedAt);
+      await lock.signIn(
+        "sign-in",
+        async () => {
+          const result = await startSignIn({
+            environmentId,
+            input: { connectorId, callbackOrigin },
+          });
+          lock.setError(commandFailureMessage(result));
+          return result._tag === "Success" ? result.value.authorizationUrl : null;
+        },
+        connector.updatedAt,
+      );
     },
     test: async () => {
       const result = await lock.run("test", () => test({ environmentId, input: { connectorId } }));
@@ -167,21 +219,26 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
 
 /**
  * Adds a registry or curated entry in one step, then starts sign-in when the
- * server asks for it.
+ * server asks for it. The sign-in belongs to the new connector: its row and
+ * page replace this entry's as soon as the lists re-read, and they show the
+ * sign-in's progress and outcome.
  */
 export function useAddEntry(entry: DiscoverEntry) {
   const { environmentId, callbackOrigin } = useExtensionsEnvironment();
-  const lock = useActionLock();
+  const registry = useContext(RegistryContext);
+  const lock = useActionLock(`entry:${entry.name}`);
   const add = useAtomCommand(addConnector, { reportFailure: true });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   const remote = installableRemotes(entry)[0];
 
   return {
-    ...lock,
+    busy: lock.busy,
+    locked: lock.locked,
+    feedback: lock.feedback,
     canAdd: entry.installable && remote !== undefined,
     add: async () => {
-      if (!entry.installable || remote === undefined) return;
-      const result = await lock.run("add", () =>
+      if (!entry.installable || remote === undefined || lock.locked) return;
+      const addEntry = () =>
         add({
           environmentId,
           input: {
@@ -191,30 +248,58 @@ export function useAddEntry(entry: DiscoverEntry) {
               ? { description: entry.description.trim().slice(0, 1000) }
               : {}),
           },
-        }),
-      );
-      if (result?._tag !== "Success") return;
-      if (result.value.nextStep === "ready") {
-        toastManager.add({ type: "success", title: `${result.value.connector.displayName} added` });
+        });
+      const announceReady = (result: AtomCommandResult<ConnectorAddResult, unknown> | null) => {
+        if (result?._tag === "Success" && result.value.nextStep === "ready") {
+          toastManager.add({
+            type: "success",
+            title: `${result.value.connector.displayName} added`,
+          });
+        }
+      };
+      if (callbackOrigin === null) {
+        announceReady(await lock.run("add", addEntry));
         return;
       }
-      if (callbackOrigin === null) return;
-      const connectorId = result.value.connector.connectorId;
-      await lock.signIn("sign-in", async () => {
+      // The sign-in page is opened through `openAuthorizationPage` from this
+      // click, so the web build reserves its tab before the add is awaited.
+      const steps: {
+        added: AtomCommandResult<ConnectorAddResult, unknown> | null;
+        signIn: { readonly patch: OperationPatch; readonly startedAt: string } | null;
+      } = { added: null, signIn: null };
+      lock.patch({ busy: "add", error: null, blockedSignInUrl: null });
+      const opening = await openAuthorizationPage(async () => {
+        const added = await addEntry();
+        steps.added = added;
+        if (added._tag !== "Success" || added.value.nextStep === "ready") return null;
+        const connector = added.value.connector;
+        const patchConnector = operationPatch(
+          registry,
+          environmentId,
+          connectorItem(connector.connectorId),
+        );
+        steps.signIn = { patch: patchConnector, startedAt: connector.updatedAt };
+        patchConnector({ busy: "sign-in", error: null, blockedSignInUrl: null });
         const started = await startSignIn({
           environmentId,
-          input: { connectorId, callbackOrigin },
+          input: { connectorId: connector.connectorId, callbackOrigin },
         });
-        lock.setError(commandFailureMessage(started));
+        patchConnector({ error: commandFailureMessage(started) });
         return started._tag === "Success" ? started.value.authorizationUrl : null;
+      }).finally(() => {
+        lock.patch({ busy: null });
+        steps.signIn?.patch({ busy: null });
       });
+      lock.patch({ error: steps.added === null ? null : commandFailureMessage(steps.added) });
+      announceReady(steps.added);
+      if (steps.signIn !== null) finishSignIn(steps.signIn.patch, opening, steps.signIn.startedAt);
     },
   };
 }
 
 export function usePluginActions(plugin: ScientPluginSummary): PluginActionsState {
   const { environmentId } = useExtensionsEnvironment();
-  const lock = useActionLock();
+  const lock = useActionLock(`plugin:${plugin.pluginId}`);
   const setEnabled = useAtomCommand(setScientPluginEnabled, { reportFailure: true });
   const remove = useAtomCommand(removeScientPlugin, { reportFailure: true });
   const pluginId = plugin.pluginId;
@@ -239,7 +324,7 @@ export function useProviderPluginActions(
   workspace: string | undefined,
 ) {
   const { environmentId } = useExtensionsEnvironment();
-  const lock = useActionLock();
+  const lock = useActionLock(`provider-plugin:${provider.instanceId}:${plugin.id}`);
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,
@@ -269,25 +354,32 @@ export function useProviderServerActions(
   server: ServerProviderMcpServer,
 ) {
   const { environmentId } = useExtensionsEnvironment();
-  const lock = useActionLock();
+  const lock = useActionLock(`provider-server:${provider.instanceId}:${server.name}`);
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,
     signIn: () =>
-      lock.signIn("sign-in", async () => {
-        const result = await act({
-          environmentId,
-          input: {
-            instanceId: provider.instanceId,
-            action: { type: "mcp-sign-in", serverName: server.name },
-          },
-        });
-        lock.setError(commandFailureMessage(result));
-        if (result._tag !== "Success") return null;
-        if (!result.value.authorizationUrl) {
-          toastManager.add({ type: "info", title: `${label} started sign-in for ${server.name}` });
-        }
-        return result.value.authorizationUrl ?? null;
-      }),
+      lock.signIn(
+        "sign-in",
+        async () => {
+          const result = await act({
+            environmentId,
+            input: {
+              instanceId: provider.instanceId,
+              action: { type: "mcp-sign-in", serverName: server.name },
+            },
+          });
+          lock.setError(commandFailureMessage(result));
+          if (result._tag !== "Success") return null;
+          if (!result.value.authorizationUrl) {
+            toastManager.add({
+              type: "info",
+              title: `${label} started sign-in for ${server.name}`,
+            });
+          }
+          return result.value.authorizationUrl ?? null;
+        },
+        null,
+      ),
   };
 }

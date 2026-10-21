@@ -265,6 +265,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.extensionsConnectorTest]: "extensions",
   [WS_METHODS.extensionsDiscoverSearch]: "extensions",
   [WS_METHODS.extensionsDiscoverCatalog]: "extensions",
+  [WS_METHODS.extensionsDiscoverEntry]: "extensions",
   [WS_METHODS.extensionsPluginInstall]: "extensions",
   [WS_METHODS.extensionsPluginRemove]: "extensions",
   [WS_METHODS.extensionsPluginSetEnabled]: "extensions",

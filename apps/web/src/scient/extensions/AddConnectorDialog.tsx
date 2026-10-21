@@ -110,9 +110,11 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
   const displayName = draft.displayName.trim();
   const clientId = draft.clientId.trim();
   const clientSecret = draft.clientSecret.trim();
+  const description = entry?.description?.trim().slice(0, 1000);
   return {
     target: entry ? entryAddTarget(entry, draft.remoteUrl) : { type: "url", url: draft.url.trim() },
     ...(displayName ? { displayName } : {}),
+    ...(description ? { description } : {}),
     ...(draft.authMode === "automatic" && clientId
       ? { oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } }
       : {}),

@@ -196,6 +196,8 @@ export const makeExtensionsRpcHandlers = ({
       ),
     [WS_METHODS.extensionsDiscoverCatalog]: () =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
+    [WS_METHODS.extensionsDiscoverEntry]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsDiscoverEntry, discover.entry(input), traceAttributes),
     [WS_METHODS.extensionsPluginInstall]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsPluginInstall,

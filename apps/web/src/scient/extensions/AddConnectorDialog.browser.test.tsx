@@ -290,6 +290,30 @@ describe("AddConnectorDialog validation", () => {
     expect(state.toast).not.toHaveBeenCalled();
   });
 
+  it("sends the entry's description, trimmed and capped at 1000 characters", async () => {
+    state.add.mockResolvedValue({ _tag: "Success", value: { connector, nextStep: "ready" } });
+    const registryEntry = (description: string): DiscoverEntry => ({
+      name: "io.example/notes",
+      version: "2.0.0",
+      title: "Notes",
+      description,
+      remotes: [
+        { type: "streamable-http", url: "https://notes.example.com/mcp", requiresInput: false },
+      ],
+      installable: true,
+      categories: [],
+    });
+    await render(registryEntry(`  ${"a".repeat(1200)}  `));
+    await submit();
+    expect(state.add.mock.calls[0]?.[0].input.description).toBe("a".repeat(1000));
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render(registryEntry("   "));
+    await submit();
+    expect(state.add.mock.calls[1]?.[0].input).not.toHaveProperty("description");
+  });
+
   async function renderSignInStep() {
     state.add.mockResolvedValueOnce({
       _tag: "Success",

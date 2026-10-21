@@ -81,6 +81,18 @@ export type ConnectorAuthSummary = typeof ConnectorAuthSummary.Type;
 export const ConnectorStatus = Schema.Literals(["connected", "needs-auth", "needs-credential"]);
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 
+/**
+ * An extension logo as an inline image. Clients never load remote images, so
+ * icons travel only as base64 `data:` URIs of PNG, JPEG, WebP or SVG, at most
+ * 64 KiB of image (about 87,400 base64 characters).
+ */
+export const ExtensionIconDataUri = Schema.String.check(
+  Schema.isMaxLength(90_000),
+  Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/u),
+);
+export type ExtensionIconDataUri = typeof ExtensionIconDataUri.Type;
+export const isExtensionIconDataUri = Schema.is(ExtensionIconDataUri);
+
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
   serverName: ConnectorServerName,
@@ -97,12 +109,8 @@ export const ConnectorSummary = Schema.Struct({
   updatedAt: IsoDateTime,
   /** Most recent user-facing failure, cleared by the next success. */
   lastError: Schema.optional(TrimmedNonEmptyString),
-  /** Logo of the curated server this connector points at, as a `data:` image URI only. */
-  iconUrl: Schema.optional(
-    TrimmedNonEmptyString.check(
-      Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,/u),
-    ),
-  ),
+  /** Logo of the curated server this connector points at. */
+  iconUrl: Schema.optional(ExtensionIconDataUri),
 });
 export type ConnectorSummary = typeof ConnectorSummary.Type;
 
@@ -310,8 +318,8 @@ export const DiscoverEntry = Schema.Struct({
   description: Schema.optional(Schema.String),
   /** One line for list rows; curated entries always have one. */
   tagline: Schema.optional(TrimmedNonEmptyString),
-  /** https icon published by the registry entry or the curated catalog. */
-  iconUrl: Schema.optional(TrimmedNonEmptyString),
+  /** Logo from the curated catalog, inlined; uncurated registry entries have none. */
+  iconUrl: Schema.optional(ExtensionIconDataUri),
   /** Curated categories this entry belongs to; empty for uncurated registry entries. */
   categories: Schema.Array(ExtensionCategory),
   websiteUrl: Schema.optional(TrimmedNonEmptyString),
@@ -341,6 +349,10 @@ export const DiscoverCatalog = Schema.Struct({
   fetchedAt: IsoDateTime,
 });
 export type DiscoverCatalog = typeof DiscoverCatalog.Type;
+
+/** Exact lookup of one curated or registry entry by name; fails with `not-found`. */
+export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString });
+export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({
   entries: Schema.Array(DiscoverEntry),

@@ -110,7 +110,10 @@ connector plus separate `{ connectorId, projectId, enabled }` selection
 records. It is migrated on load and saved as format 2 at once: `all-projects`
 stays all projects; `selected-projects` becomes the projects whose selection
 was enabled (deduplicated, in file order); the selection records are dropped.
-A Scient that predates format 2 refuses the file rather than overwriting it.
+If that first save fails, the migrated state is kept in memory and used, and
+it is written by the next successful mutation; the format 1 file is left as
+it was until then. A Scient that predates format 2 refuses the file rather
+than overwriting it.
 
 ```ts
 
@@ -495,9 +498,16 @@ each with up to 6 preview entries (entries whose first non-featured category is
 the section come first, then the rest, in catalog order) and its `total`.
 `extensions.discover.search` with a `category` returns that category's curated
 entries filtered in memory by every query term against name, tagline and
-description, without a cursor; without a category it searches the registry,
-and a registry result matching a curated server (by registry name or remote
-URL) carries that server's tagline, categories and icon.
+description, without a cursor. Without a category it searches the registry;
+when there is a query, every matching entry of the complete curated catalog
+(previews or not, registry-listed or not) leads the first page, and registry
+results for those curated servers are not repeated. A registry result matching
+a curated server (by registry name or remote URL) carries that server's
+tagline, categories and icon. `extensions.discover.entry` (`{ name }`) returns
+one entry: from the complete curated catalog first (with its icon within the
+response budget), otherwise the registry's latest active version of that exact
+name (`/v0.1/servers/<name>/versions/latest`), otherwise `not-found`. Names
+starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
 
@@ -505,7 +515,13 @@ canonical connector URL (parsed, trailing path slash ignored).
 server's pinned icon through the connector egress policy (public https only,
 unauthenticated redirects re-checked, 10-second deadline, 64 KiB cap), accepts
 only `image/png`, `image/jpeg`, `image/webp` and `image/svg+xml` whose bytes
-match the declared type, and returns it as a `data:` URI. Every curated icon is
+match the declared type, and returns it as a `data:` URI. Media types are
+looked up as own keys only (`constructor`, `__proto__` and other inherited
+names are not types), and only a value that satisfies the shared
+`ExtensionIconDataUri` contract schema (`data:image/(png|jpeg|webp|svg+xml);base64,`
+followed by base64, at most 90,000 characters) is admitted to the cache, so a
+rejected icon can never reach `DiscoverEntry.iconUrl` or
+`ConnectorSummary.iconUrl`. Every curated icon is
 warmed in the background at server start, at most six fetches at a time and
 each fetched once (single flight). A `catalog` or `search` response waits at
 most one second in total for icons that are not cached yet and leaves the rest

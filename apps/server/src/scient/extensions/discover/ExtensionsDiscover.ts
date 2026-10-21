@@ -14,7 +14,6 @@ import {
   type DiscoverEntry,
   type DiscoverPage,
   type DiscoverRemote,
-  type DiscoverSearchInput,
   type ExtensionCategory,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -38,6 +37,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
+  CURATED_NAME_PREFIX,
   CURATED_SERVERS,
   curatedDiscoverEntry,
   curatedServerForUrl,
@@ -125,8 +125,23 @@ const decodeRegistryServerEntry = Schema.decodeUnknownExit(RegistryServerEntry);
 
 class RegistryAttemptError extends Schema.TaggedError<RegistryAttemptError>()(
   "RegistryAttemptError",
-  { retryable: Schema.Boolean, message: Schema.String },
+  { retryable: Schema.Boolean, message: Schema.String, status: Schema.optional(Schema.Number) },
 ) {}
+
+const decodeRegistryServerJson = Schema.decodeUnknownExit(
+  Schema.fromJsonString(RegistryServerEntry),
+);
+
+/** One server read by exact name: an empty page when it is not active. */
+const parseRegistryServer = (body: string) => {
+  const decoded = decodeRegistryServerJson(body);
+  if (Exit.isFailure(decoded)) return undefined;
+  const active =
+    decoded.value._meta?.[OFFICIAL_META_KEY]?.status === "active" &&
+    decoded.value.server.name.trim() !== "" &&
+    decoded.value.server.version.trim() !== "";
+  return { entries: active ? [toDiscoverEntry(decoded.value)] : [], nextCursor: undefined };
+};
 
 const nonBlank = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
@@ -282,6 +297,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         return yield* new RegistryAttemptError({
           retryable: response.status === 429 || response.status >= 500,
           message: `The MCP Registry answered with HTTP ${response.status}.`,
+          status: response.status,
         });
       }
       const declaredLength = Number(response.headers["content-length"] ?? "0");
@@ -412,104 +428,166 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       );
     });
 
-  const searchRegistry = Effect.fn("ExtensionsDiscover.searchRegistry")(function* (
-    input: DiscoverSearchInput,
-    query: string,
+  /**
+   * One registry read through the page cache; `undefined` from `parse` means a
+   * bad response. A 404 is `not-found` only when `byName` (an exact-name read).
+   */
+  const readRegistry = Effect.fn("ExtensionsDiscover.readRegistry")(function* (
+    key: string,
+    parse: (body: string) => Omit<CachedPage, "expiresAtMs" | "fetchedAt"> | undefined,
+    byName: boolean,
   ) {
-    const cursor = input.cursor?.trim();
-    const requestedLimit =
-      input.limit !== undefined && Number.isFinite(input.limit)
-        ? Math.trunc(input.limit)
-        : DEFAULT_LIMIT;
-    const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
-    const url = new URL(MCP_REGISTRY_SERVERS_URL);
-    if (query !== "") url.searchParams.set("search", query);
-    url.searchParams.set("limit", String(limit));
-    if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
-    url.searchParams.set("version", "latest");
-    const key = url.href;
-
     const now = yield* Clock.currentTimeMillis;
-    let page = cache.get(key);
-    if (page === undefined || page.expiresAtMs <= now) {
-      const body = yield* fetchOnce(key).pipe(
-        Effect.retry({
-          times: RETRIES,
-          while: (error) => error.retryable,
-          schedule: Schedule.exponential(Duration.millis(250)),
-        }),
-        Effect.mapError(
-          (error) => new ExtensionsError({ reason: "unreachable", message: error.message }),
-        ),
-      );
-      const parsed = parseRegistryPage(body);
-      if (parsed === undefined) {
-        return yield* new ExtensionsError({
-          reason: "unreachable",
-          message: "The MCP Registry returned an unexpected response.",
-        });
-      }
-      page = {
-        ...parsed,
-        expiresAtMs: now + Duration.toMillis(DISCOVER_CACHE_TTL),
-        fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-      };
-      cache.delete(key);
-      cache.set(key, page);
-      for (const staleKey of cache.keys()) {
-        if (cache.size <= MAX_CACHED_PAGES) break;
-        cache.delete(staleKey);
-      }
-    }
-
-    // Installation state is live, never cached with the registry page.
-    const installed = yield* installedConnectors;
-    const matched = page.entries.map((entry) => ({ entry, curated: curatedFor(entry) }));
-    const ready = yield* iconsFor(
-      matched.flatMap(({ curated }) => (curated === undefined ? [] : [curated])),
+    const cachedPage = cache.get(key);
+    if (cachedPage !== undefined && cachedPage.expiresAtMs > now) return cachedPage;
+    const body = yield* fetchOnce(key).pipe(
+      Effect.retry({
+        times: RETRIES,
+        while: (error) => error.retryable,
+        schedule: Schedule.exponential(Duration.millis(250)),
+      }),
+      Effect.mapError((error) =>
+        byName && error.status === 404
+          ? new ExtensionsError({
+              reason: "not-found",
+              message: "The MCP Registry has no such server.",
+            })
+          : new ExtensionsError({ reason: "unreachable", message: error.message }),
+      ),
     );
-    const entries = matched.map(({ entry, curated }): DiscoverEntry => {
-      // A registry server Scient curates carries the curated presentation.
-      const iconUrl = curated?.iconSource === undefined ? undefined : ready.get(curated.iconSource);
-      const installedConnectorId = installedFor(
-        installed,
-        entry.name,
-        entry.remotes.map((remote) => remote.url),
-      );
-      return {
-        ...entry,
-        ...(curated === undefined
-          ? {}
-          : { tagline: curated.tagline, categories: [...curated.categories] }),
-        ...(iconUrl === undefined ? {} : { iconUrl }),
-        ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
-      };
-    });
-    return {
-      entries,
-      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
-      fetchedAt: page.fetchedAt,
-    } satisfies DiscoverPage;
+    const parsed = parse(body);
+    if (parsed === undefined) {
+      return yield* new ExtensionsError({
+        reason: "unreachable",
+        message: "The MCP Registry returned an unexpected response.",
+      });
+    }
+    const page: CachedPage = {
+      ...parsed,
+      expiresAtMs: now + Duration.toMillis(DISCOVER_CACHE_TTL),
+      fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    };
+    cache.delete(key);
+    cache.set(key, page);
+    for (const staleKey of cache.keys()) {
+      if (cache.size <= MAX_CACHED_PAGES) break;
+      cache.delete(staleKey);
+    }
+    return page;
   });
+
+  /** A registry entry with the curated presentation when Scient curates that server. */
+  const registryEntry = (
+    entry: Omit<DiscoverEntry, "installedConnectorId">,
+    installed: Installed,
+    ready: ReadonlyMap<string, string>,
+  ): DiscoverEntry => {
+    const curated = curatedFor(entry);
+    const iconUrl = curated?.iconSource === undefined ? undefined : ready.get(curated.iconSource);
+    const installedConnectorId = installedFor(
+      installed,
+      entry.name,
+      entry.remotes.map((remote) => remote.url),
+    );
+    return {
+      ...entry,
+      ...(curated === undefined
+        ? {}
+        : { tagline: curated.tagline, categories: [...curated.categories] }),
+      ...(iconUrl === undefined ? {} : { iconUrl }),
+      ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
+    };
+  };
+
+  const curatedOf = (entries: ReadonlyArray<Omit<DiscoverEntry, "installedConnectorId">>) =>
+    entries.flatMap((entry) => curatedFor(entry) ?? []);
 
   const search: ExtensionsDiscoverShape["search"] = Effect.fn("ExtensionsDiscover.search")(
     function* (input) {
       const query = (input.query ?? "").trim().slice(0, MAX_QUERY_LENGTH);
-      if (input.category === undefined) return yield* searchRegistry(input, query);
-      // A curated category is small and complete: filtered in memory, never paged.
       const terms = query
         .toLowerCase()
         .split(/\s+/u)
         .filter((term) => term !== "");
+      // Installation state is live, never cached with the registry page.
       const installed = yield* installedConnectors;
-      const list = serversIn(servers, input.category).filter((server) =>
-        matchesQuery(server, terms),
-      );
-      const ready = yield* iconsFor(list);
+      if (input.category !== undefined) {
+        // A curated category is small and complete: filtered in memory, never paged.
+        const list = serversIn(servers, input.category).filter((server) =>
+          matchesQuery(server, terms),
+        );
+        const ready = yield* iconsFor(list);
+        return {
+          entries: list.map((server) => curatedEntry(server, installed, ready)),
+          fetchedAt: yield* nowIso,
+        } satisfies DiscoverPage;
+      }
+
+      const cursor = input.cursor?.trim();
+      const requestedLimit =
+        input.limit !== undefined && Number.isFinite(input.limit)
+          ? Math.trunc(input.limit)
+          : DEFAULT_LIMIT;
+      const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
+      const url = new URL(MCP_REGISTRY_SERVERS_URL);
+      if (query !== "") url.searchParams.set("search", query);
+      url.searchParams.set("limit", String(limit));
+      if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
+      url.searchParams.set("version", "latest");
+      const page = yield* readRegistry(url.href, parseRegistryPage, false);
+
+      // A query also searches the whole curated catalog, including servers the
+      // registry does not list; they lead the first page and are never repeated.
+      const curatedMatches =
+        terms.length === 0 ? [] : servers.filter((server) => matchesQuery(server, terms));
+      const registryEntries = page.entries.filter((entry) => {
+        const curated = curatedFor(entry);
+        return curated === undefined || !curatedMatches.includes(curated);
+      });
+      const leading = cursor === undefined || cursor === "" ? curatedMatches : [];
+      // One icon budget for the whole response.
+      const ready = yield* iconsFor([...leading, ...curatedOf(registryEntries)]);
       return {
-        entries: list.map((server) => curatedEntry(server, installed, ready)),
-        fetchedAt: yield* nowIso,
+        entries: [
+          ...leading.map((server) => curatedEntry(server, installed, ready)),
+          ...registryEntries.map((entry) => registryEntry(entry, installed, ready)),
+        ],
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        fetchedAt: page.fetchedAt,
       } satisfies DiscoverPage;
+    },
+  );
+
+  const entry: ExtensionsDiscoverShape["entry"] = Effect.fn("ExtensionsDiscover.entry")(
+    function* (input) {
+      // The complete curated catalog first, not only the home-page previews.
+      const curated = servers.find((server) => curatedDiscoverEntry(server).name === input.name);
+      if (curated !== undefined) {
+        const installed = yield* installedConnectors;
+        return curatedEntry(curated, installed, yield* iconsFor([curated]));
+      }
+      if (input.name.startsWith(CURATED_NAME_PREFIX)) {
+        return yield* new ExtensionsError({
+          reason: "not-found",
+          message: `No curated server is named '${input.name}'.`,
+        });
+      }
+      const page = yield* readRegistry(
+        `${MCP_REGISTRY_SERVERS_URL}/${encodeURIComponent(input.name)}/versions/latest`,
+        parseRegistryServer,
+        true,
+      );
+      const matches = page.entries.filter((candidate) => candidate.name === input.name);
+      const installed = yield* installedConnectors;
+      const ready = yield* iconsFor(curatedOf(matches));
+      const found = matches.map((candidate) => registryEntry(candidate, installed, ready))[0];
+      if (found === undefined) {
+        return yield* new ExtensionsError({
+          reason: "not-found",
+          message: `The MCP Registry has no active server named '${input.name}'.`,
+        });
+      }
+      return found;
     },
   );
 
@@ -530,7 +608,13 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       );
     });
 
-  return ExtensionsDiscover.of({ search, catalog, connectorIcons, changes: icons.changes });
+  return ExtensionsDiscover.of({
+    search,
+    catalog,
+    entry,
+    connectorIcons,
+    changes: icons.changes,
+  });
 });
 
 export const layer = Layer.effect(ExtensionsDiscover, makeWith());

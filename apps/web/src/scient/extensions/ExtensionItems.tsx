@@ -137,16 +137,13 @@ export function ItemMenu({
   );
 }
 
-/** Menu entries for a connector, shared by its row and its detail page. */
-export function ConnectorMenuItems({
+/** Menu entries for a connector's row. */
+function ConnectorMenuItems({
   connector,
   actions,
-  toggle = true,
 }: {
   readonly connector: ConnectorSummary;
   readonly actions: ConnectorActionsState;
-  /** False where an On/Off switch is already shown. */
-  readonly toggle?: boolean;
 }) {
   const allowed = connectorActions(connector);
   return (
@@ -159,14 +156,12 @@ export function ConnectorMenuItems({
           {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
         </MenuItem>
       ) : null}
-      {toggle ? (
-        <MenuItem
-          disabled={actions.locked}
-          onClick={() => void actions.setEnabled(!connector.enabled)}
-        >
-          {connector.enabled ? "Turn off" : "Turn on"}
-        </MenuItem>
-      ) : null}
+      <MenuItem
+        disabled={actions.locked}
+        onClick={() => void actions.setEnabled(!connector.enabled)}
+      >
+        {connector.enabled ? "Turn off" : "Turn on"}
+      </MenuItem>
       <MenuSeparator />
       <MenuItem
         variant="destructive"
@@ -195,7 +190,7 @@ export function ConnectorItem({
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
-      status={connectorStatusText(connector)}
+      status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
           <ConnectorMenuItems connector={connector} actions={actions} />
@@ -239,6 +234,7 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
       name={name}
       iconUrl={entry.iconUrl}
       tagline={entryTagline(entry)}
+      status={actions.busy === "add" ? "Adding…" : null}
       trailing={
         entry.installedConnectorId === undefined ? (
           <Button
@@ -259,7 +255,7 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
   );
 }
 
-export function PluginMenuItems({
+function PluginMenuItems({
   plugin,
   actions,
 }: {

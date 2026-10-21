@@ -8,6 +8,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
+import * as Option from "effect/Option";
 import { ChevronLeftIcon, ChevronRightIcon, type LucideIcon } from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
 
@@ -22,6 +23,7 @@ import { useProjects } from "../../state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { providersIgnoringCheckedAtAtom } from "../../state/server";
+import { environmentShell } from "../../state/shell";
 import { useEnvironmentScope } from "../../state/session";
 import { extensionsDiscoverCatalog, extensionsInventory } from "./extensionsState";
 import { callbackOriginOf } from "./extensionsView";
@@ -37,6 +39,11 @@ export interface ExtensionsEnvironment {
   readonly catalogError: string | null;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  /**
+   * Whether `projects` is this environment's real project list. Before its
+   * first snapshot arrives the list is empty, which proves nothing is deleted.
+   */
+  readonly projectsKnown: boolean;
 }
 
 const ExtensionsEnvironmentContext = createContext<ExtensionsEnvironment | null>(null);
@@ -55,6 +62,7 @@ function ExtensionsEnvironmentProvider({
   readonly children: ReactNode;
 }) {
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
+  const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const allProjects = useProjects();
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const catalog = useEnvironmentQuery(extensionsDiscoverCatalog({ environmentId, input: {} }));
@@ -72,6 +80,7 @@ function ExtensionsEnvironmentProvider({
     projects: allProjects
       .filter((project) => project.environmentId === environmentId && project.isScratch !== true)
       .map((project) => ({ id: project.id, title: project.title })),
+    projectsKnown: Option.isSome(shell.snapshot),
   };
   return <ExtensionsEnvironmentContext value={value}>{children}</ExtensionsEnvironmentContext>;
 }

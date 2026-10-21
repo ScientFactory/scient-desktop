@@ -13,7 +13,9 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
+import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { AtomRegistry } from "effect/reactivity";
 import { act, cloneElement, type ReactElement, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -29,8 +31,12 @@ const state = vi.hoisted(() => ({
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
   discoverPages: {} as Record<string, DiscoverPageResult>,
+  /** `extensions.discover.entry` answers by name; catalog entries answer too. */
+  entries: {} as Record<string, DiscoverEntry>,
   queryTargets: [] as unknown[],
   projects: [] as Array<{ environmentId: string; id: string; title: string; isScratch?: true }>,
+  projectsKnown: true,
+  registry: null as AtomRegistry.AtomRegistry | null,
   hash: "",
   navigate: vi.fn(),
   commands: {
@@ -66,12 +72,23 @@ function useStateVersion() {
   );
 }
 
-vi.mock("@effect/atom-react", async (importOriginal) => ({
-  ...(await importOriginal<typeof AtomReact>()),
-  useAtomValue: (atom: unknown) => {
-    useStateVersion();
-    return typeof atom === "string" ? (state.providersByEnvironment[atom] ?? []) : null;
-  },
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof AtomReact>();
+  const { some, none } = await import("effect/Option");
+  return {
+    ...actual,
+    useAtomValue: (atom: unknown) => {
+      useStateVersion();
+      if (typeof atom === "string") return state.providersByEnvironment[atom] ?? [];
+      if (typeof atom === "object" && atom !== null && "shellOf" in atom) {
+        return { status: "live", snapshot: state.projectsKnown ? some({}) : none() };
+      }
+      return actual.useAtomValue(atom as Parameters<typeof actual.useAtomValue>[0]);
+    },
+  };
+});
+vi.mock("../../state/shell", () => ({
+  environmentShell: { stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }) },
 }));
 vi.mock("../../state/server", () => ({
   providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
@@ -121,50 +138,84 @@ vi.mock("../../state/session", () => ({
   },
   useEnvironmentsWithScope: () => new Set(),
 }));
-vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (
-    atom: { kind: string; environmentId: string; input?: Record<string, unknown> } | null,
-  ) => {
-    useStateVersion();
-    if (atom === null) return { data: null, error: null, isPending: false };
-    state.queryTargets.push(atom);
-    if (atom.kind === "inventory") return { data: state.inventory, error: null };
-    if (atom.kind === "catalog") return { data: state.catalog, error: null };
-    const page = state.discoverPages[JSON.stringify(atom.input ?? {})];
-    return {
-      data: page ?? { entries: [], fetchedAt: "2026-10-21T00:00:00.000Z" },
-      error: null,
-      isPending: false,
-    };
-  },
-}));
+vi.mock("../../state/query", async () => {
+  const { ExtensionsError: NotFound } = await import("@t3tools/contracts");
+  return {
+    useEnvironmentQuery: (
+      atom: { kind: string; environmentId: string; input?: Record<string, unknown> } | null,
+    ) => {
+      useStateVersion();
+      if (atom === null) return { data: null, error: null, failure: null, isPending: false };
+      state.queryTargets.push(atom);
+      if (atom.kind === "inventory") return { data: state.inventory, error: null };
+      if (atom.kind === "catalog") return { data: state.catalog, error: null };
+      if (atom.kind === "entry") {
+        const name = String(atom.input?.name);
+        const found =
+          state.entries[name] ??
+          state.catalog?.sections
+            .flatMap((section) => section.entries)
+            .find((candidate) => candidate.name === name);
+        return found
+          ? { data: found, error: null, failure: null, isPending: false }
+          : {
+              data: null,
+              error: `No server named ${name}.`,
+              failure: new NotFound({ reason: "not-found", message: `No server named ${name}.` }),
+              isPending: false,
+            };
+      }
+      const page = state.discoverPages[JSON.stringify(atom.input ?? {})];
+      return {
+        data: page ?? { entries: [], fetchedAt: "2026-10-21T00:00:00.000Z" },
+        error: null,
+        isPending: false,
+      };
+    },
+  };
+});
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: unknown) => value }));
-vi.mock("./extensionsState", () => ({
-  extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
-    kind: "inventory",
-    environmentId,
-  }),
-  extensionsDiscoverCatalog: ({ environmentId }: { environmentId: string }) => ({
-    kind: "catalog",
-    environmentId,
-  }),
-  extensionsDiscoverPage: ({
-    environmentId,
-    input,
-  }: {
-    environmentId: string;
-    input: Record<string, unknown>;
-  }) => ({ kind: "discover", environmentId, input }),
-  addConnector: "add",
-  updateConnector: "update",
-  removeConnector: "remove",
-  testConnector: "test",
-  startConnectorSignIn: "startSignIn",
-  installScientPlugin: "install",
-  removeScientPlugin: "pluginRemove",
-  setScientPluginEnabled: "pluginEnabled",
-  actOnProviderPlugin: "providerAct",
-}));
+vi.mock("./extensionsState", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
+  return {
+    extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
+      kind: "inventory",
+      environmentId,
+    }),
+    extensionsDiscoverCatalog: ({ environmentId }: { environmentId: string }) => ({
+      kind: "catalog",
+      environmentId,
+    }),
+    extensionsDiscoverEntry: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => ({ kind: "entry", environmentId, input }),
+    extensionsDiscoverPage: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => ({ kind: "discover", environmentId, input }),
+    // Real atoms: each test renders into its own registry, so nothing leaks between tests.
+    extensionItemOperation: Atom.family((_key: string) => Atom.make(idle).pipe(Atom.keepAlive)),
+    extensionItemOperationKey: (environmentId: string, item: string) =>
+      JSON.stringify([environmentId, item]),
+    addConnector: "add",
+    updateConnector: "update",
+    removeConnector: "remove",
+    testConnector: "test",
+    startConnectorSignIn: "startSignIn",
+    installScientPlugin: "install",
+    removeScientPlugin: "pluginRemove",
+    setScientPluginEnabled: "pluginEnabled",
+    actOnProviderPlugin: "providerAct",
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: keyof typeof state.commands) => state.commands[command],
 }));
@@ -435,7 +486,7 @@ async function render(element: ReactElement) {
   await act(async () => {
     state.version += 1;
     for (const listener of state.listeners) listener();
-    root.render(element);
+    root.render(<RegistryContext value={state.registry!}>{element}</RegistryContext>);
   });
 }
 
@@ -485,6 +536,9 @@ beforeEach(() => {
   state.inventory = inventory();
   state.catalog = catalog;
   state.discoverPages = {};
+  state.entries = {};
+  state.projectsKnown = true;
+  state.registry = AtomRegistry.make();
   state.queryTargets = [];
   state.hash = "";
   state.navigate.mockReset();
@@ -581,6 +635,96 @@ describe("Discover", () => {
       },
     });
     expect(reserved.location.href).toBe("https://auth.notion.so/authorize");
+  });
+
+  it("keeps a deferred sign-in's fallback link once the added connector replaces the row", async () => {
+    // The browser refuses the sign-in window.
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => null),
+    );
+    const notion = connector("notion0001", { displayName: "Notion", status: "needs-auth" });
+    state.commands.add.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { connector: notion, nextStep: "sign-in-required" },
+    });
+    const signIn = Promise.withResolvers<unknown>();
+    state.commands.startSignIn.mockReturnValueOnce(signIn.promise);
+    await render(<DiscoverPage />);
+    await userEvent.click(buttonIn(row("Notion"), "Add Notion")!);
+    await act(async () => undefined);
+    expect(state.commands.startSignIn).toHaveBeenCalledOnce();
+
+    // The server publishes the new connector while its sign-in is still opening.
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear" }), notion],
+    });
+    const [popular] = catalog.sections;
+    state.catalog = {
+      ...catalog,
+      sections: [
+        {
+          ...popular!,
+          entries: popular!.entries.map((item) =>
+            item.name === "io.notion/notion"
+              ? { ...item, installedConnectorId: notion.connectorId }
+              : item,
+          ),
+        },
+      ],
+    };
+    await render(<DiscoverPage />);
+    expect(buttonIn(row("Notion"), "More for Notion")).not.toBeNull();
+    expect(row("Notion").querySelector("[data-extension-status]")?.textContent).toBe(
+      "Opening sign-in…",
+    );
+
+    await act(async () =>
+      signIn.resolve({
+        _tag: "Success",
+        value: {
+          authorizationUrl: "https://auth.notion.so/authorize",
+          expiresAt: "2026-10-21T00:10:00.000Z",
+        },
+      }),
+    );
+    expect(linkIn(row("Notion"), "Open sign-in page")?.getAttribute("href")).toBe(
+      "https://auth.notion.so/authorize",
+    );
+    expect(row("Notion").querySelector("[data-extension-status]")?.textContent).toBe(
+      "Needs sign-in",
+    );
+
+    await render(<ConnectorDetailPage connectorId="con_notion0001" />);
+    expect(linkIn(section("Connection"), "Open sign-in page")?.getAttribute("href")).toBe(
+      "https://auth.notion.so/authorize",
+    );
+  });
+
+  it("draws a letter tile for an icon that is not an allowed inline image", async () => {
+    const [popular] = catalog.sections;
+    state.catalog = {
+      ...catalog,
+      sections: [
+        {
+          ...popular!,
+          entries: [
+            entry("io.example/odd", {
+              title: "Odd",
+              iconUrl: "data:constructor;base64,bm90IGFuIGltYWdl",
+            }),
+            entry("io.example/fine", {
+              title: "Fine",
+              iconUrl: "data:image/png;base64,iVBORw0KGgo=",
+            }),
+          ],
+        },
+      ],
+    };
+    await render(<DiscoverPage />);
+    expect(row("Odd").querySelector("img")).toBeNull();
+    expect(row("Odd").querySelector("[data-extension-icon]")).toBeNull();
+    expect(row("Fine").querySelector('[data-extension-icon="image"] img')).not.toBeNull();
   });
 
   it("shows a failed add on its row", async () => {
@@ -749,41 +893,98 @@ describe("Installed", () => {
   });
 });
 
+const header = () => container.querySelector("header")!;
+const headerButtons = () =>
+  [...header().querySelectorAll("button")].map(
+    (item) => item.getAttribute("aria-label") ?? item.textContent,
+  );
+const detailsDialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+const groupTrigger = (label: string) =>
+  [...detailsDialog().querySelectorAll("button")].find((item) =>
+    item.textContent?.startsWith(label),
+  ) ?? null;
+const aboutTerms = () =>
+  [...section("About").querySelectorAll("dt")].map((item) => item.textContent);
+const aboutValue = (label: string) =>
+  [...section("About").querySelectorAll("dt")].find((item) => item.textContent === label)
+    ?.nextElementSibling?.textContent;
+const projectA = ProjectId.make("project-a");
+const projectB = ProjectId.make("project-b");
+const projectC = ProjectId.make("project-c");
+
 describe("Detail pages", () => {
-  it("offers sign-in for a connector that needs it and lists tools after a test", async () => {
+  it("shows each kind's header actions", async () => {
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(headerButtons()).toEqual(["View details", "Remove"]);
+
+    await render(<ServerDetailPage name="io.notion/notion" />);
+    expect(headerButtons()).toEqual([
+      "View details",
+      "Add",
+      "More for Notion",
+      "Add with options…",
+    ]);
+
+    state.inventory = inventory({
+      plugins: [
+        plugin("scient.sources", { displayName: "Sources" }),
+        plugin("lab-kit", {
+          displayName: "Lab kit",
+          origin: "bundle",
+          canSetEnabled: true,
+          canRemove: true,
+        }),
+      ],
+    });
+    await render(<PluginDetailPage pluginId="scient.sources" />);
+    expect(headerButtons()).toEqual(["View details"]);
+    await render(<PluginDetailPage pluginId="lab-kit" />);
+    expect(headerButtons()).toEqual(["Turn off Lab kit", "View details", "Uninstall"]);
+
+    await render(
+      <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
+    );
+    expect(headerButtons()).toEqual(["View details", "Uninstall"]);
+    await render(
+      <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
+    );
+    expect(headerButtons()).toEqual(["View details"]);
+    expect(header().textContent).toContain("Managed by Codex");
+  });
+
+  it("shows the connection with its sign-in, menu and On/Off switch", async () => {
     state.inventory = inventory({
       connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const header = container.querySelector("header")!;
-    expect(buttonIn(header, "Sign in")).not.toBeNull();
-    expect(buttonIn(section("Tools"), "Test")?.disabled).toBe(true);
+    const connection = section("Connection");
+    expect(connection.textContent).toContain("Needs sign-in");
+    expect(buttonIn(connection, "Sign in")?.disabled).toBe(false);
+    expect(buttonIn(connection, "Test")?.disabled).toBe(true);
+    expect(buttonIn(header(), "Sign in")).toBeNull();
     expect(linkIn(container, "Installed")?.getAttribute("href")).toBe(
       "/settings/extensions/installed",
     );
 
-    state.inventory = inventory();
-    state.commands.test.mockResolvedValueOnce({
-      _tag: "Success",
-      value: {
-        connectorId: LINEAR,
-        outcome: "ok",
-        checkedAt: "2026-10-21T00:00:00.000Z",
-        tools: [
-          { name: "list_issues", readOnly: true },
-          { name: "delete_issue", destructive: true },
-        ],
-      },
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear", enabled: false })],
     });
+    state.commands.update.mockResolvedValueOnce(extensionsError("Locked by a plugin."));
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(buttonIn(container.querySelector("header")!, "Sign in")).toBeNull();
-    expect(container.querySelector('header [role="switch"]')?.getAttribute("aria-checked")).toBe(
-      "true",
+    expect(section("Connection").textContent).toContain("Signed in");
+    expect(buttonIn(section("Connection"), "Sign in")).toBeNull();
+    expect(buttonIn(section("Connection"), "Reconnect")).not.toBeNull();
+    const toggle = buttonIn(section("Connection"), "Turn on Linear")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await userEvent.click(toggle);
+    expect(state.commands.update).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, enabled: true },
+    });
+    expect(section("Connection").querySelector('[role="alert"]')?.textContent).toBe(
+      "Locked by a plugin.",
     );
-    await userEvent.click(buttonIn(section("Tools"), "Test")!);
-    const tools = container.querySelector('[aria-label="Tools of Linear"]')!;
-    expect(tools.textContent).toContain("list_issuesread-only");
-    expect(tools.textContent).toContain("delete_issuechanges data");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
   it("sends the whole project list for each availability change", async () => {
@@ -795,8 +996,7 @@ describe("Detail pages", () => {
     ];
     state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const available = section("Available in");
-    await userEvent.selectOptions(available.querySelector("select")!, "projects");
+    await userEvent.selectOptions(section("Available in").querySelector("select")!, "projects");
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
       input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [] } },
@@ -822,17 +1022,14 @@ describe("Detail pages", () => {
     await userEvent.click(switches()[0]!);
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
-      input: {
-        connectorId: LINEAR,
-        availability: { type: "projects", projectIds: [ProjectId.make("project-a")] },
-      },
+      input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [projectA] } },
     });
 
     state.inventory = inventory({
       connectors: [
         connector("linear0001", {
           displayName: "Linear",
-          availability: { type: "projects", projectIds: [ProjectId.make("project-a")] },
+          availability: { type: "projects", projectIds: [projectA] },
         }),
       ],
     });
@@ -843,10 +1040,7 @@ describe("Detail pages", () => {
       environmentId: "local",
       input: {
         connectorId: LINEAR,
-        availability: {
-          type: "projects",
-          projectIds: [ProjectId.make("project-a"), ProjectId.make("project-b")],
-        },
+        availability: { type: "projects", projectIds: [projectA, projectB] },
       },
     });
     await userEvent.click(switches()[0]!);
@@ -856,14 +1050,63 @@ describe("Detail pages", () => {
     });
   });
 
+  it("keeps project switches working after a selected project is deleted", async () => {
+    // A and B were selected; B has since been deleted, so only A and C exist.
+    state.projects = [
+      { environmentId: "local", id: "project-a", title: "Alpha" },
+      { environmentId: "local", id: "project-c", title: "Gamma" },
+    ];
+    state.inventory = inventory({
+      connectors: [
+        connector("linear0001", {
+          displayName: "Linear",
+          availability: { type: "projects", projectIds: [projectA, projectB] },
+        }),
+      ],
+    });
+    state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    const available = section("Available in");
+    expect(available.textContent).toContain("Deleted project");
+
+    await userEvent.click(buttonIn(available, "Turn off in Alpha")!);
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [] } },
+    });
+    await userEvent.click(buttonIn(available, "Turn on in Gamma")!);
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: {
+        connectorId: LINEAR,
+        availability: { type: "projects", projectIds: [projectA, projectC] },
+      },
+    });
+    await userEvent.click(buttonIn(available, "Remove deleted project project-b")!);
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [projectA] } },
+    });
+    expect(state.commands.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ availability: { type: "all-projects" } }),
+      }),
+    );
+
+    // Before the project list arrives, nothing is called deleted or dropped.
+    state.projectsKnown = false;
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(section("Available in").textContent).not.toContain("Deleted project");
+    expect(section("Available in").textContent).toContain("Loading projects…");
+  });
+
   it("removes a connector only after confirmation", async () => {
     state.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     state.commands.remove.mockResolvedValue({ _tag: "Success", value: inventory() });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const advanced = section("Advanced");
-    await userEvent.click(buttonIn(advanced, "Remove")!);
+    await userEvent.click(buttonIn(header(), "Remove")!);
     expect(state.commands.remove).not.toHaveBeenCalled();
-    await userEvent.click(buttonIn(advanced, "Remove")!);
+    await userEvent.click(buttonIn(header(), "Remove")!);
     expect(state.commands.remove).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { connectorId: LINEAR },
@@ -872,7 +1115,7 @@ describe("Detail pages", () => {
 
   it("explains why a server cannot be added and adds one that can", async () => {
     await render(<ServerDetailPage name="io.github.acme/local" />);
-    expect(buttonIn(container.querySelector("header")!, "Add")?.disabled).toBe(true);
+    expect(buttonIn(header(), "Add")?.disabled).toBe(true);
     expect(container.textContent).toContain("Runs locally, not supported.");
 
     state.commands.add.mockResolvedValueOnce({
@@ -880,64 +1123,185 @@ describe("Detail pages", () => {
       value: { connector: connector("notion0001", { displayName: "Notion" }), nextStep: "ready" },
     });
     await render(<ServerDetailPage name="io.notion/notion" />);
-    await userEvent.click(buttonIn(container.querySelector("header")!, "Add")!);
+    await userEvent.click(buttonIn(header(), "Add")!);
     expect(state.commands.add).toHaveBeenCalledOnce();
     expect(state.toast).toHaveBeenCalledWith({ type: "success", title: "Notion added" });
   });
 
-  it("shows an added curated server as its connector", async () => {
+  it("shows an added catalog server as its connector", async () => {
     await render(<ServerDetailPage name="app.linear/linear" />);
     expect(container.querySelector("h1")?.textContent).toBe("Linear");
-    expect(container.querySelector('header [role="switch"]')).not.toBeNull();
-    expect(container.querySelector("header img")).not.toBeNull();
+    expect(buttonIn(section("Connection"), "Turn off Linear")).not.toBeNull();
+    expect(header().querySelector("img")).not.toBeNull();
     expect(section("Available in")).not.toBeNull();
   });
 
-  it("shows one On/Off switch for an added connector, never Off beside Connected", async () => {
-    state.inventory = inventory({
-      connectors: [connector("linear0001", { displayName: "Linear", enabled: false })],
+  it("opens a catalog entry that no preview lists, by link, reload and search", async () => {
+    const synapse = entry("scient.curated/synapse", {
+      title: "Synapse",
+      tagline: "Biomedical research data",
+      categories: ["research"],
     });
-    state.commands.update.mockResolvedValueOnce(extensionsError("Locked by a plugin."));
-    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const header = container.querySelector("header")!;
-    expect(header.textContent).not.toContain("Connected");
-    const toggle = header.querySelector<HTMLButtonElement>('[role="switch"]')!;
-    expect(toggle.getAttribute("aria-label")).toBe("Turn on Linear");
-    expect(header.textContent).toContain("Off");
-    expect(buttonIn(header, "Turn on")).toBeNull();
-    await userEvent.click(toggle);
-    expect(state.commands.update).toHaveBeenCalledExactlyOnceWith({
+    state.entries = { [synapse.name]: synapse };
+    await render(<ServerDetailPage name="scient.curated/synapse" />);
+    expect(container.querySelector("h1")?.textContent).toBe("Synapse");
+    expect(state.queryTargets).toContainEqual({
+      kind: "entry",
       environmentId: "local",
-      input: { connectorId: LINEAR, enabled: true },
+      input: { name: "scient.curated/synapse" },
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Locked by a plugin.");
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render(<ServerDetailPage name="scient.curated/synapse" />);
+    expect(container.querySelector("h1")?.textContent).toBe("Synapse");
+
+    await render(<ServerDetailPage name="io.nowhere/missing" />);
+    expect(container.textContent).toContain("This server was not found.");
+
+    state.discoverPages = {
+      [JSON.stringify({ query: "synapse" })]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [synapse],
+      },
+    };
+    await render(<DiscoverPage />);
+    await userEvent.type(
+      container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      "synapse",
+    );
+    expect(rowNames(section("Search results"))).toEqual(["Synapse"]);
+    expect(linkIn(row("Synapse"), "Synapse")?.getAttribute("href")).toBe(
+      "/settings/extensions/item/server/scient.curated/synapse",
+    );
   });
 
-  it("summarizes which agents a connector works with and lists only the exceptions", async () => {
+  it("lists only the About rows it has data for", async () => {
+    state.entries = {
+      "io.example/full": entry("io.example/full", {
+        title: "Full",
+        version: "3.1.0",
+        websiteUrl: "https://www.full.example/docs",
+        repositoryUrl: "https://github.com/acme/full",
+        categories: ["featured", "research"],
+      }),
+      "scient.curated/bare": entry("scient.curated/bare", {
+        title: "Bare",
+        remotes: [],
+        installable: false,
+      }),
+    };
+    await render(<ServerDetailPage name="io.example/full" />);
+    expect(aboutTerms()).toEqual([
+      "Category",
+      "Website",
+      "Repository",
+      "Works with",
+      "URL",
+      "Registry name",
+      "Version",
+      "Source",
+    ]);
+    expect(aboutValue("Category")).toBe("Research");
+    expect(aboutValue("Website")).toBe("full.example");
+    expect(aboutValue("Source")).toBe("Scient catalog");
+
+    await render(<ServerDetailPage name="scient.curated/bare" />);
+    expect(aboutTerms()).toEqual(["Works with", "Source"]);
+
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const worksWith = section("Works with");
-    expect(worksWith.textContent).toContain("Works with 2 of 3 agents.");
+    expect(aboutTerms()).toEqual([
+      "Added on",
+      "Works with",
+      "Sign-in used",
+      "URL",
+      "Server name",
+      "Source",
+    ]);
+    expect(aboutValue("Sign-in used")).toBe("OAuth");
+    expect(aboutValue("Server name")).toBe("linear0001");
+    expect(aboutValue("Source")).toBe("Scient catalog");
+  });
+
+  it("summarizes which agents a connector works with and lists them on demand", async () => {
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(aboutValue("Works with")).toContain("2 of 3 agents");
     const listed = () =>
-      [...worksWith.querySelectorAll<HTMLElement>("[data-support]")].map(
+      [...section("About").querySelectorAll<HTMLElement>("[data-support]")].map(
         (item) => item.textContent,
       );
-    expect(listed()).toEqual(["Pi — Pi cannot reach remote MCP servers."]);
-    await userEvent.click(buttonIn(worksWith, "Show all 3")!);
+    expect(listed()).toEqual([]);
+    await userEvent.click(buttonIn(section("About"), "Show agents")!);
     expect(listed()).toEqual([
       "Codex — Works",
       "Claude — Works",
       "Pi — Pi cannot reach remote MCP servers.",
     ]);
-    await userEvent.click(buttonIn(worksWith, "Show fewer")!);
-    expect(listed()).toEqual(["Pi — Pi cannot reach remote MCP servers."]);
 
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.filter((entry) => entry.status === "supported"),
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(section("Works with").textContent).toContain("Works with all your agents.");
-    expect(section("Works with").querySelectorAll("[data-support]")).toHaveLength(0);
+    expect(aboutValue("Works with")).toContain("All your agents");
+  });
+
+  it("tests on View details and groups a connector's tools by kind", async () => {
+    state.commands.test.mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        connectorId: LINEAR,
+        outcome: "ok",
+        checkedAt: "2026-10-21T00:00:00.000Z",
+        tools: [
+          { name: "list_issues", readOnly: true, description: "List issues" },
+          { name: "delete_issue", destructive: true },
+          { name: "update_issue", readOnly: false },
+          { name: "ping" },
+        ],
+      },
+    });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.click(buttonIn(header(), "View details")!);
+    expect(state.commands.test).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR },
+    });
+    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
+      "The Linear app contains 4 tools (2 write, 1 read, 1 other)",
+    );
+    expect(
+      ["Write", "Read", "Other", "Works with"].map((label) => groupTrigger(label)?.textContent),
+    ).toEqual(["Write2", "Read1", "Other1", "Works with3"]);
+    await userEvent.click(groupTrigger("Read")!);
+    expect(detailsDialog().querySelector('[aria-label="Read"]')?.textContent).toBe(
+      "list_issuesList issues",
+    );
+    await userEvent.click(groupTrigger("Write")!);
+    expect(
+      [...detailsDialog().querySelectorAll('[aria-label="Write"] li')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["delete_issue", "update_issue"]);
+  });
+
+  it("says tools appear after adding and signing in, without testing", async () => {
+    await render(<ServerDetailPage name="io.notion/notion" />);
+    await userEvent.click(buttonIn(header(), "View details")!);
+    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
+      "Tools appear after you add and sign in.",
+    );
+    expect(groupTrigger("Works with")).not.toBeNull();
+    expect(groupTrigger("Write")).toBeNull();
+
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
+    });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.click(buttonIn(header(), "View details")!);
+    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
+      "Tools appear after you add and sign in.",
+    );
+    expect(state.commands.test).not.toHaveBeenCalled();
   });
 
   it("draws built-in plugins with a glyph and bundles with a letter tile", async () => {
@@ -954,41 +1318,44 @@ describe("Detail pages", () => {
     expect(row("Lab kit").querySelector("[data-extension-icon]")).toBeNull();
   });
 
-  it("links a plugin's skills to the Skills page", async () => {
+  it("lists a plugin's parts in View details and links its skills to the Skills page", async () => {
     state.inventory = inventory({
       plugins: [
         plugin("sources", {
           displayName: "Sources",
           components: [
             { type: "skill", name: "find-papers" },
-            { type: "mcp-tools", name: "sources_search" },
+            { type: "mcp-tools", name: "sources:read", detail: "sources_search" },
           ],
         }),
       ],
     });
     await render(<PluginDetailPage pluginId="sources" />);
-    const includes = section("Includes");
-    expect(linkIn(includes, "find-papers")?.getAttribute("href")).toBe("/settings/skills");
-    expect(linkIn(includes, "sources_search")).toBeNull();
+    await userEvent.click(buttonIn(header(), "View details")!);
+    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
+      "The Sources plugin contains 1 skill and 1 tool set",
+    );
+    await userEvent.click(groupTrigger("Skills")!);
+    expect(linkIn(detailsDialog(), "find-papers")?.getAttribute("href")).toBe("/settings/skills");
+    await userEvent.click(groupTrigger("Tools")!);
+    expect(detailsDialog().querySelector('[aria-label="Tools"]')?.textContent).toBe(
+      "sources:readsources_search",
+    );
+    expect(groupTrigger("Connected services")).toBeNull();
   });
 
-  it("offers Uninstall for a provider plugin only when the provider allows it", async () => {
+  it("uninstalls a provider plugin only when the provider allows it", async () => {
     state.confirm.mockResolvedValueOnce(true);
     state.commands.providerAct.mockResolvedValueOnce(extensionsError("Codex refused."));
     await render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    const managed = section("Managed by Codex");
-    await userEvent.click(buttonIn(managed, "Uninstall")!);
+    await userEvent.click(buttonIn(header(), "Uninstall")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
     });
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
-
-    await render(
-      <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
-    );
-    expect(buttonIn(section("Managed by Codex"), "Uninstall")).toBeNull();
+    expect(aboutValue("Managed by")).toBe("Codex");
   });
 });

@@ -5,6 +5,7 @@
  * small PNG, JPEG, WebP or SVG image is dropped and the client draws a letter
  * tile instead.
  */
+import { isExtensionIconDataUri, type ExtensionIconDataUri } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -47,17 +48,35 @@ const ICON_SIGNATURES: Readonly<Record<string, (bytes: Uint8Array) => boolean>> 
 };
 
 /**
- * A `data:` URI for `bytes` when the declared type is allowed, the bytes match
- * it, and they fit the size cap; otherwise `undefined`.
+ * The signature check for a `Content-Type`, or `undefined` when the type is
+ * not allowed. Own keys only: `constructor`, `__proto__`, `toString` and other
+ * inherited names are not media types.
  */
-export function iconDataUri(contentType: string | null, bytes: Uint8Array): string | undefined {
+const signatureFor = (
+  contentType: string | null,
+): { readonly mediaType: string; readonly matches: (bytes: Uint8Array) => boolean } | undefined => {
   const mediaType = (contentType ?? "").split(";")[0]!.trim().toLowerCase();
-  const matches = ICON_SIGNATURES[mediaType];
-  if (matches === undefined || bytes.byteLength === 0 || bytes.byteLength > MAX_ICON_BYTES) {
+  return Object.hasOwn(ICON_SIGNATURES, mediaType)
+    ? { mediaType, matches: ICON_SIGNATURES[mediaType]! }
+    : undefined;
+};
+
+/**
+ * A `data:` URI for `bytes` when the declared type is allowed, the bytes match
+ * it, they fit the size cap, and the result is a valid `ExtensionIconDataUri`;
+ * otherwise `undefined`.
+ */
+export function iconDataUri(
+  contentType: string | null,
+  bytes: Uint8Array,
+): ExtensionIconDataUri | undefined {
+  const signature = signatureFor(contentType);
+  if (signature === undefined || bytes.byteLength === 0 || bytes.byteLength > MAX_ICON_BYTES) {
     return undefined;
   }
-  if (!matches(bytes)) return undefined;
-  return `data:${mediaType};base64,${Buffer.from(bytes).toString("base64")}`;
+  if (!signature.matches(bytes)) return undefined;
+  const uri = `data:${signature.mediaType};base64,${Buffer.from(bytes).toString("base64")}`;
+  return isExtensionIconDataUri(uri) ? uri : undefined;
 }
 
 /** Icon traffic: public https only, unauthenticated GET redirects re-checked, 64 KiB, 10 s. */
@@ -73,7 +92,7 @@ export async function fetchIconDataUri(
   fetch: ConnectorFetch,
   url: string,
   signal?: AbortSignal,
-): Promise<string | undefined> {
+): Promise<ExtensionIconDataUri | undefined> {
   try {
     const response = await fetch(url, {
       headers: { accept: Object.keys(ICON_SIGNATURES).join(", ") },
@@ -84,7 +103,7 @@ export async function fetchIconDataUri(
       return undefined;
     }
     const contentType = response.headers.get("content-type");
-    if (ICON_SIGNATURES[(contentType ?? "").split(";")[0]!.trim().toLowerCase()] === undefined) {
+    if (signatureFor(contentType) === undefined) {
       await response.body?.cancel().catch(() => undefined);
       return undefined;
     }
@@ -103,7 +122,7 @@ export interface IconStore {
   readonly resolveWithin: (
     urls: ReadonlyArray<string>,
     budget: Duration.Input,
-  ) => Effect.Effect<ReadonlyMap<string, string>>;
+  ) => Effect.Effect<ReadonlyMap<string, ExtensionIconDataUri>>;
   /** Start loading `urls` in the background; never waits. */
   readonly warm: (urls: ReadonlyArray<string>) => Effect.Effect<void>;
   /** Emits once per batch of background loads that made at least one new icon available. */
@@ -111,7 +130,7 @@ export interface IconStore {
 }
 
 interface CachedIcon {
-  readonly value: string | undefined;
+  readonly value: ExtensionIconDataUri | undefined;
   readonly expiresAtMs: number;
 }
 
@@ -136,6 +155,8 @@ export const makeIconStore = Effect.fn("DiscoverIcons.makeIconStore")(function* 
         ),
       )
       .pipe(
+        // Only a valid icon data URI is admitted; anything else counts as a failure.
+        Effect.map((fetched) => (isExtensionIconDataUri(fetched) ? fetched : undefined)),
         Effect.flatMap((value) =>
           Clock.currentTimeMillis.pipe(
             Effect.map((now) => {
