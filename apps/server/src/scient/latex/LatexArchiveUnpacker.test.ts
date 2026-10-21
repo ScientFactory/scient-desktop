@@ -19,6 +19,7 @@ import {
   LatexArchiveUnpacker,
   layer as unpackerLayer,
   make,
+  sevenZipSelfExtractArguments,
   tinyTexUnpackArguments,
   windowsSystemTarPath,
 } from "./LatexArchiveUnpacker.ts";
@@ -56,7 +57,7 @@ const output = (
  * would assert something different on every developer's machine.
  */
 const harness = (
-  respond: () => Effect.Effect<ProcessRunner.ProcessRunOutput>,
+  respond: (input: ProcessRunner.ProcessRunInput) => Effect.Effect<ProcessRunner.ProcessRunOutput>,
   options: { readonly platform?: NodeJS.Platform; readonly systemRoot?: string } = {},
 ) =>
   Effect.gen(function* () {
@@ -67,7 +68,9 @@ const harness = (
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
             run: (input) =>
-              Ref.update(calls, (previous) => [...previous, input]).pipe(Effect.andThen(respond())),
+              Ref.update(calls, (previous) => [...previous, input]).pipe(
+                Effect.andThen(respond(input)),
+              ),
           }),
         ),
       ),
@@ -89,6 +92,18 @@ const unpackFixture = {
   archive: "seven-zip-sfx",
 } as const;
 
+/** The fixture in a real staging directory, for cases that clear the destination. */
+const stagedFixture = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const staging = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-staged-" });
+  return {
+    archivePath: path.join(staging, "TinyTeX-1-windows.exe"),
+    destination: path.join(staging, "payload"),
+    archive: "seven-zip-sfx",
+  } as const;
+});
+
 describe("tinyTexUnpackArguments", () => {
   it("hands tar the archive and the directory to expand it into", () => {
     expect(
@@ -104,6 +119,18 @@ describe("tinyTexUnpackArguments", () => {
       "-C",
       "/staging/install-1/payload",
     ]);
+  });
+});
+
+describe("sevenZipSelfExtractArguments", () => {
+  it("extracts in full, answers yes to every prompt, and names the destination in one argument", () => {
+    expect(
+      sevenZipSelfExtractArguments({
+        archivePath: "C:\\Users\\me and you\\staging\\TinyTeX-1-windows.exe",
+        destination: "C:\\Users\\me and you\\staging\\payload",
+        archive: "seven-zip-sfx",
+      }),
+    ).toEqual(["x", "-y", "-oC:\\Users\\me and you\\staging\\payload"]);
   });
 });
 
@@ -161,21 +188,110 @@ describe("LatexArchiveUnpacker", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("says so when the pinned unpacker is not on this computer", () =>
+  it.effect("lets the bundle unpack itself when this computer has no system tar", () =>
     Effect.gen(function* () {
+      const fixture = yield* stagedFixture;
       const { layer, calls } = yield* harness(() => Effect.succeed(output()), {
         platform: "win32",
         systemRoot: "Z:\\scient-latex-no-such-windows",
       });
+      yield* Effect.gen(function* () {
+        const unpacker = yield* LatexArchiveUnpacker;
+        yield* unpacker.unpack(fixture);
+      }).pipe(Effect.provide(layer));
+
+      // A bare `tar` from PATH is never tried: the only spawn is the bundle itself.
+      expect((yield* Ref.get(calls)).map((call) => [call.command, call.args])).toEqual([
+        [fixture.archivePath, ["x", "-y", `-o${fixture.destination}`]],
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("says so when neither the system tar nor the bundle can unpack it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* stagedFixture;
+      const { layer } = yield* harness(
+        () =>
+          Effect.succeed(
+            output({
+              code: ChildProcessSpawner.ExitCode(2),
+              stdout:
+                "7-Zip SFX 26.02 (x86)\r\n\r\nERROR: There is not enough space on the disk.\r\n",
+            }),
+          ),
+        { platform: "win32", systemRoot: "Z:\\scient-latex-no-such-windows" },
+      );
+      const failure = yield* Effect.gen(function* () {
+        const unpacker = yield* LatexArchiveUnpacker;
+        return yield* unpacker.unpack(fixture);
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(failure.reason).toBe("unpack-failed");
+      expect(failure.detail).toContain("Z:\\scient-latex-no-such-windows\\System32\\tar.exe");
+      expect(failure.detail).toContain(
+        "The download's own extractor also failed: ERROR: There is not enough space on the disk.",
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("clears what a failing system tar left and lets the bundle unpack itself", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const systemRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-latex-system-root-",
+      });
+      const systemTar = windowsSystemTarPath({ SystemRoot: systemRoot });
+      yield* fileSystem.makeDirectory(path.dirname(systemTar), { recursive: true });
+      yield* fileSystem.writeFileString(systemTar, "");
+      const staging = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-sfx-" });
+      const destination = path.join(staging, "payload");
+      const leftover = path.join(destination, "TinyTeX", "half-written.tfm");
+      yield* fileSystem.makeDirectory(path.dirname(leftover), { recursive: true });
+      yield* fileSystem.writeFileString(leftover, "");
+      const archivePath = path.join(staging, "TinyTeX-1-windows.exe");
+
+      const leftoverWhenExtracting = yield* Ref.make<boolean | null>(null);
+      const { layer, calls } = yield* harness(
+        (input) =>
+          input.command === systemTar
+            ? // Windows 10's bsdtar: it reads the 7-Zip headers, then cannot decode LZMA.
+              Effect.succeed(
+                output({
+                  code: ChildProcessSpawner.ExitCode(1),
+                  stderr: "tar.exe: Error opening archive: Unrecognized archive format",
+                }),
+              )
+            : fileSystem.exists(leftover).pipe(
+                Effect.orElseSucceed(() => true),
+                Effect.flatMap((present) => Ref.set(leftoverWhenExtracting, present)),
+                Effect.as(output()),
+              ),
+        { platform: "win32", systemRoot },
+      );
+      yield* Effect.gen(function* () {
+        const unpacker = yield* LatexArchiveUnpacker;
+        yield* unpacker.unpack({ archivePath, destination, archive: "seven-zip-sfx" });
+      }).pipe(Effect.provide(layer));
+
+      expect((yield* Ref.get(calls)).map((call) => call.command)).toEqual([systemTar, archivePath]);
+      expect(yield* Ref.get(leftoverWhenExtracting)).toBe(false);
+      expect(yield* fileSystem.exists(destination)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("never runs the download outside Windows", () =>
+    Effect.gen(function* () {
+      const { layer, calls } = yield* harness(() =>
+        Effect.succeed(output({ code: ChildProcessSpawner.ExitCode(2), stderr: "tar: bad" })),
+      );
       const failure = yield* Effect.gen(function* () {
         const unpacker = yield* LatexArchiveUnpacker;
         return yield* unpacker.unpack(unpackFixture);
       }).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(failure.reason).toBe("unpacker-unavailable");
-      expect(failure.detail).toContain("Z:\\scient-latex-no-such-windows\\System32\\tar.exe");
-      // Nothing was spawned: a bare `tar` fallback is exactly what this avoids.
-      expect(yield* Ref.get(calls)).toEqual([]);
+      expect(failure.detail).toContain("tar: bad");
+      expect((yield* Ref.get(calls)).map((call) => call.command)).toEqual(["tar"]);
     }),
   );
 

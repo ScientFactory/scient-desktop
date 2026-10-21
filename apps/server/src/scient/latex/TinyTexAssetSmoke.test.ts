@@ -20,7 +20,8 @@ import {
   latexDriverBinDirectory,
   make as makeLatexToolchain,
 } from "./LatexToolchain.ts";
-import { resolveTinyTexAsset } from "./tinytexManifest.ts";
+import { LatexArchiveUnpacker, make as makeLatexArchiveUnpacker } from "./LatexArchiveUnpacker.ts";
+import { resolveTinyTexAsset, type TinyTexAsset } from "./tinytexManifest.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
@@ -35,6 +36,8 @@ interface NativeAsset {
   readonly executable: string;
   readonly binDirectory: string;
   readonly workspace: string;
+  readonly archivePath: string;
+  readonly asset: TinyTexAsset;
 }
 
 /**
@@ -261,7 +264,7 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
       (location) => /chapters[\\/]body\.tex$/iu.test(location.input) && location.line >= 1,
     ),
   ).toBe(true);
-  return { executable, binDirectory, workspace };
+  return { executable, binDirectory, workspace, archivePath, asset: lookup.asset };
 }
 
 /**
@@ -338,6 +341,54 @@ const brokenFirstOnPath = (temporaryRoot: string, native: NativeAsset) =>
   });
 
 /**
+ * Windows 10's bsdtar cannot decode this bundle. With the system tar out of
+ * reach, the real unpacker must hand the verified download to its own 7-Zip
+ * extractor and still leave an engine that starts.
+ */
+const selfExtractWithoutSystemTar = (temporaryRoot: string, native: NativeAsset) =>
+  Effect.gen(function* () {
+    const destination = NodePath.join(temporaryRoot, "self-extracted");
+    yield* Effect.promise(() => NodeFSP.mkdir(destination, { recursive: true }));
+    yield* LatexArchiveUnpacker.use((unpacker) =>
+      unpacker.unpack({
+        archivePath: native.archivePath,
+        destination,
+        archive: native.asset.archive,
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.effect(LatexArchiveUnpacker, makeLatexArchiveUnpacker).pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, {
+              ...process.env,
+              SystemRoot: NodePath.join(temporaryRoot, "no-system-tar"),
+            }),
+          ),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+    const engine = NodePath.join(destination, native.asset.executableRelativePath);
+    expect(NodeFS.existsSync(engine)).toBe(true);
+    const environment = isolatedEnvironment(
+      [
+        NodePath.dirname(engine),
+        NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+      ],
+      NodePath.join(temporaryRoot, "no-default-installs"),
+    );
+    const started = NodeChildProcess.spawnSync(engine, ["-v"], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+      env: environment,
+    });
+    expect(started.error).toBeUndefined();
+    expect(started.status, started.stderr || started.stdout).toBe(0);
+  });
+
+/**
  * Unit tests cover failures and state transitions; this opt-in lane proves
  * each native release asset is executable on the operating system it claims
  * to support, and that discovery handles a broken driver ahead of it.
@@ -355,6 +406,8 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
             const native = yield* Effect.promise(() => verifyNativeAsset(temporaryRoot));
             if (native === null) return;
             yield* brokenFirstOnPath(temporaryRoot, native);
+            if (HOST_PLATFORM === "win32")
+              yield* selfExtractWithoutSystemTar(temporaryRoot, native);
           }),
         (temporaryRoot) =>
           Effect.promise(() => NodeFSP.rm(temporaryRoot, { recursive: true, force: true })),

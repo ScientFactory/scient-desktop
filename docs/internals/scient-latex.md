@@ -628,9 +628,9 @@ resolves a "latest" pointer at install time. Windows x64, Linux x64, and the
 universal Darwin bundle used by both macOS x64 and arm64 are pinned. Windows
 arm64 and Linux arm64 remain explicit unsupported slots until their assets are
 verified; the setup card falls back to plain install-it-yourself instructions
-there. Upstream ships the Windows bundle as a 7-Zip self-extracting `.exe`;
-Scient never runs that stub. `LatexArchiveUnpacker` shells out to `tar`, which
-reads the SFX file as an ordinary archive and extracts its payload directly.
+there. Upstream ships the Windows bundle as a 7-Zip self-extracting `.exe`.
+`LatexArchiveUnpacker` first shells out to `tar`, which reads the SFX file as
+an ordinary archive and extracts its payload directly.
 Only libarchive's tar
 does that, though, so which `tar` cannot be left to `PATH` on Windows, where
 Git for Windows and MSYS2 both place a GNU tar that rejects the bundle: the
@@ -640,6 +640,17 @@ there, which also keeps PATH — the one input on this path a user's other
 software can rewrite — out of the install entirely. Elsewhere the command
 stays `tar`: macOS ships bsdtar under that name, and Linux only ever reads the
 `.tar.xz` asset.
+
+Windows 10's bsdtar (libarchive without liblzma) opens the bundle and then
+cannot decode its LZMA payload, and some installs have no System32 `tar.exe`
+at all. On Windows only, when the system tar fails for any reason, the
+unpacker clears the half-written destination and runs the bundle itself as
+7-Zip's console self-extractor, `x -y -o<destination>`: it carries its own
+decoder, shows no window, and handles Unicode paths. The bundle's SHA-256 was
+already checked against the pin, and it is the same reviewed release whose
+`latexmk.exe` the install runs next, so this trusts nothing new. Both
+failures are reported together if the self-extractor fails too. Computers
+where the system tar works keep exactly the path they had.
 
 The install downloads to a staging directory under
 `<latexDir>/managed/.staging` (streamed with a declared-size check, a hard byte
