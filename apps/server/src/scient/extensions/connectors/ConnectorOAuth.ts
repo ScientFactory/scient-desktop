@@ -240,24 +240,30 @@ export interface ConnectorSignInResult {
     | undefined;
 }
 
+/** A stored client is usable only without a secret or with one Scient can protect. */
+const hasProtectableSecret = (client: Readonly<Record<string, unknown>>) =>
+  typeof client.client_secret !== "string" || isProtectableCredential(client.client_secret);
+
+/**
+ * The material a successful sign-in commits. Registrations whose secret is too
+ * short are retired at every issuer and redirect URI (not only the one just
+ * used), so legacy material can never block the new grant.
+ */
 export const applySignIn = (
   material: ConnectorOAuthMaterial,
   result: ConnectorSignInResult,
 ): ConnectorOAuthMaterial => {
   const registration = result.registration;
+  const kept = material.registrations.filter(
+    (entry) =>
+      hasProtectableSecret(entry.client) &&
+      (registration === undefined ||
+        entry.issuer !== registration.issuer ||
+        entry.redirectUri !== registration.redirectUri),
+  );
   return {
     ...material,
-    registrations:
-      registration === undefined
-        ? material.registrations
-        : [
-            ...material.registrations.filter(
-              (entry) =>
-                entry.issuer !== registration.issuer ||
-                entry.redirectUri !== registration.redirectUri,
-            ),
-            registration,
-          ],
+    registrations: registration === undefined ? kept : [...kept, registration],
     session: result.session,
   };
 };
@@ -395,10 +401,7 @@ export class ConnectorOAuthFlows {
         );
         // A stored registration whose secret is too short to protect is not
         // reused: returning nothing makes the flow register a new client.
-        const storedSecret = stored?.client.client_secret;
-        const usable =
-          stored !== undefined &&
-          (typeof storedSecret !== "string" || isProtectableCredential(storedSecret));
+        const usable = stored !== undefined && hasProtectableSecret(stored.client);
         return (usedClient = usable ? asClientInformation(stored.client) : undefined);
       },
       saveClientInformation: (information) => {

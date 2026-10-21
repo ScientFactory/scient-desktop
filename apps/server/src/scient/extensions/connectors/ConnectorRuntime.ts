@@ -77,8 +77,10 @@ import {
 } from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
 import {
+  agentRequestIds,
+  requestIdToken,
   credentialSet,
-  type CredentialSet,
+  type RedactionContext,
   isProtectableCredential,
   MIN_CREDENTIAL_LENGTH,
   redactEventStream,
@@ -292,26 +294,21 @@ const extensionsError = (reason: ExtensionsError["reason"], message: string) =>
 const lostGrantMessage = (record: Pick<ConnectorRecord, "displayName">) =>
   `${record.displayName} is no longer connected in Scient. Ask the user to reconnect it in Scient Settings → Extensions, then retry.`;
 
-/** The JSON-RPC id of a buffered request body, or null for notifications and unparsable bodies. */
+/** The method and tool name of a buffered request body, for the credential-use audit. */
 const parseRpcRequest = (
   body: Uint8Array | undefined,
 ): {
-  readonly id: string | number | null;
   readonly method?: string;
   readonly toolName?: string;
 } => {
-  if (body === undefined) return { id: null };
+  if (body === undefined) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(body));
   } catch {
-    return { id: null };
+    return {};
   }
-  if (typeof parsed !== "object" || parsed === null) return { id: null };
-  const id =
-    "id" in parsed && (typeof parsed.id === "string" || typeof parsed.id === "number")
-      ? parsed.id
-      : null;
+  if (typeof parsed !== "object" || parsed === null) return {};
   const method =
     "method" in parsed && typeof parsed.method === "string" ? parsed.method : undefined;
   const params = "params" in parsed ? parsed.params : undefined;
@@ -323,22 +320,19 @@ const parseRpcRequest = (
       ? params.name
       : undefined;
   return {
-    id,
     ...(method === undefined ? {} : { method }),
     ...(toolName === undefined ? {} : { toolName }),
   };
 };
 
-/** Replaces a response that cannot be verified as JSON (and ends an SSE stream). */
-const unverifiableResult = (id: string | number | null, displayName: string): string =>
-  JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    error: {
-      code: CONNECTOR_UNAVAILABLE_CODE,
-      message: `${displayName} sent a response Scient could not verify, so it was withheld.`,
-    },
-  });
+/**
+ * A Scient JSON-RPC error answering the agent's request. The id is the agent's
+ * own token text (`requestIdToken`), never a re-serialized number.
+ */
+const errorMessageFor = (body: Uint8Array | undefined, message: string): string =>
+  `{"jsonrpc":"2.0","id":${
+    body === undefined ? "null" : requestIdToken(new TextDecoder().decode(body))
+  },"error":${JSON.stringify({ code: CONNECTOR_UNAVAILABLE_CODE, message })}}`;
 
 const jsonBody = (value: unknown) => Stream.make(new TextEncoder().encode(JSON.stringify(value)));
 
@@ -357,11 +351,7 @@ const refusal = (
     ? {
         status: 200,
         headers: { "content-type": "application/json" },
-        body: jsonBody({
-          jsonrpc: "2.0",
-          id: parseRpcRequest(request.body).id,
-          error: { code: CONNECTOR_UNAVAILABLE_CODE, message },
-        }),
+        body: Stream.make(new TextEncoder().encode(errorMessageFor(request.body, message))),
       }
     : {
         status,
@@ -1404,7 +1394,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     function* (request) {
       const state = yield* store.read;
       const record = state.connectors.find((entry) => entry.connectorId === request.connectorId);
-      const rpc = request.method === "POST" ? parseRpcRequest(request.body) : { id: null };
+      const rpc = request.method === "POST" ? parseRpcRequest(request.body) : {};
       const correlationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const recordToolUse = (decision: "allowed" | "denied", outcome?: "ok" | "error") =>
         record !== undefined && rpc.method === "tools/call" && rpc.toolName !== undefined
@@ -1532,8 +1522,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         );
       }
       const body = response.body;
-      const applied: CredentialSet = credentialSet(outcome.secrets);
-      const unverifiable = unverifiableResult(rpc.id, record.displayName);
+      // Ids the agent itself sent may be echoed back unchanged even if tainted.
+      const redaction: RedactionContext = {
+        credentials: credentialSet(outcome.secrets),
+        agentIds:
+          request.body === undefined
+            ? new Set()
+            : agentRequestIds(new TextDecoder().decode(request.body)),
+        refusal: errorMessageFor(
+          request.body,
+          `${record.displayName} sent a response Scient could not verify, so it was withheld.`,
+        ),
+      };
       return {
         status: response.status,
         headers,
@@ -1542,9 +1542,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ? Stream.empty.pipe(Stream.ensuring(release))
             : Stream.fromReadableStream({
                 evaluate: () =>
-                  streamed
-                    ? redactEventStream(body, applied, unverifiable)
-                    : redactJsonStream(body, applied, unverifiable),
+                  streamed ? redactEventStream(body, redaction) : redactJsonStream(body, redaction),
                 onError: (error) => error,
               }).pipe(
                 Stream.onError(() =>

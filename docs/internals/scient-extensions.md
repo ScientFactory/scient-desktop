@@ -167,30 +167,37 @@ environment auth (the MCP session token is the authority, as for `/mcp`).
 - Buffers the request body (POST bodies are single JSON-RPC messages, ≤ 4 MiB)
   so it can be replayed once after a refresh. Responses are redacted by a
   token-level JSON rewriter that builds no objects: every token is copied byte
-  for byte, and only a string (value or key) or number lexeme carrying a
-  credential Scient applied becomes `"[redacted by Scient]"`. Strings are
-  checked after JSON unescaping, tolerant percent decoding (up to three rounds,
-  plain and form) and base64/base64url decoding at every alignment (runs found
-  by a linear scan). Untainted JSON is unchanged, including exact numbers and
-  any key name; nesting beyond 512 levels is refused.
+  for byte, and only a string (value or key) carrying a credential Scient
+  applied becomes `"[redacted by Scient]"`. Strings are checked after JSON
+  unescaping, tolerant percent decoding (up to three rounds, plain and form) and
+  base64/base64url decoding at every alignment (runs found by a linear scan).
+  A tainted number refuses the message rather than changing its type, and a
+  message's top-level `id` is never altered: kept exactly when it equals an id
+  the agent sent in this exchange, otherwise the message is refused. Refusals
+  are Scient JSON-RPC errors carrying the agent's request id exactly as the
+  agent wrote it (never a re-serialized number). Untainted JSON is
+  unchanged, including exact numbers and any key name; nesting beyond 512
+  levels is refused.
 - SSE is parsed line by line per the specification (CRLF, CR, LF or mixed,
   across chunks) and re-rendered event by event, each complete event released at
-  once and bounded by its own 4 MiB of upstream bytes. Data is redacted as JSON;
-  empty data (resumption priming) passes as is. A credential-bearing `event` or
-  `id` is dropped, `retry` passes only as an integer up to 600 000 ms, and each
-  upstream comment becomes a fixed `: keepalive` (its content is never sent).
-  A success body or event that is not verifiable JSON is replaced by a Scient
-  JSON-RPC error (ending the stream). Response headers are rebuilt by Scient:
-  content type, a protocol version only when it is a known MCP version
-  (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25), and the proxy session id;
-  nothing else is forwarded.
+  once and bounded by its own 4 MiB of raw upstream bytes (terminators
+  included). Data is redacted as JSON; empty data (resumption priming) passes as
+  is. A credential-bearing `event` or `id` is dropped, `retry` passes only as an
+  integer up to 600 000 ms, and upstream comments are never echoed: they only
+  let Scient send its own `: keepalive`, at most once per second and only when
+  nothing else was sent in that second. A success body or event that is not
+  verifiable JSON is replaced by a Scient JSON-RPC error (ending the stream).
+  Response headers are rebuilt by Scient: content type, a protocol version only
+  when it is a known MCP version (2024-11-05, 2025-03-26, 2025-06-18,
+  2025-11-25), and the proxy session id; nothing else is forwarded.
 - Every credential Scient holds or applies is at least 16 characters (entered
   keys, the Basic password half, issued access and refresh tokens, DCR and
   user client secrets). Shorter ones are refused at entry; issued ones are
   revoked and the connector marked needs-auth, whatever its previous status;
   stored legacy material is never applied (a short own client secret must be
-  replaced, a short stored DCR registration is re-registered at the next
-  sign-in). They could not be told apart from ordinary text.
+  replaced; a successful sign-in retires short stored DCR registrations at
+  every issuer and redirect URI). They could not be told apart from ordinary
+  text.
 - Only MCP results pass through. 202/204, `GET` 405 and session 404 keep their
   status with server-owned bodies; every other upstream status or content type
   becomes a server-owned error, so vendor error text never reaches the agent.

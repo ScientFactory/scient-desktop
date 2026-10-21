@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  VaultSecretRef,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,6 +34,8 @@ import {
   ConnectorOAuthError,
   ConnectorOAuthFlows,
   type ConnectorOAuthMaterial,
+  decodeOAuthMaterial,
+  encodeOAuthMaterial,
 } from "./ConnectorOAuth.ts";
 import { controlFetch, egressPolicyFor, STRICT_EGRESS_POLICY } from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
@@ -265,6 +268,13 @@ const handleMcp = async (
           // A resumable server's priming event (id, empty data), then the reply.
           response.writeHead(200, { "content-type": "text/event-stream" });
           response.end(`id: c1\r\nretry: 500\r\ndata:\r\n\r\n${sse(result({ content: [] }))}`);
+          return;
+        case "echo-number":
+          // A structured result carrying the (digits-only) credential as a number.
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            `{"jsonrpc":"2.0","id":${message.id},"result":{"content":[],"structuredContent":{"n":${token}}}}`,
+          );
           return;
         case "echo-version":
           // Date-shaped, but not a protocol version Scient knows.
@@ -1069,6 +1079,87 @@ describe("connector credential isolation, equivalent encodings", () => {
     expect(new URL(started.authorizationUrl).searchParams.get("client_id")).toBe("client-1");
     expect(vendor.registrations).toHaveLength(1);
   });
+
+  it.live("keeps the agent's own tainted numeric id and refuses a retyped numeric field", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const digits = "1234567890123456";
+      vendor.validTokens.add(digits);
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: digits },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      const kept = yield* harness.proxy(connectorId, toolCall(Number(digits)));
+      expect(yield* readText(kept)).toBe(
+        `{"jsonrpc":"2.0","id":${digits},"result":{"content":[{"type":"text","text":"found"}]}}`,
+      );
+      const refused = yield* harness.proxy(connectorId, toolCall(7, "echo-number"));
+      expect(yield* readJson(refused)).toMatchObject({
+        jsonrpc: "2.0",
+        id: 7,
+        error: { code: -32001, message: expect.stringContaining("withheld") },
+      });
+
+      // Refusals answer with the agent's id exactly as written, never a rounded number.
+      const bigId = "9007199254740993";
+      const rawCall = (name: string) =>
+        `{"jsonrpc":"2.0","id":${bigId},"method":"tools/call","params":{"name":"${name}","arguments":{}}}`;
+      const withheld = yield* harness.request(connectorId, { body: rawCall("echo-number") });
+      expect(yield* readText(withheld)).toMatch(
+        new RegExp(`^\\{"jsonrpc":"2\\.0","id":${bigId},"error":\\{"code":-32001,`),
+      );
+      yield* harness.runtime.update({ connectorId, projectPolicy: "selected-projects" });
+      const deselected = yield* harness.request(connectorId, { body: rawCall("search") });
+      expect(yield* readText(deselected)).toMatch(
+        new RegExp(`^\\{"jsonrpc":"2\\.0","id":${bigId},"error":\\{"code":-32001,`),
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("retires a legacy short DCR registration at another redirect URI on recovery", () =>
+    Effect.gen(function* () {
+      const first = yield* makeHarness();
+      const connectorId = yield* first.connectSecure();
+      const state: { connectors: Array<{ auth: { credentialRef: string } }> } = JSON.parse(
+        yield* Effect.promise(() => NodeFSP.readFile(first.statePath, "utf8")),
+      );
+      const ref = VaultSecretRef.make(state.connectors[0]!.auth.credentialRef);
+      const store = yield* ConnectorCredentialStore.ConnectorCredentialStore;
+      const owner = { type: "connector", connectorId } as const;
+      const stored = yield* store.readOwned(ref, owner);
+      expect(Option.isSome(stored)).toBe(true);
+      if (Option.isNone(stored)) return;
+      const material = decodeOAuthMaterial(stored.value.material);
+      expect(material).toBeDefined();
+      yield* store.replace(
+        ref,
+        encodeOAuthMaterial({
+          ...material!,
+          registrations: [
+            ...material!.registrations,
+            {
+              issuer: `${vendor.base}/as`,
+              redirectUri: "http://localhost:9/oauth/connectors/callback",
+              client: { client_id: "legacy", client_secret: "short" },
+            },
+          ],
+        }),
+        stored.value.version,
+      );
+
+      // A fresh runtime reads the legacy material: it is refused until a new sign-in.
+      const second = yield* makeHarness();
+      second.delivered.add(connectorId);
+      const blocked = yield* second.proxy(connectorId, toolCall(1));
+      expect(yield* readJson(blocked)).toMatchObject({ id: 1, error: { code: -32001 } });
+      const { response } = yield* second.signIn(connectorId);
+      expect(response.status).toBe(200);
+      const call = yield* second.proxy(connectorId, toolCall(2));
+      expect(yield* readJson(call)).toMatchObject({ id: 2, result: {} });
+    }).pipe(Effect.provide(testLayer)),
+  );
 
   it.live("refuses a Basic credential whose password half is short", () =>
     Effect.gen(function* () {

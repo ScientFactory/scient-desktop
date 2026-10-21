@@ -230,21 +230,49 @@ const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 
 type Expect = "value" | "valueOrEnd" | "key" | "keyOrEnd" | "colon" | "commaOrEnd" | "done";
 
+interface JsonToken {
+  readonly kind: "string" | "number";
+  readonly role: "key" | "value";
+  /** The decoded string, or the exact number lexeme. */
+  readonly content: string;
+  /** The token exactly as it appears in the text. */
+  readonly raw: string;
+  /** The value of a JSON-RPC message's top-level `id` (a message is the document or a batch element). */
+  readonly messageId: boolean;
+}
+
+/** What to do with a token: copy it, replace it with the redaction marker, or refuse the document. */
+type TokenAction = "keep" | "redact" | "refuse";
+
 /**
- * The redacted rewrite of a JSON document, or `undefined` when it is not
- * valid JSON or nests deeper than `MAX_JSON_DEPTH`. Untainted input is
- * returned byte for byte.
+ * Iterative JSON scanner. Calls `visit` for every string and number token and
+ * applies its decision; everything else is copied through. Returns the
+ * rewritten text (the input itself when nothing changed), or `undefined` when
+ * the input is not valid JSON, nests deeper than `MAX_JSON_DEPTH`, or a visit
+ * refused it.
  */
-export const redactJsonText = (text: string, credentials: CredentialSet): string | undefined => {
+const rewriteJson = (
+  text: string,
+  visit: (token: JsonToken) => TokenAction,
+): string | undefined => {
   const out: string[] = [];
   const stack: Array<"{" | "["> = [];
+  /** The most recent key of each open object (aligned with `stack`). */
+  const keys: Array<string | undefined> = [];
   let expect: Expect = "value";
   let copyFrom = 0;
   let index = 0;
   const afterValue = (): Expect => (stack.length === 0 ? "done" : "commaOrEnd");
-  const replaceToken = (start: number, end: number) => {
-    out.push(text.slice(copyFrom, start), REDACTED_TOKEN);
-    copyFrom = end;
+  const inMessage = () =>
+    (stack.length === 1 && stack[0] === "{") ||
+    (stack.length === 2 && stack[0] === "[" && stack[1] === "{");
+  const apply = (action: TokenAction, start: number, end: number): boolean => {
+    if (action === "refuse") return false;
+    if (action === "redact") {
+      out.push(text.slice(copyFrom, start), REDACTED_TOKEN);
+      copyFrom = end;
+    }
+    return true;
   };
   while (index < text.length) {
     const char = text[index]!;
@@ -259,6 +287,7 @@ export const redactJsonText = (text: string, credentials: CredentialSet): string
         if (expect !== "value" && expect !== "valueOrEnd") return undefined;
         if (stack.length >= MAX_JSON_DEPTH) return undefined;
         stack.push(char);
+        keys.push(undefined);
         expect = char === "{" ? "keyOrEnd" : "valueOrEnd";
         index += 1;
         continue;
@@ -270,6 +299,7 @@ export const redactJsonText = (text: string, credentials: CredentialSet): string
           return undefined;
         }
         stack.pop();
+        keys.pop();
         expect = afterValue();
         index += 1;
         continue;
@@ -289,10 +319,18 @@ export const redactJsonText = (text: string, credentials: CredentialSet): string
         if (!isKey && expect !== "value" && expect !== "valueOrEnd") return undefined;
         const lexed = lexString(text, index);
         if (lexed === undefined) return undefined;
-        if (isTainted(lexed.decoded, credentials)) replaceToken(index, lexed.end);
+        const messageId = !isKey && inMessage() && keys.at(-1) === "id";
+        const action = visit({
+          kind: "string",
+          role: isKey ? "key" : "value",
+          content: lexed.decoded,
+          raw: text.slice(index, lexed.end),
+          messageId,
+        });
+        if (!apply(action, index, lexed.end)) return undefined;
+        if (isKey) keys[keys.length - 1] = lexed.decoded;
         index = lexed.end;
-        if (isKey) expect = "colon";
-        else expect = afterValue();
+        expect = isKey ? "colon" : afterValue();
         continue;
       }
       default: {
@@ -307,8 +345,14 @@ export const redactJsonText = (text: string, credentials: CredentialSet): string
         const number = NUMBER.exec(text);
         if (number === null) return undefined;
         const end = index + number[0].length;
-        // A digits-only credential echoed as a JSON number.
-        if (isTainted(number[0], credentials)) replaceToken(index, end);
+        const action = visit({
+          kind: "number",
+          role: "value",
+          content: number[0],
+          raw: number[0],
+          messageId: inMessage() && keys.at(-1) === "id",
+        });
+        if (!apply(action, index, end)) return undefined;
         index = end;
         expect = afterValue();
         continue;
@@ -321,23 +365,80 @@ export const redactJsonText = (text: string, credentials: CredentialSet): string
   return out.join("");
 };
 
+/** A JSON-RPC id as compared between request and response: kind plus exact content. */
+const idKey = (token: Pick<JsonToken, "kind" | "content">) => `${token.kind}:${token.content}`;
+
+/** The top-level JSON-RPC ids of a request body the agent sent (empty when it is not JSON). */
+export const agentRequestIds = (body: string): ReadonlySet<string> => {
+  const ids = new Set<string>();
+  rewriteJson(body, (token) => {
+    if (token.messageId) ids.add(idKey(token));
+    return "keep";
+  });
+  return ids;
+};
+
+/**
+ * The exact JSON text of a single request message's `id` (string or number,
+ * as the agent wrote it), or `null` for notifications, batches and anything
+ * that is not a JSON-RPC message. Refusals echo it without re-serializing, so
+ * a large numeric id is never rounded.
+ */
+export const requestIdToken = (body: string): string => {
+  if (!body.trimStart().startsWith("{")) return "null";
+  let token: string | undefined;
+  const valid = rewriteJson(body, (visited) => {
+    if (visited.messageId && token === undefined) token = visited.raw;
+    return "keep";
+  });
+  return valid === undefined || token === undefined ? "null" : token;
+};
+
+/**
+ * The redacted rewrite of a JSON document, or `undefined` when it is not
+ * valid JSON, nests deeper than `MAX_JSON_DEPTH`, or cannot be redacted
+ * without changing a value's type or a message's identity. A tainted string
+ * becomes the redaction marker. A tainted number refuses the document (it
+ * cannot become a string without changing its type), except a message `id`
+ * the agent itself sent in this exchange, which is kept exactly. Untainted
+ * input is returned byte for byte.
+ */
+export const redactJsonText = (
+  text: string,
+  credentials: CredentialSet,
+  agentIds: ReadonlySet<string> = new Set(),
+): string | undefined =>
+  rewriteJson(text, (token) => {
+    if (!isTainted(token.content, credentials)) return "keep";
+    if (token.messageId) return agentIds.has(idKey(token)) ? "keep" : "refuse";
+    return token.kind === "number" ? "refuse" : "redact";
+  });
+
 /** `redactJsonText`, with any sanitizer failure treated as unverifiable. */
-const safelyRedactJson = (text: string, credentials: CredentialSet): string | undefined => {
+const safelyRedactJson = (
+  text: string,
+  credentials: CredentialSet,
+  agentIds: ReadonlySet<string>,
+): string | undefined => {
   try {
-    return redactJsonText(text, credentials);
+    return redactJsonText(text, credentials, agentIds);
   } catch {
     return undefined;
   }
 };
 
-/**
- * A complete JSON response body, redacted. Anything that is not JSON becomes
- * `refusal` (a Scient-written JSON-RPC error).
- */
+export interface RedactionContext {
+  readonly credentials: CredentialSet;
+  /** Top-level ids of the request the agent sent (`agentRequestIds`); empty for GET streams. */
+  readonly agentIds: ReadonlySet<string>;
+  /** A Scient-written JSON-RPC error carrying the agent's request id. */
+  readonly refusal: string;
+}
+
+/** A complete JSON response body, redacted; anything unverifiable becomes the refusal. */
 export const redactJsonStream = (
   body: ReadableStream<Uint8Array>,
-  credentials: CredentialSet,
-  refusal: string,
+  context: RedactionContext,
 ): ReadableStream<Uint8Array> => {
   const decoder = new TextDecoder();
   const parts: string[] = [];
@@ -348,15 +449,18 @@ export const redactJsonStream = (
       },
       flush(controller) {
         parts.push(decoder.decode());
-        const redacted = safelyRedactJson(parts.join(""), credentials);
-        controller.enqueue(new TextEncoder().encode(redacted ?? refusal));
+        const redacted = safelyRedactJson(parts.join(""), context.credentials, context.agentIds);
+        controller.enqueue(new TextEncoder().encode(redacted ?? context.refusal));
       },
     }),
   );
 };
 
-/** The comment Scient sends in place of each upstream comment line. */
+/** The comment Scient sends in place of upstream comments. */
 export const SSE_KEEPALIVE = ": keepalive\n";
+const KEEPALIVE_BYTES = new TextEncoder().encode(SSE_KEEPALIVE);
+/** At most one keepalive per window, and none when other output went out in it. */
+export const SSE_KEEPALIVE_INTERVAL_MS = 1_000;
 
 interface PendingEvent {
   data: string[] | undefined;
@@ -378,7 +482,8 @@ const emptyEvent = (): PendingEvent => ({
  * dropped; `retry` passes only as an integer within `MAX_SSE_RETRY_MS`.
  * Returns `undefined` when non-empty data is not verifiable JSON.
  */
-const renderEvent = (event: PendingEvent, credentials: CredentialSet): string | undefined => {
+const renderEvent = (event: PendingEvent, context: RedactionContext): string | undefined => {
+  const { credentials } = context;
   const lines: string[] = [];
   if (event.event !== undefined && !isTainted(event.event, credentials)) {
     lines.push(`event: ${event.event}`);
@@ -393,7 +498,7 @@ const renderEvent = (event: PendingEvent, credentials: CredentialSet): string | 
     if (data.length === 0) {
       lines.push("data:");
     } else {
-      const redacted = safelyRedactJson(data, credentials);
+      const redacted = safelyRedactJson(data, credentials, context.agentIds);
       if (redacted === undefined) return undefined;
       // JSON keeps line breaks only in whitespace; each becomes its own data line.
       for (const line of redacted.split(/\r\n|\r|\n/)) lines.push(`data: ${line}`);
@@ -403,39 +508,57 @@ const renderEvent = (event: PendingEvent, credentials: CredentialSet): string | 
 };
 
 /**
- * An SSE body re-rendered event by event. Upstream comments are replaced by
- * one Scient keepalive comment each. An event whose data is not JSON, or
- * whose upstream bytes exceed `MAX_SSE_EVENT_BYTES`, is replaced by `refusal`
- * (a Scient-written JSON-RPC error event) and the stream ends.
+ * An SSE body re-rendered event by event. Upstream comments are never echoed;
+ * they only let Scient send its own keepalive when nothing else was sent for
+ * `SSE_KEEPALIVE_INTERVAL_MS`. An event whose data is not verifiable JSON, or
+ * whose raw upstream bytes (line terminators included) exceed
+ * `MAX_SSE_EVENT_BYTES`, is replaced by the refusal event and the stream ends.
  */
 export const redactEventStream = (
   body: ReadableStream<Uint8Array>,
-  credentials: CredentialSet,
-  refusal: string,
+  context: RedactionContext,
+  now: () => number = () => performance.now(),
 ): ReadableStream<Uint8Array> => {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  const refusalEvent = encoder.encode(`event: message\ndata: ${refusal}\n\n`);
+  const refusalEvent = encoder.encode(`event: message\ndata: ${context.refusal}\n\n`);
   let line = "";
-  let pendingCarriageReturn = false;
   let eventBytes = 0;
   let event = emptyEvent();
   let ended = false;
+  let lastOutputAt = Number.NEGATIVE_INFINITY;
+  /**
+   * A chunk ended on CR. A following LF belongs to the same line ending, so it
+   * is charged to the event that owns the CR (and is never charged to the next).
+   */
+  let pendingCarriageReturn = false;
+  /** The pending CR ended a dispatch line whose event had room for its LF. */
+  let lineFeedOwnedByDispatched = false;
+  /**
+   * The pending CR ended a dispatch line exactly at the cap: the event is held
+   * until we know whether an LF (making it one byte too large) follows.
+   */
+  let dispatchDeferred = false;
+
+  const emit = (controller: TransformStreamDefaultController<Uint8Array>, bytes: Uint8Array) => {
+    lastOutputAt = now();
+    controller.enqueue(bytes);
+  };
 
   const handleLine = (
     complete: string,
     controller: TransformStreamDefaultController<Uint8Array>,
   ): boolean => {
     if (complete.length === 0) {
-      const rendered = renderEvent(event, credentials);
+      const rendered = renderEvent(event, context);
       event = emptyEvent();
       eventBytes = 0;
       if (rendered === undefined) return false;
-      if (rendered.length > 0) controller.enqueue(encoder.encode(rendered));
+      if (rendered.length > 0) emit(controller, encoder.encode(rendered));
       return true;
     }
     if (complete.startsWith(":")) {
-      controller.enqueue(encoder.encode(SSE_KEEPALIVE));
+      if (now() - lastOutputAt >= SSE_KEEPALIVE_INTERVAL_MS) emit(controller, KEEPALIVE_BYTES);
       return true;
     }
     const colon = complete.indexOf(":");
@@ -471,10 +594,28 @@ export const redactEventStream = (
       transform(chunk, controller) {
         if (ended) return;
         const text = decoder.decode(chunk, { stream: true });
+        if (text.length === 0) return;
         let index = 0;
         if (pendingCarriageReturn) {
           pendingCarriageReturn = false;
-          if (text.charCodeAt(0) === 10) index = 1;
+          const lineFeed = text.charCodeAt(0) === 10;
+          if (lineFeed) index = 1;
+          if (dispatchDeferred) {
+            dispatchDeferred = false;
+            // The LF completes a CRLF that takes the held event past the cap.
+            if (lineFeed || !handleLine("", controller)) {
+              refuse(controller);
+              return;
+            }
+          } else if (lineFeed && !lineFeedOwnedByDispatched) {
+            // The LF of a CRLF split across chunks, charged to its own event.
+            eventBytes += 1;
+            if (eventBytes > MAX_SSE_EVENT_BYTES) {
+              refuse(controller);
+              return;
+            }
+          }
+          lineFeedOwnedByDispatched = false;
         }
         let nextCr = text.indexOf("\r", index);
         let nextLf = text.indexOf("\n", index);
@@ -483,29 +624,42 @@ export const redactEventStream = (
           if (nextLf !== -1 && nextLf < index) nextLf = text.indexOf("\n", index);
           const end = nextCr === -1 ? nextLf : nextLf === -1 ? nextCr : Math.min(nextCr, nextLf);
           const piece = text.slice(index, end === -1 ? text.length : end);
-          eventBytes += Buffer.byteLength(piece, "utf8") + (end === -1 ? 0 : 1);
+          const crlf = end !== -1 && text.charCodeAt(end) === 13 && text.charCodeAt(end + 1) === 10;
+          eventBytes += Buffer.byteLength(piece, "utf8") + (end === -1 ? 0 : crlf ? 2 : 1);
           if (eventBytes > MAX_SSE_EVENT_BYTES) {
             refuse(controller);
             return;
           }
           line += piece;
           if (end === -1) break;
-          if (text.charCodeAt(end) === 13) {
-            if (end + 1 === text.length) pendingCarriageReturn = true;
-            index = text.charCodeAt(end + 1) === 10 ? end + 2 : end + 1;
-          } else {
-            index = end + 1;
-          }
+          const chunkEndingCr = !crlf && text.charCodeAt(end) === 13 && end + 1 === text.length;
+          index = crlf ? end + 2 : end + 1;
           const complete = line;
           line = "";
+          if (chunkEndingCr) {
+            pendingCarriageReturn = true;
+            if (complete.length === 0) {
+              if (eventBytes + 1 > MAX_SSE_EVENT_BYTES) {
+                dispatchDeferred = true;
+                break;
+              }
+              lineFeedOwnedByDispatched = true;
+            }
+          }
           if (!handleLine(complete, controller)) {
             refuse(controller);
             return;
           }
         }
       },
-      // An event without its terminating blank line is incomplete and, per
-      // the SSE specification, discarded at end of stream.
+      flush(controller) {
+        // A held event whose CR was the stream's last byte ended with that CR.
+        if (!ended && dispatchDeferred && !handleLine("", controller)) {
+          controller.enqueue(refusalEvent);
+        }
+        // Any other event without its terminating blank line is incomplete
+        // and, per the SSE specification, discarded at end of stream.
+      },
     }),
   );
 };
