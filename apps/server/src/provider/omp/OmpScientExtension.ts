@@ -98,7 +98,8 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     let data = [];
     const result = (json) => {
       const envelope = scientRecord(JSON.parse(json));
-      if (envelope?.id !== id) return undefined;
+      // A server request may reuse this id; only a response (no method) answers it.
+      if (envelope?.id !== id || "method" in envelope) return undefined;
       if (envelope.error) throw new Error(label + " rejected the tool request.");
       return { value: envelope.result };
     };

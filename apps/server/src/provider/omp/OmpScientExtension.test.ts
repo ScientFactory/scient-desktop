@@ -674,6 +674,20 @@ describe("Scient's Oh My Pi extension", () => {
       expect(cancelled).toEqual(["initialize", "tools/list", "tools/call"]);
     });
 
+    it("does not take a server request that reuses the pending id as its response", async () => {
+      stubEventStream(
+        (message) => {
+          // The server numbers its own requests, so one may carry this call's id.
+          const { id } = JSON.parse(message) as { readonly id: unknown };
+          const request = JSON.stringify({ jsonrpc: "2.0", id, method: "sampling/createMessage" });
+          return `${dataLines(request, "\n")}\n\n${dataLines(message, "\n")}\n\n`;
+        },
+        { open: true },
+      );
+      const result = await callFixture();
+      expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+    });
+
     it.each([
       ["no line break", ""],
       ["one LF", "\n"],
