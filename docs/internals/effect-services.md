@@ -43,7 +43,7 @@ outside the EventSink SQL transaction.
 Extend the relevant V2 service and its production layer in `runtimeLayer.ts`. Provider protocol
 work belongs in `Adapters/*AdapterV2.ts`, with session residency in `ProviderSessionManager` and
 output normalization in `ProviderEventIngestor`. The live adapter SPI is
-[`orchestration-v2/ProviderAdapter.ts`](../../apps/server/src/orchestration-v2/ProviderAdapter.ts);
+[`provider-core/ProviderAdapter.ts`](../../packages/provider-core/src/server/ProviderAdapter.ts);
 read operations use `ProjectionStore`, not the retired V1 Query tag. Legacy import services only
 translate saved facts into V2. The V1 `OrchestrationEngine`, `ProviderService`, decider/projector
 pipeline, and execution reactors are retired; their obsolete tests cannot prove a live V2 behavior.

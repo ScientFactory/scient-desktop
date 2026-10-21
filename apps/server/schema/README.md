@@ -9,7 +9,7 @@ For offline reproduction, obtain that exact blob with `git show`, then use the
 installed GraphQL 16.14.1 API to produce:
 
 ```ts
-printSchema(lexicographicSortSchema(buildSchema(source))).replace(/[ \t]+$/gm, "") + "\n"
+printSchema(lexicographicSortSchema(buildSchema(source))).replace(/[ \t]+$/gm, "") + "\n";
 ```
 
 Write the result to `expo.graphql`. Parsing before and after with

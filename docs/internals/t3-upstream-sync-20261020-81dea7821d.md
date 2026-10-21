@@ -10,10 +10,13 @@ follow-ups were accepted into actual index tree
 
 Normal complete web qualification passes all 1,225 files and 16,866 cases on
 that tree, without diagnostic hooks. All nine non-test gates pass on its
-code-identical predecessor; the only intervening edit is this maintainer
-receipt, whose formatting and whitespace were rechecked.
+code-identical predecessor. Complete non-web qualification also passes on
+committed `a0cceb3d981c43c775f3ab2bc25f1003e2b48031`; source and actual-index
+fences pass before and after the run. The intervening metadata and final
+maintainer-documentation corrections do not change product code or test inputs.
 
-Complete non-web qualification remains pending. This is not release,
+Together these partitions cover the complete workspace tests, with skips retained.
+This is not release,
 platform, live-provider or visual acceptance. The existing candidate, live
 profiles and unrelated checkouts remain untouched.
 
@@ -195,8 +198,8 @@ All nine gates pass on `5c2295db15d9bf169c842d96d08a0c664c1f78b9`:
 - `git diff --cached --check`
 - `git diff --check`
 
-These checks do not establish complete-workspace or visual acceptance. The
-maintainer-only receipt edit preserves runtime evidence. Actual staged seam
+These non-test checks do not establish runtime or visual acceptance. The
+maintainer-only successors preserve runtime evidence. Actual staged seam
 and whitespace checks pass on the qualified merge tree.
 
 ### Complete web qualification
@@ -212,6 +215,35 @@ pnpm exec vp test run --passWithNoTests --project unit --project browser --maxWo
 
 Earlier web09 remains failed; the unchanged diagnostic and normal rerun did not
 establish a conclusive cause for its table-picker/mock failures.
+
+### Complete non-web qualification
+
+The normal serial run passes on committed `a0cceb3d981c43c775f3ab2bc25f1003e2b48031`,
+tree `ba873eb1428e74d9da11b80433529b4f1cac2e85`, whose product source and test
+inputs are unchanged from the complete web checkpoint:
+
+```sh
+pnpm -r --no-bail --workspace-concurrency=1 --filter '!@t3tools/web' run test
+```
+
+It selects 48 of 50 workspace projects and exits zero, from 07:17:56 to 08:06:20
+UTC on 2026-10-21. The 47 emitted test summaries report 2,136 passing files and
+30,271 passing cases; 64 files and 250 cases remain skipped. No skipped or
+otherwise unreported case is claimed as passing. The owned synthetic warm home
+and explicit verified SyncTeX helper remain in use; source, stage entries and
+index ownership flags are unchanged across the run.
+
+### First hosted result and documentation correction
+
+The first hosted snapshot on `a0cceb3d` reports eight passing checks, one failure,
+26 pending and six skipping. Provenance passes. [Documentation fails](https://github.com/ScientFactory/scient-desktop/actions/runs/39560839647)
+because a schema README code example lacks its terminating semicolon. Local
+continuation also finds a stale link to the adapter SPI, now owned by
+`packages/provider-core/src/server/ProviderAdapter.ts`. The minimal follow-up
+fixes that semicolon and link only, without changing the schema or runtime.
+The exact 37-file CI Markdown scope passes local formatting and link checks;
+all six documentation-checker regressions pass. The original hosted failure
+remains failed; later hosted CI is not monitored or claimed green.
 
 ### Named scoped evidence
 
@@ -254,15 +286,12 @@ No timeout increase, removed behavioral assertion, privacy relaxation or
 suppressed observer warning converts those failed attempts into passes.
 The early thumbnail aggregate failure has no conclusive causal stack.
 
-### Still required
+### Remaining qualification limits
 
-1. Run all non-web workspace tests serially:
-   `pnpm -r --no-bail --workspace-concurrency=1 --filter '!@t3tools/web' run test`.
-   Combine them with the complete web result on unchanged product source;
-   this partition is not a waiver.
-2. Qualify the final pushed revision in hosted CI and read its first result.
+1. Hosted CI must qualify the final pushed revision. Its first observed result
+   and the bounded local documentation correction are recorded above.
    A draft PR does not authorize merging or release.
-3. Perform isolated exact-head app interaction and proportional visual review
+2. Perform isolated exact-head app interaction and proportional visual review
    when the required built-in Browser tools are available. No alternative
    automation system is presented as equivalent acceptance.
    No Windows native installer, iOS/Android device interaction, signing,
@@ -276,6 +305,7 @@ The early thumbnail aggregate failure has no conclusive causal stack.
 The task authorizes a new draft PR only, not merge/auto-merge to owned main,
 release, service activation or live-profile access. Preserve the official
 target as the literal merge's second parent. Its boundary facts were generated and provenance passed before advancing the
-upstream cursor. Publish the authorized draft and read its first hosted
-result, with remaining qualification gaps explicit. Do not extend the frozen
+upstream cursor. [PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)
+is the authorized draft; its first hosted result and remaining qualification
+limits are recorded above. Do not extend the frozen
 official range during this pass or disturb the existing candidate.
