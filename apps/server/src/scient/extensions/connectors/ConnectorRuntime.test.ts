@@ -25,6 +25,7 @@ import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import type { McpThreadInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../../mcp/McpSessionRegistry.ts";
+import { type ProjectRow, ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
@@ -448,8 +449,36 @@ const AGENT_TOKEN = "agent-session-token";
 const OTHER_AGENT_TOKEN = "other-agent-session-token";
 const CALLBACK_ORIGIN = "http://127.0.0.1:4777";
 
+/** The projects that exist (not deleted) for availability validation. */
+const existingProject = (projectId: ProjectId): ProjectRow => ({
+  projectId,
+  title: projectId,
+  workspaceRoot: `/work/${projectId}`,
+  defaultModelSelection: null,
+  defaultThreadEnvMode: null,
+  autoPull: false,
+  faviconPath: null,
+  projectIcon: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: null,
+});
+const EXISTING_PROJECTS = [PROJECT, OTHER_PROJECT].map(existingProject);
+
 const testLayer = ConnectorCredentialStore.layer.pipe(
   Layer.provideMerge(PluginConnectorEligibility.layer),
+  Layer.provideMerge(
+    Layer.mock(ProjectStoreV2)({
+      list: (options) =>
+        Effect.succeed(
+          EXISTING_PROJECTS.filter(
+            (row) =>
+              options?.projectIds === undefined || options.projectIds.includes(row.projectId),
+          ),
+        ),
+    }),
+  ),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-connectors-" })),
   Layer.provideMerge(NodeServices.layer),
@@ -687,6 +716,25 @@ describe("connector probe", () => {
       expect(Exit.isFailure(registry)).toBe(true);
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live("keeps the name and description of the Discover entry it was added from", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+        displayName: "Vendor Docs",
+        description: "Search the vendor's documentation.",
+      });
+      expect(added.connector).toMatchObject({
+        displayName: "Vendor Docs",
+        description: "Search the vendor's documentation.",
+      });
+      const listed = yield* harness.runtime.list();
+      expect(listed.connectors[0]).toMatchObject({
+        description: "Search the vendor's documentation.",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
 });
 
 describe("connector OAuth sign-in", () => {
@@ -726,7 +774,7 @@ describe("connector OAuth sign-in", () => {
         expect(response.headers.get("cache-control")).toBe("no-store");
         expect(yield* readText(response)).toContain("Vendor connected");
 
-        const listed = yield* harness.runtime.list({ projectId: undefined });
+        const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]).toMatchObject({
           status: "connected",
           auth: {
@@ -837,7 +885,7 @@ describe("connector OAuth sign-in", () => {
         credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
       });
       expect(added.nextStep).toBe("ready");
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(JSON.stringify(listed)).not.toContain("entered-secret-value");
       expect(JSON.stringify(added)).not.toContain("entered-secret-value");
       const short = yield* Effect.exit(
@@ -988,7 +1036,7 @@ describe("connector credential isolation, equivalent encodings", () => {
       expect(yield* readText(response)).toContain(
         "shorter than Scient can keep out of agent output",
       );
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(listed.connectors[0]?.status).toBe("needs-auth");
       expect(yield* connectorSecrets(harness.config)).toEqual([]);
       yield* Effect.promise(() => revoked.promise);
@@ -1004,7 +1052,7 @@ describe("connector credential isolation, equivalent encodings", () => {
       const response = yield* harness.proxy(connectorId, toolCall(1));
       expect(yield* readJson(response)).toMatchObject({ id: 1, error: { code: -32001 } });
       expect(vendor.upstream.map((entry) => entry.authorization)).not.toContain("Bearer short-2");
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(listed.connectors[0]).toMatchObject({
         status: "needs-auth",
         lastError: expect.stringContaining("16 characters"),
@@ -1032,7 +1080,7 @@ describe("connector credential isolation, equivalent encodings", () => {
         vendor.shortTokens = true;
         const { response } = yield* harness.signIn(connectorId);
         expect(response.status).toBe(400);
-        const listed = yield* harness.runtime.list({ projectId: undefined });
+        const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]).toMatchObject({
           status: "needs-auth",
           lastError: expect.stringContaining("16 characters"),
@@ -1110,7 +1158,10 @@ describe("connector credential isolation, equivalent encodings", () => {
       expect(yield* readText(withheld)).toMatch(
         new RegExp(`^\\{"jsonrpc":"2\\.0","id":${bigId},"error":\\{"code":-32001,`),
       );
-      yield* harness.runtime.update({ connectorId, projectPolicy: "selected-projects" });
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [] },
+      });
       const deselected = yield* harness.request(connectorId, { body: rawCall("search") });
       expect(yield* readText(deselected)).toMatch(
         new RegExp(`^\\{"jsonrpc":"2\\.0","id":${bigId},"error":\\{"code":-32001,`),
@@ -1311,11 +1362,9 @@ describe("connector proxy", () => {
         expect(undelivered.status).toBe(403);
         harness.delivered.add(connectorId);
 
-        yield* harness.runtime.update({ connectorId, projectPolicy: "selected-projects" });
-        yield* harness.runtime.setProjectSelection({
+        yield* harness.runtime.update({
           connectorId,
-          projectId: OTHER_PROJECT,
-          enabled: true,
+          availability: { type: "projects", projectIds: [OTHER_PROJECT] },
         });
         const deselected = yield* harness.proxy(connectorId, toolCall(7));
         expect(deselected.status).toBe(200);
@@ -1329,6 +1378,65 @@ describe("connector proxy", () => {
         const selected = yield* harness.proxy(connectorId, toolCall(8));
         expect(yield* readJson(selected)).toMatchObject({ id: 8, result: {} });
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("validates, deduplicates and applies availability as part of the grant", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+      });
+      const connectorId = added.connector.connectorId;
+      const granted = (projectId: ProjectId) =>
+        harness.runtime.isGranted({ connectorId, projectId });
+      const before = (yield* harness.runtime.list()).revision;
+
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [OTHER_PROJECT, PROJECT, OTHER_PROJECT] },
+      });
+      const selected = yield* harness.runtime.list();
+      expect(selected.connectors[0]?.availability).toEqual({
+        type: "projects",
+        projectIds: [OTHER_PROJECT, PROJECT],
+      });
+      expect(selected.revision).toBeGreaterThan(before);
+      expect(yield* granted(PROJECT)).toBe(true);
+
+      // An unknown project fails the whole update; nothing is saved.
+      const unknown = yield* Effect.flip(
+        harness.runtime.update({
+          connectorId,
+          displayName: "Renamed",
+          availability: { type: "projects", projectIds: [PROJECT, ProjectId.make("project-gone")] },
+        }),
+      );
+      expect(unknown).toMatchObject({
+        reason: "not-found",
+        message: expect.stringContaining("project-gone"),
+      });
+      const unchanged = yield* harness.runtime.list();
+      expect(unchanged.connectors).toEqual(selected.connectors);
+      expect(unchanged.revision).toBe(selected.revision);
+
+      // An empty list means no project at all.
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [] },
+      });
+      expect(yield* granted(PROJECT)).toBe(false);
+      expect(
+        (yield* harness.runtime.resolveDelivery({ projectId: PROJECT })).skipped.map(
+          (entry) => entry.reason,
+        ),
+      ).toEqual(["project-deselected"]);
+
+      yield* harness.runtime.update({ connectorId, availability: { type: "all-projects" } });
+      expect(yield* granted(PROJECT)).toBe(true);
+      // Availability never overrides a disabled connector.
+      yield* harness.runtime.update({ connectorId, enabled: false });
+      expect(yield* granted(PROJECT)).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -1470,7 +1578,7 @@ describe("connector token lifecycle", () => {
           },
         });
 
-        const listed = yield* harness.runtime.list({ projectId: undefined });
+        const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]?.status).toBe("needs-auth");
         const delivery = yield* harness.runtime.resolveDelivery({ projectId: PROJECT });
         expect(delivery.eligible).toEqual([]);
@@ -1535,7 +1643,7 @@ describe("connector disconnect", () => {
       expect(yield* readJson(response)).toMatchObject({ id: 1, error: { code: -32001 } });
       expect(vendor.upstream).toHaveLength(calls);
       expect(yield* connectorSecrets(harness.config)).toEqual([]);
-      expect((yield* harness.runtime.list({ projectId: undefined })).connectors).toEqual([]);
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -1553,7 +1661,7 @@ describe("connector disconnect", () => {
       const response = yield* Fiber.join(completing);
       expect(response.status).toBe(400);
       expect(yield* connectorSecrets(harness.config)).toEqual([]);
-      expect((yield* harness.runtime.list({ projectId: undefined })).connectors).toEqual([]);
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
       expect(vendor.upstream).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
@@ -1580,7 +1688,7 @@ describe("connector state file", () => {
     Effect.gen(function* () {
       const corrupt = "{ this is not json";
       const harness = yield* makeHarness({ seedStateFile: corrupt });
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(listed.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["state-unreadable"]);
       const exit = yield* Effect.exit(
         harness.runtime.add({ target: { type: "url", url: `${vendor.base}/open/mcp` } }),
@@ -1597,12 +1705,11 @@ describe("connector state file", () => {
       const unreadable = { connectorId: "con_broken", serverName: "BROKEN NAME" };
       const harness = yield* makeHarness({
         seedStateFile: JSON.stringify({
-          formatVersion: 1,
+          formatVersion: 2,
           connectors: [unreadable],
-          projectSelections: [],
         }),
       });
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(listed.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
         "connector-record-unreadable",
       ]);
@@ -1629,24 +1736,110 @@ describe("connector state file", () => {
         auth: { type: "none" },
         status: "connected",
         enabled: true,
-        projectPolicy: "all-projects",
+        availability: { type: "all-projects" },
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
       const harness = yield* makeHarness({
         seedStateFile: JSON.stringify({
-          formatVersion: 1,
+          formatVersion: 2,
           connectors: [record, { ...record, displayName: "Duplicate" }],
-          projectSelections: [],
         }),
       });
-      const listed = yield* harness.runtime.list({ projectId: undefined });
+      const listed = yield* harness.runtime.list();
       expect(listed.connectors.map((connector) => connector.displayName)).toEqual(["Original"]);
       yield* harness.runtime.remove({ connectorId: listed.connectors[0]!.connectorId });
       const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir });
-      const after = yield* reloaded.list({ projectId: undefined });
+      const after = yield* reloaded.list();
       expect(after.connectors).toEqual([]);
       expect(after.diagnostics).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("migrates a format-1 file: policies become availability, selections are dropped", () =>
+    Effect.gen(function* () {
+      const legacy = (connectorId: string, projectPolicy: string) => ({
+        connectorId,
+        serverName: connectorId.slice(4),
+        displayName: connectorId,
+        url: `${vendor.base}/open/mcp`,
+        source: { type: "url" },
+        auth: { type: "none" },
+        status: "connected",
+        enabled: true,
+        projectPolicy,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const unknownPolicy = legacy("con_unknownp", "some-future-policy");
+      const third = ProjectId.make("project-c");
+      // The exact shape Scient wrote before availability existed.
+      const fixture = `${JSON.stringify(
+        {
+          formatVersion: 1,
+          connectors: [
+            legacy("con_everywhr", "all-projects"),
+            legacy("con_selected", "selected-projects"),
+            legacy("con_nonesele", "selected-projects"),
+            unknownPolicy,
+          ],
+          projectSelections: [
+            { connectorId: "con_selected", projectId: OTHER_PROJECT, enabled: true },
+            { connectorId: "con_selected", projectId: PROJECT, enabled: false },
+            { connectorId: "con_selected", projectId: third, enabled: true },
+            { connectorId: "con_selected", projectId: OTHER_PROJECT, enabled: true },
+            { connectorId: "con_everywhr", projectId: PROJECT, enabled: false },
+            { connectorId: "con_nonesele", projectId: PROJECT, enabled: false },
+            { connectorId: "con_selected", projectId: 7, enabled: true },
+          ],
+        },
+        null,
+        2,
+      )}\n`;
+      const harness = yield* makeHarness({ seedStateFile: fixture });
+      const expected = {
+        con_everywhr: { type: "all-projects" },
+        con_selected: { type: "projects", projectIds: [OTHER_PROJECT, third] },
+        con_nonesele: { type: "projects", projectIds: [] },
+      };
+      const listed = yield* harness.runtime.list();
+      expect(
+        Object.fromEntries(
+          listed.connectors.map((entry) => [entry.connectorId, entry.availability]),
+        ),
+      ).toEqual(expected);
+      expect(listed.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        "connector-record-unreadable",
+      ]);
+
+      // Saved in the new format at once: no policy, no selection records.
+      const written: {
+        formatVersion: number;
+        connectors: ReadonlyArray<Record<string, unknown>>;
+      } = JSON.parse(yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")));
+      expect(written.formatVersion).toBe(2);
+      expect(written).not.toHaveProperty("projectSelections");
+      expect(written.connectors.slice(0, 3).map((entry) => entry.availability)).toEqual(
+        Object.values(expected),
+      );
+      expect(written.connectors.slice(0, 3).some((entry) => "projectPolicy" in entry)).toBe(false);
+      expect(written.connectors[3]).toEqual(unknownPolicy);
+
+      const delivery = yield* harness.runtime.resolveDelivery({ projectId: PROJECT });
+      expect(delivery.eligible.map((entry) => entry.connectorId)).toEqual(["con_everywhr"]);
+      expect(delivery.skipped.map((entry) => [entry.connectorId, entry.reason])).toEqual([
+        ["con_selected", "project-deselected"],
+        ["con_nonesele", "project-deselected"],
+      ]);
+      const elsewhere = yield* harness.runtime.resolveDelivery({ projectId: third });
+      expect(elsewhere.eligible.map((entry) => entry.connectorId)).toEqual([
+        "con_everywhr",
+        "con_selected",
+      ]);
+
+      // Reloading the migrated file gives the same connectors.
+      const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir });
+      expect((yield* reloaded.list()).connectors).toEqual(listed.connectors);
     }).pipe(Effect.provide(testLayer)),
   );
 

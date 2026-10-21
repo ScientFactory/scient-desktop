@@ -25,7 +25,12 @@ import { toastManager } from "../../components/ui/toast";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
-import { validateConnectorUrl, validateHeaderName } from "./extensionsView";
+import {
+  entryAddTarget,
+  installableRemotes,
+  validateConnectorUrl,
+  validateHeaderName,
+} from "./extensionsView";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 
 type AuthMode = "automatic" | "api-key";
@@ -35,13 +40,6 @@ const STRATEGY_LABELS: Readonly<Record<CredentialStrategy, string>> = {
   header: "Custom header",
   basic: "Basic auth",
 };
-
-/** Remotes Scient can reach as a connector without extra user input. */
-export function installableRemotes(entry: DiscoverEntry) {
-  return entry.remotes.filter(
-    (remote) => remote.type === "streamable-http" && !remote.requiresInput,
-  );
-}
 
 interface AddConnectorErrors {
   url?: string;
@@ -113,9 +111,7 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
   const clientId = draft.clientId.trim();
   const clientSecret = draft.clientSecret.trim();
   return {
-    target: entry
-      ? { type: "registry", name: entry.name, version: entry.version, url: draft.remoteUrl }
-      : { type: "url", url: draft.url.trim() },
+    target: entry ? entryAddTarget(entry, draft.remoteUrl) : { type: "url", url: draft.url.trim() },
     ...(displayName ? { displayName } : {}),
     ...(draft.authMode === "automatic" && clientId
       ? { oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } }
@@ -284,9 +280,7 @@ export function AddConnectorDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>
-                {entry ? `Add ${entry.title ?? entry.name}` : "Add a connected service"}
-              </DialogTitle>
+              <DialogTitle>{entry ? `Add ${entry.title ?? entry.name}` : "Add by URL"}</DialogTitle>
               <DialogDescription>
                 A remote MCP server. Scient keeps its sign-in; agents never receive it.
               </DialogDescription>

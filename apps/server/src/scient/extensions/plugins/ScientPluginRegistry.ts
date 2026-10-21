@@ -346,7 +346,7 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   const reconcile = Effect.gen(function* () {
     const current = yield* Ref.get(state);
     const problems: ExtensionsDiagnostic[] = [];
-    const inventory = yield* connectors.list({ projectId: undefined });
+    const inventory = yield* connectors.list();
     const ownershipKnown = !current.unreadable && current.preserved.length === 0;
     for (const connector of inventory.connectors) {
       if (connector.source.type !== "plugin") continue;
@@ -452,7 +452,7 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
    * inventory proves nothing, so nothing may be pruned or treated as gone.
    */
   const authoritativeConnectorIds = connectors
-    .list({ projectId: undefined })
+    .list()
     .pipe(
       Effect.map((inventory) =>
         inventory.diagnostics.some(
@@ -592,7 +592,7 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
 
   const liveOwned = (owned: ReadonlyArray<OwnedConnector>) =>
     connectors
-      .list({ projectId: undefined })
+      .list()
       .pipe(
         Effect.map((inventory) =>
           inventory.connectors.filter((connector) =>
@@ -871,7 +871,7 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   const list: ScientPluginRegistryShape["list"] = () =>
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
-      const inventory = yield* connectors.list({ projectId: undefined });
+      const inventory = yield* connectors.list();
       const diagnostics: ExtensionsDiagnostic[] = [];
       if (current.unreadable) {
         diagnostics.push({

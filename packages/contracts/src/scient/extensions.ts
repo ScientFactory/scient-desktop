@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
+import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
-import { VaultSecretRef } from "./secrets.ts";
+import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
 /**
  * Scient Extensions: connected services (remote MCP servers whose credentials
@@ -81,9 +81,6 @@ export type ConnectorAuthSummary = typeof ConnectorAuthSummary.Type;
 export const ConnectorStatus = Schema.Literals(["connected", "needs-auth", "needs-credential"]);
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 
-export const ConnectorProjectPolicy = Schema.Literals(["all-projects", "selected-projects"]);
-export type ConnectorProjectPolicy = typeof ConnectorProjectPolicy.Type;
-
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
   serverName: ConnectorServerName,
@@ -94,20 +91,20 @@ export const ConnectorSummary = Schema.Struct({
   auth: ConnectorAuthSummary,
   status: ConnectorStatus,
   enabled: Schema.Boolean,
-  projectPolicy: ConnectorProjectPolicy,
+  /** Projects whose sessions receive this connector. Shared model with Secrets. */
+  availability: GrantScope,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   /** Most recent user-facing failure, cleared by the next success. */
   lastError: Schema.optional(TrimmedNonEmptyString),
+  /** Logo of the curated server this connector points at, as a `data:` image URI only. */
+  iconUrl: Schema.optional(
+    TrimmedNonEmptyString.check(
+      Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,/u),
+    ),
+  ),
 });
 export type ConnectorSummary = typeof ConnectorSummary.Type;
-
-export const ConnectorProjectSelection = Schema.Struct({
-  connectorId: ConnectorId,
-  projectId: ProjectId,
-  enabled: Schema.Boolean,
-});
-export type ConnectorProjectSelection = typeof ConnectorProjectSelection.Type;
 
 /** Whether a provider instance can receive connectors at all. */
 export const ConnectorProviderSupport = Schema.Struct({
@@ -159,16 +156,12 @@ export const ExtensionsDiagnostic = Schema.Struct({
 });
 export type ExtensionsDiagnostic = typeof ExtensionsDiagnostic.Type;
 
-export const ExtensionsListInput = Schema.Struct({
-  /** When set, `projectSelections` reports this project's choices. */
-  projectId: Schema.optional(ProjectId),
-});
+export const ExtensionsListInput = Schema.Struct({});
 export type ExtensionsListInput = typeof ExtensionsListInput.Type;
 
 export const ExtensionsInventory = Schema.Struct({
   revision: Schema.Number,
   connectors: Schema.Array(ConnectorSummary),
-  projectSelections: Schema.Array(ConnectorProjectSelection),
   providerSupport: Schema.Array(ConnectorProviderSupport),
   plugins: Schema.Array(ScientPluginSummary),
   diagnostics: Schema.Array(ExtensionsDiagnostic),
@@ -198,6 +191,8 @@ export const ConnectorAddInput = Schema.Struct({
     Schema.Struct({ type: Schema.Literal("url"), url: TrimmedNonEmptyString }),
   ]),
   displayName: Schema.optional(TrimmedNonEmptyString),
+  /** Shown in Installed; from the Discover entry the connector was added from. */
+  description: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1_000))),
   oauthClient: Schema.optional(ConnectorOAuthClientInput),
   /** API-key style servers. */
   credential: Schema.optional(
@@ -249,16 +244,9 @@ export const ConnectorUpdateInput = Schema.Struct({
   connectorId: ConnectorId,
   displayName: Schema.optional(TrimmedNonEmptyString),
   enabled: Schema.optional(Schema.Boolean),
-  projectPolicy: Schema.optional(ConnectorProjectPolicy),
+  availability: Schema.optional(GrantScope),
 });
 export type ConnectorUpdateInput = typeof ConnectorUpdateInput.Type;
-
-export const ConnectorSetProjectSelectionInput = Schema.Struct({
-  connectorId: ConnectorId,
-  projectId: ProjectId,
-  enabled: Schema.Boolean,
-});
-export type ConnectorSetProjectSelectionInput = typeof ConnectorSetProjectSelectionInput.Type;
 
 export const ConnectorRemoveInput = Schema.Struct({ connectorId: ConnectorId });
 export type ConnectorRemoveInput = typeof ConnectorRemoveInput.Type;
@@ -286,8 +274,22 @@ export const ConnectorTestResult = Schema.Struct({
 });
 export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 
+/** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
+export const ExtensionCategory = Schema.Literals([
+  "featured",
+  "research",
+  "data",
+  "code",
+  "writing",
+  "communication",
+  "design",
+]);
+export type ExtensionCategory = typeof ExtensionCategory.Type;
+
 export const DiscoverSearchInput = Schema.Struct({
   query: Schema.optional(Schema.String),
+  /** Restrict to one curated category; omitted means the whole registry. */
+  category: Schema.optional(ExtensionCategory),
   cursor: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Number),
 });
@@ -306,6 +308,12 @@ export const DiscoverEntry = Schema.Struct({
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
   description: Schema.optional(Schema.String),
+  /** One line for list rows; curated entries always have one. */
+  tagline: Schema.optional(TrimmedNonEmptyString),
+  /** https icon published by the registry entry or the curated catalog. */
+  iconUrl: Schema.optional(TrimmedNonEmptyString),
+  /** Curated categories this entry belongs to; empty for uncurated registry entries. */
+  categories: Schema.Array(ExtensionCategory),
   websiteUrl: Schema.optional(TrimmedNonEmptyString),
   repositoryUrl: Schema.optional(TrimmedNonEmptyString),
   remotes: Schema.Array(DiscoverRemote),
@@ -317,6 +325,22 @@ export const DiscoverEntry = Schema.Struct({
   installedConnectorId: Schema.optional(ConnectorId),
 });
 export type DiscoverEntry = typeof DiscoverEntry.Type;
+
+export const DiscoverCatalogSection = Schema.Struct({
+  category: ExtensionCategory,
+  title: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+  /** Preview entries for the home page, in curated order. */
+  entries: Schema.Array(DiscoverEntry),
+  total: Schema.Number,
+});
+export type DiscoverCatalogSection = typeof DiscoverCatalogSection.Type;
+
+export const DiscoverCatalog = Schema.Struct({
+  sections: Schema.Array(DiscoverCatalogSection),
+  fetchedAt: IsoDateTime,
+});
+export type DiscoverCatalog = typeof DiscoverCatalog.Type;
 
 export const DiscoverPage = Schema.Struct({
   entries: Schema.Array(DiscoverEntry),

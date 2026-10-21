@@ -1027,8 +1027,8 @@ const buildAppUnderTest = (options?: {
           }),
         ),
         // SCIENT-FORK:START — extensions RPCs and connector routes use the real owners,
-        // backed by this fixture's state directory and the provider registry below.
-        Layer.provide(ScientExtensionsLayerLive),
+        // backed by this fixture's state directory, project store and provider registry.
+        Layer.provide(ScientExtensionsLayerLive.pipe(Layer.provide(ProjectStoreV2.layer))),
         // SCIENT-FORK:END
         Layer.provide(
           Layer.mergeAll(

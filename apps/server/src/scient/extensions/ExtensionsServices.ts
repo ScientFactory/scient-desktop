@@ -7,15 +7,14 @@ import type {
   ConnectorAddInput,
   ConnectorAddResult,
   ConnectorId,
-  ConnectorProjectSelection,
   ConnectorRemoveInput,
-  ConnectorSetProjectSelectionInput,
   ConnectorStartSignInInput,
   ConnectorStartSignInResult,
   ConnectorSummary,
   ConnectorTestInput,
   ConnectorTestResult,
   ConnectorUpdateInput,
+  DiscoverCatalog,
   DiscoverPage,
   DiscoverSearchInput,
   ExtensionDeliveryReceipt,
@@ -94,13 +93,12 @@ export interface ConnectorSignInCallbackOutcome {
 }
 
 export interface ConnectorRuntimeShape {
-  readonly list: (input: { readonly projectId: ProjectId | undefined }) => Effect.Effect<{
+  readonly list: () => Effect.Effect<{
     readonly revision: number;
     readonly connectors: ReadonlyArray<ConnectorSummary>;
-    readonly projectSelections: ReadonlyArray<ConnectorProjectSelection>;
     readonly diagnostics: ReadonlyArray<ExtensionsDiagnostic>;
   }>;
-  /** Emits after every committed change to connectors or selections. */
+  /** Emits after every committed change to connectors (availability included). */
   readonly changes: Stream.Stream<ExtensionsChangedEvent>;
   readonly add: (input: ConnectorAddInput) => Effect.Effect<ConnectorAddResult, ExtensionsError>;
   /** Connector definitions contributed by an installed Scient plugin bundle. Never signs in. */
@@ -117,10 +115,8 @@ export interface ConnectorRuntimeShape {
   readonly completeSignIn: (
     query: ConnectorSignInCallbackQuery,
   ) => Effect.Effect<ConnectorSignInCallbackOutcome>;
+  /** `availability` project ids must exist; they are deduplicated before saving. */
   readonly update: (input: ConnectorUpdateInput) => Effect.Effect<void, ExtensionsError>;
-  readonly setProjectSelection: (
-    input: ConnectorSetProjectSelectionInput,
-  ) => Effect.Effect<void, ExtensionsError>;
   readonly remove: (input: ConnectorRemoveInput) => Effect.Effect<void, ExtensionsError>;
   readonly test: (input: ConnectorTestInput) => Effect.Effect<ConnectorTestResult, ExtensionsError>;
   /** Connectors a new session in this project may receive, plus user-facing skips. */
@@ -186,6 +182,18 @@ export class ExtensionDeliveryReceipts extends Context.Service<
 
 export interface ExtensionsDiscoverShape {
   readonly search: (input: DiscoverSearchInput) => Effect.Effect<DiscoverPage, ExtensionsError>;
+  /** Curated home page: non-empty categories in fixed order, each with preview entries. */
+  readonly catalog: () => Effect.Effect<DiscoverCatalog, ExtensionsError>;
+  /**
+   * Curated icons (`data:` URIs) for connector URLs that match a curated
+   * server, keyed by the given URL. Never waits: icons still loading are left
+   * out and announced on `changes` once they arrive.
+   */
+  readonly connectorIcons: (
+    urls: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyMap<string, string>>;
+  /** Emits when icons that earlier responses left out have become available. */
+  readonly changes: Stream.Stream<void>;
 }
 
 export class ExtensionsDiscover extends Context.Service<

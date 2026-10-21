@@ -16,12 +16,12 @@ import {
   type ConnectorAddResult,
   type ConnectorAuthSummary,
   ConnectorId,
-  type ConnectorProjectSelection,
   type ConnectorSummary,
   type ConnectorTestResult,
   type ExtensionDeliverySkipReason,
   type ExtensionsChangedEvent,
   ExtensionsError,
+  type GrantScope,
   isReservedConnectorServerName,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
+import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
   ConnectorRuntime,
   type ConnectorForwardRequest,
@@ -88,6 +89,7 @@ import {
   redactString,
 } from "./ConnectorRedaction.ts";
 import { ConnectorSessionBindings } from "./ConnectorSessionBindings.ts";
+import { curatedServerForUrl } from "../discover/curatedCatalog.ts";
 import {
   type ConnectorAuthRecord,
   type ConnectorRecord,
@@ -164,19 +166,10 @@ class ConnectorUnavailableError extends Error {
 const policyOf = (record: Pick<ConnectorRecord, "source" | "url">): ConnectorEgressPolicy =>
   egressPolicyFor(record.url, record.source);
 
-const isProjectAllowed = (
-  record: ConnectorRecord,
-  selections: ReadonlyArray<ConnectorProjectSelection>,
-  projectId: ProjectId | undefined,
-) =>
-  record.projectPolicy === "all-projects" ||
-  (projectId !== undefined &&
-    selections.some(
-      (selection) =>
-        selection.connectorId === record.connectorId &&
-        selection.projectId === projectId &&
-        selection.enabled,
-    ));
+/** Availability alone; the grant also requires the connector to be enabled. */
+const isAvailableIn = (record: ConnectorRecord, projectId: ProjectId | undefined) =>
+  record.availability.type === "all-projects" ||
+  (projectId !== undefined && record.availability.projectIds.includes(projectId));
 
 const authSummary = (auth: ConnectorAuthRecord): ConnectorAuthSummary => {
   switch (auth.type) {
@@ -209,7 +202,7 @@ const toSummary = (record: ConnectorRecord): ConnectorSummary => ({
   auth: authSummary(record.auth),
   status: record.status,
   enabled: record.enabled,
-  projectPolicy: record.projectPolicy,
+  availability: record.availability,
   createdAt: record.createdAt,
   updatedAt: record.updatedAt,
   ...(record.lastError === undefined ? {} : { lastError: record.lastError }),
@@ -389,6 +382,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 ) {
   const credentials = yield* ConnectorCredentialStore;
   const eligibility = yield* PluginConnectorEligibility;
+  const projects = yield* ProjectStoreV2;
   const store = yield* makeConnectorStateStore(options.stateDir);
   const clock = yield* Clock.Clock;
   const crypto = yield* Crypto.Crypto;
@@ -491,6 +485,30 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       });
       yield* publishChange;
     });
+
+  /** Deduplicated (first occurrence kept); every project must exist and not be deleted. */
+  const checkAvailability = Effect.fn("ConnectorRuntime.checkAvailability")(function* (
+    availability: GrantScope,
+  ) {
+    if (availability.type === "all-projects") return availability;
+    const projectIds = [...new Set(availability.projectIds)];
+    if (projectIds.length === 0) return { type: "projects", projectIds } satisfies GrantScope;
+    const rows = yield* projects
+      .list({ projectIds })
+      .pipe(
+        Effect.mapError(() =>
+          extensionsError("state-unavailable", "Projects could not be read. Try again."),
+        ),
+      );
+    const unknown = projectIds.filter((id) => !rows.some((row) => row.projectId === id));
+    if (unknown.length > 0) {
+      return yield* extensionsError(
+        "not-found",
+        `${unknown.length === 1 ? "A selected project does not exist" : "Some selected projects do not exist"}: ${unknown.join(", ")}.`,
+      );
+    }
+    return { type: "projects", projectIds } satisfies GrantScope;
+  });
 
   /** Status changes discovered while forwarding never fail the request. */
   const markStatus = (
@@ -911,11 +929,16 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         `Scient supports at most ${MAX_CONNECTORS} connected services.`,
       );
     }
+    // A curated endpoint keeps its curated name and description even when the
+    // client added it by URL ("DeepWiki", not "mcp.deepwiki.com").
+    const curated = curatedServerForUrl(url);
     const displayName =
       input.displayName ??
+      curated?.displayName ??
       (input.target.type === "registry"
         ? (input.target.name.split("/").pop() ?? input.target.name)
         : new URL(url).hostname);
+    const description = input.description ?? curated?.description;
     const connectorId = yield* newConnectorId;
     const owner = { type: "connector", connectorId } as const;
     const createdAt = yield* isoNow;
@@ -1001,6 +1024,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       connectorId,
       serverName: displayName,
       displayName,
+      ...(description === undefined ? {} : { description }),
       url,
       source:
         input.target.type === "registry"
@@ -1009,7 +1033,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       auth,
       status,
       enabled: true,
-      projectPolicy: "all-projects",
+      availability: { type: "all-projects" },
       createdAt,
       updatedAt: createdAt,
     };
@@ -1052,7 +1076,6 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               undefined,
               {
                 connectors: current.connectors.filter((entry) => entry.connectorId !== connectorId),
-                selections: current.selections.filter((entry) => entry.connectorId !== connectorId),
               } satisfies ConnectorStateData,
             ] as const),
           );
@@ -1559,15 +1582,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   );
 
   return ConnectorRuntime.of({
-    list: Effect.fn("ConnectorRuntime.list")(function* (input) {
+    list: Effect.fn("ConnectorRuntime.list")(function* () {
       const state = yield* store.read;
       return {
         revision: yield* Ref.get(revision),
         connectors: state.connectors.map(toSummary),
-        projectSelections:
-          input.projectId === undefined
-            ? state.selections
-            : state.selections.filter((selection) => selection.projectId === input.projectId),
         diagnostics: state.diagnostics,
       };
     }),
@@ -1595,7 +1614,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         auth: { type: "oauth", usesOwnClient: false },
         status: "needs-auth",
         enabled: true,
-        projectPolicy: "all-projects",
+        availability: { type: "all-projects" },
         createdAt,
         updatedAt: createdAt,
       });
@@ -1620,38 +1639,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           );
         }
       }
+      const availability =
+        input.availability === undefined ? undefined : yield* checkAvailability(input.availability);
       yield* updateRecord(input.connectorId, (current, updatedAt) => ({
         ...current,
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-        ...(input.projectPolicy === undefined ? {} : { projectPolicy: input.projectPolicy }),
+        ...(availability === undefined ? {} : { availability }),
         updatedAt,
       }));
-    }),
-    setProjectSelection: Effect.fn("ConnectorRuntime.setProjectSelection")(function* (input) {
-      yield* store.update((current) =>
-        current.connectors.some((record) => record.connectorId === input.connectorId)
-          ? Effect.succeed([
-              undefined,
-              {
-                ...current,
-                selections: [
-                  ...current.selections.filter(
-                    (selection) =>
-                      selection.connectorId !== input.connectorId ||
-                      selection.projectId !== input.projectId,
-                  ),
-                  {
-                    connectorId: input.connectorId,
-                    projectId: input.projectId,
-                    enabled: input.enabled,
-                  },
-                ],
-              },
-            ] as const)
-          : Effect.fail(extensionsError("not-found", "That connected service no longer exists.")),
-      );
-      yield* publishChange;
     }),
     remove: Effect.fn("ConnectorRuntime.remove")(function* (input) {
       yield* removeRecord(yield* requireRecord(input.connectorId));
@@ -1667,7 +1663,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const reason: ExtensionDeliverySkipReason | undefined =
           !record.enabled || !(yield* isPluginEligible(record))
             ? "disabled"
-            : !isProjectAllowed(record, state.selections, input.projectId)
+            : !isAvailableIn(record, input.projectId)
               ? "project-deselected"
               : record.status === "connected"
                 ? undefined
@@ -1685,7 +1681,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         isLive(record.connectorId) &&
         record.enabled &&
         record.status === "connected" &&
-        isProjectAllowed(record, state.selections, input.projectId) &&
+        isAvailableIn(record, input.projectId) &&
         (yield* isPluginEligible(record))
       );
     }),

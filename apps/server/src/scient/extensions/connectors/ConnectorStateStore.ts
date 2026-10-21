@@ -1,9 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This store owns its app-private state file.
 /**
- * `<stateDir>/scient-extensions.json`: connector records and per-project
- * selections. Versioned; written atomically (temporary file + rename).
- * Entries that do not decode are preserved verbatim and written back, and a
- * file that cannot be loaded is never overwritten: mutations fail instead.
+ * `<stateDir>/scient-extensions.json`: connector records, each with its
+ * availability (`GrantScope`, shared with Secrets). Versioned; written
+ * atomically (temporary file + rename). Entries that do not decode are
+ * preserved verbatim and written back, and a file that cannot be loaded is
+ * never overwritten: mutations fail instead.
+ *
+ * Format 1 kept a per-connector project policy plus separate per-project
+ * selection records; it is migrated to format 2 on load and saved at once.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -11,15 +15,15 @@ import * as NodePath from "node:path";
 
 import {
   ConnectorId,
-  ConnectorProjectPolicy,
-  ConnectorProjectSelection,
   ConnectorServerName,
   ConnectorSource,
   ConnectorStatus,
   CredentialStrategy,
   ExtensionsError,
   type ExtensionsDiagnostic,
+  GrantScope,
   IsoDateTime,
+  ProjectId,
   TrimmedNonEmptyString,
   VaultSecretRef,
 } from "@t3tools/contracts";
@@ -63,27 +67,74 @@ export const ConnectorRecord = Schema.Struct({
   auth: ConnectorAuthRecord,
   status: ConnectorStatus,
   enabled: Schema.Boolean,
-  projectPolicy: ConnectorProjectPolicy,
+  /** Projects whose sessions receive this connector; an empty list means none. */
+  availability: GrantScope,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),
 });
 export type ConnectorRecord = typeof ConnectorRecord.Type;
 
+const STATE_FORMAT_VERSION = 2;
+
 const PersistedFile = Schema.Struct({
+  formatVersion: Schema.Literal(STATE_FORMAT_VERSION),
+  connectors: Schema.Array(Schema.Unknown),
+});
+/** Format 1: `projectPolicy` on each connector plus per-project selection records. */
+const PersistedFileV1 = Schema.Struct({
   formatVersion: Schema.Literal(1),
   connectors: Schema.Array(Schema.Unknown),
   projectSelections: Schema.Array(Schema.Unknown),
 });
-const decodeFile = Schema.decodeUnknownExit(Schema.fromJsonString(PersistedFile));
+type PersistedFileV1 = typeof PersistedFileV1.Type;
+const LegacySelection = Schema.Struct({
+  connectorId: Schema.String,
+  projectId: ProjectId,
+  enabled: Schema.Boolean,
+});
+const decodeFile = Schema.decodeUnknownExit(
+  Schema.fromJsonString(Schema.Union([PersistedFile, PersistedFileV1])),
+);
 const decodeRecord = Schema.decodeUnknownExit(ConnectorRecord);
-const decodeSelection = Schema.decodeUnknownExit(ConnectorProjectSelection);
+const decodeLegacySelection = Schema.decodeUnknownExit(LegacySelection);
 const encodeRecord = Schema.encodeSync(ConnectorRecord);
-const encodeSelection = Schema.encodeSync(ConnectorProjectSelection);
+
+/**
+ * Format 1 → 2. `all-projects` stays all projects; `selected-projects` becomes
+ * the projects whose selection was enabled (deduplicated, in file order). The
+ * selection records are dropped. An entry with an unknown policy is kept
+ * verbatim and stays unreadable.
+ */
+const migrateV1Connectors = (file: PersistedFileV1): ReadonlyArray<unknown> => {
+  const selected = new Map<string, ProjectId[]>();
+  for (const entry of file.projectSelections) {
+    const selection = decodeLegacySelection(entry);
+    if (Exit.isFailure(selection) || !selection.value.enabled) continue;
+    const { connectorId, projectId } = selection.value;
+    const projectIds = selected.get(connectorId) ?? [];
+    if (!projectIds.includes(projectId)) projectIds.push(projectId);
+    selected.set(connectorId, projectIds);
+  }
+  return file.connectors.map((entry) => {
+    if (typeof entry !== "object" || entry === null || !("projectPolicy" in entry)) return entry;
+    const connectorId = "connectorId" in entry ? String(entry.connectorId) : "";
+    const availability: GrantScope | undefined =
+      entry.projectPolicy === "all-projects"
+        ? { type: "all-projects" }
+        : entry.projectPolicy === "selected-projects"
+          ? { type: "projects", projectIds: selected.get(connectorId) ?? [] }
+          : undefined;
+    if (availability === undefined) return entry;
+    return {
+      ...Object.fromEntries(Object.entries(entry).filter(([key]) => key !== "projectPolicy")),
+      availability,
+    };
+  });
+};
 
 export interface ConnectorStateData {
   readonly connectors: ReadonlyArray<ConnectorRecord>;
-  readonly selections: ReadonlyArray<ConnectorProjectSelection>;
 }
 
 export interface ConnectorStateSnapshot extends ConnectorStateData {
@@ -94,7 +145,8 @@ export interface ConnectorStateSnapshot extends ConnectorStateData {
 
 interface LoadedState extends ConnectorStateSnapshot {
   readonly unreadableConnectors: ReadonlyArray<unknown>;
-  readonly unreadableSelections: ReadonlyArray<unknown>;
+  /** Loaded from an older format; saved in the current one right after loading. */
+  readonly migrated: boolean;
 }
 
 export interface ConnectorStateStore {
@@ -113,9 +165,8 @@ const isNodeError = (error: unknown, code: string): error is NodeJS.ErrnoExcepti
 
 const unloadable = (message: string): LoadedState => ({
   connectors: [],
-  selections: [],
   unreadableConnectors: [],
-  unreadableSelections: [],
+  migrated: false,
   diagnostics: [{ code: "state-unreadable", message }],
   writable: false,
 });
@@ -128,9 +179,8 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
     if (isNodeError(error, "ENOENT")) {
       return {
         connectors: [],
-        selections: [],
         unreadableConnectors: [],
-        unreadableSelections: [],
+        migrated: false,
         diagnostics: [],
         writable: true,
       };
@@ -154,10 +204,15 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
       `${CONNECTOR_STATE_FILE} is unreadable or was written by a newer Scient. It was left unchanged; connected services cannot be changed until it is repaired.`,
     );
   }
+  const migrated = decoded.value.formatVersion === 1;
+  const entries =
+    decoded.value.formatVersion === 1
+      ? migrateV1Connectors(decoded.value)
+      : decoded.value.connectors;
   const connectors: ConnectorRecord[] = [];
   const unreadableConnectors: unknown[] = [];
   const seen = new Set<string>();
-  for (const entry of decoded.value.connectors) {
+  for (const entry of entries) {
     const record = decodeRecord(entry);
     if (Exit.isSuccess(record) && !seen.has(record.value.connectorId)) {
       seen.add(record.value.connectorId);
@@ -168,18 +223,10 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
     // never become live; removing that id purges them too (see `update`).
     unreadableConnectors.push(entry);
   }
-  const selections: ConnectorProjectSelection[] = [];
-  const unreadableSelections: unknown[] = [];
-  for (const entry of decoded.value.projectSelections) {
-    const selection = decodeSelection(entry);
-    if (Exit.isSuccess(selection)) selections.push(selection.value);
-    else unreadableSelections.push(entry);
-  }
   return withDiagnostics({
     connectors,
-    selections,
     unreadableConnectors,
-    unreadableSelections,
+    migrated,
     diagnostics: [],
     writable: true,
   });
@@ -204,14 +251,10 @@ const preservedConnectorId = (entry: unknown): unknown =>
 const writeState = async (statePath: string, state: LoadedState, platform: NodeJS.Platform) => {
   const text = `${JSON.stringify(
     {
-      formatVersion: 1,
+      formatVersion: STATE_FORMAT_VERSION,
       connectors: [
         ...state.connectors.map((record) => encodeRecord(record)),
         ...state.unreadableConnectors,
-      ],
-      projectSelections: [
-        ...state.selections.map((selection) => encodeSelection(selection)),
-        ...state.unreadableSelections,
       ],
     },
     null,
@@ -264,12 +307,24 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
 ) {
   const statePath = NodePath.join(stateDir, CONNECTOR_STATE_FILE);
   const platform = yield* HostProcess.Platform;
-  const initial = yield* Effect.promise(() => loadState(statePath));
-  if (!initial.writable) {
+  const loaded = yield* Effect.promise(() => loadState(statePath));
+  if (!loaded.writable) {
     yield* Effect.logWarning("connected services state could not be loaded", {
       path: statePath,
     });
   }
+  // A migrated file is saved in the current format at once, so the old
+  // selection records are gone. If that fails, the next change saves it.
+  const initial = loaded.migrated
+    ? yield* Effect.tryPromise(() => writeState(statePath, loaded, platform)).pipe(
+        Effect.as({ ...loaded, migrated: false }),
+        Effect.catch(() =>
+          Effect.logWarning("migrated connected services could not be saved yet", {
+            path: statePath,
+          }).pipe(Effect.as(loaded)),
+        ),
+      )
+    : loaded;
   const state = yield* Ref.make(initial);
   const writePermit = yield* Semaphore.make(1);
 
@@ -286,8 +341,8 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             });
           }
           const [result, next] = yield* transform(current);
-          // A removed id takes its preserved duplicates and selections with it,
-          // so none of them can become live after a restart.
+          // A removed id takes its preserved duplicates with it, so none of
+          // them can become live after a restart.
           const remaining = new Set(next.connectors.map((record) => record.connectorId));
           const removed = new Set<string>(
             current.connectors
@@ -297,13 +352,10 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
           const nextState = withDiagnostics({
             ...current,
             connectors: next.connectors,
-            selections: next.selections,
             unreadableConnectors: current.unreadableConnectors.filter(
               (entry) => !removed.has(String(preservedConnectorId(entry))),
             ),
-            unreadableSelections: current.unreadableSelections.filter(
-              (entry) => !removed.has(String(preservedConnectorId(entry))),
-            ),
+            migrated: false,
           });
           yield* Effect.tryPromise({
             try: () => writeState(statePath, nextState, platform),

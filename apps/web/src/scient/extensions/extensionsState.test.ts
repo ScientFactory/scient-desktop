@@ -24,7 +24,6 @@ const CONNECTOR = ConnectorId.make("con_linear0001");
 const INVENTORY = {
   revision: 1,
   connectors: [],
-  projectSelections: [],
   providerSupport: [],
   plugins: [],
   diagnostics: [],

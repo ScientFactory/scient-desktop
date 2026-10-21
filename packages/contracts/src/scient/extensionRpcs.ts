@@ -6,12 +6,12 @@ import {
   ConnectorAddInput,
   ConnectorAddResult,
   ConnectorRemoveInput,
-  ConnectorSetProjectSelectionInput,
   ConnectorStartSignInInput,
   ConnectorStartSignInResult,
   ConnectorTestInput,
   ConnectorTestResult,
   ConnectorUpdateInput,
+  DiscoverCatalog,
   DiscoverPage,
   DiscoverSearchInput,
   ExtensionDeliveryReceiptInput,
@@ -34,10 +34,10 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsConnectorAdd: "extensions.connectors.add",
   extensionsConnectorStartSignIn: "extensions.connectors.startSignIn",
   extensionsConnectorUpdate: "extensions.connectors.update",
-  extensionsConnectorSetProjectSelection: "extensions.connectors.setProjectSelection",
   extensionsConnectorRemove: "extensions.connectors.remove",
   extensionsConnectorTest: "extensions.connectors.test",
   extensionsDiscoverSearch: "extensions.discover.search",
+  extensionsDiscoverCatalog: "extensions.discover.catalog",
   extensionsPluginInstall: "extensions.plugins.install",
   extensionsPluginRemove: "extensions.plugins.remove",
   extensionsPluginSetEnabled: "extensions.plugins.setEnabled",
@@ -52,6 +52,11 @@ export const WsExtensionsListRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.extensio
   success: ExtensionsInventory,
   error: ExtensionsRpcError,
 });
+
+export const WsExtensionsDiscoverCatalogRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsDiscoverCatalog,
+  { payload: Schema.Struct({}), success: DiscoverCatalog, error: ExtensionsRpcError },
+);
 
 export const WsExtensionsSubscribeChangesRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsSubscribeChanges,
@@ -80,15 +85,6 @@ export const WsExtensionsConnectorStartSignInRpc = Rpc.make(
 export const WsExtensionsConnectorUpdateRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsConnectorUpdate,
   { payload: ConnectorUpdateInput, success: ExtensionsInventory, error: ExtensionsRpcError },
-);
-
-export const WsExtensionsConnectorSetProjectSelectionRpc = Rpc.make(
-  SCIENT_EXTENSION_WS_METHODS.extensionsConnectorSetProjectSelection,
-  {
-    payload: ConnectorSetProjectSelectionInput,
-    success: ExtensionsInventory,
-    error: ExtensionsRpcError,
-  },
 );
 
 export const WsExtensionsConnectorRemoveRpc = Rpc.make(

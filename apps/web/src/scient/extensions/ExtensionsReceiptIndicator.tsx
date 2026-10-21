@@ -76,7 +76,7 @@ export function ExtensionsReceiptIndicator({
             </section>
           ) : null}
           <Link
-            to="/settings/extensions"
+            to="/settings/extensions/installed"
             search={{ machine: environmentId }}
             className="justify-self-start text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >

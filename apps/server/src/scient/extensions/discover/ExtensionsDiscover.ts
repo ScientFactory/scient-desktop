@@ -1,16 +1,21 @@
 /**
- * Discover: a server-side client for the official MCP Registry. Entries are
- * filtered to active servers and normalized into `DiscoverEntry`, where only a
- * Streamable HTTP remote over https that needs no user-supplied headers or URL
- * variables is one-click installable as a connector.
- * See docs/internals/scient-extensions.md.
+ * Discover: Scient's curated catalog plus a server-side client for the
+ * official MCP Registry. Registry entries are filtered to active servers and
+ * normalized into `DiscoverEntry`, where only a Streamable HTTP remote over
+ * https that needs no user-supplied headers or URL variables is one-click
+ * installable as a connector. Curated entries carry a tagline, categories and
+ * an icon, inlined as a `data:` URI. See docs/internals/scient-extensions.md.
  */
 import {
   ExtensionsError,
   type ConnectorId,
+  type DiscoverCatalog,
+  type DiscoverCatalogSection,
   type DiscoverEntry,
   type DiscoverPage,
   type DiscoverRemote,
+  type DiscoverSearchInput,
+  type ExtensionCategory,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -29,10 +34,26 @@ import {
   ExtensionsDiscover,
   type ExtensionsDiscoverShape,
 } from "../ExtensionsServices.ts";
+import {
+  canonicalConnectorUrl,
+  CATALOG_CATEGORY_ORDER,
+  CATALOG_SECTIONS,
+  CURATED_SERVERS,
+  curatedDiscoverEntry,
+  curatedServerForUrl,
+  type CuratedServer,
+} from "./curatedCatalog.ts";
+import { fetchIconDataUri, iconFetch, makeIconStore } from "./DiscoverIcons.ts";
 
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
 export const DISCOVER_CACHE_TTL = Duration.minutes(10);
+export const CATALOG_PREVIEW_ENTRIES = 6;
+/** How long one response waits for icons that are not cached yet. */
+export const ICON_RESPONSE_BUDGET = Duration.seconds(1);
+
+const curatedIconSources = (list: ReadonlyArray<CuratedServer>): ReadonlyArray<string> =>
+  list.flatMap((server) => (server.iconSource === undefined ? [] : [server.iconSource]));
 const MAX_CACHED_PAGES = 64;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const ATTEMPT_TIMEOUT = Duration.seconds(10);
@@ -175,6 +196,7 @@ export function toDiscoverEntry(
     ...(websiteUrl === undefined ? {} : { websiteUrl }),
     ...(repositoryUrl === undefined ? {} : { repositoryUrl }),
     remotes: usable,
+    categories: [],
     installable,
     ...(unsupportedReason === undefined ? {} : { unsupportedReason }),
     ...(publishedAt === undefined ? {} : { publishedAt }),
@@ -210,11 +232,46 @@ interface CachedPage {
   readonly fetchedAt: string;
 }
 
-const make = Effect.fn("ExtensionsDiscover.make")(function* () {
+export interface DiscoverOptions {
+  /** Curated servers; the shipped catalog by default. */
+  readonly servers?: ReadonlyArray<CuratedServer>;
+  /** Resolves a pinned icon to a `data:` URI, or `undefined` when it cannot be used. */
+  readonly fetchIcon?: (url: string, signal: AbortSignal) => Promise<string | undefined>;
+}
+
+/** How a curated entry is matched against connectors and registry results. */
+const curatedKeys = (server: CuratedServer) => ({
+  name: server.registry?.name,
+  url: canonicalConnectorUrl(server.url),
+});
+
+const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): boolean => {
+  const haystack = `${server.displayName}\n${server.tagline}\n${server.description}`.toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+};
+
+/** Entries whose primary category is `category` first, then the rest, each in catalog order. */
+const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
+  const members = servers.filter((server) => server.categories.includes(category));
+  if (category === "featured") return members;
+  const primary = (server: CuratedServer) =>
+    server.categories.find((candidate) => candidate !== "featured") === category;
+  return [...members.filter(primary), ...members.filter((server) => !primary(server))];
+};
+
+export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
+  options: DiscoverOptions = {},
+) {
   const httpClient = yield* HttpClient.HttpClient;
   const connectorRuntime = yield* Effect.serviceOption(ConnectorRuntime);
+  const servers = options.servers ?? CURATED_SERVERS;
+  const fetchIcon =
+    options.fetchIcon ?? ((url, signal) => fetchIconDataUri(iconFetch, url, signal));
   // Keyed by query, cursor and limit; Map insertion order drives eviction.
   const cache = new Map<string, CachedPage>();
+  const icons = yield* makeIconStore(fetchIcon, yield* Effect.scope);
+  // Warm every curated icon at start so the first Discover page has logos.
+  yield* icons.warm(curatedIconSources(servers));
 
   const fetchOnce = (url: string) =>
     Effect.gen(function* () {
@@ -271,81 +328,209 @@ const make = Effect.fn("ExtensionsDiscover.make")(function* () {
       }),
     );
 
-  const installedByRegistryName = Effect.gen(function* () {
-    if (Option.isNone(connectorRuntime)) return new Map<string, ConnectorId>();
-    const inventory = yield* connectorRuntime.value.list({ projectId: undefined });
+  /** Live installation state: connectors by registry name and by canonical URL. */
+  const installedConnectors = Effect.gen(function* () {
     const byName = new Map<string, ConnectorId>();
+    const byUrl = new Map<string, ConnectorId>();
+    if (Option.isNone(connectorRuntime)) return { byName, byUrl };
+    const inventory = yield* connectorRuntime.value.list();
     for (const connector of inventory.connectors) {
       if (connector.source.type === "registry" && !byName.has(connector.source.name)) {
         byName.set(connector.source.name, connector.connectorId);
       }
+      const url = canonicalConnectorUrl(connector.url);
+      if (!byUrl.has(url)) byUrl.set(url, connector.connectorId);
     }
-    return byName;
+    return { byName, byUrl };
+  });
+
+  type Installed = Effect.Success<typeof installedConnectors>;
+
+  const installedFor = (
+    installed: Installed,
+    name: string,
+    urls: ReadonlyArray<string>,
+  ): ConnectorId | undefined =>
+    installed.byName.get(name) ??
+    urls
+      .map((url) => installed.byUrl.get(canonicalConnectorUrl(url)))
+      .find((id) => id !== undefined);
+
+  /** Curated icon `data:` URIs by icon source, ready within the response budget. */
+  const iconsFor = (list: ReadonlyArray<CuratedServer>) =>
+    icons.resolveWithin(curatedIconSources(list), ICON_RESPONSE_BUDGET);
+
+  /** A curated entry with its icon (when ready) and live installation state. */
+  const curatedEntry = (
+    server: CuratedServer,
+    installed: Installed,
+    ready: ReadonlyMap<string, string>,
+  ): DiscoverEntry => {
+    const entry = curatedDiscoverEntry(server);
+    const iconUrl = server.iconSource === undefined ? undefined : ready.get(server.iconSource);
+    const installedConnectorId = installedFor(installed, entry.name, [server.url]);
+    return {
+      ...entry,
+      ...(iconUrl === undefined ? {} : { iconUrl }),
+      ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
+    };
+  };
+
+  const nowIso = Clock.currentTimeMillis.pipe(
+    Effect.map((now) => DateTime.formatIso(DateTime.makeUnsafe(now))),
+  );
+
+  const catalog: ExtensionsDiscoverShape["catalog"] = Effect.fn("ExtensionsDiscover.catalog")(
+    function* () {
+      const installed = yield* installedConnectors;
+      const previews = CATALOG_CATEGORY_ORDER.flatMap((category) => {
+        const members = serversIn(servers, category);
+        return members.length === 0
+          ? []
+          : [{ category, members, preview: members.slice(0, CATALOG_PREVIEW_ENTRIES) }];
+      });
+      // One budget for the whole page: icons not ready yet follow on `changes`.
+      const ready = yield* iconsFor(previews.flatMap(({ preview }) => preview));
+      const sections = previews.map(({ category, members, preview }): DiscoverCatalogSection => ({
+        category,
+        title: CATALOG_SECTIONS[category].title,
+        description: CATALOG_SECTIONS[category].description,
+        entries: preview.map((server) => curatedEntry(server, installed, ready)),
+        total: members.length,
+      }));
+      return { sections, fetchedAt: yield* nowIso } satisfies DiscoverCatalog;
+    },
+  );
+
+  /** The curated server a registry entry publishes, by registry name or remote URL. */
+  const curatedFor = (entry: Omit<DiscoverEntry, "installedConnectorId">) =>
+    servers.find((server) => {
+      const keys = curatedKeys(server);
+      return (
+        keys.name === entry.name ||
+        entry.remotes.some((remote) => canonicalConnectorUrl(remote.url) === keys.url)
+      );
+    });
+
+  const searchRegistry = Effect.fn("ExtensionsDiscover.searchRegistry")(function* (
+    input: DiscoverSearchInput,
+    query: string,
+  ) {
+    const cursor = input.cursor?.trim();
+    const requestedLimit =
+      input.limit !== undefined && Number.isFinite(input.limit)
+        ? Math.trunc(input.limit)
+        : DEFAULT_LIMIT;
+    const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
+    const url = new URL(MCP_REGISTRY_SERVERS_URL);
+    if (query !== "") url.searchParams.set("search", query);
+    url.searchParams.set("limit", String(limit));
+    if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
+    url.searchParams.set("version", "latest");
+    const key = url.href;
+
+    const now = yield* Clock.currentTimeMillis;
+    let page = cache.get(key);
+    if (page === undefined || page.expiresAtMs <= now) {
+      const body = yield* fetchOnce(key).pipe(
+        Effect.retry({
+          times: RETRIES,
+          while: (error) => error.retryable,
+          schedule: Schedule.exponential(Duration.millis(250)),
+        }),
+        Effect.mapError(
+          (error) => new ExtensionsError({ reason: "unreachable", message: error.message }),
+        ),
+      );
+      const parsed = parseRegistryPage(body);
+      if (parsed === undefined) {
+        return yield* new ExtensionsError({
+          reason: "unreachable",
+          message: "The MCP Registry returned an unexpected response.",
+        });
+      }
+      page = {
+        ...parsed,
+        expiresAtMs: now + Duration.toMillis(DISCOVER_CACHE_TTL),
+        fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      };
+      cache.delete(key);
+      cache.set(key, page);
+      for (const staleKey of cache.keys()) {
+        if (cache.size <= MAX_CACHED_PAGES) break;
+        cache.delete(staleKey);
+      }
+    }
+
+    // Installation state is live, never cached with the registry page.
+    const installed = yield* installedConnectors;
+    const matched = page.entries.map((entry) => ({ entry, curated: curatedFor(entry) }));
+    const ready = yield* iconsFor(
+      matched.flatMap(({ curated }) => (curated === undefined ? [] : [curated])),
+    );
+    const entries = matched.map(({ entry, curated }): DiscoverEntry => {
+      // A registry server Scient curates carries the curated presentation.
+      const iconUrl = curated?.iconSource === undefined ? undefined : ready.get(curated.iconSource);
+      const installedConnectorId = installedFor(
+        installed,
+        entry.name,
+        entry.remotes.map((remote) => remote.url),
+      );
+      return {
+        ...entry,
+        ...(curated === undefined
+          ? {}
+          : { tagline: curated.tagline, categories: [...curated.categories] }),
+        ...(iconUrl === undefined ? {} : { iconUrl }),
+        ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
+      };
+    });
+    return {
+      entries,
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+      fetchedAt: page.fetchedAt,
+    } satisfies DiscoverPage;
   });
 
   const search: ExtensionsDiscoverShape["search"] = Effect.fn("ExtensionsDiscover.search")(
     function* (input) {
       const query = (input.query ?? "").trim().slice(0, MAX_QUERY_LENGTH);
-      const cursor = input.cursor?.trim();
-      const requestedLimit =
-        input.limit !== undefined && Number.isFinite(input.limit)
-          ? Math.trunc(input.limit)
-          : DEFAULT_LIMIT;
-      const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
-      const url = new URL(MCP_REGISTRY_SERVERS_URL);
-      if (query !== "") url.searchParams.set("search", query);
-      url.searchParams.set("limit", String(limit));
-      if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
-      url.searchParams.set("version", "latest");
-      const key = url.href;
-
-      const now = yield* Clock.currentTimeMillis;
-      let page = cache.get(key);
-      if (page === undefined || page.expiresAtMs <= now) {
-        const body = yield* fetchOnce(key).pipe(
-          Effect.retry({
-            times: RETRIES,
-            while: (error) => error.retryable,
-            schedule: Schedule.exponential(Duration.millis(250)),
-          }),
-          Effect.mapError(
-            (error) => new ExtensionsError({ reason: "unreachable", message: error.message }),
-          ),
-        );
-        const parsed = parseRegistryPage(body);
-        if (parsed === undefined) {
-          return yield* new ExtensionsError({
-            reason: "unreachable",
-            message: "The MCP Registry returned an unexpected response.",
-          });
-        }
-        page = {
-          ...parsed,
-          expiresAtMs: now + Duration.toMillis(DISCOVER_CACHE_TTL),
-          fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-        };
-        cache.delete(key);
-        cache.set(key, page);
-        for (const staleKey of cache.keys()) {
-          if (cache.size <= MAX_CACHED_PAGES) break;
-          cache.delete(staleKey);
-        }
-      }
-
-      // Installation state is live, never cached with the registry page.
-      const installed = yield* installedByRegistryName;
+      if (input.category === undefined) return yield* searchRegistry(input, query);
+      // A curated category is small and complete: filtered in memory, never paged.
+      const terms = query
+        .toLowerCase()
+        .split(/\s+/u)
+        .filter((term) => term !== "");
+      const installed = yield* installedConnectors;
+      const list = serversIn(servers, input.category).filter((server) =>
+        matchesQuery(server, terms),
+      );
+      const ready = yield* iconsFor(list);
       return {
-        entries: page.entries.map((entry) => {
-          const installedConnectorId = installed.get(entry.name);
-          return installedConnectorId === undefined ? entry : { ...entry, installedConnectorId };
-        }),
-        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
-        fetchedAt: page.fetchedAt,
+        entries: list.map((server) => curatedEntry(server, installed, ready)),
+        fetchedAt: yield* nowIso,
       } satisfies DiscoverPage;
     },
   );
 
-  return ExtensionsDiscover.of({ search });
+  const connectorIcons: ExtensionsDiscoverShape["connectorIcons"] = (urls) =>
+    Effect.gen(function* () {
+      const sources = new Map<string, string>();
+      for (const url of urls) {
+        const source = curatedServerForUrl(url, servers)?.iconSource;
+        if (source !== undefined) sources.set(url, source);
+      }
+      if (sources.size === 0) return new Map<string, string>();
+      const ready = yield* icons.resolveWithin([...sources.values()], Duration.zero);
+      return new Map(
+        [...sources].flatMap(([url, source]) => {
+          const iconUrl = ready.get(source);
+          return iconUrl === undefined ? [] : [[url, iconUrl] as const];
+        }),
+      );
+    });
+
+  return ExtensionsDiscover.of({ search, catalog, connectorIcons, changes: icons.changes });
 });
 
-export const layer = Layer.effect(ExtensionsDiscover, make());
+export const layer = Layer.effect(ExtensionsDiscover, makeWith());

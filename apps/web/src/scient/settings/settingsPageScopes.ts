@@ -25,13 +25,18 @@ const OFFLINE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/documents": true,
 };
 
+/** The settings section a path belongs to: `/settings/extensions/installed` → `/settings/extensions`. */
+function settingsSection(pathname: string): string {
+  return pathname.split("/").slice(0, 3).join("/");
+}
+
 export function settingsPageChoosesOneEnvironment(pathname: string): boolean {
-  return Object.hasOwn(SINGLE_ENVIRONMENT_SETTINGS_PATHS, pathname);
+  return Object.hasOwn(SINGLE_ENVIRONMENT_SETTINGS_PATHS, settingsSection(pathname));
 }
 
 /** Whether a page offers only the environment choice, with no project or checkout. */
 export function settingsPageIgnoresProjects(pathname: string): boolean {
-  return Object.hasOwn(SERVER_ONLY_SETTINGS_PATHS, pathname);
+  return Object.hasOwn(SERVER_ONLY_SETTINGS_PATHS, settingsSection(pathname));
 }
 
 /**
@@ -47,5 +52,5 @@ export function settingsPageScopeSearch(
 
 /** Whether a page still renders while its one selected environment is disconnected. */
 export function settingsPageRendersOffline(pathname: string): boolean {
-  return Object.hasOwn(OFFLINE_ENVIRONMENT_SETTINGS_PATHS, pathname);
+  return Object.hasOwn(OFFLINE_ENVIRONMENT_SETTINGS_PATHS, settingsSection(pathname));
 }

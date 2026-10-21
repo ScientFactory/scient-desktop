@@ -11,6 +11,7 @@ import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import {
   ConnectorRuntime,
   ExtensionDeliveryReceipts,
+  ExtensionsDiscover,
   ScientPluginRegistry,
 } from "./ExtensionsServices.ts";
 import {
@@ -78,6 +79,7 @@ it.effect("bumps the extensions revision when a provider instance is added", () 
       Layer.mock(ConnectorRuntime)({ changes: Stream.never }),
       Layer.mock(ScientPluginRegistry)({ changes: Stream.never }),
       Layer.mock(ExtensionDeliveryReceipts)({ changes: Stream.never }),
+      Layer.mock(ExtensionsDiscover)({ changes: Stream.never }),
       Layer.mock(ProviderRegistry)({
         getProviders: Effect.succeed([provider("work", "codex")]),
         streamChanges: Stream.fromQueue(snapshots),
@@ -98,5 +100,33 @@ it.effect("bumps the extensions revision when a provider instance is added", () 
     yield* Queue.offer(snapshots, [provider("work", "codex"), provider("team", "claudeAgent")]);
     assert.deepEqual(Array.from(yield* Fiber.join(announced)), [{ revision: 1 }]);
     assert.equal(yield* feed.current, 1);
+  }),
+);
+
+it.effect("bumps the extensions revision when curated icons become ready", () =>
+  Effect.gen(function* () {
+    const iconsReady = yield* Queue.unbounded<void>();
+    const owners = Layer.mergeAll(
+      Layer.mock(ConnectorRuntime)({ changes: Stream.never }),
+      Layer.mock(ScientPluginRegistry)({ changes: Stream.never }),
+      Layer.mock(ExtensionDeliveryReceipts)({ changes: Stream.never }),
+      Layer.mock(ExtensionsDiscover)({ changes: Stream.fromQueue(iconsReady) }),
+      Layer.mock(ProviderRegistry)({
+        getProviders: Effect.succeed([provider("work", "codex")]),
+        streamChanges: Stream.never,
+      }),
+    );
+    const feed = Context.get(
+      yield* Layer.build(changeFeedLayer.pipe(Layer.provide(owners))),
+      ExtensionsChangeFeed,
+    );
+    const announced = yield* feed.changes.pipe(
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.yieldNow;
+    yield* Queue.offer(iconsReady, undefined);
+    assert.deepEqual(Array.from(yield* Fiber.join(announced)), [{ revision: 1 }]);
   }),
 );

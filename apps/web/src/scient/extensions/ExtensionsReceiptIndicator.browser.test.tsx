@@ -20,8 +20,17 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("./extensionsState", () => ({ extensionsDeliveryReceipt: state.receiptAtom }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, children, ...props }: { to: string; children: React.ReactNode }) => (
-    <a href={to} {...props}>
+  Link: ({
+    to,
+    search,
+    children,
+    ...props
+  }: {
+    to: string;
+    search?: { machine?: string };
+    children: React.ReactNode;
+  }) => (
+    <a href={to} data-machine={search?.machine} {...props}>
       {children}
     </a>
   ),
@@ -113,7 +122,9 @@ describe("ExtensionsReceiptIndicator", () => {
       ["transport-unsupported", "Hugging FaceNot supported by this agent"],
       ["project-deselected", "SentryOff for this project"],
     ]);
-    expect(document.querySelector('a[href="/settings/extensions"]')).not.toBeNull();
+    const manage = document.querySelector('a[href="/settings/extensions/installed"]');
+    expect(manage?.textContent).toBe("Manage connected services");
+    expect(manage?.getAttribute("data-machine")).toBe("local");
   });
 
   it("omits the skipped list when everything was delivered", async () => {

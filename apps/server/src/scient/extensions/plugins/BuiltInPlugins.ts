@@ -117,19 +117,6 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
     ],
     settingsPath: "/settings/source-control",
   }),
-  builtIn({
-    pluginId: "scient.skills",
-    displayName: "Skills",
-    description: "Reviewed Scient skills that agents load through turn-scoped skill tools.",
-    components: [
-      tools("skills:read", [
-        "scient_skills_list",
-        "scient_skill_load",
-        "scient_skill_read_resource",
-      ]),
-    ],
-    settingsPath: "/settings/skills",
-  }),
 ];
 
 /** Bundles may not reuse Scient's namespace, so a bundle cannot impersonate a built-in. */

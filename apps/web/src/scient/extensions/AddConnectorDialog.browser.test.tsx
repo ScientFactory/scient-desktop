@@ -41,7 +41,7 @@ const connector: ConnectorSummary = {
   auth: { type: "oauth", usesOwnClient: false },
   status: "needs-auth",
   enabled: true,
-  projectPolicy: "all-projects",
+  availability: { type: "all-projects" },
   createdAt: "2026-10-21T00:00:00.000Z",
   updatedAt: "2026-10-21T00:00:00.000Z",
 };
@@ -268,6 +268,7 @@ describe("AddConnectorDialog validation", () => {
         { type: "streamable-http", url: "https://mcp.linear.app/mcp", requiresInput: false },
       ],
       installable: true,
+      categories: [],
     });
     expect([...field<HTMLSelectElement>("connector-remote").options].map((o) => o.value)).toEqual([
       "https://mcp.linear.app/mcp",

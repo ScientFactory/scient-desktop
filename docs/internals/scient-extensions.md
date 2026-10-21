@@ -8,11 +8,11 @@ Companion feature: **Secrets** (separate owner, see [Secrets integration](#secre
 One place where a user sees and manages everything that extends what Scient and
 its agents can do, regardless of who owns it:
 
-| Kind                                      | Owner                                    | Examples                                                                            | Mutable from Scient                                                 |
-| ----------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| **Connected service** (connector)         | Scient, per user                         | Linear, Notion, Hugging Face, any remote MCP server                                 | Yes: connect, sign in, reconnect, disconnect, per-project selection |
-| **Provider plugin / provider MCP server** | A provider instance (Codex, Claude, …)   | Codex marketplace plugins, Claude plugins, servers in `~/.codex/config.toml`        | Only where the provider exposes a verified mutation API             |
-| **Scient plugin**                         | Scient (built-in) or an installed bundle | Sources, Documents, Compute; a declarative bundle of skills + connector definitions | Built-ins: read-only description; bundles: install, enable, remove  |
+| Kind                                      | Owner                                    | Examples                                                                            | Mutable from Scient                                                    |
+| ----------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Connected service** (connector)         | Scient, per user                         | Linear, Notion, Hugging Face, any remote MCP server                                 | Yes: connect, sign in, reconnect, disconnect, per-project availability |
+| **Provider plugin / provider MCP server** | A provider instance (Codex, Claude, …)   | Codex marketplace plugins, Claude plugins, servers in `~/.codex/config.toml`        | Only where the provider exposes a verified mutation API                |
+| **Scient plugin**                         | Scient (built-in) or an installed bundle | Sources, Documents, Compute; a declarative bundle of skills + connector definitions | Built-ins: read-only description; bundles: install, enable, remove     |
 
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
@@ -33,7 +33,7 @@ reused.
   removed or change driver or name (not on health refreshes), so the
   compatibility in the inventory follows the live provider list.
 - **Entry detail** — what it adds (tools, skills, panels), who manages it,
-  compatibility per provider instance with a reason, health, project selection,
+  compatibility per provider instance with a reason, health, project availability,
   and the owner's actions.
 
 External skills (`/settings/skills/external`) remain where they are; the
@@ -76,8 +76,9 @@ vendor MCP endpoint (https)
 
 ### Persistent state
 
-`<stateDir>/scient-extensions.json` (versioned schema, atomic write, unreadable
-entries preserved and written back, a failed load never overwrites the file):
+`<stateDir>/scient-extensions.json` (versioned schema, currently format 2;
+atomic write; unreadable entries preserved and written back; a failed load
+never overwrites the file):
 
 ```ts
 ConnectorRecord {
@@ -92,10 +93,27 @@ ConnectorRecord {
     | { type: "header"; headerName: string; secretRef: SecretRef; scheme?: "Bearer" };
   status: "connected" | "needs-auth";
   enabled: boolean;               // user-level on/off
-  projectPolicy: "all-projects" | "selected-projects";
+  availability: GrantScope;       // which projects receive it (shared with Secrets)
   createdAt; updatedAt;
 }
-ProjectConnectorSelection { projectId; connectorId; enabled: boolean }   // app-private, keyed by durable project id
+GrantScope = { type: "all-projects" } | { type: "projects"; projectIds: ProjectId[] }
+```
+
+`GrantScope` is the one availability model across Secrets and Extensions
+(defined in `packages/contracts/src/scient/secrets.ts`). An empty `projectIds`
+list means no project. Updates go through `extensions.connectors.update`
+(`availability`); every project id must exist and not be deleted, and ids are
+deduplicated (first occurrence kept) before saving.
+
+Format 1 kept `projectPolicy: "all-projects" | "selected-projects"` per
+connector plus separate `{ connectorId, projectId, enabled }` selection
+records. It is migrated on load and saved as format 2 at once: `all-projects`
+stays all projects; `selected-projects` becomes the projects whose selection
+was enabled (deduplicated, in file order); the selection records are dropped.
+A Scient that predates format 2 refuses the file rather than overwriting it.
+
+```ts
+
 ```
 
 Credential material (OAuth tokens, client registration, PKCE verifier for
@@ -239,7 +257,7 @@ computes the **delivered connector set** for the session:
 
 ```
 connected ∧ enabled
-∧ (projectPolicy = all-projects ∨ selection(projectId, connectorId) = enabled)
+∧ (availability.type = all-projects ∨ projectId ∈ availability.projectIds)
 ∧ adapter supports remote HTTP MCP for this session
 ```
 
@@ -251,8 +269,8 @@ Drivers without a reviewed delivery path skip every connector as
 `transport-unsupported` (`apps/server/src/scient/extensions/ConnectorProviderSupport.ts`).
 
 At request time the proxy re-checks the same predicate, so disconnecting,
-disabling, or deselecting takes effect on the next call. Adding a connector
-reaches sessions issued afterwards.
+disabling, or narrowing availability takes effect on the next call. Adding a
+connector reaches sessions issued afterwards.
 
 Adapters map the list into their native formats:
 
@@ -361,10 +379,11 @@ pages exist only on built-in plugins; keys that would carry code (`main`,
 rejected with a named reason.
 
 - **Built-in plugins** describe existing Scient features (Sources, Documents,
-  Compute, Browser and devices, Pull requests, Skills). They appear in the
-  library with their contributed tools and settings links. Their on/off controls
-  are the existing settings (for example agent browser/device access); no
-  parallel toggle is introduced. The `scient.` id namespace is reserved for them.
+  Compute, Browser and devices, Pull requests). They appear in the library with
+  their contributed tools and settings links. Their on/off controls are the
+  existing settings (for example agent browser/device access); no parallel
+  toggle is introduced. Skills are not listed: they keep their own Settings →
+  Skills page. The `scient.` id namespace is reserved for built-ins.
 - **Declarative bundles** contain only data: Agent Skills directories and
   connector definitions. They are installed from an absolute directory path on
   the server host and read once into memory. The requested root is `lstat`ed
@@ -456,23 +475,64 @@ rejected with a named reason.
   no local MCP server processes, no scripts, no UI code. Supporting third-party
   code requires a separate decision (see Open decisions).
 
-## Discover: MCP Registry
+## Discover: curated catalog and MCP Registry
 
-Server-side client for `https://registry.modelcontextprotocol.io/v0.1/servers`
-(search, cursor pagination, `version=latest`, at most 100 per page), cached 10
-minutes per query, cursor and limit, with a 10-second deadline per attempt, two
-retries for transport failures, timeouts, 429 and 5xx, and a 4 MiB response
-cap. Entries are filtered to `status: active` and normalized into
-`DiscoverEntry`: `remotes` lists the `streamable-http` remotes served over
-https, decided after URL variables are substituted (fixed `value` first, then
-`default`), plus unresolved templates whose scheme is not a literal non-https
-one; a remote `requiresInput` when it has a required header or an unresolved
-URL variable; `installable` = at
-least one such remote without required input. Otherwise `unsupportedReason`
-explains why: package-only (local) servers "Runs locally — local servers are
-not supported yet", required configuration, non-https endpoints, or another
-transport (for example legacy SSE). `installedConnectorId` is computed live
-from connectors whose source is that registry name, never cached.
+**Curated catalog.** `apps/server/src/scient/extensions/discover/curatedCatalog.ts`
+lists remote MCP servers chosen for a research-focused audience, each with an
+https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
+a short description, categories (`featured`, `research`, `data`, `code`,
+`writing`, `communication`, `design`), a website, the MCP Registry entry when
+the registry publishes that exact remote, and a pinned https icon source. Every
+URL is verified live before it is added (a POST `initialize` answered 200 with
+an initialize result, or 401 with `WWW-Authenticate`); the verification date
+is recorded in the file. Servers are never invented, and a category with no
+verified entry has no section. A curated server that is not in the registry is
+named `scient.curated/<id>` with the verification date as its version; clients
+install it by URL.
+
+`extensions.discover.catalog` returns the non-empty categories in that order,
+each with up to 6 preview entries (entries whose first non-featured category is
+the section come first, then the rest, in catalog order) and its `total`.
+`extensions.discover.search` with a `category` returns that category's curated
+entries filtered in memory by every query term against name, tagline and
+description, without a cursor; without a category it searches the registry,
+and a registry result matching a curated server (by registry name or remote
+URL) carries that server's tagline, categories and icon.
+`installedConnectorId` is resolved live on every call, by registry name or by
+canonical connector URL (parsed, trailing path slash ignored).
+
+**Icons.** Clients never load remote images. The server fetches a curated
+server's pinned icon through the connector egress policy (public https only,
+unauthenticated redirects re-checked, 10-second deadline, 64 KiB cap), accepts
+only `image/png`, `image/jpeg`, `image/webp` and `image/svg+xml` whose bytes
+match the declared type, and returns it as a `data:` URI. Every curated icon is
+warmed in the background at server start, at most six fetches at a time and
+each fetched once (single flight). A `catalog` or `search` response waits at
+most one second in total for icons that are not cached yet and leaves the rest
+out; `extensions.list` never waits. When icons a response left out become
+ready, the extensions change feed advances so clients refetch. Icons are kept
+24 hours (a stale icon is served while it is refreshed); a failure omits
+`iconUrl` (the client draws a letter tile) and is retried after ten minutes.
+Icons are never scraped at runtime and uncurated registry entries get none.
+A connector whose canonical URL is a curated server carries that server's icon
+as `ConnectorSummary.iconUrl`, and adding a curated URL (from Discover or typed
+by hand) keeps the curated name and description unless the client sends its
+own `displayName` and `description`.
+
+**MCP Registry.** Server-side client for
+`https://registry.modelcontextprotocol.io/v0.1/servers` (search, cursor
+pagination, `version=latest`, at most 100 per page), cached 10 minutes per
+query, cursor and limit, with a 10-second deadline per attempt, two retries for
+transport failures, timeouts, 429 and 5xx, and a 4 MiB response cap. Entries
+are filtered to `status: active` and normalized into `DiscoverEntry`: `remotes`
+lists the `streamable-http` remotes served over https, decided after URL
+variables are substituted (fixed `value` first, then `default`), plus
+unresolved templates whose scheme is not a literal non-https one; a remote
+`requiresInput` when it has a required header or an unresolved URL variable;
+`installable` = at least one such remote without required input. Otherwise
+`unsupportedReason` explains why: package-only (local) servers "Runs locally —
+local servers are not supported yet", required configuration, non-https
+endpoints, or another transport (for example legacy SSE).
 
 ## Secrets integration
 
@@ -507,6 +567,10 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 - Both features resolve grants from the project per session, so delegated
   children in the same project inherit them; writes keep the provider's own
   per-call approval.
+- Both features express where a grant applies with the same `GrantScope`
+  (`{ type: "all-projects" } | { type: "projects"; projectIds }`, defined in
+  `packages/contracts/src/scient/secrets.ts`): a connector's `availability`
+  and a secret's grant scope mean the same thing and are edited the same way.
 - Until the vault lands, the port is implemented over `ServerSecretStore` with
   entries named `connector-<uuid>.bin` and a versioned material envelope; the
   vault migration moves them by that prefix. Binding user secrets is offered

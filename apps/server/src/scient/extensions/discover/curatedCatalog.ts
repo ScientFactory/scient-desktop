@@ -1,0 +1,653 @@
+/**
+ * Scient's curated Discover catalog: remote MCP servers chosen for a
+ * research-focused audience, grouped into the Settings → Extensions sections.
+ *
+ * Verification (2026-10-21): every `url` below answered a POST MCP `initialize`
+ * with either 200 and a valid initialize result ("open") or 401 with a
+ * `WWW-Authenticate` challenge ("sign-in"); candidates that failed (403, 404,
+ * DNS, expired TLS, 401 without a challenge) were dropped. `registry` was
+ * cross-checked against registry.modelcontextprotocol.io v0.1 search by remote
+ * URL; entries without it are not listed there. Every `iconSource` resolved to
+ * an allowed image under 64 KiB through Scient's own icon fetch (connector
+ * egress policy); entries without one get a letter tile. Re-verify before
+ * changing an entry.
+ */
+import type { DiscoverEntry, ExtensionCategory } from "@t3tools/contracts";
+
+export const CATALOG_VERIFIED_ON = "2026-10-21";
+
+/** Names of curated servers not listed in the MCP Registry. Install them by URL. */
+export const CURATED_NAME_PREFIX = "scient.curated/";
+
+/** Section order on the Discover home page. */
+export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
+  "featured",
+  "research",
+  "data",
+  "code",
+  "writing",
+  "communication",
+  "design",
+];
+
+export const CATALOG_SECTIONS: Readonly<
+  Record<ExtensionCategory, { readonly title: string; readonly description: string }>
+> = {
+  featured: { title: "Featured", description: "Strong picks to start with." },
+  research: {
+    title: "Research",
+    description: "Literature, citations, models and biomedical knowledge.",
+  },
+  data: { title: "Data", description: "Datasets, notebooks and databases." },
+  code: { title: "Code", description: "Repositories, documentation and developer tools." },
+  writing: { title: "Writing", description: "Documents, wikis and file storage." },
+  communication: {
+    title: "Communication",
+    description: "Chat, meetings and project tracking.",
+  },
+  design: { title: "Design", description: "Figures, diagrams, slides and design files." },
+};
+
+export interface CuratedServer {
+  /** Stable slug; the entry name when the server is not in the registry. */
+  readonly id: string;
+  readonly displayName: string;
+  /** Plain text, at most 60 characters. */
+  readonly tagline: string;
+  /** Two or three sentences. */
+  readonly description: string;
+  /** Streamable HTTP endpoint (https). */
+  readonly url: string;
+  /** The MCP Registry entry publishing this exact remote, when there is one. */
+  readonly registry?: { readonly name: string; readonly version: string };
+  /** First category is the primary one; `featured` may be added to any entry. */
+  readonly categories: ReadonlyArray<ExtensionCategory>;
+  readonly websiteUrl: string;
+  /** Pinned https icon (PNG, JPEG, WebP or SVG, at most 64 KiB). */
+  readonly iconSource?: string;
+}
+
+export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
+  // ── Research ────────────────────────────────────────────────────────────
+  {
+    // open: 200 "Asta Scientific Corpus Tool" 1.9.4
+    id: "semantic-scholar",
+    displayName: "Semantic Scholar",
+    tagline: "Search papers, authors and citations",
+    description:
+      "Ai2's Semantic Scholar corpus for agents. Search papers by relevance or title, read citations and author publication lists, and pull matching snippets from paper text.",
+    url: "https://api.semanticscholar.org/mcp",
+    categories: ["featured", "research"],
+    websiteUrl: "https://www.semanticscholar.org",
+    iconSource: "https://cdn.semanticscholar.org/96374d262d7c8584/img/apple-touch-icon-57x57.png",
+  },
+  {
+    // sign-in: 401 OAuth (free OpenAlex account)
+    id: "openalex",
+    displayName: "OpenAlex",
+    tagline: "Open catalog of scholarly works and authors",
+    description:
+      "Query OpenAlex, the open index of research papers, authors, institutions and citations. Useful for literature mapping and bibliometrics; sign in with a free OpenAlex account.",
+    url: "https://mcp.openalex.org/mcp",
+    registry: { name: "org.openalex/openalex", version: "0.5.0" },
+    categories: ["featured", "research"],
+    websiteUrl: "https://openalex.org",
+    iconSource: "https://openalex.org/tricon-outlined.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "scholar-gateway",
+    displayName: "Scholar Gateway",
+    tagline: "Peer-reviewed research from Wiley",
+    description:
+      "Wiley's gateway to peer-reviewed literature for AI assistants. Search scholarly content and get answers grounded in citable sources.",
+    url: "https://connector.scholargateway.ai/mcp",
+    categories: ["research"],
+    websiteUrl: "https://scholargateway.ai",
+    iconSource: "https://scholargateway.ai/images/favicon-96x96.png?v=2",
+  },
+  {
+    // sign-in: 401 OAuth (scope "search")
+    id: "consensus",
+    displayName: "Consensus",
+    tagline: "Evidence from peer-reviewed studies",
+    description:
+      "Search peer-reviewed research and see what studies conclude about a question. Results link back to the underlying papers.",
+    url: "https://mcp.consensus.app/mcp",
+    categories: ["research"],
+    websiteUrl: "https://consensus.app",
+    iconSource: "https://consensus.app/favicon.svg",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "scite",
+    displayName: "scite",
+    tagline: "See how papers are cited",
+    description:
+      "Find papers and see whether later work supports or contrasts their claims. Uses scite's Smart Citations index; sign in with a scite account.",
+    url: "https://api.scite.ai/mcp",
+    registry: { name: "ai.scite/mcp", version: "1.0.0" },
+    categories: ["research"],
+    websiteUrl: "https://scite.ai",
+    iconSource: "https://cdn.scite.ai/assets/images/logo.svg",
+  },
+  {
+    // open: 200 Open Targets Platform 2026.7.1
+    id: "open-targets",
+    displayName: "Open Targets",
+    tagline: "Target–disease evidence for drug discovery",
+    description:
+      "Query the Open Targets Platform for targets, diseases, drugs and the evidence linking them. Agents can search entities and run GraphQL queries against the platform.",
+    url: "https://mcp.platform.opentargets.org/mcp",
+    categories: ["research"],
+    websiteUrl: "https://platform.opentargets.org",
+    iconSource: "https://platform.opentargets.org/favicon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "synapse",
+    displayName: "Synapse",
+    tagline: "Biomedical research data from Sage Bionetworks",
+    description:
+      "Find and read projects, files and metadata on Synapse, Sage Bionetworks' platform for sharing biomedical research data. Access follows your Synapse permissions.",
+    url: "https://mcp.synapse.org/mcp",
+    categories: ["research", "data"],
+    websiteUrl: "https://www.synapse.org",
+    iconSource: "https://www.synapse.org/favicon.png?v=4",
+  },
+  {
+    // open: 200 "huggingface.co/mcp" 0.4.31
+    id: "hugging-face",
+    displayName: "Hugging Face",
+    tagline: "Models, datasets, Spaces and papers on the Hub",
+    description:
+      "Search the Hugging Face Hub for models, datasets, Spaces and papers, and read repository details and files. Works without an account; sign in to reach your private repositories.",
+    url: "https://huggingface.co/mcp",
+    registry: { name: "co.huggingface/hf-mcp-server", version: "0.2.33" },
+    categories: ["featured", "research", "data"],
+    websiteUrl: "https://huggingface.co",
+    iconSource: "https://huggingface.co/front/assets/huggingface_logo-noborder.svg",
+  },
+  {
+    // open: 200 "Kaggle.Web" 1.0.0.0
+    id: "kaggle",
+    displayName: "Kaggle",
+    tagline: "Datasets, notebooks and competitions",
+    description:
+      "Search and download Kaggle datasets, explore competitions and leaderboards, and work with notebooks and models. Some actions need a signed-in Kaggle account.",
+    url: "https://www.kaggle.com/mcp",
+    categories: ["data", "research"],
+    websiteUrl: "https://www.kaggle.com",
+    iconSource: "https://www.kaggle.com/static/images/logos/kaggle-logo-transparent-300.png",
+  },
+
+  // ── Data ────────────────────────────────────────────────────────────────
+  {
+    // sign-in: 401 OAuth
+    id: "hex",
+    displayName: "Hex",
+    tagline: "Notebooks and data apps in Hex",
+    description:
+      "Work with your Hex workspace: find projects, run analyses and read results. Access follows your Hex permissions.",
+    url: "https://app.hex.tech/mcp",
+    categories: ["data"],
+    websiteUrl: "https://hex.tech",
+    iconSource: "https://hex.tech/favicon.svg",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "motherduck",
+    displayName: "MotherDuck",
+    tagline: "Query DuckDB databases in the cloud",
+    description:
+      "Explore schemas and run SQL against your MotherDuck databases. Good for analysing tabular research data without moving it.",
+    url: "https://api.motherduck.com/mcp",
+    categories: ["data"],
+    websiteUrl: "https://motherduck.com",
+    iconSource: "https://motherduck.com/apple-touch-icon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "supabase",
+    displayName: "Supabase",
+    tagline: "Postgres projects, tables and SQL",
+    description:
+      "Manage Supabase projects: inspect tables, run SQL, apply migrations and read logs. Access follows the organizations you authorize.",
+    url: "https://mcp.supabase.com/mcp",
+    registry: { name: "com.supabase/mcp", version: "0.14.0" },
+    categories: ["data"],
+    websiteUrl: "https://supabase.com",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "neon",
+    displayName: "Neon",
+    tagline: "Serverless Postgres with branching",
+    description:
+      "Create and manage Neon Postgres projects and branches, and run SQL against them. Branches make it safe to try schema changes.",
+    url: "https://mcp.neon.tech/mcp",
+    registry: { name: "com.neon/mcp", version: "1.0.0" },
+    categories: ["data"],
+    websiteUrl: "https://neon.com",
+    iconSource: "https://neon.com/favicon/favicon.svg",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "airtable",
+    displayName: "Airtable",
+    tagline: "Bases, tables and records",
+    description:
+      "Read and update records in your Airtable bases, and inspect their tables and fields. Handy for lab inventories and study trackers kept in Airtable.",
+    url: "https://mcp.airtable.com/mcp",
+    registry: { name: "com.airtable/mcp", version: "0.1.0" },
+    categories: ["data"],
+    websiteUrl: "https://www.airtable.com",
+    iconSource: "https://www.airtable.com/images/favicon/baymax/apple-touch-icon.png",
+  },
+
+  // ── Code ────────────────────────────────────────────────────────────────
+  {
+    // sign-in: 401 OAuth
+    id: "github",
+    displayName: "GitHub",
+    tagline: "Repositories, issues and pull requests",
+    description:
+      "Work with GitHub repositories, issues, pull requests and Actions from your agent. Access follows the account and organizations you authorize.",
+    url: "https://api.githubcopilot.com/mcp/",
+    registry: { name: "io.github.github/github-mcp-server", version: "2.0.2" },
+    categories: ["featured", "code"],
+    websiteUrl: "https://github.com",
+    iconSource: "https://github.com/fluidicon.png",
+  },
+  {
+    // open: 200 "DeepWiki" 2.14.3
+    id: "deepwiki",
+    displayName: "DeepWiki",
+    tagline: "Ask questions about any public GitHub repo",
+    description:
+      "Read generated documentation for public GitHub repositories and ask questions about how their code works. No account needed.",
+    url: "https://mcp.deepwiki.com/mcp",
+    categories: ["featured", "code"],
+    websiteUrl: "https://deepwiki.com",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "gitlab",
+    displayName: "GitLab",
+    tagline: "Projects, issues and merge requests",
+    description:
+      "Work with GitLab projects, issues and merge requests on gitlab.com. Access follows the account you authorize.",
+    url: "https://gitlab.com/api/v4/mcp",
+    registry: { name: "com.gitlab/mcp", version: "0.0.1" },
+    categories: ["code"],
+    websiteUrl: "https://gitlab.com",
+    iconSource: "https://about.gitlab.com/images/ico/favicon-32x32.png",
+  },
+  {
+    // open: 200 "Context7" 4.4.3
+    id: "context7",
+    displayName: "Context7",
+    tagline: "Up-to-date library documentation",
+    description:
+      "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
+    url: "https://mcp.context7.com/mcp",
+    registry: { name: "io.github.upstash/context7", version: "4.4.4" },
+    categories: ["code"],
+    websiteUrl: "https://context7.com",
+    iconSource: "https://raw.githubusercontent.com/upstash/context7/master/public/icon.png",
+  },
+  {
+    // sign-in: 401 Bearer
+    id: "stack-overflow",
+    displayName: "Stack Overflow",
+    tagline: "Questions and answers from Stack Overflow",
+    description:
+      "Search Stack Overflow questions and answers from your agent. Answers keep their attribution and links.",
+    url: "https://mcp.stackoverflow.com",
+    registry: { name: "com.stackoverflow.mcp/mcp", version: "1.1.3" },
+    categories: ["code"],
+    websiteUrl: "https://stackoverflow.com",
+    iconSource: "https://cdn.sstatic.net/Sites/stackoverflow/Img/apple-touch-icon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "sentry",
+    displayName: "Sentry",
+    tagline: "Errors, issues and performance data",
+    description:
+      "Look up Sentry issues, errors and traces for your projects. Helps agents debug with real production context.",
+    url: "https://mcp.sentry.dev/mcp",
+    registry: { name: "io.github.getsentry/sentry-mcp", version: "0.42.0" },
+    categories: ["code"],
+    websiteUrl: "https://sentry.io",
+    iconSource: "https://sentry-brand.storage.googleapis.com/sentry-glyph-black.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "vercel",
+    displayName: "Vercel",
+    tagline: "Projects, deployments and logs",
+    description:
+      "Inspect Vercel projects and deployments, read build logs and search Vercel documentation. Access follows the teams you authorize.",
+    url: "https://mcp.vercel.com",
+    registry: { name: "com.vercel/vercel-mcp", version: "0.0.3" },
+    categories: ["code"],
+    websiteUrl: "https://vercel.com",
+    iconSource:
+      "https://assets.vercel.com/image/upload/q_auto/front/favicon/vercel/apple-touch-icon-57x57.png",
+  },
+  {
+    // open: 200 "docs-ai-search" 0.4.14
+    id: "cloudflare-docs",
+    displayName: "Cloudflare Docs",
+    tagline: "Search Cloudflare developer documentation",
+    description:
+      "Search Cloudflare's developer documentation for Workers, R2, D1 and the rest of the platform. No account needed.",
+    url: "https://docs.mcp.cloudflare.com/mcp",
+    registry: { name: "com.cloudflare.mcp/mcp", version: "1.0.0" },
+    categories: ["code"],
+    websiteUrl: "https://developers.cloudflare.com",
+    iconSource: "https://developers.cloudflare.com/favicon.png",
+  },
+  {
+    // open: 200 "Microsoft Learn MCP Server" 1.0.0
+    id: "microsoft-learn",
+    displayName: "Microsoft Learn",
+    tagline: "Official Microsoft and Azure documentation",
+    description:
+      "Search and read Microsoft Learn documentation and code samples for Azure, .NET, Microsoft 365 and more. No account needed.",
+    url: "https://learn.microsoft.com/api/mcp",
+    registry: { name: "com.microsoft/microsoft-learn-mcp", version: "1.0.0" },
+    categories: ["code"],
+    websiteUrl: "https://learn.microsoft.com",
+    iconSource: "https://learn.microsoft.com/apple-touch-icon.png",
+  },
+
+  // ── Writing ─────────────────────────────────────────────────────────────
+  {
+    // sign-in: 401 OAuth
+    id: "notion",
+    displayName: "Notion",
+    tagline: "Pages, databases and lab notes",
+    description:
+      "Search, read and update Notion pages and databases. Keeps project notes, protocols and reading lists close to your agent.",
+    url: "https://mcp.notion.com/mcp",
+    registry: { name: "com.notion/mcp", version: "1.0.1" },
+    categories: ["featured", "writing"],
+    websiteUrl: "https://www.notion.com",
+    iconSource: "https://www.notion.com/front-static/logo-ios.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "atlassian",
+    displayName: "Atlassian",
+    tagline: "Confluence pages and Jira issues",
+    description:
+      "Search and update Confluence pages and Jira issues in your Atlassian Cloud sites. Access follows your Atlassian permissions.",
+    url: "https://mcp.atlassian.com/v1/mcp",
+    categories: ["writing", "communication"],
+    websiteUrl: "https://www.atlassian.com",
+    iconSource: "https://www.atlassian.com/apple-touch-icon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "coda",
+    displayName: "Coda",
+    tagline: "Docs, tables and automations",
+    description:
+      "Read and edit Coda docs, pages and tables. Useful when shared protocols and trackers live in Coda.",
+    url: "https://coda.io/apis/mcp",
+    categories: ["writing"],
+    websiteUrl: "https://coda.io",
+    iconSource: "https://cdn.coda.io/icons/png/color/coda-32.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "box",
+    displayName: "Box",
+    tagline: "Search and read files in Box",
+    description:
+      "Search your Box content and read documents, including AI-assisted answers over files. Access follows your Box permissions.",
+    url: "https://mcp.box.com",
+    categories: ["writing"],
+    websiteUrl: "https://www.box.com",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "dropbox",
+    displayName: "Dropbox",
+    tagline: "Search and read files in Dropbox",
+    description:
+      "Find and read files stored in your Dropbox. Access follows the account you authorize.",
+    url: "https://mcp.dropbox.com/mcp",
+    categories: ["writing"],
+    websiteUrl: "https://www.dropbox.com",
+    iconSource:
+      "https://cfl.dropboxstatic.com/static/metaserver/static/images/logo_catalog/dropbox_webclip_152_m1.png",
+  },
+
+  // ── Communication ───────────────────────────────────────────────────────
+  {
+    // sign-in: 401 OAuth
+    id: "linear",
+    displayName: "Linear",
+    tagline: "Issues, projects and cycles",
+    description:
+      "Create, search and update Linear issues and projects. Keeps your agent's work tied to the team's plan.",
+    url: "https://mcp.linear.app/mcp",
+    registry: { name: "app.linear/linear", version: "1.0.1" },
+    categories: ["featured", "communication"],
+    websiteUrl: "https://linear.app",
+    iconSource: "https://linear.app/static/favicon.svg?v=2",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "slack",
+    displayName: "Slack",
+    tagline: "Search and post in your workspace",
+    description:
+      "Search Slack messages and channels, read threads and send messages. Access follows the workspace you authorize.",
+    url: "https://mcp.slack.com/mcp",
+    categories: ["communication"],
+    websiteUrl: "https://slack.com",
+    iconSource: "https://a.slack-edge.com/9cc0056/img/icons/favicon-32.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "asana",
+    displayName: "Asana",
+    tagline: "Tasks, projects and goals",
+    description:
+      "Search, create and update Asana tasks and projects. Access follows your Asana workspace permissions.",
+    url: "https://mcp.asana.com/v2/mcp",
+    categories: ["communication"],
+    websiteUrl: "https://asana.com",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "monday",
+    displayName: "monday.com",
+    tagline: "Boards, items and updates",
+    description:
+      "Read and update monday.com boards and items. Access follows the account you authorize.",
+    url: "https://mcp.monday.com/mcp",
+    registry: { name: "com.monday/monday.com", version: "0.0.1" },
+    categories: ["communication"],
+    websiteUrl: "https://monday.com",
+    iconSource:
+      "https://cdn.prod.website-files.com/656da6fea306219773d04208/65af6bd29fc8bb3d3d4ea39a_6464d702c3ac5c56000c2438_favicon-monday5-32.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "clickup",
+    displayName: "ClickUp",
+    tagline: "Tasks, docs and workspaces",
+    description:
+      "Search and update ClickUp tasks, lists and docs. Access follows your ClickUp workspace permissions.",
+    url: "https://mcp.clickup.com/mcp",
+    categories: ["communication"],
+    websiteUrl: "https://clickup.com",
+    iconSource: "https://clickup.com/favicons/apple-touch-icon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "fireflies",
+    displayName: "Fireflies",
+    tagline: "Meeting transcripts and summaries",
+    description:
+      "Search meeting transcripts and summaries recorded by Fireflies. Useful for recalling decisions from lab meetings and interviews.",
+    url: "https://api.fireflies.ai/mcp",
+    registry: { name: "ai.fireflies/fireflies", version: "1.1.0" },
+    categories: ["communication"],
+    websiteUrl: "https://fireflies.ai",
+    iconSource: "https://fireflies.ai/apple-icon.png?81a7679a0c7e6094",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "granola",
+    displayName: "Granola",
+    tagline: "Your meeting notes",
+    description:
+      "Search and read the meeting notes you took with Granola. Access follows the account you authorize.",
+    url: "https://mcp.granola.ai/mcp",
+    categories: ["communication"],
+    websiteUrl: "https://www.granola.ai",
+    iconSource: "https://www.granola.ai/favicon/favicon-96x96.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "todoist",
+    displayName: "Todoist",
+    tagline: "Tasks and projects in Todoist",
+    description:
+      "Add, find and complete Todoist tasks and projects. Access follows the account you authorize.",
+    url: "https://ai.todoist.net/mcp",
+    registry: { name: "net.todoist/mcp", version: "1.0.0" },
+    categories: ["communication"],
+    websiteUrl: "https://www.todoist.com",
+    iconSource: "https://www.todoist.com/static/favicon-32x32.png",
+  },
+
+  // ── Design ──────────────────────────────────────────────────────────────
+  {
+    // sign-in: 401 OAuth
+    id: "biorender",
+    displayName: "BioRender",
+    tagline: "Scientific figures and icons",
+    description:
+      "Find BioRender icons and templates for scientific figures. Access follows your BioRender account.",
+    url: "https://mcp.services.biorender.com/mcp",
+    categories: ["design"],
+    websiteUrl: "https://www.biorender.com",
+    iconSource:
+      "https://cdn.prod.website-files.com/621e6f1effebfe03881da9bd/62337779d8e7196d1d9d02ac_biorender_logo_lighter%20blue_square-03.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "figma",
+    displayName: "Figma",
+    tagline: "Design files, components and variables",
+    description:
+      "Read Figma design files, components and variables so agents can build from real designs. Access follows your Figma account.",
+    url: "https://mcp.figma.com/mcp",
+    registry: { name: "com.figma.mcp/mcp", version: "1.0.3" },
+    categories: ["design"],
+    websiteUrl: "https://www.figma.com",
+    iconSource: "https://static.figma.com/app/icon/2/icon-128.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "canva",
+    displayName: "Canva",
+    tagline: "Create and edit Canva designs",
+    description:
+      "Search, create and edit Canva designs such as posters and slides. Access follows your Canva account.",
+    url: "https://mcp.canva.com/mcp",
+    registry: { name: "com.canva.mcp/mcp", version: "1.0.0" },
+    categories: ["design"],
+    websiteUrl: "https://www.canva.com",
+    iconSource: "https://static.canva.com/domain-assets/canva/static/images/android-192x192-2.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "miro",
+    displayName: "Miro",
+    tagline: "Boards, diagrams and sticky notes",
+    description:
+      "Read and create content on Miro boards, from diagrams to brainstorms. Access follows your Miro account.",
+    url: "https://mcp.miro.com/",
+    registry: { name: "io.github.miroapp/mcp-server", version: "1.0.2" },
+    categories: ["design"],
+    websiteUrl: "https://miro.com",
+    iconSource: "https://framerusercontent.com/images/6FBG66PBxjV2QFaDfIdUi5mi9A.png",
+  },
+  {
+    // open: 200 "Excalidraw" 1.0.0
+    id: "excalidraw",
+    displayName: "Excalidraw",
+    tagline: "Hand-drawn style diagrams",
+    description:
+      "Have your agent sketch diagrams and export them to Excalidraw for editing. No account needed.",
+    url: "https://mcp.excalidraw.com/mcp",
+    categories: ["design"],
+    websiteUrl: "https://excalidraw.com",
+    iconSource: "https://excalidraw.com/apple-touch-icon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "mermaid-chart",
+    displayName: "Mermaid Chart",
+    tagline: "Mermaid diagrams you can edit and share",
+    description:
+      "Create and edit Mermaid diagrams such as flowcharts and sequence diagrams in Mermaid Chart. Access follows your Mermaid Chart account.",
+    url: "https://mcp.mermaidchart.com/mcp",
+    registry: { name: "com.mermaidchart/mermaid-mcp", version: "1.0.0" },
+    categories: ["design"],
+    websiteUrl: "https://www.mermaidchart.com",
+    iconSource: "https://mermaid.ai/favicon.png",
+  },
+  {
+    // sign-in: 401 OAuth
+    id: "gamma",
+    displayName: "Gamma",
+    tagline: "Presentations and documents from prompts",
+    description:
+      "Generate presentations, documents and web pages in Gamma from an outline. Access follows your Gamma account.",
+    url: "https://mcp.gamma.app/mcp",
+    categories: ["design"],
+    websiteUrl: "https://gamma.app",
+  },
+];
+
+/** A URL compared as a connector address: parsed, without a trailing path slash. */
+export const canonicalConnectorUrl = (url: string): string => {
+  if (!URL.canParse(url)) return url;
+  const parsed = new URL(url);
+  parsed.hash = "";
+  const href = parsed.href;
+  return parsed.pathname.length > 1 && href.endsWith("/") ? href.slice(0, -1) : href;
+};
+
+/** The curated server whose endpoint is `url`, compared canonically. */
+export const curatedServerForUrl = (
+  url: string,
+  servers: ReadonlyArray<CuratedServer> = CURATED_SERVERS,
+): CuratedServer | undefined => {
+  const canonical = canonicalConnectorUrl(url);
+  return servers.find((server) => canonicalConnectorUrl(server.url) === canonical);
+};
+
+/** The Discover entry for a curated server, before icon and installation state. */
+export const curatedDiscoverEntry = (
+  server: CuratedServer,
+): Omit<DiscoverEntry, "iconUrl" | "installedConnectorId"> => ({
+  name: server.registry?.name ?? `${CURATED_NAME_PREFIX}${server.id}`,
+  version: server.registry?.version ?? CATALOG_VERIFIED_ON,
+  title: server.displayName,
+  description: server.description,
+  tagline: server.tagline,
+  categories: [...server.categories],
+  websiteUrl: server.websiteUrl,
+  remotes: [{ type: "streamable-http", url: server.url, requiresInput: false }],
+  installable: true,
+});

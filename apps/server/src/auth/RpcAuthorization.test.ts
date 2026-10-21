@@ -238,6 +238,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.extensionsList,
       WS_METHODS.extensionsSubscribeChanges,
       WS_METHODS.extensionsDiscoverSearch,
+      WS_METHODS.extensionsDiscoverCatalog,
       WS_METHODS.extensionsDeliveryReceipt,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
@@ -246,7 +247,6 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.extensionsConnectorAdd,
       WS_METHODS.extensionsConnectorStartSignIn,
       WS_METHODS.extensionsConnectorUpdate,
-      WS_METHODS.extensionsConnectorSetProjectSelection,
       WS_METHODS.extensionsConnectorRemove,
       WS_METHODS.extensionsConnectorTest,
       WS_METHODS.extensionsPluginInstall,

@@ -383,11 +383,6 @@
       "path": "apps/server/src/scient/extensions/plugins/ScientPluginManifest.ts",
       "anchor": "isStrictSemver",
       "purpose": "Apply the skill release loader's exact SemVer rule to plugin versions (ScientPluginManifest.test.ts)."
-    },
-    {
-      "path": "apps/server/src/scient/extensions/plugins/BuiltInPlugins.ts",
-      "anchor": "scient.skills",
-      "purpose": "Describe the Skills feature (skills:read tools, Settings → Skills) as a read-only built-in plugin."
     }
   ]
 }

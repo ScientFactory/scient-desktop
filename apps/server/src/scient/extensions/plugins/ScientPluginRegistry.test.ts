@@ -140,7 +140,6 @@ const makeConnectorRuntime = () => {
           ? {
               revision: sequence,
               connectors: [],
-              projectSelections: [],
               diagnostics: [
                 {
                   code: "state-unreadable" as const,
@@ -148,7 +147,7 @@ const makeConnectorRuntime = () => {
                 },
               ],
             }
-          : { revision: sequence, connectors, projectSelections: [], diagnostics: [] },
+          : { revision: sequence, connectors, diagnostics: [] },
       ),
     changes: Stream.empty,
     addFromPlugin: (input) =>
@@ -168,7 +167,7 @@ const makeConnectorRuntime = () => {
                 auth: { type: "none" },
                 status: "needs-auth",
                 enabled: true,
-                projectPolicy: "all-projects",
+                availability: { type: "all-projects" },
                 createdAt: "2026-10-21T00:00:00.000Z",
                 updatedAt: "2026-10-21T00:00:00.000Z",
               },
@@ -219,7 +218,6 @@ const makeConnectorRuntime = () => {
     add: () => unused,
     startSignIn: () => unused,
     completeSignIn: () => unused,
-    setProjectSelection: () => unused,
     test: () => unused,
     resolveDelivery: () => unused,
     isGranted: () => unused,
@@ -307,7 +305,6 @@ describe("Scient plugin registry", () => {
           "scient.compute",
           "scient.browser-devices",
           "scient.pull-requests",
-          "scient.skills",
         ]);
         expect(plugins.every((plugin) => !plugin.canSetEnabled && !plugin.canRemove)).toBe(true);
         expect(
@@ -923,7 +920,7 @@ describe("Scient plugin registry", () => {
           auth: { type: "none" },
           status: "connected",
           enabled: true,
-          projectPolicy: "all-projects",
+          availability: { type: "all-projects" },
           createdAt: "2026-10-21T00:00:00.000Z",
           updatedAt: "2026-10-21T00:00:00.000Z",
         };

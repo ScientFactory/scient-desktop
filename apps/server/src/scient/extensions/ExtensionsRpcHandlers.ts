@@ -9,7 +9,6 @@
 import {
   type ExtensionsChangedEvent,
   type ExtensionsInventory,
-  type ProjectId,
   type ServerProviders,
   WS_METHODS,
   WsExtensionsRpcGroup,
@@ -30,6 +29,7 @@ import {
   type ConnectorRuntimeShape,
   ExtensionDeliveryReceipts,
   type ExtensionDeliveryReceiptsShape,
+  ExtensionsDiscover,
   type ExtensionsDiscoverShape,
   type ProviderPluginManagementShape,
   ScientPluginRegistry,
@@ -78,6 +78,7 @@ export const changeFeedLayer = Layer.effect(
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
     const providers = yield* ProviderRegistry;
+    const discover = yield* ExtensionsDiscover;
     const revision = yield* Ref.make(0);
     const events = yield* PubSub.unbounded<ExtensionsChangedEvent>();
     const supportChanges = Stream.map(
@@ -90,6 +91,8 @@ export const changeFeedLayer = Layer.effect(
         plugins.changes,
         Stream.map(receipts.changes, () => undefined),
         supportChanges,
+        // Curated icons that earlier responses left out are now ready.
+        discover.changes,
       ],
       { concurrency: "unbounded" },
     ).pipe(
@@ -127,19 +130,23 @@ export const makeExtensionsRpcHandlers = ({
   readonly changeFeed: ExtensionsChangeFeedShape;
 }) => {
   const traceAttributes = { "rpc.aggregate": "extensions" } as const;
-  const inventory = Effect.fn("ExtensionsRpc.inventory")(function* (
-    projectId: ProjectId | undefined,
-  ) {
+  const inventory = Effect.fn("ExtensionsRpc.inventory")(function* () {
     const [connectors, plugins, providers, revision] = yield* Effect.all([
-      connectorRuntime.list({ projectId }),
+      connectorRuntime.list(),
       pluginRegistry.list(),
       providerRegistry.getProviders,
       changeFeed.current,
     ]);
+    // Logos come only from the curated icon cache; a cold icon never delays the list.
+    const icons = yield* discover.connectorIcons(
+      connectors.connectors.map((connector) => connector.url),
+    );
     return {
       revision,
-      connectors: connectors.connectors,
-      projectSelections: connectors.projectSelections,
+      connectors: connectors.connectors.map((connector) => {
+        const iconUrl = icons.get(connector.url);
+        return iconUrl === undefined ? connector : { ...connector, iconUrl };
+      }),
       providerSupport: connectorProviderSupport(providers),
       plugins: plugins.plugins,
       diagnostics: [...connectors.diagnostics, ...plugins.diagnostics],
@@ -147,8 +154,8 @@ export const makeExtensionsRpcHandlers = ({
   });
 
   return WsExtensionsRpcGroup.of({
-    [WS_METHODS.extensionsList]: (input) =>
-      observeRpcEffect(WS_METHODS.extensionsList, inventory(input.projectId), traceAttributes),
+    [WS_METHODS.extensionsList]: () =>
+      observeRpcEffect(WS_METHODS.extensionsList, inventory(), traceAttributes),
     [WS_METHODS.extensionsSubscribeChanges]: () =>
       observeRpcStream(WS_METHODS.extensionsSubscribeChanges, changeFeed.changes, traceAttributes),
     [WS_METHODS.extensionsConnectorAdd]: (input) =>
@@ -166,21 +173,13 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsConnectorUpdate]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorUpdate,
-        connectorRuntime.update(input).pipe(Effect.andThen(inventory(undefined))),
-        traceAttributes,
-      ),
-    [WS_METHODS.extensionsConnectorSetProjectSelection]: (input) =>
-      observeRpcEffect(
-        WS_METHODS.extensionsConnectorSetProjectSelection,
-        connectorRuntime
-          .setProjectSelection(input)
-          .pipe(Effect.andThen(inventory(input.projectId))),
+        connectorRuntime.update(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
     [WS_METHODS.extensionsConnectorRemove]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorRemove,
-        connectorRuntime.remove(input).pipe(Effect.andThen(inventory(undefined))),
+        connectorRuntime.remove(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
     [WS_METHODS.extensionsConnectorTest]: (input) =>
@@ -195,22 +194,24 @@ export const makeExtensionsRpcHandlers = ({
         discover.search(input),
         traceAttributes,
       ),
+    [WS_METHODS.extensionsDiscoverCatalog]: () =>
+      observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
     [WS_METHODS.extensionsPluginInstall]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsPluginInstall,
-        pluginRegistry.install(input).pipe(Effect.andThen(inventory(undefined))),
+        pluginRegistry.install(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
     [WS_METHODS.extensionsPluginRemove]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsPluginRemove,
-        pluginRegistry.remove(input).pipe(Effect.andThen(inventory(undefined))),
+        pluginRegistry.remove(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
     [WS_METHODS.extensionsPluginSetEnabled]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsPluginSetEnabled,
-        pluginRegistry.setEnabled(input).pipe(Effect.andThen(inventory(undefined))),
+        pluginRegistry.setEnabled(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
     [WS_METHODS.extensionsDeliveryReceipt]: (input) =>

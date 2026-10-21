@@ -1,45 +1,51 @@
-import type {
-  ConnectorProviderSupport,
-  ConnectorStatus,
-  ConnectorSummary,
-  ExtensionDeliverySkipReason,
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderMcpServer,
-  ServerProviderMcpServerStatus,
-  ServerProviderPlugin,
+import {
+  type ConnectorAddInput,
+  type ConnectorProviderSupport,
+  type ConnectorStatus,
+  type ConnectorSummary,
+  type ConnectorTestResult,
+  type DiscoverCatalog,
+  type DiscoverEntry,
+  ExtensionCategory,
+  type ExtensionDeliverySkipReason,
+  type ProjectIconColor,
+  type ProviderInstanceId,
+  type ScientPluginSummary,
+  type ServerProvider,
+  type ServerProviderMcpServer,
+  type ServerProviderMcpServerStatus,
+  type ServerProviderPlugin,
 } from "@t3tools/contracts";
+import {
+  BookOpenIcon,
+  CpuIcon,
+  FileTextIcon,
+  type LucideIcon,
+  MonitorSmartphoneIcon,
+  PuzzleIcon,
+} from "lucide-react";
 
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
+import { normalizeSearchText } from "../../lib/utils";
+import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
+import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 
-export type ExtensionKindFilter = "all" | "connectors" | "scient-plugins" | "provider-plugins";
-
-export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKindFilter, string>> = {
-  all: "All",
-  connectors: "Connected services",
-  "scient-plugins": "Scient plugins",
-  "provider-plugins": "Provider plugins",
+/** Shown after a row's name; healthy entries show nothing. */
+export const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
+  connected: null,
+  "needs-auth": "Needs sign-in",
+  "needs-credential": "Needs credential",
 };
 
-export type BadgeTone = "success" | "warning" | "error" | "secondary";
-
-export const CONNECTOR_STATUS_PRESENTATION: Readonly<
-  Record<ConnectorStatus, { readonly label: string; readonly tone: BadgeTone }>
+export const MCP_SERVER_STATUS_TEXT: Readonly<
+  Record<ServerProviderMcpServerStatus, string | null>
 > = {
-  connected: { label: "Connected", tone: "success" },
-  "needs-auth": { label: "Needs sign-in", tone: "warning" },
-  "needs-credential": { label: "Needs credential", tone: "error" },
-};
-
-export const MCP_SERVER_STATUS_PRESENTATION: Readonly<
-  Record<ServerProviderMcpServerStatus, { readonly label: string; readonly tone: BadgeTone }>
-> = {
-  connected: { label: "Connected", tone: "success" },
-  failed: { label: "Failed", tone: "error" },
-  "needs-auth": { label: "Needs sign-in", tone: "warning" },
-  pending: { label: "Starting", tone: "secondary" },
-  disabled: { label: "Off", tone: "secondary" },
-  unknown: { label: "Unknown", tone: "secondary" },
+  connected: null,
+  failed: "Failed",
+  "needs-auth": "Needs sign-in",
+  pending: "Starting",
+  disabled: "Off",
+  unknown: null,
 };
 
 export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, string>> = {
@@ -52,6 +58,19 @@ export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, st
   "native-servers-unknown": "Agent's own servers couldn't be checked",
   "registration-failed": "The agent couldn't connect it",
 };
+
+export const TEST_OUTCOME_LABELS: Readonly<Record<ConnectorTestResult["outcome"], string>> = {
+  ok: "Reachable",
+  "needs-auth": "Needs sign-in",
+  unreachable: "Unreachable",
+  error: "Error",
+};
+
+/** A turned-off connector says so first; otherwise its health. */
+export function connectorStatusText(connector: Pick<ConnectorSummary, "status" | "enabled">) {
+  if (!connector.enabled) return "Off";
+  return CONNECTOR_STATUS_TEXT[connector.status];
+}
 
 export interface ConnectorActions {
   /** `reconnect` repeats sign-in for a connected OAuth connector. */
@@ -70,6 +89,114 @@ export function connectorActions(connector: Pick<ConnectorSummary, "status" | "a
     "needs-credential": { signIn: null, canTest: false },
   };
   return actions[connector.status];
+}
+
+export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
+  switch (auth.type) {
+    case "none":
+      return "No sign-in";
+    case "oauth":
+      return auth.usesOwnClient ? "OAuth with your own client" : "OAuth";
+    case "credential": {
+      const kind =
+        auth.strategy === "bearer"
+          ? "Bearer token"
+          : auth.strategy === "basic"
+            ? "Basic auth"
+            : `Header ${auth.headerName ?? ""}`.trim();
+      return auth.storage === "bound" ? `${kind} from Secrets` : kind;
+    }
+  }
+}
+
+export function connectorSourceLabel(source: ConnectorSummary["source"]): string {
+  switch (source.type) {
+    case "registry":
+      return `MCP Registry · ${source.name}`;
+    case "url":
+      return "Added by URL";
+    case "plugin":
+      return `From plugin ${source.pluginId}`;
+  }
+}
+
+const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
+  "scient.sources": BookOpenIcon,
+  "scient.documents": FileTextIcon,
+  "scient.compute": CpuIcon,
+  "scient.browser-devices": MonitorSmartphoneIcon,
+  "scient.pull-requests": PullRequestGlyph.pullRequest,
+};
+
+/** Built-in features are drawn with a symbol; bundles keep their letter tile. */
+export function pluginGlyph(
+  plugin: Pick<ScientPluginSummary, "pluginId" | "origin">,
+): LucideIcon | undefined {
+  if (plugin.origin !== "built-in") return undefined;
+  return BUILT_IN_PLUGIN_GLYPHS[plugin.pluginId] ?? PuzzleIcon;
+}
+
+export function isExtensionCategory(value: string): value is ExtensionCategory {
+  return (ExtensionCategory.literals as ReadonlyArray<string>).includes(value);
+}
+
+/** Remotes Scient can reach as a connector without extra user input. */
+export function installableRemotes(entry: DiscoverEntry) {
+  return entry.remotes.filter(
+    (remote) => remote.type === "streamable-http" && !remote.requiresInput,
+  );
+}
+
+/** Curated entries outside the MCP Registry are named `scient.curated/<id>`. */
+const CURATED_ONLY_PREFIX = "scient.curated/";
+
+/** The entry exists only in Scient's catalog, not in the MCP Registry. */
+export function isCatalogOnlyEntry(entry: DiscoverEntry): boolean {
+  return entry.name.startsWith(CURATED_ONLY_PREFIX);
+}
+
+/**
+ * What `connectors.add` targets for an entry's remote: registry entries by
+ * name and version, curated-only entries by their URL.
+ */
+export function entryAddTarget(entry: DiscoverEntry, url: string): ConnectorAddInput["target"] {
+  return isCatalogOnlyEntry(entry)
+    ? { type: "url", url }
+    : { type: "registry", name: entry.name, version: entry.version, url };
+}
+
+export function entryName(entry: DiscoverEntry): string {
+  return entry.title ?? entry.name;
+}
+
+export function entryTagline(entry: DiscoverEntry): string | undefined {
+  return entry.tagline ?? entry.description?.split("\n")[0]?.trim() ?? undefined;
+}
+
+/** Curated entries in catalog order, each once. */
+export function catalogEntries(catalog: DiscoverCatalog | null): ReadonlyArray<DiscoverEntry> {
+  const entries: DiscoverEntry[] = [];
+  for (const section of catalog?.sections ?? []) {
+    for (const entry of section.entries) {
+      if (!entries.some((existing) => existing.name === entry.name)) entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+/** Whether every word of the query appears in one of the texts. */
+export function matchesQuery(query: string, texts: ReadonlyArray<string | undefined>): boolean {
+  const words = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = normalizeSearchText(texts.filter(Boolean).join(" "));
+  return words.every((word) => haystack.includes(word));
+}
+
+/** A stable tint per name, from the project icon palette. */
+export function iconTint(name: string): ProjectIconColor {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return PROJECT_ICON_COLORS[Math.abs(hash) % PROJECT_ICON_COLORS.length]!.value;
 }
 
 export function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {

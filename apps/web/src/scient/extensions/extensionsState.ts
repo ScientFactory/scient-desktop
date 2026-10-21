@@ -26,7 +26,7 @@ export function createExtensionsAtoms<R, E>(
   const changesOf = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     changes({ environmentId, input: {} });
 
-  /** Read with `input: {}`: selections are then reported for every project. */
+  /** Connectors (with where each is available), Scient plugins and agent support. */
   const inventory = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:extensions:list",
     tag: WS_METHODS.extensionsList,
@@ -41,7 +41,7 @@ export function createExtensionsAtoms<R, E>(
   ) => Effect.sync(() => registry.refresh(inventory({ environmentId, input: {} })));
 
   /**
-   * Every change to connectors, selections and Scient plugins of one
+   * Every change to connectors and Scient plugins of one
    * environment runs in order, across commands: they share one scheduler.
    */
   const mutationLane = {
@@ -75,7 +75,15 @@ export function createExtensionsAtoms<R, E>(
       idleTtlMs: 60_000,
       refreshTrigger: changesOf,
     }),
-    /** One registry page per `{ query, cursor }`; the server caches registry reads. */
+    /** Curated home-page sections; `installedConnectorId` follows the change feed. */
+    discoverCatalog: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:discover-catalog",
+      tag: WS_METHODS.extensionsDiscoverCatalog,
+      staleTimeMs: 10 * 60_000,
+      idleTtlMs: 10 * 60_000,
+      refreshTrigger: changesOf,
+    }),
+    /** One registry page per `{ query, category, cursor }`; the server caches registry reads. */
     discoverPage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:discover",
       tag: WS_METHODS.extensionsDiscoverSearch,
@@ -91,11 +99,6 @@ export function createExtensionsAtoms<R, E>(
     updateConnector: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:update-connector",
       tag: WS_METHODS.extensionsConnectorUpdate,
-      ...mutationLane,
-    }),
-    setConnectorProjectSelection: createEnvironmentRpcCommand(runtime, {
-      label: "environment-command:extensions:set-connector-project-selection",
-      tag: WS_METHODS.extensionsConnectorSetProjectSelection,
       ...mutationLane,
     }),
     removeConnector: createEnvironmentRpcCommand(runtime, {
@@ -147,10 +150,10 @@ const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
+export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;
 export const extensionsDiscoverPage = extensionsAtoms.discoverPage;
 export const addConnector = extensionsAtoms.addConnector;
 export const updateConnector = extensionsAtoms.updateConnector;
-export const setConnectorProjectSelection = extensionsAtoms.setConnectorProjectSelection;
 export const removeConnector = extensionsAtoms.removeConnector;
 export const installScientPlugin = extensionsAtoms.installScientPlugin;
 export const removeScientPlugin = extensionsAtoms.removeScientPlugin;
