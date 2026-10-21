@@ -294,11 +294,21 @@ export const ExtensionCategory = Schema.Literals([
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
+/**
+ * `curated`: Scient's catalog, answered locally without the network.
+ * `registry`: the MCP Registry, without the servers the same curated query returns.
+ */
+export const DiscoverSearchScope = Schema.Literals(["curated", "registry"]);
+export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
+
 export const DiscoverSearchInput = Schema.Struct({
+  scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Restrict to one curated category; omitted means the whole registry. */
+  /** Restrict a `curated` search to one category; invalid with `registry`. */
   category: Schema.optional(ExtensionCategory),
+  /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),
+  /** `registry` only: page size, 1 to 100. */
   limit: Schema.optional(Schema.Number),
 });
 export type DiscoverSearchInput = typeof DiscoverSearchInput.Type;

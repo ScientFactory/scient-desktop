@@ -496,13 +496,23 @@ install it by URL.
 `extensions.discover.catalog` returns the non-empty categories in that order,
 each with up to 6 preview entries (entries whose first non-featured category is
 the section come first, then the rest, in catalog order) and its `total`.
-`extensions.discover.search` with a `category` returns that category's curated
-entries filtered in memory by every query term against name, tagline and
-description, without a cursor. Without a category it searches the registry;
-when there is a query, every matching entry of the complete curated catalog
-(previews or not, registry-listed or not) leads the first page, and registry
-results for those curated servers are not repeated. A registry result matching
-a curated server (by registry name or remote URL) carries that server's
+`extensions.discover.search` takes a required `scope`, so local results never
+wait on the network:
+
+- `curated` returns every entry of the complete curated catalog (previews or
+  not, registry-listed or not) whose name, tagline and description contain every
+  query term, in catalog order; with a `category`, that category's entries in
+  section order. It is answered in memory without touching the registry, has no
+  cursor, and icons follow the usual response budget. An empty query returns the
+  whole catalog (or category).
+- `registry` searches the MCP Registry and drops every result whose curated
+  server the same `curated` query returns, so the two lists never repeat an
+  entry. Cursor paging and failures are the registry's: an unreachable registry
+  fails this query and only this one. `registry` with a `category` is
+  `invalid-input`.
+
+A registry result matching a curated server (by registry name or remote URL)
+carries that server's
 tagline, categories and icon. `extensions.discover.entry` (`{ name }`) returns
 one entry: from the complete curated catalog first (with its icon within the
 response budget), otherwise the registry's latest active version of that exact

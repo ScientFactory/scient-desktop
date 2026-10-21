@@ -68,12 +68,14 @@ function DiscoverResultsPage({
   cursor,
   isLast,
   hide,
+  pendingLabel,
   onMore,
 }: {
   readonly input: Omit<DiscoverSearchInput, "cursor">;
   readonly cursor: string | undefined;
   readonly isLast: boolean;
   readonly hide: ((entry: DiscoverEntry) => boolean) | undefined;
+  readonly pendingLabel: string;
   readonly onMore: (cursor: string) => void;
 }) {
   const { environmentId } = useExtensionsEnvironment();
@@ -82,15 +84,15 @@ function DiscoverResultsPage({
   );
   if (page.error) {
     return (
-      <li className="col-span-full px-2">
+      <li className="col-span-full px-2" data-discover-error={input.scope}>
         <MutedLine>{page.error}</MutedLine>
       </li>
     );
   }
   if (page.data === null) {
     return (
-      <li className="col-span-full px-2">
-        <MutedLine>Loading…</MutedLine>
+      <li className="col-span-full px-2" data-discover-pending={input.scope}>
+        <MutedLine>{pendingLabel}</MutedLine>
       </li>
     );
   }
@@ -114,15 +116,17 @@ function DiscoverResultsPage({
 }
 
 /**
- * Registry pages, one query per cursor, appended in order. Renders list items
+ * Discover pages, one query per cursor, appended in order. Renders list items
  * so callers can put them in the same grid as their own rows.
  */
 function DiscoverPager({
   input,
   hide,
+  pendingLabel = "Loading…",
 }: {
   readonly input: Omit<DiscoverSearchInput, "cursor">;
   readonly hide?: (entry: DiscoverEntry) => boolean;
+  readonly pendingLabel?: string;
 }) {
   const inputKey = JSON.stringify(input);
   const [pages, setPages] = useState<{
@@ -141,6 +145,7 @@ function DiscoverPager({
       cursor={cursor}
       isLast={index === cursors.length - 1}
       hide={hide}
+      pendingLabel={pendingLabel}
       onMore={(next) =>
         setPages((current) =>
           current.inputKey === inputKey && !current.cursors.includes(next)
@@ -206,7 +211,11 @@ function DiscoverHome() {
   );
 }
 
-/** Installed, built-in and curated matches first, then the registry's. */
+/**
+ * Installed, built-in and catalog matches at once; the registry's, which can
+ * be slow or unreachable, follow when they arrive and never move the others.
+ * The server leaves catalog servers out of the registry's list.
+ */
 function DiscoverSearchResults({ query }: { readonly query: string }) {
   const { catalog, inventory } = useExtensionsEnvironment();
   const connectors = (inventory?.connectors ?? []).filter((connector) =>
@@ -221,6 +230,8 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
     matchesQuery(query, [plugin.displayName, plugin.description, plugin.publisher]),
   );
   const shownConnectorIds = new Set(connectors.map((connector) => connector.connectorId));
+  const installedHere = (entry: DiscoverEntry) =>
+    entry.installedConnectorId !== undefined && shownConnectorIds.has(entry.installedConnectorId);
   return (
     <ExtensionGrid label="Search results">
       {connectors.map((connector) => (
@@ -235,13 +246,11 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
       {plugins.map((plugin) => (
         <PluginItem key={plugin.pluginId} plugin={plugin} />
       ))}
-      {/* The server's search lists every matching curated entry first, then the registry's. */}
+      <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
       <DiscoverPager
-        input={{ query }}
-        hide={(entry) =>
-          entry.installedConnectorId !== undefined &&
-          shownConnectorIds.has(entry.installedConnectorId)
-        }
+        input={{ scope: "registry", query }}
+        hide={installedHere}
+        pendingLabel="Searching the MCP Registry…"
       />
     </ExtensionGrid>
   );
@@ -293,7 +302,7 @@ function Category({ category }: { readonly category: string }) {
       <ExtensionsSection title={title}>
         {section?.description ? <MutedLine>{section.description}</MutedLine> : null}
         <ExtensionGrid label={title}>
-          <DiscoverPager input={{ category }} />
+          <DiscoverPager input={{ scope: "curated", category }} />
         </ExtensionGrid>
       </ExtensionsSection>
     </>
@@ -320,7 +329,7 @@ function AllServers() {
       >
         <MutedLine>Remote servers from the MCP Registry.</MutedLine>
         <ExtensionGrid label="All MCP servers">
-          <DiscoverPager input={query ? { query } : {}} />
+          <DiscoverPager input={query ? { scope: "registry", query } : { scope: "registry" }} />
         </ExtensionGrid>
       </ExtensionsSection>
     </>

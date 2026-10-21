@@ -16,24 +16,22 @@ import * as Schema from "effect/Schema";
 import { ChevronRightIcon, EllipsisIcon, type LucideIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { Button, InlineButton } from "../../components/ui/button";
+import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
+import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
-import {
-  Dialog,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { ScrollArea } from "../../components/ui/scroll-area";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
+import {
+  PreviewCard,
+  PreviewCardPopup,
+  PreviewCardTrigger,
+} from "../../components/ui/preview-card";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import {
-  type ActionFeedbackState,
   type ConnectorActionsState,
   useAddEntry,
   useConnectorActions,
@@ -66,12 +64,9 @@ import {
   isCatalogOnlyEntry,
   MCP_SERVER_STATUS_TEXT,
   pluginGlyph,
-  PROVIDER_SUPPORT_TEXT,
   TEST_OUTCOME_LABELS,
-  toolSummary,
   urlHost,
   workspaceLabel,
-  worksWithSummary,
 } from "./extensionsView";
 
 const isExtensionsError = Schema.is(ExtensionsError);
@@ -152,14 +147,6 @@ function DetailHeader({
 function extraDescription(description: string | undefined, tagline: string | undefined) {
   const text = description?.trim();
   return text && text !== tagline?.trim() ? text : undefined;
-}
-
-function ViewDetailsButton({ onClick }: { readonly onClick: () => void }) {
-  return (
-    <Button variant="outline" onClick={onClick}>
-      View details
-    </Button>
-  );
 }
 
 function MoreMenu({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -263,40 +250,97 @@ function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalo
     .join(", ");
 }
 
-function agentReason(entry: ConnectorProviderSupport): string {
-  return entry.reason ?? PROVIDER_SUPPORT_TEXT[entry.status];
+/** "All agents", "4 agents": agents with limits can use the service, so they count. */
+function worksWithCount(support: ReadonlyArray<ConnectorProviderSupport>): string {
+  const usable = support.filter((entry) => entry.status !== "unsupported").length;
+  if (usable === support.length) return "All agents";
+  if (usable === 0) return "None of your agents";
+  return `${usable} ${usable === 1 ? "agent" : "agents"}`;
 }
 
-/** "All your agents", with every agent and its reason one click away. */
+/**
+ * How many agents can use this service; hovering or focusing it opens a card
+ * with their logos (scrolling sideways when they don't fit), a line per
+ * limitation, and a line per agent that can't use it.
+ */
 function WorksWithValue() {
-  const { inventory } = useExtensionsEnvironment();
-  const [open, setOpen] = useState(false);
+  const { inventory, providers } = useExtensionsEnvironment();
   const support = inventory?.providerSupport ?? [];
+  if (support.length === 0) {
+    return <span className="text-muted-foreground">No agents reported</span>;
+  }
+  const usable = support.filter((entry) => entry.status !== "unsupported");
+  const limited = usable.filter((entry) => entry.status === "conditional");
+  const unavailable = support.filter((entry) => entry.status === "unsupported");
   return (
-    <div className="grid gap-2">
-      <span className="flex flex-wrap items-baseline gap-x-2">
-        {worksWithSummary(support)}
-        {support.length > 0 ? (
-          <InlineButton
-            tone="muted"
-            aria-expanded={open}
-            onClick={() => setOpen((current) => !current)}
-          >
-            {open ? "Hide agents" : "Show agents"}
-          </InlineButton>
-        ) : null}
-      </span>
-      {open ? (
-        <ul className="grid gap-1" aria-label="Agents">
-          {support.map((entry) => (
-            <li key={entry.providerInstanceId} data-support={entry.status}>
-              {entry.displayName}
-              <span className="text-muted-foreground"> — {agentReason(entry)}</span>
-            </li>
+    <PreviewCard>
+      <PreviewCardTrigger
+        delay={200}
+        closeDelay={120}
+        render={
+          <button
+            type="button"
+            className="cursor-default rounded-sm text-foreground underline decoration-muted-foreground/60 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
+        }
+      >
+        {worksWithCount(support)}
+      </PreviewCardTrigger>
+      <PreviewCardPopup side="bottom" className="w-max max-w-[min(420px,var(--available-width))]">
+        <div role="group" aria-label="Agents" className="grid gap-2 p-3">
+          {usable.length > 0 ? (
+            <ScrollArea scrollFade hideScrollbars className="h-auto">
+              <ul className="flex w-max gap-1">
+                {usable.map((entry) => (
+                  <li
+                    key={entry.providerInstanceId}
+                    data-support={entry.status}
+                    className="flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center"
+                  >
+                    <ProviderInstanceIcon
+                      driverKind={entry.driver}
+                      displayName={entry.displayName}
+                      acpRegistryIconUrl={
+                        providers.find(
+                          (provider) => provider.instanceId === entry.providerInstanceId,
+                        )?.iconUrl
+                      }
+                      iconClassName="size-7"
+                      indicatorBackground="var(--popover)"
+                      {...(entry.status === "conditional"
+                        ? { statusDotClassName: "bg-warning" }
+                        : {})}
+                    />
+                    <span className="line-clamp-2 w-full text-xs leading-tight text-muted-foreground">
+                      {entry.displayName}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+          ) : null}
+          {limited.map((entry) => (
+            <p
+              key={entry.providerInstanceId}
+              data-limited=""
+              className="text-xs text-muted-foreground"
+            >
+              {entry.displayName}: {entry.reason ?? "works with limits"}
+            </p>
           ))}
-        </ul>
-      ) : null}
-    </div>
+          {unavailable.map((entry) => (
+            <p
+              key={entry.providerInstanceId}
+              data-unavailable=""
+              className="text-xs text-muted-foreground"
+            >
+              Not available in {entry.displayName}
+              {entry.reason ? `: ${entry.reason}` : ""}
+            </p>
+          ))}
+        </div>
+      </PreviewCardPopup>
+    </PreviewCard>
   );
 }
 
@@ -341,66 +385,31 @@ function DetailGroupRow({ group }: { readonly group: DetailGroup }) {
   );
 }
 
-/** Name and kind, a summary line, then collapsible groups (tools, parts, agents). */
-function DetailsDialog({
-  open,
-  onOpenChange,
-  name,
-  kind,
-  iconUrl,
-  glyph,
-  tagline,
-  summary,
+/** Collapsible groups in one card; empty groups are left out. */
+function GroupsCard({
+  label,
   groups,
 }: {
-  readonly open: boolean;
-  readonly onOpenChange: (open: boolean) => void;
-  readonly name: string;
-  readonly kind: "App" | "Plugin";
-  readonly iconUrl?: string | undefined;
-  readonly glyph?: LucideIcon | undefined;
-  readonly tagline?: string | undefined;
-  readonly summary: string;
+  readonly label: string;
   readonly groups: ReadonlyArray<DetailGroup>;
 }) {
-  const shown = groups.filter((group) => group.rows.length > 0);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup className="max-w-xl">
-        <DialogHeader>
-          <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} size="dialog" />
-          <DialogTitle size="large">
-            <span className="font-semibold">{name}</span>{" "}
-            <span className="font-normal text-muted-foreground">{kind}</span>
-          </DialogTitle>
-          {tagline ? <DialogDescription>{tagline}</DialogDescription> : null}
-          <p className="text-sm text-muted-foreground" data-details-summary="">
-            {summary}
-          </p>
-        </DialogHeader>
-        {shown.length > 0 ? (
-          <DialogPanel>
-            <div className={CARD_CLASS} aria-label={`Details of ${name}`}>
-              {shown.map((group) => (
-                <DetailGroupRow key={group.label} group={group} />
-              ))}
-            </div>
-          </DialogPanel>
-        ) : null}
-      </DialogPopup>
-    </Dialog>
+    <div role="group" aria-label={label} className={CARD_CLASS}>
+      {groups
+        .filter((group) => group.rows.length > 0)
+        .map((group) => (
+          <DetailGroupRow key={group.label} group={group} />
+        ))}
+    </div>
   );
 }
 
-function agentsGroup(support: ReadonlyArray<ConnectorProviderSupport>): DetailGroup {
-  return {
-    label: "Works with",
-    rows: support.map((entry) => ({
-      key: entry.providerInstanceId,
-      name: entry.displayName,
-      detail: agentReason(entry),
-    })),
-  };
+function MutedCard({ children }: { readonly children: string }) {
+  return (
+    <div className={CARD_CLASS}>
+      <p className="px-4 py-3 text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
 }
 
 function toolRows(tools: ToolGroups["read"]): ReadonlyArray<DetailRow> {
@@ -413,34 +422,67 @@ function toolRows(tools: ToolGroups["read"]): ReadonlyArray<DetailRow> {
 
 const TOOLS_AFTER_SIGN_IN = "Tools appear after you add and sign in.";
 
-/** What the details dialog says about a connector's tools, from its last test. */
-function connectorToolsView(
-  name: string,
-  canTest: boolean,
-  testResult: ConnectorTestResult | null,
-  testing: boolean,
-  feedback: ActionFeedbackState,
-): { readonly summary: string; readonly groups: ReadonlyArray<DetailGroup> } {
-  if (!canTest) return { summary: TOOLS_AFTER_SIGN_IN, groups: [] };
-  if (testResult === null) {
-    return {
-      summary: testing ? "Listing tools…" : (feedback.error ?? "Tools appear after a test."),
-      groups: [],
-    };
+/**
+ * A connector's tools, grouped from its last test. Nothing runs on its own:
+ * "See tools" runs one test, then the groups show.
+ */
+function ToolsSection({
+  canTest,
+  locked,
+  testing,
+  testResult,
+  onTest,
+}: {
+  readonly canTest: boolean;
+  readonly locked: boolean;
+  readonly testing: boolean;
+  readonly testResult: ConnectorTestResult | null;
+  readonly onTest: () => void;
+}) {
+  if (!canTest || testResult?.outcome === "ok") {
+    const grouped = testResult?.outcome === "ok" ? groupTools(testResult.tools) : null;
+    return (
+      <DetailSection title="Tools">
+        {grouped === null ? (
+          <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
+        ) : testResult?.tools.length === 0 ? (
+          <MutedCard>No tools reported.</MutedCard>
+        ) : (
+          <GroupsCard
+            label="Tool groups"
+            groups={[
+              { label: "Write", rows: toolRows(grouped.write) },
+              { label: "Read", rows: toolRows(grouped.read) },
+              { label: "Other", rows: toolRows(grouped.other) },
+            ]}
+          />
+        )}
+      </DetailSection>
+    );
   }
-  if (testResult.outcome !== "ok") {
-    const message = testResult.message ? ` · ${testResult.message}` : "";
-    return { summary: `${TEST_OUTCOME_LABELS[testResult.outcome]}${message}`, groups: [] };
-  }
-  const grouped = groupTools(testResult.tools);
-  return {
-    summary: toolSummary(name, grouped),
-    groups: [
-      { label: "Write", rows: toolRows(grouped.write) },
-      { label: "Read", rows: toolRows(grouped.read) },
-      { label: "Other", rows: toolRows(grouped.other) },
-    ],
-  };
+  return (
+    <DetailSection title="Tools">
+      <div className={CARD_CLASS}>
+        <button
+          type="button"
+          disabled={locked}
+          onClick={onTest}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition-colors not-disabled:hover:bg-foreground/[0.035] disabled:cursor-default"
+        >
+          <span className="font-medium text-foreground">
+            {testing ? "Listing tools…" : testResult ? "Try again" : "See tools"}
+          </span>
+          <ChevronRightIcon aria-hidden className="size-4 text-muted-foreground" />
+        </button>
+        {testResult ? (
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            {TEST_OUTCOME_LABELS[testResult.outcome]}
+            {testResult.message ? ` · ${testResult.message}` : ""}
+          </p>
+        ) : null}
+      </div>
+    </DetailSection>
+  );
 }
 
 function connectionState(connector: ConnectorSummary): string {
@@ -578,7 +620,6 @@ function ConnectorDetail({
   const { inventory, catalog } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
   const allowed = connectorActions(connector);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = entry ? entryName(entry) : connector.displayName;
   const iconUrl = entry?.iconUrl ?? connector.iconUrl;
   const tagline = (entry ? entryTagline(entry) : undefined) ?? connector.description;
@@ -586,18 +627,6 @@ function ConnectorDetail({
   const pluginId = source.type === "plugin" ? source.pluginId : null;
   const pluginName = inventory?.plugins.find((plugin) => plugin.pluginId === pluginId)?.displayName;
   const curated = entry !== undefined && (isCatalogOnlyEntry(entry) || entry.categories.length > 0);
-  const tools = connectorToolsView(
-    name,
-    allowed.canTest,
-    actions.testResult,
-    actions.busy === "test",
-    actions.feedback,
-  );
-  const openDetails = () => {
-    setDetailsOpen(true);
-    // The dialog lists tools from a test; run one when there is no result yet.
-    if (actions.testResult === null && allowed.canTest && !actions.locked) void actions.test();
-  };
   return (
     <DetailLayout
       back={back}
@@ -607,16 +636,13 @@ function ConnectorDetail({
           iconUrl={iconUrl}
           tagline={tagline}
           actions={
-            <>
-              <ViewDetailsButton onClick={openDetails} />
-              <Button
-                variant="destructive-outline"
-                disabled={actions.locked}
-                onClick={() => void actions.remove()}
-              >
-                Remove
-              </Button>
-            </>
+            <Button
+              variant="destructive-outline"
+              disabled={actions.locked}
+              onClick={() => void actions.remove()}
+            >
+              Remove
+            </Button>
           }
         />
       }
@@ -671,13 +697,16 @@ function ConnectorDetail({
           <p className="text-sm text-destructive-foreground">{connector.lastError}</p>
         ) : null}
         <div className="grid gap-1 empty:hidden">
-          <ActionFeedback
-            feedback={actions.feedback}
-            waitingForSignIn={actions.waitingForSignIn}
-            testResult={actions.testResult}
-          />
+          <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
         </div>
       </DetailSection>
+      <ToolsSection
+        canTest={allowed.canTest}
+        locked={actions.locked}
+        testing={actions.busy === "test"}
+        testResult={actions.testResult}
+        onTest={() => void actions.test()}
+      />
       <AboutCard
         rows={[
           fact("Added on", formatDate(connector.createdAt)),
@@ -693,16 +722,6 @@ function ConnectorDetail({
           ["Server name", <Mono key="server-name">{connector.serverName}</Mono>],
           ["Source", connectorSourceLabel(source, curated, pluginName)],
         ]}
-      />
-      <DetailsDialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        name={name}
-        kind="App"
-        iconUrl={iconUrl}
-        tagline={tagline}
-        summary={tools.summary}
-        groups={[...tools.groups, agentsGroup(inventory?.providerSupport ?? [])]}
       />
     </DetailLayout>
   );
@@ -738,7 +757,15 @@ function ConnectorDetailContent({ connectorId }: { readonly connectorId: string 
     );
   }
   const entry = fromCatalog ?? registryEntry.data ?? undefined;
-  return <ConnectorDetail connector={connector} entry={entry} back="installed" />;
+  // Keyed by id: a different connector is a different page, with nothing carried over.
+  return (
+    <ConnectorDetail
+      key={connector.connectorId}
+      connector={connector}
+      entry={entry}
+      back="installed"
+    />
+  );
 }
 
 export function ConnectorDetailPage({ connectorId }: { readonly connectorId: string }) {
@@ -757,9 +784,8 @@ function ServerDetail({
   readonly entry: DiscoverEntry;
   readonly onAddWithOptions: () => void;
 }) {
-  const { inventory, catalog } = useExtensionsEnvironment();
+  const { catalog } = useExtensionsEnvironment();
   const actions = useAddEntry(entry);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = entryName(entry);
   const tagline = entryTagline(entry);
   const catalogOnly = isCatalogOnlyEntry(entry);
@@ -773,7 +799,6 @@ function ServerDetail({
           tagline={tagline}
           actions={
             <>
-              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
               <Button
                 disabled={!actions.canAdd || actions.locked}
                 onClick={() => void actions.add()}
@@ -804,6 +829,9 @@ function ServerDetail({
         </>
       }
     >
+      <DetailSection title="Tools">
+        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
+      </DetailSection>
       <AboutCard
         rows={[
           fact("Category", categoryLabel(entry, catalog)),
@@ -827,16 +855,6 @@ function ServerDetail({
           catalogOnly ? null : ["Version", entry.version],
           ["Source", entrySourceLabel(entry)],
         ]}
-      />
-      <DetailsDialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        name={name}
-        kind="App"
-        iconUrl={entry.iconUrl}
-        tagline={tagline}
-        summary={TOOLS_AFTER_SIGN_IN}
-        groups={[agentsGroup(inventory?.providerSupport ?? [])]}
       />
     </DetailLayout>
   );
@@ -870,7 +888,12 @@ function ServerDetailContent({ name }: { readonly name: string }) {
   return (
     <>
       {connector ? (
-        <ConnectorDetail connector={connector} entry={entry} back="discover" />
+        <ConnectorDetail
+          key={connector.connectorId}
+          connector={connector}
+          entry={entry}
+          back="discover"
+        />
       ) : (
         <ServerDetail entry={entry} onAddWithOptions={() => setWithOptions(true)} />
       )}
@@ -900,16 +923,13 @@ export function ServerDetailPage({ name }: { readonly name: string }) {
 type ComponentGroupLabel = "Skills" | "Connected services" | "Tools" | "Other";
 
 const COMPONENT_KINDS: Readonly<
-  Record<
-    ExtensionComponent["type"],
-    { readonly group: ComponentGroupLabel; readonly one: string; readonly many: string }
-  >
+  Record<ExtensionComponent["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
 > = {
-  skill: { group: "Skills", one: "skill", many: "skills" },
-  connector: { group: "Connected services", one: "connected service", many: "connected services" },
-  "mcp-tools": { group: "Tools", one: "tool set", many: "tool sets" },
-  settings: { group: "Other", one: "settings page", many: "settings pages" },
-  panel: { group: "Other", one: "panel", many: "panels" },
+  skill: { group: "Skills", kind: "Skill" },
+  connector: { group: "Connected services", kind: "Connected service" },
+  "mcp-tools": { group: "Tools", kind: "Tools" },
+  settings: { group: "Other", kind: "Settings" },
+  panel: { group: "Other", kind: "Panel" },
 };
 
 const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
@@ -918,31 +938,6 @@ const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
   "Tools",
   "Other",
 ];
-
-function joinWithAnd(parts: ReadonlyArray<string>): string {
-  return parts.length <= 1
-    ? (parts[0] ?? "")
-    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
-}
-
-const COMPONENT_TYPE_ORDER: ReadonlyArray<ExtensionComponent["type"]> = [
-  "skill",
-  "connector",
-  "mcp-tools",
-  "settings",
-  "panel",
-];
-
-/** "The Sources plugin contains 2 tool sets and 1 panel". */
-function componentSummary(name: string, components: ReadonlyArray<ExtensionComponent>): string {
-  if (components.length === 0) return `The ${name} plugin doesn't list what it contains.`;
-  const counts = COMPONENT_TYPE_ORDER.flatMap((type) => {
-    const kind = COMPONENT_KINDS[type];
-    const count = components.filter((component) => component.type === type).length;
-    return count === 0 ? [] : [`${count} ${count === 1 ? kind.one : kind.many}`];
-  });
-  return `The ${name} plugin contains ${joinWithAnd(counts)}`;
-}
 
 function componentGroups(
   components: ReadonlyArray<ExtensionComponent>,
@@ -967,14 +962,14 @@ function componentGroups(
             component.name
           ),
         detail:
-          component.detail ?? (label === "Other" ? COMPONENT_KINDS[component.type].one : undefined),
+          component.detail ??
+          (label === "Other" ? COMPONENT_KINDS[component.type].kind : undefined),
       })),
   }));
 }
 
 function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
   const actions = usePluginActions(plugin);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const builtIn = plugin.origin === "built-in";
   const glyph = pluginGlyph(plugin);
   const settingsPath = plugin.settingsPath?.startsWith("/settings/") ? plugin.settingsPath : null;
@@ -999,7 +994,6 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
                   <span className="w-6">{plugin.enabled ? "On" : "Off"}</span>
                 </label>
               ) : null}
-              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
               {plugin.canRemove ? (
                 <Button
                   variant="destructive-outline"
@@ -1015,6 +1009,11 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
       }
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
+      {plugin.components.length > 0 ? (
+        <DetailSection title="Includes">
+          <GroupsCard label="Parts" groups={componentGroups(plugin.components)} />
+        </DetailSection>
+      ) : null}
       <AboutCard
         rows={[
           ["Developer", plugin.publisher],
@@ -1034,16 +1033,6 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           ["Source", builtIn ? "Built into Scient" : "Plugin bundle"],
           fact("SHA-256", plugin.digest ? <Mono>{plugin.digest}</Mono> : null),
         ]}
-      />
-      <DetailsDialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        name={plugin.displayName}
-        kind="Plugin"
-        glyph={glyph}
-        tagline={plugin.description}
-        summary={componentSummary(plugin.displayName, plugin.components)}
-        groups={componentGroups(plugin.components)}
       />
     </DetailLayout>
   );
@@ -1118,7 +1107,6 @@ function ProviderPluginDetail({
   readonly workspace: string | undefined;
 }) {
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const name = plugin.displayName ?? plugin.name;
   const servers = group.mcpServers.filter((server) => server.pluginId === plugin.id);
   return (
@@ -1129,25 +1117,39 @@ function ProviderPluginDetail({
           name={name}
           tagline={plugin.description}
           actions={
-            <>
-              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
-              {plugin.canUninstall === true ? (
-                <Button
-                  variant="destructive-outline"
-                  disabled={actions.locked}
-                  onClick={() => void actions.uninstall()}
-                >
-                  Uninstall
-                </Button>
-              ) : (
-                <ManagedBy label={group.label} />
-              )}
-            </>
+            plugin.canUninstall === true ? (
+              <Button
+                variant="destructive-outline"
+                disabled={actions.locked}
+                onClick={() => void actions.uninstall()}
+              >
+                Uninstall
+              </Button>
+            ) : (
+              <ManagedBy label={group.label} />
+            )
           }
         />
       }
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
+      {servers.length > 0 ? (
+        <DetailSection title="Includes">
+          <GroupsCard
+            label="Parts"
+            groups={[
+              {
+                label: "MCP servers",
+                rows: servers.map((server) => ({
+                  key: server.name,
+                  name: server.name,
+                  detail: mcpServerSummary(server),
+                })),
+              },
+            ]}
+          />
+        </DetailSection>
+      ) : null}
       <AboutCard
         rows={[
           ["Managed by", group.label],
@@ -1155,24 +1157,6 @@ function ProviderPluginDetail({
           fact("Marketplace", plugin.marketplace),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
           ["State", plugin.enabled ? "On" : "Off"],
-        ]}
-      />
-      <DetailsDialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        name={name}
-        kind="Plugin"
-        tagline={plugin.description}
-        summary={`${group.label} installs and updates this plugin.`}
-        groups={[
-          {
-            label: "MCP servers",
-            rows: servers.map((server) => ({
-              key: server.name,
-              name: server.name,
-              detail: mcpServerSummary(server),
-            })),
-          },
         ]}
       />
     </DetailLayout>
@@ -1219,7 +1203,6 @@ function ProviderServerDetail({
   readonly server: ServerProviderMcpServer;
 }) {
   const actions = useProviderServerActions(group.provider, group.label, server);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const canSignIn = server.canStartSignIn === true;
   const status =
     server.status === "connected"
@@ -1234,7 +1217,6 @@ function ProviderServerDetail({
           tagline={mcpServerSummary(server)}
           actions={
             <>
-              <ViewDetailsButton onClick={() => setDetailsOpen(true)} />
               {canSignIn ? (
                 <Button
                   variant={server.status === "connected" ? "outline" : "default"}
@@ -1266,19 +1248,6 @@ function ProviderServerDetail({
           fact("Scope", server.scope),
           fact("From plugin", server.pluginId),
         ]}
-      />
-      <DetailsDialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        name={server.name}
-        kind="App"
-        tagline={mcpServerSummary(server)}
-        summary={
-          server.toolCount === undefined
-            ? `${group.label} doesn't report this server's tools.`
-            : `${group.label} reports ${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}; it doesn't list them.`
-        }
-        groups={[]}
       />
     </DetailLayout>
   );

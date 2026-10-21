@@ -509,20 +509,27 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         .toLowerCase()
         .split(/\s+/u)
         .filter((term) => term !== "");
-      // Installation state is live, never cached with the registry page.
-      const installed = yield* installedConnectors;
-      if (input.category !== undefined) {
-        // A curated category is small and complete: filtered in memory, never paged.
-        const list = serversIn(servers, input.category).filter((server) =>
-          matchesQuery(server, terms),
-        );
-        const ready = yield* iconsFor(list);
+      // What a `curated` search with this query returns; never touches the network.
+      const curatedMatches = (
+        input.category === undefined ? servers : serversIn(servers, input.category)
+      ).filter((server) => matchesQuery(server, terms));
+
+      if (input.scope === "curated") {
+        // Small and complete: filtered in memory, never paged.
+        const installed = yield* installedConnectors;
+        const ready = yield* iconsFor(curatedMatches);
         return {
-          entries: list.map((server) => curatedEntry(server, installed, ready)),
+          entries: curatedMatches.map((server) => curatedEntry(server, installed, ready)),
           fetchedAt: yield* nowIso,
         } satisfies DiscoverPage;
       }
 
+      if (input.category !== undefined) {
+        return yield* new ExtensionsError({
+          reason: "invalid-input",
+          message: "Categories are Scient's curated catalog; search them with scope 'curated'.",
+        });
+      }
       const cursor = input.cursor?.trim();
       const requestedLimit =
         input.limit !== undefined && Number.isFinite(input.limit)
@@ -535,23 +542,16 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
       url.searchParams.set("version", "latest");
       const page = yield* readRegistry(url.href, parseRegistryPage, false);
-
-      // A query also searches the whole curated catalog, including servers the
-      // registry does not list; they lead the first page and are never repeated.
-      const curatedMatches =
-        terms.length === 0 ? [] : servers.filter((server) => matchesQuery(server, terms));
+      // The curated query already lists these servers; never list them twice.
       const registryEntries = page.entries.filter((entry) => {
         const curated = curatedFor(entry);
         return curated === undefined || !curatedMatches.includes(curated);
       });
-      const leading = cursor === undefined || cursor === "" ? curatedMatches : [];
-      // One icon budget for the whole response.
-      const ready = yield* iconsFor([...leading, ...curatedOf(registryEntries)]);
+      // Installation state is live, never cached with the registry page.
+      const installed = yield* installedConnectors;
+      const ready = yield* iconsFor(curatedOf(registryEntries));
       return {
-        entries: [
-          ...leading.map((server) => curatedEntry(server, installed, ready)),
-          ...registryEntries.map((entry) => registryEntry(entry, installed, ready)),
-        ],
+        entries: registryEntries.map((entry) => registryEntry(entry, installed, ready)),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         fetchedAt: page.fetchedAt,
       } satisfies DiscoverPage;

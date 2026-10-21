@@ -171,7 +171,20 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
   const remove = useAtomCommand(removeConnector, { reportFailure: true });
   const test = useAtomCommand(testConnector, { reportFailure: true });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
-  const [testResult, setTestResult] = useState<ConnectorTestResult | null>(null);
+  // A test result belongs to one environment, connector and sign-in state; a
+  // late answer for anything else, or one from before a status or sign-in
+  // change, is never shown.
+  const toolsIdentity = JSON.stringify([
+    environmentId,
+    connectorId,
+    connector.status,
+    connector.auth,
+  ]);
+  const [tested, setTested] = useState<{
+    readonly identity: string;
+    readonly result: ConnectorTestResult;
+  } | null>(null);
+  const testResult = tested?.identity === toolsIdentity ? tested.result : null;
 
   return {
     busy: lock.busy,
@@ -183,6 +196,8 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     canSignIn: !lock.locked && callbackOrigin !== null,
     signIn: async () => {
       if (callbackOrigin === null) return;
+      // Signing in again may change what the service offers.
+      setTested(null);
       await lock.signIn(
         "sign-in",
         async () => {
@@ -197,8 +212,13 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
       );
     },
     test: async () => {
+      const identity = toolsIdentity;
       const result = await lock.run("test", () => test({ environmentId, input: { connectorId } }));
-      setTestResult(result?._tag === "Success" ? result.value : null);
+      setTested(
+        result?._tag === "Success" && result.value.connectorId === connectorId
+          ? { identity, result: result.value }
+          : null,
+      );
     },
     setEnabled: (enabled: boolean) =>
       lock.run("enable", () => update({ environmentId, input: { connectorId, enabled } })),
@@ -324,7 +344,10 @@ export function useProviderPluginActions(
   workspace: string | undefined,
 ) {
   const { environmentId } = useExtensionsEnvironment();
-  const lock = useActionLock(`provider-plugin:${provider.instanceId}:${plugin.id}`);
+  // One installation per workspace; null is the provider's global installation.
+  const lock = useActionLock(
+    JSON.stringify(["provider-plugin", provider.instanceId, plugin.id, workspace ?? null]),
+  );
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,
@@ -354,7 +377,7 @@ export function useProviderServerActions(
   server: ServerProviderMcpServer,
 ) {
   const { environmentId } = useExtensionsEnvironment();
-  const lock = useActionLock(`provider-server:${provider.instanceId}:${server.name}`);
+  const lock = useActionLock(JSON.stringify(["provider-server", provider.instanceId, server.name]));
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,

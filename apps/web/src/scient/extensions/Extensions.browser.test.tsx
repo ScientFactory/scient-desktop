@@ -1,6 +1,7 @@
 import {
   ConnectorId,
   type ConnectorSummary,
+  type ConnectorTestResult,
   type DiscoverCatalog,
   type DiscoverEntry,
   type DiscoverPage as DiscoverPageResult,
@@ -31,6 +32,8 @@ const state = vi.hoisted(() => ({
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
   discoverPages: {} as Record<string, DiscoverPageResult>,
+  /** A discover query still waiting, or failed with this message; keyed like `discoverPages`. */
+  discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
   queryTargets: [] as unknown[],
@@ -165,9 +168,12 @@ vi.mock("../../state/query", async () => {
               isPending: false,
             };
       }
-      const page = state.discoverPages[JSON.stringify(atom.input ?? {})];
+      const key = JSON.stringify(atom.input ?? {});
+      const outcome = state.discoverOutcomes[key];
+      if (outcome === "pending") return { data: null, error: null, isPending: true };
+      if (outcome) return { data: null, error: outcome.error, isPending: false };
       return {
-        data: page ?? { entries: [], fetchedAt: "2026-10-21T00:00:00.000Z" },
+        data: state.discoverPages[key] ?? { entries: [], fetchedAt: "2026-10-21T00:00:00.000Z" },
         error: null,
         isPending: false,
       };
@@ -264,6 +270,20 @@ vi.mock("../../components/chat/providerIconUtils", () => ({
     { value: "claudeAgent", label: "Claude" },
   ],
 }));
+// Provider logos pull in every provider package; a marker keeps what the page passes visible.
+vi.mock("../../components/chat/ProviderInstanceIcon", () => ({
+  ProviderInstanceIcon: ({
+    displayName,
+    statusDotClassName,
+  }: {
+    displayName: string;
+    statusDotClassName?: string;
+  }) => (
+    <span data-provider-icon={displayName}>
+      {statusDotClassName ? <span data-status-dot={statusDotClassName} /> : null}
+    </span>
+  ),
+}));
 vi.mock("../../components/settings/settingsSearch", () => ({
   searchableSetting: (id: string) => ({ id, title: id }),
 }));
@@ -339,7 +359,7 @@ vi.mock("../../components/ui/switch", () => ({
   ),
 }));
 
-import { CategoryPage, DiscoverPage } from "./DiscoverPages";
+import { AllServersPage, CategoryPage, DiscoverPage } from "./DiscoverPages";
 import {
   ConnectorDetailPage,
   PluginDetailPage,
@@ -536,6 +556,7 @@ beforeEach(() => {
   state.inventory = inventory();
   state.catalog = catalog;
   state.discoverPages = {};
+  state.discoverOutcomes = {};
   state.entries = {};
   state.projectsKnown = true;
   state.registry = AtomRegistry.make();
@@ -744,12 +765,14 @@ describe("Discover", () => {
       ],
     });
     state.discoverPages = {
-      [JSON.stringify({ query: "note" })]: {
+      [JSON.stringify({ scope: "curated", query: "note" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
-        entries: [
-          entry("io.notion/notion", { title: "Notion" }),
-          entry("io.github.x/notes", { title: "Notes server", categories: [] }),
-        ],
+        entries: [entry("io.notion/notion", { title: "Notion" })],
+      },
+      [JSON.stringify({ scope: "registry", query: "note" })]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        // The server leaves catalog servers out of the registry's list.
+        entries: [entry("io.github.x/notes", { title: "Notes server", categories: [] })],
       },
     };
     await render(<DiscoverPage />);
@@ -768,6 +791,65 @@ describe("Discover", () => {
     expect(buttonIn(row("Notes server"), "Add Notes server")).not.toBeNull();
   });
 
+  it("shows catalog matches at once while the registry is slow, then on failure", async () => {
+    const curatedKey = JSON.stringify({ scope: "curated", query: "granola" });
+    const registryKey = JSON.stringify({ scope: "registry", query: "granola" });
+    state.discoverPages = {
+      [curatedKey]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["writing"] })],
+      },
+    };
+    state.discoverOutcomes = { [registryKey]: "pending" };
+    await render(<DiscoverPage />);
+    await userEvent.type(
+      container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      "granola",
+    );
+    const results = () => section("Search results");
+    expect(rowNames(results())).toEqual(["Granola"]);
+    expect(results().querySelector('[data-discover-pending="registry"]')?.textContent).toBe(
+      "Searching the MCP Registry…",
+    );
+
+    // The registry fails: the catalog row stays and one line says why.
+    state.discoverOutcomes = { [registryKey]: { error: "The MCP Registry did not answer." } };
+    await render(<DiscoverPage />);
+    expect(rowNames(results())).toEqual(["Granola"]);
+    expect(results().querySelector("[data-discover-pending]")).toBeNull();
+    expect(results().querySelector('[data-discover-error="registry"]')?.textContent).toBe(
+      "The MCP Registry did not answer.",
+    );
+
+    // When the registry answers, its rows follow the catalog's.
+    state.discoverOutcomes = {};
+    state.discoverPages = {
+      ...state.discoverPages,
+      [registryKey]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [entry("io.example/granola-notes", { title: "Granola notes", categories: [] })],
+      },
+    };
+    await render(<DiscoverPage />);
+    expect(rowNames(results())).toEqual(["Granola", "Granola notes"]);
+    expect(results().querySelector("[data-discover-error]")).toBeNull();
+  });
+
+  it("queries the registry for All MCP servers and the catalog for categories", async () => {
+    await render(<AllServersPage />);
+    expect(state.queryTargets).toContainEqual({
+      kind: "discover",
+      environmentId: "local",
+      input: { scope: "registry" },
+    });
+    await render(<CategoryPage category="research" />);
+    expect(state.queryTargets).toContainEqual({
+      kind: "discover",
+      environmentId: "local",
+      input: { scope: "curated", category: "research" },
+    });
+  });
+
   it("forwards an Installed search result to the Installed page", async () => {
     state.hash = "#extensions-connected-services";
     await render(<DiscoverPage />);
@@ -778,7 +860,7 @@ describe("Discover", () => {
 
   it("lists a category with a way back, and rejects unknown categories", async () => {
     state.discoverPages = {
-      [JSON.stringify({ category: "featured" })]: {
+      [JSON.stringify({ scope: "curated", category: "featured" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
         entries: [entry("io.notion/notion", { title: "Notion" })],
         nextCursor: "page-2",
@@ -898,11 +980,17 @@ const headerButtons = () =>
   [...header().querySelectorAll("button")].map(
     (item) => item.getAttribute("aria-label") ?? item.textContent,
   );
-const detailsDialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
-const groupTrigger = (label: string) =>
-  [...detailsDialog().querySelectorAll("button")].find((item) =>
-    item.textContent?.startsWith(label),
-  ) ?? null;
+const groupTrigger = (scope: ParentNode, label: string) =>
+  [...scope.querySelectorAll("button")].find((item) => item.textContent?.startsWith(label)) ?? null;
+const toolResult = (connectorId: ConnectorId, tools: ConnectorTestResult["tools"]) => ({
+  _tag: "Success" as const,
+  value: {
+    connectorId,
+    outcome: "ok" as const,
+    checkedAt: "2026-10-21T00:00:00.000Z",
+    tools,
+  },
+});
 const aboutTerms = () =>
   [...section("About").querySelectorAll("dt")].map((item) => item.textContent);
 const aboutValue = (label: string) =>
@@ -915,15 +1003,10 @@ const projectC = ProjectId.make("project-c");
 describe("Detail pages", () => {
   it("shows each kind's header actions", async () => {
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(headerButtons()).toEqual(["View details", "Remove"]);
+    expect(headerButtons()).toEqual(["Remove"]);
 
     await render(<ServerDetailPage name="io.notion/notion" />);
-    expect(headerButtons()).toEqual([
-      "View details",
-      "Add",
-      "More for Notion",
-      "Add with options…",
-    ]);
+    expect(headerButtons()).toEqual(["Add", "More for Notion", "Add with options…"]);
 
     state.inventory = inventory({
       plugins: [
@@ -937,18 +1020,18 @@ describe("Detail pages", () => {
       ],
     });
     await render(<PluginDetailPage pluginId="scient.sources" />);
-    expect(headerButtons()).toEqual(["View details"]);
+    expect(headerButtons()).toEqual([]);
     await render(<PluginDetailPage pluginId="lab-kit" />);
-    expect(headerButtons()).toEqual(["Turn off Lab kit", "View details", "Uninstall"]);
+    expect(headerButtons()).toEqual(["Turn off Lab kit", "Uninstall"]);
 
     await render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(headerButtons()).toEqual(["View details", "Uninstall"]);
+    expect(headerButtons()).toEqual(["Uninstall"]);
     await render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
-    expect(headerButtons()).toEqual(["View details"]);
+    expect(headerButtons()).toEqual([]);
     expect(header().textContent).toContain("Managed by Codex");
   });
 
@@ -1160,7 +1243,7 @@ describe("Detail pages", () => {
     expect(container.textContent).toContain("This server was not found.");
 
     state.discoverPages = {
-      [JSON.stringify({ query: "synapse" })]: {
+      [JSON.stringify({ scope: "curated", query: "synapse" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
         entries: [synapse],
       },
@@ -1223,85 +1306,172 @@ describe("Detail pages", () => {
     expect(aboutValue("Source")).toBe("Scient catalog");
   });
 
-  it("summarizes which agents a connector works with and lists them on demand", async () => {
+  it("counts the agents that can use a connector and lists them in a card on hover or focus", async () => {
+    state.inventory = inventory({
+      providerSupport: [
+        ...inventory().providerSupport,
+        {
+          providerInstanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          displayName: "OpenCode",
+          status: "conditional",
+          reason: "only when Scient starts the OpenCode server",
+        },
+      ],
+    });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(aboutValue("Works with")).toContain("2 of 3 agents");
-    const listed = () =>
-      [...section("About").querySelectorAll<HTMLElement>("[data-support]")].map(
-        (item) => item.textContent,
-      );
-    expect(listed()).toEqual([]);
-    await userEvent.click(buttonIn(section("About"), "Show agents")!);
-    expect(listed()).toEqual([
-      "Codex — Works",
-      "Claude — Works",
-      "Pi — Pi cannot reach remote MCP servers.",
-    ]);
+    // Agents with limits count; Pi can't use connectors at all.
+    expect(aboutValue("Works with")).toBe("3 agents");
+    expect(section("About").querySelector("[data-support]")).toBeNull();
 
+    const card = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Agents"]');
+    await userEvent.hover(buttonIn(section("About"), "3 agents")!);
+    await vi.waitFor(() => expect(card()).not.toBeNull());
+    const tiles = [...card()!.querySelectorAll<HTMLElement>("[data-support]")];
+    expect(tiles.map((tile) => tile.textContent)).toEqual(["Codex", "Claude", "OpenCode"]);
+    expect(
+      tiles.map((tile) =>
+        tile.querySelector("[data-provider-icon]")?.getAttribute("data-provider-icon"),
+      ),
+    ).toEqual(["Codex", "Claude", "OpenCode"]);
+    expect(tiles.map((tile) => tile.querySelector("[data-status-dot]") !== null)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    expect([...card()!.querySelectorAll("[data-limited]")].map((line) => line.textContent)).toEqual(
+      ["OpenCode: only when Scient starts the OpenCode server"],
+    );
+    expect(
+      [...card()!.querySelectorAll("[data-unavailable]")].map((line) => line.textContent),
+    ).toEqual(["Not available in Pi: Pi cannot reach remote MCP servers."]);
+    await userEvent.unhover(buttonIn(section("About"), "3 agents")!);
+    await vi.waitFor(() => expect(card()).toBeNull());
+
+    // Keyboard focus opens the same card.
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.filter((entry) => entry.status === "supported"),
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(aboutValue("Works with")).toContain("All your agents");
+    expect(aboutValue("Works with")).toBe("All agents");
+    buttonIn(section("About"), "All agents")!.focus();
+    await vi.waitFor(() => expect(card()).not.toBeNull());
+    expect([...card()!.querySelectorAll("[data-support]")].map((tile) => tile.textContent)).toEqual(
+      ["Codex", "Claude"],
+    );
+    expect(card()!.querySelector("[data-unavailable]")).toBeNull();
+    expect(card()!.querySelector("[data-limited]")).toBeNull();
   });
 
-  it("tests on View details and groups a connector's tools by kind", async () => {
-    state.commands.test.mockResolvedValueOnce({
-      _tag: "Success",
-      value: {
-        connectorId: LINEAR,
-        outcome: "ok",
-        checkedAt: "2026-10-21T00:00:00.000Z",
-        tools: [
-          { name: "list_issues", readOnly: true, description: "List issues" },
-          { name: "delete_issue", destructive: true },
-          { name: "update_issue", readOnly: false },
-          { name: "ping" },
-        ],
-      },
-    });
+  it("lists tools only after See tools, grouped by kind", async () => {
+    state.commands.test.mockResolvedValueOnce(
+      toolResult(LINEAR, [
+        { name: "list_issues", readOnly: true, description: "List issues" },
+        { name: "delete_issue", destructive: true },
+        { name: "update_issue", readOnly: false },
+        { name: "ping" },
+      ]),
+    );
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    await userEvent.click(buttonIn(header(), "View details")!);
+    expect(state.commands.test).not.toHaveBeenCalled();
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
     expect(state.commands.test).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { connectorId: LINEAR },
     });
-    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
-      "The Linear app contains 4 tools (2 write, 1 read, 1 other)",
-    );
+    const tools = section("Tools");
     expect(
-      ["Write", "Read", "Other", "Works with"].map((label) => groupTrigger(label)?.textContent),
-    ).toEqual(["Write2", "Read1", "Other1", "Works with3"]);
-    await userEvent.click(groupTrigger("Read")!);
-    expect(detailsDialog().querySelector('[aria-label="Read"]')?.textContent).toBe(
-      "list_issuesList issues",
-    );
-    await userEvent.click(groupTrigger("Write")!);
+      ["Write", "Read", "Other"].map((label) => groupTrigger(tools, label)?.textContent),
+    ).toEqual(["Write2", "Read1", "Other1"]);
+    await userEvent.click(groupTrigger(tools, "Read")!);
+    expect(tools.querySelector('[aria-label="Read"]')?.textContent).toBe("list_issuesList issues");
+    await userEvent.click(groupTrigger(tools, "Write")!);
     expect(
-      [...detailsDialog().querySelectorAll('[aria-label="Write"] li')].map(
-        (item) => item.textContent,
-      ),
+      [...tools.querySelectorAll('[aria-label="Write"] li')].map((item) => item.textContent),
     ).toEqual(["delete_issue", "update_issue"]);
+
+    // The result stays for this connector without testing again.
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
+    expect(state.commands.test).toHaveBeenCalledOnce();
   });
 
   it("says tools appear after adding and signing in, without testing", async () => {
     await render(<ServerDetailPage name="io.notion/notion" />);
-    await userEvent.click(buttonIn(header(), "View details")!);
-    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
-      "Tools appear after you add and sign in.",
-    );
-    expect(groupTrigger("Works with")).not.toBeNull();
-    expect(groupTrigger("Write")).toBeNull();
+    expect(section("Tools").textContent).toBe("ToolsTools appear after you add and sign in.");
+    expect(section("Tools").querySelector("button")).toBeNull();
 
     state.inventory = inventory({
       connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    await userEvent.click(buttonIn(header(), "View details")!);
-    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
-      "Tools appear after you add and sign in.",
-    );
+    expect(section("Tools").textContent).toBe("ToolsTools appear after you add and sign in.");
     expect(state.commands.test).not.toHaveBeenCalled();
+  });
+
+  it("never shows one connector's tools on another connector's page", async () => {
+    const notes = connector("notes00001", { displayName: "Notes" });
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear" }), notes],
+    });
+    state.commands.test.mockResolvedValueOnce(
+      toolResult(LINEAR, [{ name: "list_issues", readOnly: true }]),
+    );
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
+    expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
+
+    await render(<ConnectorDetailPage connectorId="con_notes00001" />);
+    expect(groupTrigger(section("Tools"), "Read")).toBeNull();
+    expect(buttonIn(section("Tools"), "See tools")).not.toBeNull();
+
+    // An answer for Linear that lands after moving to Notes is ignored.
+    const late = Promise.withResolvers<unknown>();
+    state.commands.test.mockReturnValueOnce(late.promise);
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
+    await render(<ConnectorDetailPage connectorId="con_notes00001" />);
+    await act(async () =>
+      late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
+    );
+    expect(section("Tools").textContent).not.toContain("Read");
+    expect(buttonIn(section("Tools"), "See tools")?.disabled).toBe(false);
+  });
+
+  it("drops cached tools when the connector signs in again or its sign-in changes", async () => {
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => ({ opener: {}, location: { href: "" }, close: vi.fn(), closed: false })),
+    );
+    state.commands.test.mockResolvedValue(
+      toolResult(LINEAR, [{ name: "list_issues", readOnly: true }]),
+    );
+    state.commands.startSignIn.mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        authorizationUrl: "https://linear.app/oauth",
+        expiresAt: "2026-10-21T00:10:00.000Z",
+      },
+    });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
+    expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
+    await userEvent.click(buttonIn(section("Connection"), "Reconnect")!);
+    expect(groupTrigger(section("Tools"), "Read")).toBeNull();
+    expect(buttonIn(section("Tools"), "See tools")).not.toBeNull();
+
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
+    expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
+    state.inventory = inventory({
+      connectors: [
+        connector("linear0001", {
+          displayName: "Linear",
+          auth: { type: "oauth", usesOwnClient: true },
+        }),
+      ],
+    });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(groupTrigger(section("Tools"), "Read")).toBeNull();
   });
 
   it("draws built-in plugins with a glyph and bundles with a letter tile", async () => {
@@ -1318,7 +1488,7 @@ describe("Detail pages", () => {
     expect(row("Lab kit").querySelector("[data-extension-icon]")).toBeNull();
   });
 
-  it("lists a plugin's parts in View details and links its skills to the Skills page", async () => {
+  it("lists a plugin's parts under Includes and links its skills to the Skills page", async () => {
     state.inventory = inventory({
       plugins: [
         plugin("sources", {
@@ -1331,17 +1501,69 @@ describe("Detail pages", () => {
       ],
     });
     await render(<PluginDetailPage pluginId="sources" />);
-    await userEvent.click(buttonIn(header(), "View details")!);
-    expect(detailsDialog().querySelector("[data-details-summary]")?.textContent).toBe(
-      "The Sources plugin contains 1 skill and 1 tool set",
-    );
-    await userEvent.click(groupTrigger("Skills")!);
-    expect(linkIn(detailsDialog(), "find-papers")?.getAttribute("href")).toBe("/settings/skills");
-    await userEvent.click(groupTrigger("Tools")!);
-    expect(detailsDialog().querySelector('[aria-label="Tools"]')?.textContent).toBe(
+    const includes = section("Includes");
+    expect(groupTrigger(includes, "Skills")?.textContent).toBe("Skills1");
+    await userEvent.click(groupTrigger(includes, "Skills")!);
+    expect(linkIn(includes, "find-papers")?.getAttribute("href")).toBe("/settings/skills");
+    await userEvent.click(groupTrigger(includes, "Tools")!);
+    expect(includes.querySelector('[aria-label="Tools"]')?.textContent).toBe(
       "sources:readsources_search",
     );
-    expect(groupTrigger("Connected services")).toBeNull();
+    expect(groupTrigger(includes, "Connected services")).toBeNull();
+  });
+
+  it("keeps each provider-plugin installation's busy state and error apart", async () => {
+    const pluginOne = {
+      id: "plugin-1",
+      name: "Codex plugin 1",
+      source: "remote" as const,
+      enabled: true,
+      canUninstall: true,
+    };
+    const snapshot = (cwd: string) => ({
+      cwd,
+      checkedAt: "2026-10-21T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+      plugins: [pluginOne],
+    });
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          plugins: [pluginOne],
+          workspaceSnapshots: [snapshot("/work/a"), snapshot("/work/b")],
+        }),
+      ],
+    };
+    state.confirm.mockResolvedValue(true);
+    const pending = Promise.withResolvers<unknown>();
+    state.commands.providerAct.mockReturnValueOnce(pending.promise);
+    const page = (workspace: string | undefined) => (
+      <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
+    );
+    await render(page("/work/a"));
+    await userEvent.click(buttonIn(header(), "Uninstall")!);
+    expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: {
+        instanceId: codex,
+        action: { type: "uninstall", pluginId: "plugin-1" },
+        cwd: "/work/a",
+      },
+    });
+    expect(buttonIn(header(), "Uninstall")?.disabled).toBe(true);
+    await render(page("/work/b"));
+    expect(buttonIn(header(), "Uninstall")?.disabled).toBe(false);
+    await render(page(undefined));
+    expect(buttonIn(header(), "Uninstall")?.disabled).toBe(false);
+
+    await act(async () => pending.resolve(extensionsError("Codex refused.")));
+    await render(page("/work/a"));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
+    await render(page("/work/b"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await render(page(undefined));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("uninstalls a provider plugin only when the provider allows it", async () => {

@@ -125,6 +125,7 @@ describe("MCP Registry discover", () => {
       return Effect.gen(function* () {
         const discover = yield* ExtensionsDiscover;
         const page = yield* discover.search({
+          scope: "registry",
           query: "  github ",
           limit: 500,
           cursor: "abc:1.0.0",
@@ -276,21 +277,21 @@ describe("MCP Registry discover", () => {
     let installed: ReadonlyArray<ConnectorSummary> = [];
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const first = yield* discover.search({ query: "github" });
+      const first = yield* discover.search({ scope: "registry", query: "github" });
       expect(first.entries.some((entry) => entry.installedConnectorId !== undefined)).toBe(false);
       yield* TestClock.adjust(Duration.minutes(9));
       installed = [installedConnector];
-      const cached = yield* discover.search({ query: "github" });
+      const cached = yield* discover.search({ scope: "registry", query: "github" });
       expect(http.requests).toHaveLength(1);
       expect(cached.fetchedAt).toBe(first.fetchedAt);
       // Installation is read live even when the registry page comes from cache.
       expect(
         cached.entries.find((entry) => entry.name === "ac.inference.sh/mcp")?.installedConnectorId,
       ).toBe(installedConnector.connectorId);
-      yield* discover.search({ query: "github", cursor: "next:1.0.0" });
+      yield* discover.search({ scope: "registry", query: "github", cursor: "next:1.0.0" });
       expect(http.requests).toHaveLength(2);
       yield* TestClock.adjust(Duration.minutes(1));
-      yield* discover.search({ query: "github" });
+      yield* discover.search({ scope: "registry", query: "github" });
       expect(http.requests).toHaveLength(3);
     }).pipe(Effect.provide(http.layer(() => installed)));
   });
@@ -301,7 +302,7 @@ describe("MCP Registry discover", () => {
     );
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const fiber = yield* Effect.forkChild(discover.search({}));
+      const fiber = yield* Effect.forkChild(discover.search({ scope: "registry" }));
       yield* TestClock.adjust(Duration.seconds(5));
       const page = yield* Fiber.join(fiber);
       expect(page.entries.length).toBeGreaterThan(0);
@@ -314,7 +315,7 @@ describe("MCP Registry discover", () => {
     const down = harness(() => new Response("down", { status: 502 }));
     const searchOnce = Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      return yield* discover.search({});
+      return yield* discover.search({ scope: "registry" });
     });
     return Effect.gen(function* () {
       const error = yield* Effect.flip(searchOnce.pipe(Effect.provide(notFound.layer())));
@@ -340,7 +341,7 @@ describe("MCP Registry discover", () => {
     );
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const error = yield* Effect.flip(discover.search({}));
+      const error = yield* Effect.flip(discover.search({ scope: "registry" }));
       expect(error.reason).toBe("unreachable");
       expect(http.requests).toHaveLength(1);
     }).pipe(Effect.provide(http.layer()));
@@ -471,7 +472,11 @@ describe("curated Discover catalog", () => {
         "con_semantic0001",
         "con_hubregistry1",
       ]);
-      const search = yield* discover.search({ category: "research", query: "SEMANTIC" });
+      const search = yield* discover.search({
+        scope: "curated",
+        category: "research",
+        query: "SEMANTIC",
+      });
       expect(search.entries.map((entry) => entry.installedConnectorId)).toEqual([
         "con_semantic0001",
       ]);
@@ -482,15 +487,28 @@ describe("curated Discover catalog", () => {
     const http = harness(() => Response.json(recordedPage), CURATED_FIXTURE);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const all = yield* discover.search({ category: "research", limit: 2, cursor: "ignored" });
+      const all = yield* discover.search({
+        scope: "curated",
+        category: "research",
+        limit: 2,
+        cursor: "ignored",
+      });
       expect(all.entries).toHaveLength(9);
       expect(all.nextCursor).toBeUndefined();
       // Every term must match name, tagline or description.
-      const papers = yield* discover.search({ category: "research", query: "paper-3 description" });
+      const papers = yield* discover.search({
+        scope: "curated",
+        category: "research",
+        query: "paper-3 description",
+      });
       expect(papers.entries.map((entry) => entry.title)).toEqual(["paper-3"]);
-      const byTagline = yield* discover.search({ category: "research", query: "citations" });
+      const byTagline = yield* discover.search({
+        scope: "curated",
+        category: "research",
+        query: "citations",
+      });
       expect(byTagline.entries.map((entry) => entry.title)).toEqual(["semantic"]);
-      expect((yield* discover.search({ category: "code" })).entries).toEqual([]);
+      expect((yield* discover.search({ scope: "curated", category: "code" })).entries).toEqual([]);
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(http.layer()));
   });
@@ -499,7 +517,8 @@ describe("curated Discover catalog", () => {
     const http = harness(() => Response.json(recordedPage), CURATED_FIXTURE);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const page = yield* discover.search({});
+      // No curated server matches "inference", so none is dropped as a duplicate.
+      const page = yield* discover.search({ scope: "registry", query: "inference" });
       const byName = Object.fromEntries(page.entries.map((entry) => [entry.name, entry]));
       expect(byName["ac.inference.sh/mcp"]).toMatchObject({
         title: "inference.sh",
@@ -733,32 +752,117 @@ describe("Discover entry lookup and global search", () => {
       );
     }).pipe(Effect.provide(http.layer()));
   });
+});
 
-  it.effect("searches the whole curated catalog first, without duplicates", () => {
+describe("split Discover search", () => {
+  /** A registry that never answers: any registry access would hang the call. */
+  const hangingRegistry = () => {
+    const requests: URL[] = [];
+    const layer = Layer.effect(
+      ExtensionsDiscover,
+      Discover.makeWith({
+        servers: CURATED_FIXTURE,
+        fetchIcon: async (url) => ICON_URIS[url],
+      }),
+    ).pipe(
+      Layer.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => requests.push(new URL(request.url))).pipe(
+              Effect.andThen(Effect.never),
+            ),
+          ),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ConnectorRuntime,
+          listOnlyConnectorRuntime(() => []),
+        ),
+      ),
+    );
+    return { requests, layer };
+  };
+
+  it.effect("answers curated searches locally, even while the registry hangs", () => {
+    const registry = hangingRegistry();
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      // Curated-only and outside every preview, matched across all categories.
+      const outside = yield* discover.search({ scope: "curated", query: "paper-6" });
+      expect(outside.entries.map((entry) => entry.name)).toEqual(["scient.curated/paper-6"]);
+      expect(outside.nextCursor).toBeUndefined();
+      // A preview entry matched by its tagline, with its icon, plus the papers.
+      const papers = yield* discover.search({ scope: "curated", query: "paper" });
+      expect(papers.entries.map((entry) => entry.name)).toEqual([
+        "scient.curated/semantic",
+        ...Array.from({ length: 7 }, (_, index) => `scient.curated/paper-${index}`),
+      ]);
+      expect(papers.entries[0]?.iconUrl).toBe("data:image/png;base64,c2Vt");
+      // An empty query is the whole catalog, in catalog order.
+      const all = yield* discover.search({ scope: "curated" });
+      expect(all.entries.map((entry) => entry.title)).toEqual(
+        CURATED_FIXTURE.map((server) => server.id),
+      );
+      expect(isDiscoverPage(papers)).toBe(true);
+      expect(registry.requests).toHaveLength(0);
+    }).pipe(Effect.provide(registry.layer));
+  });
+
+  it.effect("drops registry results the same curated query already returns", () => {
     const http = harness(registryRoutes, CURATED_FIXTURE);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      const outside = yield* discover.search({ query: "paper-6" });
-      expect(outside.entries[0]).toMatchObject({ name: "scient.curated/paper-6" });
-      // The registry page follows (the stub ignores the query), each entry once.
+      // "hub" is curated and on the registry page: only the curated query lists it.
+      const curated = yield* discover.search({ scope: "curated", query: "hub" });
+      expect(curated.entries.map((entry) => entry.name)).toEqual(["ac.inference.sh/mcp"]);
+      const registry = yield* discover.search({ scope: "registry", query: "hub" });
+      expect(registry.entries.some((entry) => entry.name === "ac.inference.sh/mcp")).toBe(false);
+      expect(registry.entries.every((entry) => !entry.name.startsWith("scient.curated/"))).toBe(
+        true,
+      );
+      // A curated server the query does not match stays, with curated presentation.
+      const other = yield* discover.search({ scope: "registry", query: "inference" });
+      expect(other.entries.find((entry) => entry.name === "ac.inference.sh/mcp")).toMatchObject({
+        tagline: "hub tagline",
+      });
+      // Paging is the registry's.
+      expect(registry.nextCursor).toBe("io.github.0Xflacko/justclip:0.3.0");
+      const next = yield* discover.search({
+        scope: "registry",
+        query: "hub",
+        cursor: registry.nextCursor!,
+      });
+      expect(next.entries.some((entry) => entry.name === "ac.inference.sh/mcp")).toBe(false);
+      expect(http.requests.at(-1)?.searchParams.get("cursor")).toBe(
+        "io.github.0Xflacko/justclip:0.3.0",
+      );
+    }).pipe(Effect.provide(http.layer()));
+  });
+
+  it.effect("fails registry searches when the registry fails, even with curated matches", () => {
+    const http = harness(() => new Response("unavailable", { status: 400 }), CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
       expect(
-        outside.entries.filter((entry) => entry.name === "scient.curated/paper-6"),
-      ).toHaveLength(1);
-      const names = outside.entries.map((entry) => entry.name);
-      expect(new Set(names).size).toBe(names.length);
+        (yield* Effect.flip(discover.search({ scope: "registry", query: "paper-6" }))).reason,
+      ).toBe("unreachable");
+      // The curated half of the same search still answers.
+      expect((yield* discover.search({ scope: "curated", query: "paper-6" })).entries).toHaveLength(
+        1,
+      );
+    }).pipe(Effect.provide(http.layer()));
+  });
 
-      // "hub" is curated and in the registry page: listed once, as the curated entry.
-      const hub = yield* discover.search({ query: "hub" });
-      expect(hub.entries.filter((entry) => entry.name === "ac.inference.sh/mcp")).toHaveLength(1);
-      expect(hub.entries[0]).toMatchObject({ name: "ac.inference.sh/mcp", title: "hub" });
-
-      // Curated matches lead only the first page; later pages stay registry pages.
-      const next = yield* discover.search({ query: "paper-6", cursor: "next:1.0.0" });
-      expect(next.entries.some((entry) => entry.name.startsWith("scient.curated/"))).toBe(false);
-      // Browsing without a query is the plain registry page.
-      const browse = yield* discover.search({});
-      expect(browse.entries.some((entry) => entry.name.startsWith("scient.curated/"))).toBe(false);
-      expect(isDiscoverPage(outside)).toBe(true);
+  it.effect("rejects a registry search restricted to a category", () => {
+    const http = harness(registryRoutes, CURATED_FIXTURE);
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      expect(
+        (yield* Effect.flip(discover.search({ scope: "registry", category: "research" }))).reason,
+      ).toBe("invalid-input");
+      expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(http.layer()));
   });
 });

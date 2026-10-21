@@ -97,21 +97,19 @@ export function ExtensionLink({
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-type ExtensionIconSize = "row" | "large" | "avatar" | "dialog";
+type ExtensionIconSize = "row" | "large" | "avatar";
 
-/** Tile size and inner padding; avatar and dialog icons are round. */
+/** Tile size and inner padding; avatar icons are round. */
 const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   row: "size-10 p-1.5 rounded-[25%]",
   large: "size-16 p-2.5 rounded-[25%]",
   avatar: "size-10 p-1.5 rounded-full",
-  dialog: "size-14 p-2.5 rounded-full",
 };
 
 const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   row: "size-10",
   large: "size-16",
   avatar: "size-10 rounded-full",
-  dialog: "size-14 rounded-full",
 };
 
 /**

@@ -135,21 +135,6 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
     : "MCP Registry";
 }
 
-/** "All your agents", "10 of 11 agents": agents with limits still count as working. */
-export function worksWithSummary(support: ReadonlyArray<ConnectorProviderSupport>): string {
-  const working = support.filter((entry) => entry.status !== "unsupported").length;
-  if (support.length === 0) return "No agents reported";
-  if (working === support.length) return "All your agents";
-  if (working === 0) return "None of your agents";
-  return `${working} of ${support.length} agents`;
-}
-
-export const PROVIDER_SUPPORT_TEXT: Readonly<Record<ConnectorProviderSupport["status"], string>> = {
-  supported: "Works",
-  conditional: "Works, with limits",
-  unsupported: "Not supported",
-};
-
 export interface ToolGroups {
   readonly read: ReadonlyArray<ConnectorToolSummary>;
   readonly write: ReadonlyArray<ConnectorToolSummary>;
@@ -163,18 +148,6 @@ export function groupTools(tools: ReadonlyArray<ConnectorToolSummary>): ToolGrou
   const read = tools.filter((tool) => tool.readOnly === true && tool.destructive !== true);
   const other = tools.filter((tool) => tool.readOnly === undefined && tool.destructive !== true);
   return { read, write, other };
-}
-
-/** "The Linear app contains 28 tools (14 write, 14 read)". */
-export function toolSummary(name: string, groups: ToolGroups): string {
-  const total = groups.read.length + groups.write.length + groups.other.length;
-  const parts = [
-    groups.write.length > 0 ? `${groups.write.length} write` : null,
-    groups.read.length > 0 ? `${groups.read.length} read` : null,
-    groups.other.length > 0 ? `${groups.other.length} other` : null,
-  ].filter((part) => part !== null);
-  const count = `${total} ${total === 1 ? "tool" : "tools"}`;
-  return `The ${name} app contains ${parts.length > 1 ? `${count} (${parts.join(", ")})` : count}`;
 }
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
