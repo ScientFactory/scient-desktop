@@ -13,7 +13,14 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { ChevronRightIcon, EllipsisIcon, type LucideIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  DownloadIcon,
+  EllipsisIcon,
+  LogInIcon,
+  type LucideIcon,
+  RefreshCwIcon,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
@@ -23,6 +30,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
   PreviewCard,
   PreviewCardPopup,
@@ -149,6 +157,36 @@ function extraDescription(description: string | undefined, tagline: string | und
   return text && text !== tagline?.trim() ? text : undefined;
 }
 
+/**
+ * The item's main action, drawn like the provider "Install" button in
+ * Settings → Providers: a borderless primary-colour button with a leading icon.
+ */
+function PrimaryAction({
+  icon: Icon,
+  disabled,
+  onClick,
+  children,
+}: {
+  readonly icon: LucideIcon;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly children: string;
+}) {
+  return (
+    <Button
+      size="sm"
+      type="button"
+      variant="ghost-primary"
+      data-primary-action=""
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <Icon aria-hidden />
+      {children}
+    </Button>
+  );
+}
+
 function MoreMenu({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <Menu>
@@ -258,10 +296,78 @@ function worksWithCount(support: ReadonlyArray<ConnectorProviderSupport>): strin
   return `${usable} ${usable === 1 ? "agent" : "agents"}`;
 }
 
+/** An agent's logo with its name below; an amber dot marks one that works with limits. */
+function AgentTileContent({
+  entry,
+  iconUrl,
+}: {
+  readonly entry: ConnectorProviderSupport;
+  readonly iconUrl: string | undefined;
+}) {
+  return (
+    <>
+      <ProviderInstanceIcon
+        driverKind={entry.driver}
+        displayName={entry.displayName}
+        acpRegistryIconUrl={iconUrl}
+        iconClassName="size-7"
+        indicatorBackground="var(--popover)"
+        {...(entry.status === "conditional" ? { statusDotClassName: "bg-warning" } : {})}
+      />
+      <span className="line-clamp-2 w-full text-xs leading-tight text-muted-foreground">
+        {entry.displayName}
+      </span>
+    </>
+  );
+}
+
+const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
+
+/**
+ * A limited agent's tile tells why on hover, keyboard focus, or a tap. The
+ * tooltip opens from inside the card, so the card stays open with it.
+ */
+function LimitedAgentTile({
+  entry,
+  iconUrl,
+}: {
+  readonly entry: ConnectorProviderSupport;
+  readonly iconUrl: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const reason = entry.reason ?? "Works with limits";
+  return (
+    <Tooltip
+      open={open}
+      onOpenChange={(next, details) => {
+        // A press toggles below, so touch can open it with a tap.
+        if (details.reason !== "trigger-press") setOpen(next);
+      }}
+    >
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`${entry.displayName}: ${reason}`}
+            onClick={() => setOpen((current) => !current)}
+            className={cn(
+              AGENT_TILE_CLASS,
+              "cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            )}
+          />
+        }
+      >
+        <AgentTileContent entry={entry} iconUrl={iconUrl} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{reason}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /**
  * How many agents can use this service; hovering or focusing it opens a card
- * with their logos (scrolling sideways when they don't fit), a line per
- * limitation, and a line per agent that can't use it.
+ * of their logos above it, scrolling sideways when they don't fit. Agents
+ * that can't use it are left out of the card; the count already says so.
  */
 function WorksWithValue() {
   const { inventory, providers } = useExtensionsEnvironment();
@@ -270,8 +376,8 @@ function WorksWithValue() {
     return <span className="text-muted-foreground">No agents reported</span>;
   }
   const usable = support.filter((entry) => entry.status !== "unsupported");
-  const limited = usable.filter((entry) => entry.status === "conditional");
-  const unavailable = support.filter((entry) => entry.status === "unsupported");
+  const iconUrlOf = (entry: ConnectorProviderSupport) =>
+    providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
   return (
     <PreviewCard>
       <PreviewCardTrigger
@@ -286,60 +392,29 @@ function WorksWithValue() {
       >
         {worksWithCount(support)}
       </PreviewCardTrigger>
-      <PreviewCardPopup side="bottom" className="w-max max-w-[min(420px,var(--available-width))]">
-        <div role="group" aria-label="Agents" className="grid gap-2 p-3">
-          {usable.length > 0 ? (
+      {usable.length > 0 ? (
+        <PreviewCardPopup side="top" className="w-max max-w-[min(420px,var(--available-width))]">
+          <div role="group" aria-label="Agents" className="p-3">
             <ScrollArea scrollFade hideScrollbars className="h-auto">
               <ul className="flex w-max gap-1">
                 {usable.map((entry) => (
                   <li
                     key={entry.providerInstanceId}
                     data-support={entry.status}
-                    className="flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center"
+                    className={entry.status === "conditional" ? undefined : AGENT_TILE_CLASS}
                   >
-                    <ProviderInstanceIcon
-                      driverKind={entry.driver}
-                      displayName={entry.displayName}
-                      acpRegistryIconUrl={
-                        providers.find(
-                          (provider) => provider.instanceId === entry.providerInstanceId,
-                        )?.iconUrl
-                      }
-                      iconClassName="size-7"
-                      indicatorBackground="var(--popover)"
-                      {...(entry.status === "conditional"
-                        ? { statusDotClassName: "bg-warning" }
-                        : {})}
-                    />
-                    <span className="line-clamp-2 w-full text-xs leading-tight text-muted-foreground">
-                      {entry.displayName}
-                    </span>
+                    {entry.status === "conditional" ? (
+                      <LimitedAgentTile entry={entry} iconUrl={iconUrlOf(entry)} />
+                    ) : (
+                      <AgentTileContent entry={entry} iconUrl={iconUrlOf(entry)} />
+                    )}
                   </li>
                 ))}
               </ul>
             </ScrollArea>
-          ) : null}
-          {limited.map((entry) => (
-            <p
-              key={entry.providerInstanceId}
-              data-limited=""
-              className="text-xs text-muted-foreground"
-            >
-              {entry.displayName}: {entry.reason ?? "works with limits"}
-            </p>
-          ))}
-          {unavailable.map((entry) => (
-            <p
-              key={entry.providerInstanceId}
-              data-unavailable=""
-              className="text-xs text-muted-foreground"
-            >
-              Not available in {entry.displayName}
-              {entry.reason ? `: ${entry.reason}` : ""}
-            </p>
-          ))}
-        </div>
-      </PreviewCardPopup>
+          </div>
+        </PreviewCardPopup>
+      ) : null}
     </PreviewCard>
   );
 }
@@ -658,10 +733,18 @@ function ConnectorDetail({
                 {connectionDetail(connector, actions.busy)}
               </p>
             </div>
-            {connector.status === "needs-auth" ? (
-              <Button size="sm" disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
-              </Button>
+            {allowed.signIn ? (
+              <PrimaryAction
+                icon={allowed.signIn === "sign-in" ? LogInIcon : RefreshCwIcon}
+                disabled={!actions.canSignIn}
+                onClick={() => void actions.signIn()}
+              >
+                {actions.busy === "sign-in"
+                  ? "Opening…"
+                  : allowed.signIn === "sign-in"
+                    ? "Sign in"
+                    : "Reconnect"}
+              </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
               <MenuItem
@@ -670,11 +753,6 @@ function ConnectorDetail({
               >
                 Test
               </MenuItem>
-              {allowed.signIn ? (
-                <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-                  {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
-                </MenuItem>
-              ) : null}
             </MoreMenu>
           </CardRow>
           <CardRow>
@@ -799,12 +877,13 @@ function ServerDetail({
           tagline={tagline}
           actions={
             <>
-              <Button
+              <PrimaryAction
+                icon={DownloadIcon}
                 disabled={!actions.canAdd || actions.locked}
                 onClick={() => void actions.add()}
               >
                 {actions.busy === "add" ? "Adding…" : "Add"}
-              </Button>
+              </PrimaryAction>
               {actions.canAdd ? (
                 <MoreMenu label={`More for ${name}`}>
                   <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
@@ -1218,13 +1297,13 @@ function ProviderServerDetail({
           actions={
             <>
               {canSignIn ? (
-                <Button
-                  variant={server.status === "connected" ? "outline" : "default"}
+                <PrimaryAction
+                  icon={server.status === "connected" ? RefreshCwIcon : LogInIcon}
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
                   {server.status === "connected" ? "Sign in again" : "Sign in"}
-                </Button>
+                </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />
             </>

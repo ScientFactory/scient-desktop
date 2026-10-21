@@ -1035,6 +1035,41 @@ describe("Detail pages", () => {
     expect(header().textContent).toContain("Managed by Codex");
   });
 
+  it("draws Add, Sign in and Reconnect like the provider Install button", async () => {
+    const primary = (scope: ParentNode, label: string) => {
+      const button = buttonIn(scope, label)!;
+      return {
+        variant: button.dataset.variant,
+        icon: button
+          .querySelector("svg")
+          ?.getAttribute("class")
+          ?.match(/lucide-[a-z-]+/)?.[0],
+      };
+    };
+    await render(<ServerDetailPage name="io.notion/notion" />);
+    expect(primary(header(), "Add")).toEqual({
+      variant: "ghost-primary",
+      icon: "lucide-download",
+    });
+
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
+    });
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(primary(section("Connection"), "Sign in")).toEqual({
+      variant: "ghost-primary",
+      icon: "lucide-log-in",
+    });
+
+    state.inventory = inventory();
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(primary(section("Connection"), "Reconnect")).toEqual({
+      variant: "ghost-primary",
+      icon: "lucide-refresh-cw",
+    });
+    expect(buttonIn(header(), "Remove")?.dataset.variant).toBe("destructive-outline");
+  });
+
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
     state.inventory = inventory({
       connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
@@ -1306,7 +1341,7 @@ describe("Detail pages", () => {
     expect(aboutValue("Source")).toBe("Scient catalog");
   });
 
-  it("counts the agents that can use a connector and lists them in a card on hover or focus", async () => {
+  it("counts the agents that can use a connector and shows only their tiles in a card above", async () => {
     state.inventory = inventory({
       providerSupport: [
         ...inventory().providerSupport,
@@ -1315,7 +1350,7 @@ describe("Detail pages", () => {
           driver: ProviderDriverKind.make("opencode"),
           displayName: "OpenCode",
           status: "conditional",
-          reason: "only when Scient starts the OpenCode server",
+          reason: "Only when Scient starts the OpenCode server",
         },
       ],
     });
@@ -1327,6 +1362,9 @@ describe("Detail pages", () => {
     const card = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Agents"]');
     await userEvent.hover(buttonIn(section("About"), "3 agents")!);
     await vi.waitFor(() => expect(card()).not.toBeNull());
+    expect(card()!.closest('[data-slot="preview-card-popup"]')?.getAttribute("data-side")).toBe(
+      "top",
+    );
     const tiles = [...card()!.querySelectorAll<HTMLElement>("[data-support]")];
     expect(tiles.map((tile) => tile.textContent)).toEqual(["Codex", "Claude", "OpenCode"]);
     expect(
@@ -1339,28 +1377,38 @@ describe("Detail pages", () => {
       false,
       true,
     ]);
-    expect([...card()!.querySelectorAll("[data-limited]")].map((line) => line.textContent)).toEqual(
-      ["OpenCode: only when Scient starts the OpenCode server"],
-    );
-    expect(
-      [...card()!.querySelectorAll("[data-unavailable]")].map((line) => line.textContent),
-    ).toEqual(["Not available in Pi: Pi cannot reach remote MCP servers."]);
-    await userEvent.unhover(buttonIn(section("About"), "3 agents")!);
-    await vi.waitFor(() => expect(card()).toBeNull());
+    // Tiles only: no limitation or "not available" text in the card.
+    expect(card()!.querySelector("p")).toBeNull();
+    expect(card()!.textContent).toBe("CodexClaudeOpenCode");
 
-    // Keyboard focus opens the same card.
+    // The limited agent's tile explains itself, and the card stays open.
+    const tooltip = () =>
+      [...document.querySelectorAll<HTMLElement>('[data-slot="tooltip-popup"]')].find((item) =>
+        item.textContent?.includes("Only when Scient starts the OpenCode server"),
+      ) ?? null;
+    const limited = buttonIn(card()!, "OpenCode: Only when Scient starts the OpenCode server")!;
+    await userEvent.hover(limited);
+    await vi.waitFor(() => expect(tooltip()).not.toBeNull());
+    expect(card()).not.toBeNull();
+    await userEvent.unhover(limited);
+    await vi.waitFor(() => expect(tooltip()).toBeNull());
+    // A tap opens it too (touch has no hover).
+    await userEvent.click(limited);
+    await vi.waitFor(() => expect(tooltip()).not.toBeNull());
+    expect(card()).not.toBeNull();
+
+    // Keyboard focus opens the card.
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.filter((entry) => entry.status === "supported"),
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(aboutValue("Works with")).toBe("All agents");
     buttonIn(section("About"), "All agents")!.focus();
-    await vi.waitFor(() => expect(card()).not.toBeNull());
-    expect([...card()!.querySelectorAll("[data-support]")].map((tile) => tile.textContent)).toEqual(
-      ["Codex", "Claude"],
+    await vi.waitFor(() =>
+      expect(
+        [...(card()?.querySelectorAll("[data-support]") ?? [])].map((tile) => tile.textContent),
+      ).toEqual(["Codex", "Claude"]),
     );
-    expect(card()!.querySelector("[data-unavailable]")).toBeNull();
-    expect(card()!.querySelector("[data-limited]")).toBeNull();
   });
 
   it("lists tools only after See tools, grouped by kind", async () => {
