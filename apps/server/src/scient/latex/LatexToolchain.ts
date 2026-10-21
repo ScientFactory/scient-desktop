@@ -551,10 +551,15 @@ export const make = Effect.gen(function* () {
 
   /**
    * Joins the discovery already running, or starts one in the service's own
-   * scope. A refresh that joins one started before it was asked for runs
-   * another afterwards, so an engine installed meanwhile is not missed.
+   * scope. `cached` accepts a fresh cache, rechecked at the moment a caller
+   * would start a discovery, since one may have finished after the caller
+   * last looked. `refresh` needs a discovery that began after it was asked
+   * for: one that joins an older run follows it with a `follow-up`, which
+   * joins or starts a run without asking for another.
    */
-  const discover = (refresh: boolean): Effect.Effect<ToolchainObservation> =>
+  const discover = (
+    mode: "cached" | "refresh" | "follow-up",
+  ): Effect.Effect<ToolchainObservation> =>
     // Claiming the slot and starting the worker are one uninterruptible step:
     // a caller cancelled between them would leave a claim nothing completes,
     // and every later caller would wait on it forever. Only the waits are
@@ -567,7 +572,17 @@ export const make = Effect.gen(function* () {
         );
         if (joined !== null) {
           const observation = yield* restore(Deferred.await(joined));
-          return refresh ? yield* restore(discover(false)) : observation;
+          return mode === "refresh" ? yield* restore(discover("follow-up")) : observation;
+        }
+        if (mode === "cached") {
+          // A run clears its claim only after caching, so a claim taken after
+          // it finished sees its result here.
+          const settled = yield* Ref.get(cacheRef);
+          if (settled !== null && (yield* isFresh(settled))) {
+            yield* Ref.set(inflightRef, null);
+            yield* Deferred.succeed(next, settled);
+            return settled;
+          }
         }
         yield* Effect.forkIn(
           restore(
@@ -641,7 +656,7 @@ export const make = Effect.gen(function* () {
     const cached = yield* Ref.get(cacheRef);
     if (!refresh && cached !== null && (yield* isFresh(cached)))
       return select(cached, requiredCompiler);
-    return select(yield* discover(refresh), requiredCompiler);
+    return select(yield* discover(refresh ? "refresh" : "cached"), requiredCompiler);
   });
 
   return LatexToolchain.of({ probe });
