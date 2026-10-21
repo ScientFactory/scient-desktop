@@ -417,11 +417,13 @@ function WorksWithValue() {
         className="w-max"
       >
         {/* The width limit sits on the content, independent of the positioner's
-            measurements, so the card is measured, and placed, at that width. */}
+            measurements, so the card is measured, and placed, at that width.
+            A wide 4rem fade marks whichever edge still has more agents, so the
+            row reads as scrollable. */}
         <ScrollArea
           scrollFade
           hideScrollbars
-          className="h-auto max-w-[min(396px,calc(100vw-3rem))]"
+          className="h-auto max-w-[min(396px,calc(100vw-3rem))] [&>[data-slot=scroll-area-viewport]]:[--fade-size:4rem]"
         >
           <ul className="flex w-max gap-1">
             {usable.map((entry) => (
