@@ -928,6 +928,29 @@ describe("Pi MCP event-stream responses", () => {
     assert.equal(output.content[0]?.text, "remote:lookup");
   });
 
+  it("does not take a server request that reuses the pending id as its response", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              [
+                // The server numbers its own requests, so one may carry this call's id.
+                dataLines({ jsonrpc: "2.0", id: message.id, method: "sampling/createMessage" }),
+                "",
+                dataLines(message),
+                "",
+                "",
+              ].join("\n"),
+              { open: true },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
   it.each([
     ["CRLF", "\r\n"],
     ["CR", "\r"],

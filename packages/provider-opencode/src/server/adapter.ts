@@ -1046,8 +1046,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   },
                 }),
               ).pipe(
-                Effect.map(() => {
-                  registered.add(connector.serverName);
+                // A 200 answer maps each server to its status; only a connected one is delivered.
+                Effect.flatMap((result) => {
+                  const status = result.data?.[connector.serverName]?.status;
+                  if (status === "connected") {
+                    registered.add(connector.serverName);
+                    return Effect.void;
+                  }
+                  return Effect.logWarning(
+                    `OpenCode did not connect the ${connector.displayName} connector.`,
+                    { status: status ?? "missing" },
+                  );
                 }),
                 Effect.catch((error) =>
                   Effect.logWarning(

@@ -688,7 +688,7 @@ describe("OpenCodeAdapterV2", () => {
   );
 
   it.effect(
-    "adds each connector beside Scient's server and reports the ones OpenCode rejected",
+    "adds each connector beside Scient's server and reports the ones OpenCode did not connect",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -718,6 +718,18 @@ describe("OpenCodeAdapterV2", () => {
                 displayName: "Linear",
                 url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
               },
+              {
+                connectorId: "connector-notion",
+                serverName: "notion",
+                displayName: "Notion",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-notion",
+              },
+              {
+                connectorId: "connector-sentry",
+                serverName: "sentry",
+                displayName: "Sentry",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-sentry",
+              },
             ],
             beginConnectorRegistration: Effect.sync((): McpConnectorRegistrationReporter => {
               begins++;
@@ -745,7 +757,12 @@ describe("OpenCodeAdapterV2", () => {
                   added.push(input);
                   // An unreachable connector must not stop the session.
                   if (input.name === "github") throw new Error("connector unreachable");
-                  return { data: true };
+                  // A 200 answer still names failed or unusable servers.
+                  if (input.name === "notion")
+                    return { data: { notion: { status: "failed", error: "connection refused" } } };
+                  if (input.name === "sentry")
+                    return { data: { sentry: { status: "needs_auth" } } };
+                  return { data: { [input.name]: { status: "connected" } } };
                 },
               },
               session: {
@@ -780,11 +797,25 @@ describe("OpenCodeAdapterV2", () => {
               name: "linear",
               config: remote("http://127.0.0.1:43123/mcp/connectors/connector-linear"),
             },
+            {
+              name: "notion",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-notion"),
+            },
+            {
+              name: "sentry",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-sentry"),
+            },
           ]);
           assert.isTrue(prompted);
           assert.equal(begins, 1);
           assert.deepEqual(reports, [
-            { withheld: [{ serverName: "github", reason: "registration-failed" }] },
+            {
+              withheld: [
+                { serverName: "github", reason: "registration-failed" },
+                { serverName: "notion", reason: "registration-failed" },
+                { serverName: "sentry", reason: "registration-failed" },
+              ],
+            },
           ]);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
       ),

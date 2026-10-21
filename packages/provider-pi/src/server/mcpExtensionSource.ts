@@ -128,9 +128,12 @@ async function readJsonRpcResponse(
     } catch {
       throw new Error(\`MCP \${method} event stream sent a message that is not JSON.\`);
     }
-    // Notifications, server requests and other requests' responses are not this answer.
-    return typeof message === "object" && message !== null && (message as JsonRpcResponse).id === id
-      ? (message as JsonRpcResponse)
+    // Notifications, server requests (which may reuse this id: the server numbers its own
+    // requests) and other requests' responses are not this answer.
+    if (typeof message !== "object" || message === null || "method" in message) return undefined;
+    const response = message as JsonRpcResponse;
+    return response.id === id && ("result" in response || "error" in response)
+      ? response
       : undefined;
   };
   // A blank line completes an event; only data fields carry the message.
