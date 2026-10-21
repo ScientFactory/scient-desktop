@@ -567,8 +567,10 @@ export const make = Effect.gen(function* () {
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const next = yield* Deferred.make<ToolchainObservation>();
+        // A finished claim nothing cleared (its worker was interrupted before
+        // it ran) is replaced rather than joined.
         const joined = yield* Ref.modify(inflightRef, (current) =>
-          current === null ? [null, next] : [current, current],
+          current === null || Deferred.isDoneUnsafe(current) ? [null, next] : [current, current],
         );
         if (joined !== null) {
           const observation = yield* restore(Deferred.await(joined));
@@ -584,7 +586,7 @@ export const make = Effect.gen(function* () {
             return settled;
           }
         }
-        yield* Effect.forkIn(
+        const worker = yield* Effect.forkIn(
           restore(
             probeAll.pipe(
               Effect.flatMap((observed) =>
@@ -607,6 +609,11 @@ export const make = Effect.gen(function* () {
           ),
           discoveryScope,
         );
+        // The worker's own finalizer cannot run if the scope interrupts it
+        // before its first step; its exit still reaches whoever waits here.
+        worker.addObserver((exit) => {
+          Deferred.doneUnsafe(next, exit);
+        });
         return yield* restore(Deferred.await(next));
       }),
     );

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -1202,6 +1203,27 @@ describe("latexmk discovery lifecycle", () => {
       );
       // Ended, one way or another, instead of hanging on a worker that is gone.
       expect(Exit.isSuccess(exit)).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("releases a waiting caller when the service shuts down before discovery starts", () =>
+    Effect.gen(function* () {
+      const { layer, calls } = yield* harness((command) =>
+        command === "latexmk" ? Effect.succeed(output(LATEXMK_BANNER)) : spawnFailure(command),
+      );
+      const serviceScope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(layer, serviceScope);
+      const toolchain = Context.get(context, LatexToolchain);
+      const waiting = yield* Effect.forkChild(toolchain.probe(false));
+      // One turn: the caller claims discovery and schedules its worker; the
+      // scope closes before the worker's first step.
+      yield* Effect.yieldNow;
+      yield* Scope.close(serviceScope, Exit.void);
+      const exit = yield* Fiber.await(waiting).pipe(
+        Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.die("still waiting") }),
+      );
+      expect(Exit.isSuccess(exit)).toBe(false);
+      expect(yield* Ref.get(calls)).toEqual([]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
