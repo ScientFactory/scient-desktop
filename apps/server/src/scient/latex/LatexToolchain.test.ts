@@ -15,7 +15,14 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
-import { LatexToolchain, make, parseLatexToolchainVersion } from "./LatexToolchain.ts";
+import {
+  LatexToolchain,
+  latexDriverBinDirectory,
+  latexProbeFailureReason,
+  make,
+  parseLatexToolchainVersion,
+  windowsLatexmkFolders,
+} from "./LatexToolchain.ts";
 import { encodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
 import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
 
@@ -77,7 +84,13 @@ const harness = (
     command: string,
     input: ProcessRunner.ProcessRunInput,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
-  options: { readonly managedInstall?: boolean } = {},
+  options: {
+    readonly managedInstall?: boolean;
+    /** Host environment; the default has a PATH with nothing on it. */
+    readonly environment?: NodeJS.ProcessEnv;
+    /** Where the bare `latexmk` resolves, as Node's PATH search would answer. */
+    readonly latexmkOnPath?: string;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -115,9 +128,14 @@ const harness = (
         Layer.provide(config),
         Layer.provide(NodeServices.layer),
         Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
-        Layer.provide(Layer.succeed(HostProcess.Environment, { Path: "C:\\system" })),
+        Layer.provide(
+          Layer.succeed(HostProcess.Environment, options.environment ?? { Path: "C:\\system" }),
+        ),
         Layer.provide(
           Layer.succeed(SpawnExecutableResolution, (command, _platform, environment) => {
+            if (command === "latexmk" && options.latexmkOnPath !== undefined) {
+              return options.latexmkOnPath;
+            }
             const binDirectory = environment.Path?.split(";")[0];
             return COMPILER_NAMES.some((compiler) => compiler === command) &&
               binDirectory !== undefined &&
@@ -868,4 +886,221 @@ describe("LatexToolchain", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.provide(TestClock.layer())),
   );
+});
+
+// MiKTeX's own words when its `latexmk.exe` has no Perl to run under.
+const MIKTEX_NO_PERL =
+  "Sorry, but latexmk.exe did not succeed for the following reason:\r\n\r\n" +
+  "  MiKTeX could not find the script engine 'perl' which is required to execute 'latexmk'.\r\n\r\n" +
+  "Remedy:\r\n\r\n  Make sure 'perl' is installed on your system.\r\n";
+const MIKTEX_NO_PERL_REASON =
+  "MiKTeX could not find the script engine 'perl' which is required to execute 'latexmk'.";
+
+const failed = (stderr: string, code = 1): ProcessRunner.ProcessRunOutput => ({
+  ...output(""),
+  stderr,
+  code: ChildProcessSpawner.ExitCode(code),
+});
+
+/** Two `latexmk.exe` on PATH, MiKTeX's first, as on a computer with both distributions. */
+const twoDistributions = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-two-" });
+  const miktex = path.join(root, "MiKTeX", "miktex", "bin", "x64");
+  const texlive = path.join(root, "texlive", "2024", "bin", "windows");
+  for (const folder of [miktex, texlive]) {
+    yield* fileSystem.makeDirectory(folder, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(folder, "latexmk.exe"), "");
+  }
+  return {
+    root,
+    miktex,
+    texlive,
+    miktexLatexmk: path.join(miktex, "latexmk.exe"),
+    texliveLatexmk: path.join(texlive, "latexmk.exe"),
+  };
+});
+
+describe("latexmk fallback", () => {
+  it.effect("uses the next latexmk on PATH when the first one does not run", () =>
+    Effect.gen(function* () {
+      const machine = yield* twoDistributions;
+      const environment = { Path: `${machine.miktex};${machine.texlive}` };
+      const seen: Array<ProcessRunner.ProcessRunInput> = [];
+      const { layer, calls } = yield* harness(
+        (command, input) => {
+          seen.push(input);
+          if (command === "latexmk") return Effect.succeed(failed(MIKTEX_NO_PERL));
+          if (command === machine.texliveLatexmk) return Effect.succeed(output(LATEXMK_BANNER));
+          return spawnFailure(command);
+        },
+        { environment, latexmkOnPath: machine.miktexLatexmk },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status).toMatchObject({
+        kind: "latexmk",
+        executable: machine.texliveLatexmk,
+        version: "4.79",
+        source: "system",
+      });
+      expect(status.unusable).toBeUndefined();
+      // MiKTeX's copy is tried once, by name, and never again by path.
+      expect((yield* Ref.get(calls)).slice(0, 2)).toEqual(["latexmk", machine.texliveLatexmk]);
+      // TeX Live's latexmk must drive TeX Live's engines, not MiKTeX's.
+      const texliveProbe = seen.find((input) => input.command === machine.texliveLatexmk);
+      expect(texliveProbe?.env?.Path?.split(";")[0]).toBe(machine.texlive);
+      expect(latexDriverBinDirectory(status, yield* Path.Path)).toBe(machine.texlive);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("finds a default install folder that PATH does not list", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const localAppData = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-latex-local-",
+      });
+      const miktex = path.join(localAppData, "Programs", "MiKTeX", "miktex", "bin", "x64");
+      yield* fileSystem.makeDirectory(miktex, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(miktex, "latexmk.exe"), "");
+      const { layer } = yield* harness(
+        (command) =>
+          command === path.join(miktex, "latexmk.exe")
+            ? Effect.succeed(output(LATEXMK_BANNER))
+            : spawnFailure(command),
+        { environment: { Path: "C:\\system", LOCALAPPDATA: localAppData } },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status.kind).toBe("latexmk");
+      expect(status.executable).toBe(path.join(miktex, "latexmk.exe"));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("names every latexmk that exists but did not run, when none did", () =>
+    Effect.gen(function* () {
+      const machine = yield* twoDistributions;
+      const { layer } = yield* harness(
+        (command) => {
+          if (command === "latexmk") return Effect.succeed(failed(MIKTEX_NO_PERL));
+          if (command === machine.texliveLatexmk) {
+            return Effect.succeed({ ...failed(""), code: null, timedOut: true });
+          }
+          return spawnFailure(command);
+        },
+        {
+          environment: { Path: `${machine.miktex};${machine.texlive}` },
+          latexmkOnPath: machine.miktexLatexmk,
+        },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status.kind).toBeNull();
+      expect(status.unusable).toEqual([
+        { executable: machine.miktexLatexmk, reason: MIKTEX_NO_PERL_REASON },
+        {
+          executable: machine.texliveLatexmk,
+          reason: "It did not answer within 30 seconds.",
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps a working first latexmk exactly as before, without looking further", () =>
+    Effect.gen(function* () {
+      const machine = yield* twoDistributions;
+      const { layer, calls } = yield* harness(
+        (command) =>
+          command === "latexmk" ? Effect.succeed(output(LATEXMK_BANNER)) : spawnFailure(command),
+        {
+          environment: { Path: `${machine.miktex};${machine.texlive}` },
+          latexmkOnPath: machine.miktexLatexmk,
+        },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status.executable).toBe("latexmk");
+      expect(latexDriverBinDirectory(status, yield* Path.Path)).toBeNull();
+      expect((yield* Ref.get(calls)).filter((command) => command.includes("latexmk"))).toEqual([
+        "latexmk",
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not report a latexmk that is not installed as unusable", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness((command) => spawnFailure(command));
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+      expect(status.kind).toBeNull();
+      expect(status.unusable).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("latexProbeFailureReason", () => {
+  const base = { stdout: "", stderr: "", code: 1, timedOut: false, timeoutSeconds: 10 };
+
+  it("skips a launcher's introduction and reads its cause", () => {
+    expect(latexProbeFailureReason({ ...base, stderr: MIKTEX_NO_PERL })).toBe(
+      MIKTEX_NO_PERL_REASON,
+    );
+  });
+
+  it("says how a silent or slow probe ended, and bounds a long line", () => {
+    expect(latexProbeFailureReason(base)).toBe("It exited with code 1.");
+    expect(latexProbeFailureReason({ ...base, timedOut: true, code: null })).toBe(
+      "It did not answer within 10 seconds.",
+    );
+    const reason = latexProbeFailureReason({ ...base, stdout: "x".repeat(500) });
+    expect(reason).toHaveLength(240);
+    expect(reason.endsWith("…")).toBe(true);
+  });
+});
+
+describe("windowsLatexmkFolders", () => {
+  const join = (...segments: ReadonlyArray<string>) => segments.join("\\").replace(/\\+/gu, "\\");
+
+  it("lists MiKTeX's folders, then TeX Live's newest year first in all its layouts", () => {
+    expect(
+      windowsLatexmkFolders({
+        environment: {
+          localappdata: "C:\\Users\\me\\AppData\\Local",
+          ProgramFiles: "C:\\Program Files",
+          SystemDrive: "D:",
+        },
+        texliveYears: ["2023", "texmf-local", "2024"],
+        join,
+      }),
+    ).toEqual([
+      "C:\\Users\\me\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64",
+      "C:\\Program Files\\MiKTeX\\miktex\\bin\\x64",
+      "D:\\texlive\\2024\\bin\\windows",
+      "D:\\texlive\\2024\\bin\\win64",
+      "D:\\texlive\\2024\\bin\\win32",
+      "D:\\texlive\\2023\\bin\\windows",
+      "D:\\texlive\\2023\\bin\\win64",
+      "D:\\texlive\\2023\\bin\\win32",
+    ]);
+  });
+
+  it("looks for nothing it has no variable for", () => {
+    expect(windowsLatexmkFolders({ environment: {}, texliveYears: ["2024"], join })).toEqual([]);
+  });
 });

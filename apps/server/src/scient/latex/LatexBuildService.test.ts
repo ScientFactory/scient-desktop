@@ -663,6 +663,59 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("leads the compiler's PATH with a system latexmk found by its path", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const texlive: ScientLatexToolchainStatus = {
+        kind: "latexmk",
+        executable: "/texlive/2024/bin/windows/latexmk.exe",
+        version: "4.83",
+        probedAtEpochMs: 0,
+        source: "system",
+      };
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("texlive") }],
+        toolchain: texlive,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const request = yield* Queue.take(harness.started);
+
+        expect(request.executable).toBe(texlive.executable);
+        // TeX Live's latexmk behind MiKTeX on PATH must find TeX Live's pdflatex.
+        const pathKey = Object.keys(request.environment ?? {}).find(
+          (key) => key.toUpperCase() === "PATH",
+        );
+        expect(
+          request.environment?.[pathKey ?? ""]?.startsWith(path.dirname(texlive.executable ?? "")),
+        ).toBe(true);
+
+        expect((yield* awaitTerminal(service, harness.buildInput)).state).toBe("succeeded");
+        // Not Scient's distribution, so nothing is ever installed into it.
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("leaves PATH alone for a latexmk that PATH already resolves by name", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("system") }],
+        toolchain: LATEXMK,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const request = yield* Queue.take(harness.started);
+        expect(
+          Object.keys(request.environment ?? {}).some((key) => key.toUpperCase() === "PATH"),
+        ).toBe(false);
+        yield* awaitTerminal(service, harness.buildInput);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("leads the compiler's PATH with the distribution Scient installed", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -3041,6 +3094,33 @@ describe("LatexBuildService", () => {
               : "missing-revision",
           bindingStatus: "current",
         });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("names a latexmk that exists but would not run instead of calling it missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [],
+        toolchain: {
+          ...NO_TOOLCHAIN,
+          unusable: [
+            {
+              executable: "C:\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe",
+              reason: "MiKTeX could not find the script engine 'perl'.",
+            },
+          ],
+        },
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toBe(
+          "No working LaTeX toolchain found. C:\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe did not run: MiKTeX could not find the script engine 'perl'.",
+        );
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

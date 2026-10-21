@@ -7,17 +7,27 @@
  * PATH keeps its original precedence: latexmk, then Tectonic. Managed TinyTeX
  * is an optional addition for a compiler that the document needs but PATH
  * cannot provide, or the fallback when no system driver is available.
+ *
+ * The first `latexmk` on PATH is not always one that runs: MiKTeX's needs a
+ * Perl it does not ship, and a computer with MiKTeX ahead of TeX Live on PATH
+ * would otherwise report no LaTeX at all. When the first one fails, every
+ * other `latexmk` on PATH is tried, then (on Windows) the folders MiKTeX and
+ * TeX Live install into, which also covers a PATH this process inherited
+ * before the distribution was installed. One found that way is run with its
+ * own folder leading PATH, so it drives its own distribution's engines.
  */
 import {
   ScientLatexCompiler,
   type ScientLatexCompilerAvailability,
   type ScientLatexToolchainKind,
   type ScientLatexToolchainStatus,
+  type ScientLatexUnusableToolchain,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -29,6 +39,20 @@ import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { readManagedLatexInstall } from "./managedLatexInstall.ts";
 import { latexEngineEnvironment } from "./latexCommand.ts";
+
+/**
+ * The folder a driver's engines must be found in first, or `null` for one PATH
+ * already resolves by name. Only a driver found by absolute path has one: the
+ * managed TinyTeX, or a system `latexmk` that is not the first on PATH.
+ */
+export function latexDriverBinDirectory(
+  status: Pick<ScientLatexToolchainStatus, "executable">,
+  path: Pick<Path.Path, "dirname" | "isAbsolute">,
+): string | null {
+  return status.executable !== null && path.isAbsolute(status.executable)
+    ? path.dirname(status.executable)
+    : null;
+}
 
 export type LatexToolchainProbe = ScientLatexToolchainStatus & {
   readonly compilers: ReadonlyArray<ScientLatexCompilerAvailability>;
@@ -45,7 +69,9 @@ export class LatexToolchain extends Context.Service<
   }
 >()("t3/scient/latex/LatexToolchain") {}
 
-const PROBE_TIMEOUT = "10 seconds";
+const PROBE_TIMEOUT_SECONDS = 10;
+/** MiKTeX's first run refreshes its file database, and a scanner may hold a fresh binary. */
+const WINDOWS_DRIVER_PROBE_TIMEOUT_SECONDS = 30;
 const PROBE_MAX_OUTPUT_BYTES = 64 * 1024;
 const PROBE_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -91,12 +117,98 @@ export function parseLatexToolchainVersion(
   return matched?.[1] ?? null;
 }
 
-const absent = (probedAtEpochMs: number): ScientLatexToolchainStatus => ({
+const absent = (
+  probedAtEpochMs: number,
+  unusable: ReadonlyArray<ScientLatexUnusableToolchain> = [],
+): ScientLatexToolchainStatus => ({
   kind: null,
   executable: null,
   version: null,
   probedAtEpochMs,
+  ...(unusable.length > 0 ? { unusable } : {}),
 });
+
+const MAX_UNUSABLE_REASON_LENGTH = 240;
+
+/**
+ * The line a person would read first in a failed probe's output. Launchers
+ * such as MiKTeX's lead with a sentence ending in a colon and put the cause on
+ * the next line, so a line introducing another is skipped.
+ */
+export function latexProbeFailureReason(input: {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly code: number | null;
+  readonly timedOut: boolean;
+  readonly timeoutSeconds: number;
+}): string {
+  if (input.timedOut) return `It did not answer within ${String(input.timeoutSeconds)} seconds.`;
+  const lines = `${input.stderr}\n${input.stdout}`
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const line = lines.find((candidate) => !candidate.endsWith(":")) ?? lines[0];
+  if (line === undefined) return `It exited with code ${String(input.code)}.`;
+  return line.length > MAX_UNUSABLE_REASON_LENGTH
+    ? `${line.slice(0, MAX_UNUSABLE_REASON_LENGTH - 1)}…`
+    : line;
+}
+
+function environmentValue(environment: NodeJS.ProcessEnv, name: string): string | null {
+  const key = Object.keys(environment).find(
+    (candidate) => candidate.toUpperCase() === name.toUpperCase(),
+  );
+  const found = key === undefined ? undefined : environment[key]?.trim();
+  return found === undefined || found === "" ? null : found;
+}
+
+/** TeX Live's default `<drive>\texlive`; `null` without a system drive to put it on. */
+function windowsTexliveRoot(
+  environment: NodeJS.ProcessEnv,
+  join: (...segments: ReadonlyArray<string>) => string,
+): string | null {
+  const drive = environmentValue(environment, "SystemDrive");
+  return drive === null ? null : join(`${drive}\\`, "texlive");
+}
+
+/**
+ * Where MiKTeX and TeX Live put `latexmk.exe` by default, newest TeX Live
+ * first. `texliveYears` is the listing of `<drive>\texlive`.
+ */
+export function windowsLatexmkFolders(input: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly texliveYears: ReadonlyArray<string>;
+  readonly join: (...segments: ReadonlyArray<string>) => string;
+}): ReadonlyArray<string> {
+  const value = (name: string) => environmentValue(input.environment, name);
+  const folders: Array<string> = [];
+  const localAppData = value("LOCALAPPDATA");
+  if (localAppData !== null) {
+    folders.push(input.join(localAppData, "Programs", "MiKTeX", "miktex", "bin", "x64"));
+  }
+  const programFiles = value("ProgramFiles");
+  if (programFiles !== null) {
+    folders.push(input.join(programFiles, "MiKTeX", "miktex", "bin", "x64"));
+  }
+  const texliveRoot = windowsTexliveRoot(input.environment, input.join);
+  if (texliveRoot === null) return folders;
+  const years = input.texliveYears
+    .filter((year) => /^\d{4}$/u.test(year))
+    .toSorted()
+    .toReversed();
+  for (const year of years) {
+    // `windows` since TeX Live 2023; `win64`/`win32` before it.
+    for (const platformFolder of ["windows", "win64", "win32"]) {
+      folders.push(input.join(texliveRoot, year, "bin", platformFolder));
+    }
+  }
+  return folders;
+}
+
+type CandidateProbe =
+  | { readonly _tag: "found"; readonly status: ScientLatexToolchainStatus }
+  | { readonly _tag: "unusable"; readonly unusable: ScientLatexUnusableToolchain }
+  | { readonly _tag: "missing" };
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -118,25 +230,28 @@ export const make = Effect.gen(function* () {
   // rest queue here and read the answer it leaves in the cache.
   const probeGate = yield* Semaphore.make(1);
 
-  const probeCandidate = (
+  const driverProbeTimeoutSeconds =
+    platform === "win32" ? WINDOWS_DRIVER_PROBE_TIMEOUT_SECONDS : PROBE_TIMEOUT_SECONDS;
+
+  const runCandidate = (
     candidate: ToolchainCandidate,
     probedAtEpochMs: number,
     source: NonNullable<ScientLatexToolchainStatus["source"]> = "system",
     env: NodeJS.ProcessEnv = {},
-  ) =>
+  ): Effect.Effect<CandidateProbe> =>
     processRunner
       .run({
         command: candidate.executable,
         args: candidate.args,
         env,
-        timeout: PROBE_TIMEOUT,
+        timeout: Duration.seconds(driverProbeTimeoutSeconds),
         maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
       })
       .pipe(
         Effect.flatMap((result) =>
-          Effect.gen(function* () {
+          Effect.gen(function* (): Effect.fn.Return<CandidateProbe> {
             // A missing engine fails to spawn and is caught below. This is the
             // other Windows case: a `.cmd`/`.bat` shim that does resolve, runs
             // through cmd.exe, and cannot find what it wraps — which exits
@@ -145,29 +260,132 @@ export const make = Effect.gen(function* () {
               result.code,
               result.stderr,
             );
-            if (result.timedOut || notFound || result.code !== 0) return null;
+            if (notFound) return { _tag: "missing" };
+            if (result.timedOut || result.code !== 0) {
+              return {
+                _tag: "unusable",
+                unusable: {
+                  executable:
+                    resolveExecutable(candidate.executable, platform, {
+                      ...hostEnvironment,
+                      ...env,
+                    }) ?? candidate.executable,
+                  reason: latexProbeFailureReason({
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    code: result.code,
+                    timedOut: result.timedOut,
+                    timeoutSeconds: driverProbeTimeoutSeconds,
+                  }),
+                },
+              };
+            }
             const banner = `${result.stdout}\n${result.stderr}`;
             return {
-              kind: candidate.kind,
-              executable: candidate.executable,
-              version: parseLatexToolchainVersion(candidate.kind, banner),
-              probedAtEpochMs,
-              source,
-            } satisfies ScientLatexToolchainStatus;
+              _tag: "found",
+              status: {
+                kind: candidate.kind,
+                executable: candidate.executable,
+                version: parseLatexToolchainVersion(candidate.kind, banner),
+                probedAtEpochMs,
+                source,
+              },
+            };
           }),
         ),
         // A spawn error means the engine is not installed on this machine.
-        Effect.orElseSucceed(() => null),
+        Effect.orElseSucceed((): CandidateProbe => ({ _tag: "missing" })),
       );
+
+  const probeCandidate = (
+    candidate: ToolchainCandidate,
+    probedAtEpochMs: number,
+    source: NonNullable<ScientLatexToolchainStatus["source"]> = "system",
+    env: NodeJS.ProcessEnv = {},
+  ) =>
+    runCandidate(candidate, probedAtEpochMs, source, env).pipe(
+      Effect.map((probed) => (probed._tag === "found" ? probed.status : null)),
+    );
+
+  const fileExists = (file: string) =>
+    FileSystem.FileSystem.use((fileSystem) => fileSystem.exists(file)).pipe(
+      Effect.provideContext(managedContext),
+      Effect.orElseSucceed(() => false),
+    );
+
+  /**
+   * Every other `latexmk` this computer has, in the order a person would
+   * expect it to be chosen: the rest of PATH, then the default install
+   * folders. The one the bare name resolves to has already been tried.
+   */
+  const alternativeLatexmks = Effect.gen(function* () {
+    const fileName = platform === "win32" ? "latexmk.exe" : "latexmk";
+    const pathKey =
+      Object.keys(hostEnvironment).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+    const pathFolders = (hostEnvironment[pathKey] ?? "")
+      .split(pathDelimiter)
+      .map((entry) => entry.trim().replace(/^"(.*)"$/u, "$1"))
+      .filter((entry) => entry.length > 0 && path.isAbsolute(entry));
+    let installFolders: ReadonlyArray<string> = [];
+    if (platform === "win32") {
+      const texliveRoot = windowsTexliveRoot(hostEnvironment, path.join);
+      const texliveYears =
+        texliveRoot === null
+          ? []
+          : yield* FileSystem.FileSystem.use((fileSystem) =>
+              fileSystem.readDirectory(texliveRoot),
+            ).pipe(
+              Effect.provideContext(managedContext),
+              Effect.orElseSucceed((): ReadonlyArray<string> => []),
+            );
+      installFolders = windowsLatexmkFolders({
+        environment: hostEnvironment,
+        texliveYears,
+        join: path.join,
+      });
+    }
+    const identity = (file: string) => (platform === "win32" ? file.toLowerCase() : file);
+    const alreadyTried = resolveExecutable("latexmk", platform, hostEnvironment);
+    const seen = new Set<string>(alreadyTried === undefined ? [] : [identity(alreadyTried)]);
+    const found: Array<string> = [];
+    for (const folder of [...pathFolders, ...installFolders]) {
+      const executable = path.join(folder, fileName);
+      if (seen.has(identity(executable))) continue;
+      seen.add(identity(executable));
+      if (yield* fileExists(executable)) found.push(executable);
+    }
+    return found;
+  });
+
+  /** The first `latexmk` that answers, with every one that did not. */
+  const findLatexmk = Effect.fnUntraced(function* (probedAtEpochMs: number) {
+    const unusable: Array<ScientLatexUnusableToolchain> = [];
+    const first = yield* runCandidate(SYSTEM_LATEXMK, probedAtEpochMs);
+    if (first._tag === "found") return { status: first.status, unusable };
+    if (first._tag === "unusable") unusable.push(first.unusable);
+    for (const executable of yield* alternativeLatexmks) {
+      const probed = yield* runCandidate(
+        { kind: "latexmk", executable, args: ["-v"] },
+        probedAtEpochMs,
+        "system",
+        latexEngineEnvironment({
+          base: {},
+          hostEnvironment,
+          binDirectory: path.dirname(executable),
+          pathDelimiter,
+        }),
+      );
+      if (probed._tag === "found") return { status: probed.status, unusable };
+      if (probed._tag === "unusable") unusable.push(probed.unusable);
+    }
+    return { status: null, unusable };
+  });
 
   const probeCompilers = Effect.fnUntraced(function* (status: ScientLatexToolchainStatus) {
     const environment = latexEngineEnvironment({
       base: {},
       hostEnvironment,
-      binDirectory:
-        status.source === "scient-managed" && status.executable !== null
-          ? path.dirname(status.executable)
-          : null,
+      binDirectory: latexDriverBinDirectory(status, path),
       pathDelimiter,
     });
     return yield* Effect.forEach(ScientLatexCompiler.literals, (compiler) =>
@@ -182,7 +400,7 @@ export const make = Effect.gen(function* () {
             command: executable,
             args: ["--version"],
             env: environment,
-            timeout: PROBE_TIMEOUT,
+            timeout: Duration.seconds(PROBE_TIMEOUT_SECONDS),
             maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
             outputMode: "truncate",
             timeoutBehavior: "timedOutResult",
@@ -213,10 +431,11 @@ export const make = Effect.gen(function* () {
   });
   const probeAll = Effect.gen(function* (): Effect.fn.Return<ToolchainObservation> {
     const probedAtEpochMs = yield* Clock.currentTimeMillis;
+    const latexmk = yield* findLatexmk(probedAtEpochMs);
     const systemStatus =
-      (yield* probeCandidate(SYSTEM_LATEXMK, probedAtEpochMs)) ??
+      latexmk.status ??
       (yield* probeCandidate(SYSTEM_TECTONIC, probedAtEpochMs)) ??
-      absent(probedAtEpochMs);
+      absent(probedAtEpochMs, latexmk.unusable);
     const primary = { ...systemStatus, compilers: yield* probeCompilers(systemStatus) };
     if (primary.compilers.every((compiler) => compiler.available)) {
       return { primary, additional: null, report: primary };

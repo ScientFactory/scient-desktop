@@ -6,8 +6,20 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "vite-plus/test";
 
+import * as ServerConfig from "../../config.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import { latexEngineEnvironment } from "./latexCommand.ts";
+import {
+  LatexToolchain,
+  latexDriverBinDirectory,
+  make as makeLatexToolchain,
+  type LatexToolchainProbe,
+} from "./LatexToolchain.ts";
 import { resolveTinyTexAsset } from "./tinytexManifest.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
@@ -18,6 +30,41 @@ const SMOKE_TIMEOUT_MS = 15 * 60 * 1_000;
 const HOST_PLATFORM = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- native runner selection happens at collection time, before an Effect runtime exists.
 const HOST_ARCHITECTURE = NodeOS.arch();
+
+/**
+ * Runs the real toolchain probe against whatever PATH this process has, with
+ * an empty state directory so no managed install can answer instead.
+ */
+async function probeRealToolchain(stateDirectory: string): Promise<LatexToolchainProbe> {
+  const layer = Layer.effect(LatexToolchain, makeLatexToolchain).pipe(
+    Layer.provide(ProcessRunner.layer),
+    Layer.provide(ServerConfig.layerTest(stateDirectory, stateDirectory)),
+    Layer.provide(NodeServices.layer),
+  );
+  return Effect.runPromise(
+    LatexToolchain.use((toolchain) => toolchain.probe(true)).pipe(Effect.provide(layer)),
+  );
+}
+
+/**
+ * A `latexmk` and a `pdflatex` that exist but fail, as MiKTeX's do without
+ * Perl. On Windows a renamed `where.exe` rejects `-v` with a real executable's
+ * own error; elsewhere a shell script says so.
+ */
+async function writeBrokenEngine(directory: string, name: string): Promise<string> {
+  if (HOST_PLATFORM === "win32") {
+    const target = NodePath.join(directory, `${name}.exe`);
+    await NodeFSP.copyFile(
+      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe"),
+      target,
+    );
+    return target;
+  }
+  const target = NodePath.join(directory, name);
+  await NodeFSP.writeFile(target, `#!/bin/sh\necho "${name}: needs perl" >&2\nexit 1\n`);
+  await NodeFSP.chmod(target, 0o755);
+  return target;
+}
 
 /**
  * Downloads the exact manifest pin, expands it using the same host `tar` the
@@ -176,6 +223,64 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
             (location) => /chapters[\\/]body\.tex$/iu.test(location.input) && location.line >= 1,
           ),
         ).toBe(true);
+
+        // A broken latexmk and pdflatex first on PATH, the unpacked TinyTeX
+        // second: the probe must pass over the broken pair, and a compile with
+        // the build's environment must reach TinyTeX's pdflatex, not the
+        // broken one that comes first on the inherited PATH.
+        const brokenDirectory = NodePath.join(temporaryRoot, "broken-first");
+        await NodeFSP.mkdir(brokenDirectory, { recursive: true });
+        const brokenLatexmk = await writeBrokenEngine(brokenDirectory, "latexmk");
+        await writeBrokenEngine(brokenDirectory, "pdflatex");
+        const inheritedPath = process.env.PATH;
+        try {
+          process.env.PATH = [brokenDirectory, inheritedPath ?? ""].join(NodePath.delimiter);
+          const unusable = await probeRealToolchain(NodePath.join(temporaryRoot, "state-a"));
+          expect(unusable.kind).toBeNull();
+          expect(unusable.unusable?.[0]?.executable.toLowerCase()).toBe(
+            brokenLatexmk.toLowerCase(),
+          );
+          expect(unusable.unusable?.[0]?.reason.length ?? 0).toBeGreaterThan(0);
+
+          process.env.PATH = [brokenDirectory, binDirectory, inheritedPath ?? ""].join(
+            NodePath.delimiter,
+          );
+          const found = await probeRealToolchain(NodePath.join(temporaryRoot, "state-b"));
+          expect(found.kind).toBe("latexmk");
+          expect(found.source).toBe("system");
+          expect(found.executable?.toLowerCase()).toBe(executable.toLowerCase());
+          expect(found.compilers.find((entry) => entry.compiler === "pdflatex")?.available).toBe(
+            true,
+          );
+
+          const fallbackOutput = NodePath.join(temporaryRoot, "fallback-output");
+          await NodeFSP.mkdir(fallbackOutput, { recursive: true });
+          const fallbackCompile = NodeChildProcess.spawnSync(
+            found.executable ?? executable,
+            ["-pdf", "-interaction=nonstopmode", `-outdir=${fallbackOutput}`, "main.tex"],
+            {
+              cwd: workspace,
+              encoding: "utf8",
+              maxBuffer: 4 * 1024 * 1024,
+              timeout: 2 * 60_000,
+              env: {
+                ...process.env,
+                ...latexEngineEnvironment({
+                  base: {},
+                  hostEnvironment: process.env,
+                  binDirectory: latexDriverBinDirectory(found, NodePath),
+                  pathDelimiter: NodePath.delimiter,
+                }),
+              },
+            },
+          );
+          expect(fallbackCompile.error).toBeUndefined();
+          expect(fallbackCompile.status, fallbackCompile.stderr || fallbackCompile.stdout).toBe(0);
+          expect(NodeFS.existsSync(NodePath.join(fallbackOutput, "main.pdf"))).toBe(true);
+        } finally {
+          if (inheritedPath === undefined) delete process.env.PATH;
+          else process.env.PATH = inheritedPath;
+        }
       } finally {
         await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
       }

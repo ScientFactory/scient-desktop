@@ -316,7 +316,13 @@ export function toolchainsEqual(
     left.executable === right.executable &&
     left.version === right.version &&
     left.source === right.source &&
-    left.probedAtEpochMs === right.probedAtEpochMs
+    left.probedAtEpochMs === right.probedAtEpochMs &&
+    (left.unusable ?? []).length === (right.unusable ?? []).length &&
+    (left.unusable ?? []).every(
+      (entry, index) =>
+        entry.executable === right.unusable?.[index]?.executable &&
+        entry.reason === right.unusable?.[index]?.reason,
+    )
   );
 }
 

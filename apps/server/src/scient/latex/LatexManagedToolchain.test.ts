@@ -167,6 +167,8 @@ const runnerLayer = (input: {
 
 const unpackerLayer = (input: {
   readonly unsupported?: boolean;
+  /** The first unpack fails this way; later ones succeed. */
+  readonly firstUnpack?: "tar-fails" | "no-engine";
   readonly seen: Ref.Ref<ReadonlyArray<LatexArchiveUnpackInput>>;
   readonly unpackedBytes: Ref.Ref<string | null>;
 }) =>
@@ -178,7 +180,18 @@ const unpackerLayer = (input: {
       return LatexArchiveUnpacker.of({
         unpack: (unpackInput) =>
           Effect.gen(function* () {
-            yield* Ref.update(input.seen, (previous) => [...previous, unpackInput]);
+            const attempt = (yield* Ref.updateAndGet(input.seen, (previous) => [
+              ...previous,
+              unpackInput,
+            ])).length;
+            if (attempt === 1 && input.firstUnpack === "tar-fails") {
+              return yield* new LatexArchiveUnpackError({
+                reason: "unpack-failed",
+                detail:
+                  "Scient could not unpack the LaTeX download: tar.exe: Error opening archive:\n  Unrecognized archive format",
+              });
+            }
+            if (attempt === 1 && input.firstUnpack === "no-engine") return;
             if (input.unsupported === true) {
               return yield* new LatexArchiveUnpackError({
                 reason: "unsupported-archive",
@@ -206,6 +219,7 @@ const makeHarness = (input: {
   readonly platform?: NodeJS.Platform;
   readonly arch?: NodeJS.Architecture;
   readonly unsupportedArchive?: boolean;
+  readonly firstUnpack?: "tar-fails" | "no-engine";
   readonly engineValidationCode?: number;
   /** The eager collections fetch; everything asked for lands unless a test says otherwise. */
   readonly installPackages?: (
@@ -255,6 +269,7 @@ const makeHarness = (input: {
           seen,
           unpackedBytes,
           ...(input.unsupportedArchive === true ? { unsupported: true } : {}),
+          ...(input.firstUnpack === undefined ? {} : { firstUnpack: input.firstUnpack }),
         }),
       ),
       Layer.provideMerge(
@@ -514,6 +529,8 @@ describe("LatexManagedToolchain", () => {
 
         expect(finished.state).toBe("failed");
         expect(finished.failureReason).toBe("unpack-failed");
+        expect(finished.failureStep).toBe("engine-failed");
+        expect(finished.failureDetail).toMatch(/^The unpacked LaTeX engine did not run: /u);
         expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(false);
         expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
       }).pipe(Effect.provide(harness.serviceLayer));
@@ -731,6 +748,55 @@ describe("LatexManagedToolchain", () => {
           expect(server.handle.requests()).toBe(0);
         }).pipe(Effect.provide(harness.serviceLayer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("says which unpack step failed, in one line, and forgets it on the next try", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        firstUnpack: "tar-fails",
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        const failed = yield* awaitInstall(managed);
+        expect(failed).toMatchObject({
+          state: "failed",
+          failureReason: "unpack-failed",
+          failureStep: "extract",
+          failureDetail:
+            "Scient could not unpack the LaTeX download: tar.exe: Error opening archive: Unrecognized archive format",
+        });
+
+        yield* managed.install;
+        const retried = yield* awaitInstall(managed);
+        expect(retried.state).toBe("ready");
+        expect(retried).not.toHaveProperty("failureStep");
+        expect(retried).not.toHaveProperty("failureDetail");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("tells an archive without the engine apart from one that could not be opened", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        firstUnpack: "no-engine",
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        expect(yield* awaitInstall(managed)).toMatchObject({
+          state: "failed",
+          failureReason: "unpack-failed",
+          failureStep: "engine-missing",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.live("reports an archive it has no way to expand", () =>

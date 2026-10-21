@@ -573,6 +573,26 @@ nowhere fails with `ENOENT` and the probe reads that as absent. The Windows
 other case — a shim that does resolve but cannot find what it wraps — so that
 its diagnostic is not misread as "found."
 
+The first `latexmk` on `PATH` is not always one that runs. MiKTeX's
+`latexmk.exe` needs a Perl it does not ship, so a computer with MiKTeX ahead of
+TeX Live on `PATH` used to report no LaTeX at all. When the bare `latexmk`
+fails, the probe tries every other `latexmk` on `PATH` in order, then, on
+Windows, the default install folders: `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64`,
+`%ProgramFiles%\MiKTeX\miktex\bin\x64`, and `%SystemDrive%\texlive\<year>\bin\{windows,win64,win32}`
+(newest year first). The default folders also cover a `PATH` that this process
+inherited before the distribution was installed. A driver found by absolute
+path leads its own child's `PATH` (`latexDriverBinDirectory`), so TeX Live's
+`latexmk` drives TeX Live's `pdflatex`, not MiKTeX's. Only Scient's own
+distribution is ever extended by package installs; a system driver found this
+way is not.
+
+A driver that exists but does not answer (non-zero exit or timeout; 30 seconds
+on Windows, where MiKTeX's first run refreshes its file database) is recorded
+in the status's `unusable` list with the first line of its complaint, but only
+when no driver was found. The build's failure summary and the setup card then
+say "Scient found … but it did not run: …" instead of "not installed". A
+driver that fails to spawn, or a Windows shim that exits 9009, stays "absent".
+
 The probe result is cached for `PROBE_CACHE_TTL_MS = 5 minutes` per server
 process. Every build and every status poll asks for the toolchain, so the
 cache is filled behind a single-permit `Semaphore`: one fiber runs the actual
