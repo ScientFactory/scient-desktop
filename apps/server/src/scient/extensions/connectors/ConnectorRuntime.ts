@@ -657,12 +657,16 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   /**
    * Single-flight per connector under the lifecycle lock: callers holding the
    * same stale token queue; the first refreshes, the rest see the new token.
+   * The caller's record may predate a sign-in, so the current record is read
+   * under the lock: it is the one the cached grant belongs to (sign-in commits
+   * publish both under this lock), and any loss is published for it.
    */
-  const refreshSession = (record: ConnectorRecord, staleAccessToken: string | undefined) =>
-    lifecycle(record.connectorId).withPermits(1)(
+  const refreshSession = (snapshot: ConnectorRecord, staleAccessToken: string | undefined) =>
+    lifecycle(snapshot.connectorId).withPermits(1)(
       Effect.gen(function* () {
-        if (!isLive(record.connectorId)) {
-          return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
+        const record = yield* findRecord(snapshot.connectorId);
+        if (record === undefined || record.auth.type !== "oauth" || !isLive(record.connectorId)) {
+          return { type: "lost", message: lostGrantMessage(snapshot) } satisfies RefreshOutcome;
         }
         const entry = yield* loadOAuth(record).pipe(Effect.orElseSucceed(() => undefined));
         const session = entry?.material.session;
@@ -685,40 +689,41 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           if (Exit.isSuccess(refreshed)) yield* revokeLater(record, refreshed.value);
           return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
         }
+        // The grant being refreshed is gone (or unusable): drop its session from
+        // memory and storage, then publish the loss for the record it belongs to.
+        const loseGrant = (lastError: string) =>
+          Effect.gen(function* () {
+            const { session: _dropped, ...withoutSession } = entry.material;
+            publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
+            if (record.auth.type === "oauth" && record.auth.credentialRef !== undefined) {
+              yield* credentials
+                .replace(
+                  record.auth.credentialRef,
+                  encodeOAuthMaterial(withoutSession),
+                  entry.version,
+                )
+                .pipe(
+                  Effect.flatMap((version) =>
+                    Effect.sync(() =>
+                      publishOAuth(record.connectorId, { material: withoutSession, version }),
+                    ),
+                  ),
+                  Effect.ignore,
+                );
+            }
+            yield* markStatus(record, "needs-auth", lastError);
+            return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
+          });
         if (Exit.isSuccess(refreshed) && !sessionProtectable(refreshed.value)) {
           yield* revokeLater(record, refreshed.value);
-          const { session: _dropped, ...withoutSession } = entry.material;
-          publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
-          yield* markStatus(record, "needs-auth", UNPROTECTABLE_GRANT);
-          return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
+          return yield* loseGrant(UNPROTECTABLE_GRANT);
         }
         if (Exit.isSuccess(refreshed)) return yield* commitRefresh(record, entry, refreshed.value);
         const failure = Option.getOrUndefined(Exit.findErrorOption(refreshed))?.cause;
         if (isGrantLost(failure)) {
-          const { session: _dropped, ...withoutSession } = entry.material;
-          publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
-          if (record.auth.type === "oauth" && record.auth.credentialRef !== undefined) {
-            yield* credentials
-              .replace(
-                record.auth.credentialRef,
-                encodeOAuthMaterial(withoutSession),
-                entry.version,
-              )
-              .pipe(
-                Effect.flatMap((version) =>
-                  Effect.sync(() =>
-                    publishOAuth(record.connectorId, { material: withoutSession, version }),
-                  ),
-                ),
-                Effect.ignore,
-              );
-          }
-          yield* markStatus(
-            record,
-            "needs-auth",
+          return yield* loseGrant(
             "The sign-in expired or was revoked. Sign in again to reconnect.",
           );
-          return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
         }
         yield* Effect.logWarning("connector token refresh failed; keeping the connection", {
           connectorId: record.connectorId,

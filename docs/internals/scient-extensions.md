@@ -278,7 +278,10 @@ environment auth (the MCP session token is the authority, as for `/mcp`).
   refused grant still owns it (checked under the lifecycle lock), and every
   credential-loss status change applies only to the auth revision it was
   observed under, so a late failure of an old grant never touches a newer
-  sign-in.
+  sign-in. A refresh reads the current record under the lifecycle lock and
+  publishes any loss (session dropped from memory and storage, needs-auth) for
+  that record, because the grant it refreshes is the current one even when the
+  request started before the latest sign-in.
 - Each `tools/call` is recorded as a use of the connector's credential (thread,
   provider session, tool name, outcome at response headers).
 - Refusals: a missing or unknown bearer gets 401 without `resource_metadata`

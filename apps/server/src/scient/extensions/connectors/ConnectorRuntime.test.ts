@@ -512,6 +512,10 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly wrapCredentials?: (
       store: ConnectorCredentialStore.ConnectorCredentialStoreShape,
     ) => ConnectorCredentialStore.ConnectorCredentialStoreShape;
+    /** Interposes on plugin eligibility (checked before a forward takes its credential). */
+    readonly wrapEligibility?: (
+      eligibility: PluginConnectorEligibility.PluginConnectorEligibilityShape,
+    ) => PluginConnectorEligibility.PluginConnectorEligibilityShape;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -524,10 +528,15 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     });
   }
   const credentialStore = yield* ConnectorCredentialStore.ConnectorCredentialStore;
+  const eligibility = yield* PluginConnectorEligibility.PluginConnectorEligibility;
   const runtime = yield* makeConnectorRuntime({ stateDir: config.stateDir }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
       options.wrapCredentials?.(credentialStore) ?? credentialStore,
+    ),
+    Effect.provideService(
+      PluginConnectorEligibility.PluginConnectorEligibility,
+      options.wrapEligibility?.(eligibility) ?? eligibility,
     ),
   );
 
@@ -1492,6 +1501,83 @@ describe("connector token lifecycle", () => {
         "Bearer vendor-access-token-2",
       ]);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live.each(["invalid_grant", "unprotectable refresh"] as const)(
+    "publishes the loss of the current grant (%s) for a request holding an older record",
+    (loss) =>
+      Effect.gen(function* () {
+        let hold:
+          | { skip: number; readonly arrived: () => void; readonly gate: Promise<void> }
+          | undefined;
+        const harness = yield* makeHarness({
+          // The proxy route checks the grant (one eligibility check); the
+          // forward then takes its record snapshot and checks eligibility again
+          // before taking the credential. Holding that second check makes the
+          // snapshot stale.
+          wrapEligibility: (inner) => ({
+            ...inner,
+            isEligible: (input) => {
+              const held = hold;
+              if (held === undefined) return inner.isEligible(input);
+              if (held.skip > 0) {
+                held.skip -= 1;
+                return inner.isEligible(input);
+              }
+              hold = undefined;
+              held.arrived();
+              return Effect.promise(() => held.gate).pipe(Effect.andThen(inner.isEligible(input)));
+            },
+          }),
+        });
+        const connectorId = yield* harness.connectSecure();
+        const current = Effect.map(harness.runtime.list(), (listed) => listed.connectors[0]!);
+        const arrived = Promise.withResolvers<void>();
+        const released = Promise.withResolvers<void>();
+        hold = { skip: 1, arrived: arrived.resolve, gate: released.promise };
+        const stale = yield* harness.proxy(connectorId, toolCall(1)).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => arrived.promise);
+
+        // Grant B is signed in (already within the refresh leeway) while the
+        // request still holds the record of grant A.
+        vendor.accessTokenTtlSeconds = 30;
+        const { response } = yield* harness.signIn(connectorId);
+        expect(response.status).toBe(200);
+        expect(yield* current).toMatchObject({ status: "connected", authRevision: 2 });
+        if (loss === "invalid_grant") vendor.refreshMode = "invalid_grant";
+        else vendor.shortTokens = true;
+        released.resolve();
+
+        // The request refreshes B (the current grant), which is lost.
+        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
+          id: 1,
+          error: { code: -32001 },
+        });
+        expect(vendor.refreshCount).toBe(1);
+        expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
+
+        // B's session is gone from storage, the status is persisted, and the
+        // connector is no longer delivered.
+        const state: { connectors: Array<{ auth: { credentialRef: string } }> } = JSON.parse(
+          yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")),
+        );
+        const stored = yield* (yield* ConnectorCredentialStore.ConnectorCredentialStore).readOwned(
+          VaultSecretRef.make(state.connectors[0]!.auth.credentialRef),
+          { type: "connector", connectorId },
+        );
+        expect(Option.isSome(stored)).toBe(true);
+        if (Option.isSome(stored)) {
+          expect(decodeOAuthMaterial(stored.value.material)?.session).toBeUndefined();
+        }
+        const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir });
+        expect((yield* reloaded.list()).connectors[0]).toMatchObject({
+          status: "needs-auth",
+          authRevision: 3,
+        });
+        expect((yield* harness.runtime.resolveDelivery({ projectId: PROJECT })).eligible).toEqual(
+          [],
+        );
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live(
