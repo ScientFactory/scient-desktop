@@ -34,7 +34,7 @@ export const MAX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_JSON_DEPTH = 512;
 
 /** Upper bound for an SSE `retry` value passed to the agent. */
-export const MAX_SSE_RETRY_MS = 600_000;
+const MAX_SSE_RETRY_MS = 600_000;
 
 const PERCENT_DECODE_ROUNDS = 3;
 /** Base64 of the shortest credential is at least this long. */
@@ -161,7 +161,7 @@ const base64Carries = (text: string, credentials: CredentialSet): boolean => {
 };
 
 /** Whether decoded text carries a credential in any supported encoding. */
-export const isTainted = (text: string, credentials: CredentialSet): boolean => {
+const isTainted = (text: string, credentials: CredentialSet): boolean => {
   if (credentials.secrets.length === 0 || text.length === 0) return false;
   for (const variant of decodedVariants(text)) {
     if (containsAny(variant, credentials.secrets)) return true;

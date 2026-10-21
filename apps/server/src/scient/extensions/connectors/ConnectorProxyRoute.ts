@@ -20,7 +20,7 @@ import { CONNECTOR_FORWARDED_REQUEST_HEADERS, ConnectorRuntime } from "../Extens
 import { CONNECTOR_MAX_REQUEST_BYTES } from "./ConnectorOutbound.ts";
 import { connectorUnavailableResponse } from "./ConnectorRuntime.ts";
 
-export const CONNECTOR_PROXY_ROUTE_PREFIX = "/mcp/connectors";
+const CONNECTOR_PROXY_ROUTE_PREFIX = "/mcp/connectors";
 
 const isConnectorId = Schema.is(ConnectorId);
 

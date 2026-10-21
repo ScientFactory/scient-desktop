@@ -167,7 +167,7 @@ export interface ExtensionItemOperation {
   readonly signInStartedAt: string | null;
 }
 
-export const IDLE_EXTENSION_ITEM_OPERATION: ExtensionItemOperation = {
+const IDLE_EXTENSION_ITEM_OPERATION: ExtensionItemOperation = {
   busy: null,
   error: null,
   blockedSignInUrl: null,
@@ -188,7 +188,6 @@ export function extensionItemOperationKey(environmentId: EnvironmentId, item: st
 
 const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 
-export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
 export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;

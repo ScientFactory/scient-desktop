@@ -42,7 +42,7 @@ export class PluginConnectorEligibility extends Context.Service<
   PluginConnectorEligibilityShape
 >()("t3/scient/extensions/plugins/PluginConnectorEligibility") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const eligible = yield* Ref.make<ReadonlySet<ConnectorId> | undefined>(undefined);
   return PluginConnectorEligibility.of({
     isEligible: ({ connectorId, pluginId }) =>

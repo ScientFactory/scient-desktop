@@ -32,7 +32,7 @@ import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons"
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 
 /** Shown after a row's name; healthy entries show nothing. */
-export const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
+const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
   connected: null,
   "needs-auth": "Needs sign-in",
   "needs-credential": "Needs credential",
@@ -234,7 +234,7 @@ export function iconTint(name: string): ProjectIconColor {
   return PROJECT_ICON_COLORS[Math.abs(hash) % PROJECT_ICON_COLORS.length]!.value;
 }
 
-export function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
   if (provider.displayName) return provider.displayName;
   return (
     AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === provider.driver)?.label ??

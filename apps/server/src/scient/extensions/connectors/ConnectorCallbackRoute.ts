@@ -19,10 +19,10 @@ const HTML_ESCAPES: Readonly<Record<string, string>> = {
   "'": "&#39;",
 };
 
-export const escapeHtml = (text: string): string =>
+const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character] ?? character);
 
-export const renderCallbackPage = (outcome: ConnectorSignInCallbackOutcome): string => {
+const renderCallbackPage = (outcome: ConnectorSignInCallbackOutcome): string => {
   const title =
     outcome.outcome === "connected"
       ? `${outcome.displayName ?? "Service"} connected`

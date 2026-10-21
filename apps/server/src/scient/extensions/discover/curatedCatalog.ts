@@ -20,7 +20,7 @@ import type { DiscoverEntry, ExtensionCategory } from "@t3tools/contracts";
 
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 
-export const CATALOG_VERIFIED_ON = "2026-10-21";
+const CATALOG_VERIFIED_ON = "2026-10-21";
 
 /** Names of curated servers not listed in the MCP Registry. Install them by URL. */
 export const CURATED_NAME_PREFIX = "scient.curated/";

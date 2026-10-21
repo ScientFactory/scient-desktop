@@ -41,8 +41,8 @@ import { type ConnectorFetch, ConnectorEgressRejected } from "./ConnectorOutboun
 import { isProtectableCredential } from "./ConnectorRedaction.ts";
 
 export const CONNECTOR_OAUTH_CALLBACK_PATH = "/oauth/connectors/callback";
-export const PENDING_SIGN_IN_TTL_MS = 10 * 60_000;
-export const MAX_PENDING_SIGN_INS = 16;
+const PENDING_SIGN_IN_TTL_MS = 10 * 60_000;
+const MAX_PENDING_SIGN_INS = 16;
 
 const ClientInformation = Schema.Record(Schema.String, Schema.Unknown).check(
   Schema.makeFilter((value) => typeof value.client_id === "string" && value.client_id.length > 0),

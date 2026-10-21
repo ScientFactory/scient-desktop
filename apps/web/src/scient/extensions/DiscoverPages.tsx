@@ -35,7 +35,7 @@ const INSTALLED_SEARCH_TARGETS: Readonly<Record<string, true>> = {
   [searchableSetting("extensions-provider-plugins").id]: true,
 };
 
-export function SearchField({
+function SearchField({
   label,
   value,
   onChange,

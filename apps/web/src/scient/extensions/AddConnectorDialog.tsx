@@ -77,10 +77,7 @@ function emptyDraft(entry: DiscoverEntry | null): Draft {
   };
 }
 
-export function validateAddConnectorDraft(
-  draft: Draft,
-  entry: DiscoverEntry | null,
-): AddConnectorErrors {
+function validateAddConnectorDraft(draft: Draft, entry: DiscoverEntry | null): AddConnectorErrors {
   const errors: AddConnectorErrors = {};
   if (entry === null) {
     const url = validateConnectorUrl(draft.url);

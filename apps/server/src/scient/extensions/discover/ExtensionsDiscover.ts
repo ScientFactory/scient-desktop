@@ -46,8 +46,8 @@ import {
 
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
-export const DISCOVER_CACHE_TTL = Duration.minutes(10);
-export const CATALOG_PREVIEW_ENTRIES = 6;
+const DISCOVER_CACHE_TTL = Duration.minutes(10);
+const CATALOG_PREVIEW_ENTRIES = 6;
 const MAX_CACHED_PAGES = 64;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const ATTEMPT_TIMEOUT = Duration.seconds(10);
@@ -62,7 +62,7 @@ export const UNSUPPORTED_REQUIRES_CONFIGURATION =
 export const UNSUPPORTED_NOT_HTTPS = "Its remote endpoint is not served over https";
 export const UNSUPPORTED_TRANSPORT =
   "Uses a transport other than Streamable HTTP, which is not supported";
-export const UNSUPPORTED_NO_ENDPOINT = "Publishes no remote endpoint";
+const UNSUPPORTED_NO_ENDPOINT = "Publishes no remote endpoint";
 
 const RegistryInput = Schema.Struct({
   isRequired: Schema.optional(Schema.Boolean),
@@ -173,9 +173,7 @@ function resolveRemote(remote: RegistryRemote): DiscoverRemote | undefined {
 }
 
 /** Normalize one active registry server into a Discover entry. */
-export function toDiscoverEntry(
-  entry: RegistryServerEntry,
-): Omit<DiscoverEntry, "installedConnectorId"> {
+function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "installedConnectorId"> {
   const { server } = entry;
   const remotes = server.remotes ?? [];
   const streamable = remotes.filter((remote) => remote.type === "streamable-http");

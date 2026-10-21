@@ -21,7 +21,7 @@ export type ExtensionTarget =
   | { readonly kind: "provider-server"; readonly instanceId: string; readonly serverName: string };
 
 /** The detail page of `target`, carrying the settings scope like every settings link. */
-export function ExtensionLink({
+function ExtensionLink({
   target,
   className,
   children,

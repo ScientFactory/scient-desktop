@@ -37,7 +37,7 @@ import {
 } from "./extensionsView";
 
 /** Navigates to a detail page, for menu items that cannot be links themselves. */
-export function useOpenExtension() {
+function useOpenExtension() {
   const navigate = useNavigate();
   return (target: ExtensionTarget) => {
     switch (target.kind) {
@@ -111,7 +111,7 @@ function hasFeedback(feedback: ActionFeedbackState, extra: boolean): boolean {
 }
 
 /** The "⋯" of an added item. Open always works; changes need settings permission. */
-export function ItemMenu({
+function ItemMenu({
   name,
   target,
   children,

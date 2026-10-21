@@ -23,8 +23,8 @@ import * as NodeNet from "node:net";
 import type * as Undici from "undici";
 
 export const CONNECTOR_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
-export const CONNECTOR_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
-export const CONNECTOR_PROXY_TIMEOUT_MS = 5 * 60_000;
+const CONNECTOR_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+const CONNECTOR_PROXY_TIMEOUT_MS = 5 * 60_000;
 /** Probe, discovery, token and revocation requests. */
 export const CONNECTOR_CONTROL_TIMEOUT_MS = 30_000;
 export const CONNECTOR_CONTROL_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -158,7 +158,7 @@ const LOOPBACK = (() => {
   return list;
 })();
 
-export const isLoopbackAddress = (address: string): boolean => {
+const isLoopbackAddress = (address: string): boolean => {
   const family = NodeNet.isIP(address);
   if (family === 4) return LOOPBACK.check(address, "ipv4");
   if (family !== 6) return false;
@@ -175,7 +175,7 @@ const bareHostname = (hostname: string) =>
     : hostname
   ).toLowerCase();
 
-export const isLoopbackHostname = (hostname: string): boolean => {
+const isLoopbackHostname = (hostname: string): boolean => {
   const host = bareHostname(hostname);
   return host === "localhost" || isLoopbackAddress(host);
 };
@@ -420,7 +420,7 @@ export const proxyFetch = (policy: ConnectorEgressPolicy): ConnectorFetch =>
   });
 
 /** Every request through `fetch` is also aborted by `signal` (connector removal). */
-export const withSignal =
+const withSignal =
   (fetch: ConnectorFetch, signal: AbortSignal): ConnectorFetch =>
   (url, init) =>
     fetch(url, {

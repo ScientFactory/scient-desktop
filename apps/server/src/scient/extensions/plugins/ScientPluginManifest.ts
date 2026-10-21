@@ -13,8 +13,8 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 export const SCIENT_PLUGIN_MANIFEST_FILE = "scient.plugin.json";
-export const SCIENT_PLUGIN_API_VERSION = "scient.plugins/v1alpha1";
-export const MAX_PLUGIN_MANIFEST_BYTES = 64 * 1024;
+const SCIENT_PLUGIN_API_VERSION = "scient.plugins/v1alpha1";
+const MAX_PLUGIN_MANIFEST_BYTES = 64 * 1024;
 const MAX_CONTRIBUTED_SKILLS = 50;
 const MAX_CONTRIBUTED_CONNECTORS = 20;
 

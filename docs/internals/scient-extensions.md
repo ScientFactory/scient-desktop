@@ -1,6 +1,6 @@
 # Scient Extensions
 
-Status: proposition approved for implementation on `claude/scient-extensions`.
+Status: implemented. User guide: [Extensions and connected services](../user/extensions.md).
 Companion feature: **Secrets** (separate owner, see [Secrets integration](#secrets-integration)).
 
 ## Purpose
@@ -22,19 +22,50 @@ before the UI updates. The UI never predicts success.
 
 **Settings → Extensions** (`/settings/extensions`). "Connections" already means
 environments and "Integrations" means browser and devices, so neither name is
-reused.
+reused. Every page reads one environment, chosen by the settings scope picker
+("Tools on …"); actions go to that environment and are gated on settings write
+access.
 
-- **Installed** — every entry the current environment knows about, grouped by kind.
-- **Discover** — remote MCP servers from the official MCP Registry plus Scient
-  plugin bundles. Installing a remote server creates a connector.
-- **Filters** — kind, owner, and **Works with** (provider instance). "Works with
-  Codex" is a filter over each entry's per-instance compatibility, not a separate page.
-  The extensions change feed also advances when provider instances are added,
-  removed or change driver or name (not on health refreshes), so the
-  compatibility in the inventory follows the live provider list.
-- **Entry detail** — what it adds (tools, skills, panels), who manages it,
-  compatibility per provider instance with a reason, health, project availability,
-  and the owner's actions.
+- **Discover** (`/settings/extensions`) — the curated catalog's sections, each
+  showing a preview with its title linking to the category page, then the
+  built-in Scient plugins and a link to the full registry. Search replaces the
+  sections with one grid: matching installed connectors and plugins first, then
+  curated matches, then registry matches as they arrive (see
+  [Discover](#discover-curated-catalog-and-mcp-registry)). A slow or failing
+  registry never holds back the other rows.
+- **Category** (`/settings/extensions/category/<category>`) — every curated
+  entry in one category.
+- **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
+  with its own search; curated servers appear here in their curated shape.
+- **Installed** (`/settings/extensions/installed`) — Connected services (with
+  **Add by URL**), Scient plugins (with **Install from folder**), then one
+  **From <agent>** section per provider instance with its plugins and MCP
+  servers. A **Works with** filter narrows every section to what one provider
+  instance can use. Provider sections show six entries with a header toggle to
+  show the rest.
+- **Detail pages** (`/settings/extensions/item/…`) — one per connector, catalog
+  or registry entry, Scient plugin, provider plugin and provider MCP server. The
+  header carries the entry's identity and its primary action (Add, Remove,
+  Uninstall, or who manages it). Below it, cards:
+  - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
+    Use with agents switch, and Available in (all projects or selected
+    projects).
+  - **Tools** (connectors) — listed only on request ("See tools" runs Test);
+    the result belongs to the connector's current sign-in generation and is
+    discarded when it changes.
+  - **Includes** (plugins) — the plugin's contributed parts, with skills linking
+    to Settings → Skills.
+  - **About** — provenance and facts the entry actually has; rows without data
+    are omitted.
+- **Works with** — in About, a count of the provider instances that can use the
+  entry (conditional ones count; unsupported ones do not). Hovering or pressing
+  it opens a popover above it with each usable agent's logo; a conditional agent
+  carries a marker whose tooltip gives the reason. The popover is a labelled
+  disclosure reachable by keyboard and touch.
+
+The extensions change feed also advances when provider instances are added,
+removed or change driver or name (not on health refreshes), so compatibility
+follows the live provider list.
 
 External skills (`/settings/skills/external`) remain where they are; the
 provider-plugins section links each provider's skills page.
@@ -610,18 +641,7 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
   only once the vault exists, because user secrets exist only there.
 - A future egress proxy must never intercept a Scient server origin.
 
-## Phases
-
-1. Contracts, seams manifest, this document.
-2. Connector runtime: store, probe, OAuth, refresh, callback route.
-3. Proxy route and live grants.
-4. Session delivery for every adapter, collision checks, receipts.
-5. Provider plugin and MCP inventory (Codex, Claude).
-6. MCP Registry Discover.
-7. Scient plugin model: built-ins and declarative bundles.
-8. Settings → Extensions and the thread receipt.
-
-## Acceptance
+## Release requirements
 
 - A real tool call through a connector from Claude and Codex sessions, before
   and after switching providers in one thread.
@@ -634,6 +654,10 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
   Tailscale completes against the server callback.
 - Vendor tokens never appear in provider config, environment, logs, or
   transcripts; the agent-facing credential is only the existing session token.
+- The product-analytics gateway accepts the `extensions` settings section
+  before this ships: its event contract is regenerated from the wire contract
+  and deployed as described in [product analytics](./product-analytics.md);
+  otherwise batches that mention the section are rejected.
 
 ## Open decisions
 
@@ -644,3 +668,10 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
   `~/.codex/config.toml` for use outside Scient): not built; the proxy covers
   every in-Scient session. Revisit only for standalone CLI use.
 - **CIMD**: requires deploying the client metadata document on `scientfactory.com`.
+- **Multiple accounts per service**: one connector per canonical URL today;
+  separate work and personal accounts would need distinct server names and an
+  account label.
+- **Provider inventory beyond Codex and Claude**: Claude's inventory is known
+  only after a Claude session starts and is not persisted; other providers
+  report none. Reading provider configuration directly or persisting the last
+  report would make "From <agent>" sections complete.

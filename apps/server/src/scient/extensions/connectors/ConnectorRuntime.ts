@@ -97,9 +97,9 @@ import {
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
 
-export const MAX_CONNECTORS = 30;
+const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
-export const TOKEN_REFRESH_LEEWAY_MS = 60_000;
+const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 /**
  * Upstream exchanges per connector, held until the response body completes or
  * is cancelled (open SSE streams included). A full connector answers busy
@@ -216,7 +216,7 @@ const eligibleOf = (record: ConnectorRecord): EligibleConnector => ({
 });
 
 /** Unique `[a-z0-9][a-z0-9_-]{0,47}` name; reserved and taken names get `_2`, `_3`, … */
-export const uniqueServerName = (displayName: string, taken: ReadonlySet<string>): string => {
+const uniqueServerName = (displayName: string, taken: ReadonlySet<string>): string => {
   const base =
     displayName
       .normalize("NFKD")
