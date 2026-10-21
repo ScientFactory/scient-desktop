@@ -1,8 +1,9 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { CSS } from "@dnd-kit/utilities";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 import type { SectionMachine } from "./SidebarSectionsView";
@@ -38,24 +39,22 @@ const groupKey = (id: string) =>
 /** The section a drop files into, on the test environment. */
 const into = (sectionId: string) => ({ environmentId: "env", sectionId });
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
+async function _cleanupFixture0(_fixture: _Fixture) {
   moveThreadsToSection.mockReset().mockResolvedValue(true);
   reorderActiveThread.mockClear();
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 type Row = { readonly id: string };
 
 const thread = (id: string, sectionId: string | null, environmentId = "env") =>
   ({ id, environmentId, sectionId, pinnedAt: null, session: null }) as never;
 
-function renderView(
+async function renderView(
+  _fixture: _Fixture,
   onReorderSections: (ids: readonly string[]) => void,
   options: {
     readonly names?: readonly string[];
@@ -90,11 +89,13 @@ function renderView(
       ...[1, 2, 3].map((n) => thread(`b${n}`, "b")),
     ],
   });
-  host = document.createElement("div");
-  host.style.cssText = "width:280px;height:800px;display:flex;flex-direction:column";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:280px;height:800px;display:flex;flex-direction:column";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <SidebarSectionsView
       groups={groups as never}
       environmentMachines={options.environmentMachines ?? null}
@@ -181,8 +182,11 @@ function pointer(type: string, target: EventTarget, clientX: number, clientY: nu
 }
 
 it("drags a section as a block without hiding rows or reflowing the list", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onReorderSections = vi.fn();
-  renderView(onReorderSections);
+  await renderView(_fixture, onReorderSections);
   await nextFrame();
 
   const rowCount = document.querySelectorAll("[data-row]").length;
@@ -227,8 +231,11 @@ it("drags a section as a block without hiding rows or reflowing the list", async
 });
 
 it("still files a dragged thread into the section it is dropped in", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   moveThreadsToSection.mockClear();
-  renderView(vi.fn());
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
@@ -251,9 +258,12 @@ it("still files a dragged thread into the section it is dropped in", async () =>
 });
 
 it("files a thread dragged up onto a collapsed section's header into that section", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   moveThreadsToSection.mockClear();
   // A is collapsed, so only its header is left to drop on.
-  renderView(vi.fn(), { collapsed: ["a"] });
+  await renderView(_fixture, vi.fn(), { collapsed: ["a"] });
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
   const start = row.getBoundingClientRect();
@@ -285,6 +295,9 @@ it.each([
 ])(
   "appends $source to A with $pickup pickup and keeps the preview stable",
   async ({ source, pickup }) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     let release: (value: boolean) => void = () => {};
     moveThreadsToSection.mockClear();
     moveThreadsToSection.mockImplementation(
@@ -294,7 +307,7 @@ it.each([
         }),
     );
     reorderActiveThread.mockClear();
-    renderView(vi.fn());
+    await renderView(_fixture, vi.fn());
     await nextFrame();
     const row = document.querySelector<HTMLElement>(`[data-row="${source}"]`)!;
     const start = row.getBoundingClientRect();
@@ -337,9 +350,12 @@ it.each([
 );
 
 it("changes insertion side within the same row before committing", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
-  renderView(vi.fn());
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
   const start = row.getBoundingClientRect();
@@ -360,9 +376,12 @@ it("changes insertion side within the same row before committing", async () => {
 });
 
 it("reorders to the end within a section without changing membership", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
-  renderView(vi.fn());
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="a1"]')!;
   const start = row.getBoundingClientRect();
@@ -386,9 +405,12 @@ it("reorders to the end within a section without changing membership", async () 
 });
 
 it("cancels an end-slot preview without writing membership or order", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
-  renderView(vi.fn());
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
   const start = row.getBoundingClientRect();
@@ -408,7 +430,10 @@ it("cancels an end-slot preview without writing membership or order", async () =
 });
 
 it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", async (grab) => {
-  renderView(vi.fn());
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
@@ -417,7 +442,7 @@ it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", 
   pointer("pointermove", document, x, start.top + grab + 8);
   await nextFrame();
   for (const offset of [150, 241, 387, 180]) {
-    const y = host!.getBoundingClientRect().top + offset;
+    const y = _fixture.host!.getBoundingClientRect().top + offset;
     pointer("pointermove", document, x + 40, y);
     await nextFrame();
     expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
@@ -435,8 +460,11 @@ it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", 
 });
 
 it("switches from a section overlay to direct conversation tracking", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onReorderSections = vi.fn();
-  renderView(onReorderSections);
+  await renderView(_fixture, onReorderSections);
   await nextFrame();
   const handle = headerOf("a").querySelector<HTMLElement>("button[aria-expanded]")!;
   const header = handle.getBoundingClientRect();
@@ -459,7 +487,7 @@ it("switches from a section overlay to direct conversation tracking", async () =
   pointer("pointerdown", row, x, start.top + 4);
   pointer("pointermove", document, x, start.top + 12);
   await nextFrame();
-  const y = host!.getBoundingClientRect().top + 180;
+  const y = _fixture.host!.getBoundingClientRect().top + 180;
   pointer("pointermove", document, x, y);
   await nextFrame();
   expect(Math.abs(row.getBoundingClientRect().top + 4 - y)).toBeLessThan(1);
@@ -472,24 +500,27 @@ it("switches from a section overlay to direct conversation tracking", async () =
 });
 
 it("keeps pointer attachment when its scrollable list scrolls", async () => {
-  renderView(vi.fn());
-  host!.style.height = "300px";
-  host!.style.overflow = "auto";
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, vi.fn());
+  _fixture.host!.style.height = "300px";
+  _fixture.host!.style.overflow = "auto";
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
   const grab = 24;
   const x = start.left + 20;
-  const y = host!.getBoundingClientRect().top + 180;
+  const y = _fixture.host!.getBoundingClientRect().top + 180;
   pointer("pointerdown", row, x, start.top + grab);
   pointer("pointermove", document, x, start.top + grab + 8);
   await nextFrame();
   pointer("pointermove", document, x, y);
   await nextFrame();
   expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
-  host!.scrollTop = 60;
+  _fixture.host!.scrollTop = 60;
   await vi.waitFor(() => {
-    expect(host!.scrollTop).toBe(60);
+    expect(_fixture.host!.scrollTop).toBe(60);
     expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
   });
   document.dispatchEvent(
@@ -501,7 +532,10 @@ it("keeps pointer attachment when its scrollable list scrolls", async () => {
 });
 
 it("sets section names 4px low, nearer their own threads, without growing the header", async () => {
-  renderView(() => {});
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, () => {});
   await nextFrame();
 
   for (const groupId of [GENERAL_SECTION_GROUP_ID, "a"]) {
@@ -515,7 +549,10 @@ it("sets section names 4px low, nearer their own threads, without growing the he
 });
 
 it("points the chevron where the section is, showing it on hover while open", async () => {
-  renderView(() => {}, { collapsed: ["b"] });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, () => {}, { collapsed: ["b"] });
   await nextFrame();
   const chevronOf = (groupId: string) =>
     headerOf(groupId).querySelector<SVGElement>("button[aria-expanded] svg")!;
@@ -542,7 +579,10 @@ it("points the chevron where the section is, showing it on hover while open", as
 });
 
 it("drops the rule entirely when less than 24px would be left beside the name", async () => {
-  renderView(() => {}, {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, () => {}, {
     names: ["A", "A section name long enough to fill the whole header row", "C"],
   });
   await nextFrame();
@@ -560,8 +600,11 @@ it("drops the rule entirely when less than 24px would be left beside the name", 
 });
 
 it("capitalizes a section name as it is typed, keeping the caret in place", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onRename = vi.fn();
-  renderView(() => {}, { renaming: "a", onRename });
+  await renderView(_fixture, () => {}, { renaming: "a", onRename });
   await nextFrame();
   const input = document.querySelector<HTMLInputElement>('input[aria-label="Section name"]')!;
   // The field opens with the name selected; typing replaces it.
@@ -573,7 +616,10 @@ it("capitalizes a section name as it is typed, keeping the caret in place", asyn
 });
 
 it("slides a header as soon as the pointer crosses its midpoint and commits the shown slot", async () => {
-  renderView(vi.fn());
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, vi.fn());
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
   const start = row.getBoundingClientRect();
@@ -610,7 +656,10 @@ it("slides a header as soon as the pointer crosses its midpoint and commits the 
 it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, grab }))))(
   "responds at the header midpoint with a $height px preceding row and $grab px pickup",
   async ({ height, grab }) => {
-    renderView(vi.fn());
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    await renderView(_fixture, vi.fn());
     await nextFrame();
     document.querySelector<HTMLElement>('[data-row="g2"]')!.style.height = `${height}px`;
     await nextFrame();
@@ -641,6 +690,9 @@ it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, g
 it.each([false, true])(
   "waits for section membership before writing order (success: %s)",
   async (success) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     let complete: (value: boolean) => void = () => {};
     moveThreadsToSection.mockImplementation(
       () =>
@@ -648,7 +700,7 @@ it.each([false, true])(
           complete = resolve;
         }),
     );
-    renderView(vi.fn());
+    await renderView(_fixture, vi.fn());
     await nextFrame();
     const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
     const start = row.getBoundingClientRect();
@@ -685,7 +737,10 @@ it.each([false, true])(
 );
 
 it("refuses to drop a thread into another environment's section", async () => {
-  renderView(vi.fn(), { foreignThread: true });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, vi.fn(), { foreignThread: true });
   await nextFrame();
   // Its section id names a section only on the test environment: it shows in General.
   const general = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
@@ -712,7 +767,10 @@ it("refuses to drop a thread into another environment's section", async () => {
 });
 
 it("marks each section's machine with its icon when sections from several machines show", async () => {
-  renderView(vi.fn(), {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await renderView(_fixture, vi.fn(), {
     environmentMachines: new Map([["env", { label: "Lab server", kind: "server" }]]),
     names: ["A long section name that fills the narrow sidebar", "B", "C"],
   });
@@ -727,8 +785,11 @@ it("marks each section's machine with its icon when sections from several machin
 });
 
 it("keeps a manual drop in the promoted display without saving unrelated automatic positions", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onManualPlacement = vi.fn();
-  renderView(vi.fn(), { promoted: true, onManualPlacement });
+  await renderView(_fixture, vi.fn(), { promoted: true, onManualPlacement });
   await nextFrame();
   const row = document.querySelector<HTMLElement>('[data-row="a2"]')!;
   const start = row.getBoundingClientRect();
@@ -754,3 +815,22 @@ it("keeps a manual drop in the promoted display without saving unrelated automat
   expect(ref).toEqual({ environmentId: "env", threadId: "a2" });
   expect(key > "m").toBe(true);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

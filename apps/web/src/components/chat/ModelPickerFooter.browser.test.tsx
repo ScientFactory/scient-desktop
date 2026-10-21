@@ -1,9 +1,10 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+
+import { expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 import {
@@ -13,18 +14,18 @@ import {
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ModelPickerContent } from "./ModelPickerContent";
 
-let host: HTMLDivElement | undefined;
-let root: Root | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  host = undefined;
-  root = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.host = undefined;
+  _fixture.root0 = undefined;
   __resetClientSettingsPersistenceForTests();
-});
+}
 
 it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (width) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(width, 720);
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, favorites: [] });
   const models = Array.from({ length: 30 }, (_, i) => ({
@@ -60,10 +61,12 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
     slashCommands: [],
     skills: [],
   }));
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <ModelPickerContent
       environmentId={null}
       activeInstanceId={providers[0]!.instanceId}
@@ -79,8 +82,8 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
     />,
   );
 
-  await expect.poll(() => host?.querySelector("[data-model-picker-content]")).toBeTruthy();
-  const picker = host.querySelector<HTMLElement>("[data-model-picker-content]")!;
+  await expect.poll(() => _fixture.host?.querySelector("[data-model-picker-content]")).toBeTruthy();
+  const picker = _fixture.host.querySelector<HTMLElement>("[data-model-picker-content]")!;
   const footer = picker.querySelector<HTMLButtonElement>(
     'button[aria-label="Continue in a new chat"]',
   )!.parentElement!;
@@ -114,3 +117,22 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
   await expect.poll(() => picker.getBoundingClientRect().height).toBeLessThanOrEqual(200);
   await expectAnchored();
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

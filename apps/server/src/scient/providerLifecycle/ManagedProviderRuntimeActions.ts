@@ -595,77 +595,83 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     }
   };
 
+  const runEffect = Effect.fn("ManagedProviderRuntimeActions.run")(function* (
+    action: Parameters<ProviderManagedRuntimeActions["run"]>[0],
+    catalogRevision: Parameters<ProviderManagedRuntimeActions["run"]>[1],
+    report: Parameters<ProviderManagedRuntimeActions["run"]>[2],
+    awaitActivationWindow: NonNullable<Parameters<ProviderManagedRuntimeActions["run"]>[3]>,
+  ) {
+    const prepared = yield* prepareAction(action);
+    const planned = prepared.plan;
+    if (planned.catalogRevision !== catalogRevision) {
+      return yield* runtimeError(
+        `The qualified ${providerName} setup plan changed. Review it again before continuing.`,
+      );
+    }
+    const context = yield* Effect.context<never>();
+    const runFork = Effect.runForkWith(context);
+    const runPromise = Effect.runPromiseWith(context);
+    if (action === "remove") {
+      yield* awaitActivationWindow;
+      yield* report({
+        status: "removing",
+        message: `Removing Scient's private ${providerName} runtime.`,
+      });
+      yield* Effect.tryPromise({
+        try: () => runtime.remove(),
+        catch: (cause) =>
+          runtimeError(`Scient could not remove its private ${providerName} runtime.`, cause),
+      });
+      return;
+    }
+    const actionArtifact = prepared.artifact;
+    if (!actionArtifact) {
+      return yield* runtimeError(`No qualified ${providerName} artifact is available.`);
+    }
+    let lastStatus: ManagedProviderRuntimeProgress["stage"] | undefined;
+    let lastReportedBytes = 0;
+    yield* Effect.tryPromise({
+      try: (signal) =>
+        runtime.install({
+          artifact: actionArtifact,
+          signal,
+          ...(input.qualify ? { qualify: input.qualify } : {}),
+          beforeActivate: (activationSignal) =>
+            runPromise(awaitActivationWindow, { signal: activationSignal }),
+          onProgress: (progress) => {
+            const stageChanged = progress.stage !== lastStatus;
+            const downloadedBytes = progress.downloadedBytes ?? 0;
+            const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
+            const downloadFinished =
+              progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
+            if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
+            lastStatus = progress.stage;
+            lastReportedBytes = downloadedBytes;
+            runFork(
+              report({
+                status: progress.stage,
+                message: progressMessage(progress),
+                ...(progress.downloadedBytes === undefined
+                  ? {}
+                  : { downloadedBytes: progress.downloadedBytes }),
+                ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+              } satisfies ProviderManagedRuntimeProgress),
+            );
+          },
+        }),
+      catch: (cause) =>
+        cause instanceof ProviderConnectionActionError
+          ? cause
+          : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
+    });
+  });
+
   const run: ProviderManagedRuntimeActions["run"] = (
     action,
     catalogRevision,
     report,
     awaitActivationWindow = Effect.void,
-  ) =>
-    Effect.gen(function* () {
-      const prepared = yield* prepareAction(action);
-      const planned = prepared.plan;
-      if (planned.catalogRevision !== catalogRevision) {
-        return yield* runtimeError(
-          `The qualified ${providerName} setup plan changed. Review it again before continuing.`,
-        );
-      }
-      const context = yield* Effect.context<never>();
-      const runFork = Effect.runForkWith(context);
-      const runPromise = Effect.runPromiseWith(context);
-      if (action === "remove") {
-        yield* awaitActivationWindow;
-        yield* report({
-          status: "removing",
-          message: `Removing Scient's private ${providerName} runtime.`,
-        });
-        yield* Effect.tryPromise({
-          try: () => runtime.remove(),
-          catch: (cause) =>
-            runtimeError(`Scient could not remove its private ${providerName} runtime.`, cause),
-        });
-        return;
-      }
-      const actionArtifact = prepared.artifact;
-      if (!actionArtifact) {
-        return yield* runtimeError(`No qualified ${providerName} artifact is available.`);
-      }
-      let lastStatus: ManagedProviderRuntimeProgress["stage"] | undefined;
-      let lastReportedBytes = 0;
-      yield* Effect.tryPromise({
-        try: (signal) =>
-          runtime.install({
-            artifact: actionArtifact,
-            signal,
-            ...(input.qualify ? { qualify: input.qualify } : {}),
-            beforeActivate: (activationSignal) =>
-              runPromise(awaitActivationWindow, { signal: activationSignal }),
-            onProgress: (progress) => {
-              const stageChanged = progress.stage !== lastStatus;
-              const downloadedBytes = progress.downloadedBytes ?? 0;
-              const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-              const downloadFinished =
-                progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-              if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
-              lastStatus = progress.stage;
-              lastReportedBytes = downloadedBytes;
-              runFork(
-                report({
-                  status: progress.stage,
-                  message: progressMessage(progress),
-                  ...(progress.downloadedBytes === undefined
-                    ? {}
-                    : { downloadedBytes: progress.downloadedBytes }),
-                  ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
-                } satisfies ProviderManagedRuntimeProgress),
-              );
-            },
-          }),
-        catch: (cause) =>
-          cause instanceof ProviderConnectionActionError
-            ? cause
-            : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
-      });
-    });
+  ) => runEffect(action, catalogRevision, report, awaitActivationWindow);
 
   const summary = yield* getSummary.pipe(
     Effect.orElseSucceed(() => ({

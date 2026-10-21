@@ -1,3 +1,4 @@
+import { render as _fixtureRender, stubGlobal, type Screen } from "../../../test/render";
 /**
  * Chat diagrams against the real Mermaid, in a real browser, with the app's stylesheet: a
  * diagram that names an outside resource draws without it, says what it left out, and makes
@@ -5,8 +6,8 @@
  */
 import "../../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { sharedIsolatedMermaid } from "./isolatedMermaid";
 import { MermaidDiagramCard } from "./MermaidDiagramCard";
@@ -143,28 +144,31 @@ const withoutIds = (svg: string) =>
     .replace(/scient-(?:chat-diagram|render|instance)-[0-9a-z]+(?:-[0-9a-z]+)?/gu, "ID")
     .replace(/ d="[^"]*"/gu, ' d=""');
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
 // A dev-served page loads hundreds of modules; keep room for the probes behind them.
 performance.setResourceTimingBufferSize(100_000);
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   performance.clearResourceTimings();
-});
+}
 
 describe("chat diagrams draw with no network access", () => {
   it("records a request to the probe, so an absent one means nothing was fetched", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const image = new Image();
     image.src = `/${PROBE}/control.png`;
     await expect.poll(() => probeRequests(), { timeout: 10_000 }).toHaveLength(1);
   });
 
   it("measures the first draw, which opens the frame, against the page's first draw", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const start = performance.now();
     await renderMermaidDiagram("flowchart LR\nFirst --> Frame", "light");
     const frameFirst = Math.round(performance.now() - start);
@@ -183,6 +187,9 @@ describe("chat diagrams draw with no network access", () => {
   it.each(FETCHING)(
     "draws a $name without its outside load, names it, and requests nothing",
     async ({ source, address }) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       const rendered = await renderMermaidDiagram(source, "light");
       expect(rendered.diagramType).not.toBe("error");
       expect(rendered.svg).toContain("<svg");
@@ -205,6 +212,9 @@ describe("chat diagrams draw with no network access", () => {
   it.each([...ATTRIBUTE_LOADS, ...HTML_ATTRIBUTE_LOADS])(
     "drops a $name, names it, and requests nothing in the frame or the page",
     async ({ source, address }) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       // What Mermaid itself kept, before Scient strips it.
       const raw = await (await sharedIsolatedMermaid()).render(source, { awaitRefusals: false });
       const rendered = await renderMermaidDiagram(source, "light");
@@ -223,6 +233,9 @@ describe("chat diagrams draw with no network access", () => {
   );
 
   it("keeps Mermaid's own presentation attributes that load from outside for the check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     // The attack the check exists for: Mermaid keeps a label's inline SVG attributes.
     const raw = await (
       await sharedIsolatedMermaid()
@@ -233,10 +246,15 @@ describe("chat diagrams draw with no network access", () => {
   });
 
   it("requests nothing once a card showing every kind of outside load is displayed", async () => {
-    host = document.createElement("div");
-    host.style.width = "720px";
-    document.body.append(host);
-    root = createRoot(host);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    _fixture.host = document.createElement("div");
+    _fixture.host.style.width = "720px";
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
     const labels = [...ATTRIBUTE_LOADS, ...HTML_ATTRIBUTE_LOADS]
       .map(
         ({ source }, index) =>
@@ -244,34 +262,45 @@ describe("chat diagrams draw with no network access", () => {
       )
       .join("\n");
     const source = `flowchart TD\n${labels}\nX["<img src='/${PROBE}/card.png'>"]`;
-    root.render(
+    await _fixture.root0.rerender(
       <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />,
     );
     await expect
-      .poll(() => host!.querySelector(".scient-mermaid-inline svg") !== null, { timeout: 20_000 })
+      .poll(() => _fixture.host!.querySelector(".scient-mermaid-inline svg") !== null, {
+        timeout: 20_000,
+      })
       .toBe(true);
-    expect(host.querySelector('[role="note"]')?.textContent).toContain(`/${PROBE}/card.png`);
+    expect(_fixture.host.querySelector('[role="note"]')?.textContent).toContain(
+      `/${PROBE}/card.png`,
+    );
     await settle();
     expect(await allProbeRequests()).toEqual([]);
   });
 
   it("shows the card with a note that links each blocked web address", async () => {
-    host = document.createElement("div");
-    host.style.width = "720px";
-    document.body.append(host);
-    root = createRoot(host);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    _fixture.host = document.createElement("div");
+    _fixture.host.style.width = "720px";
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
     const source = FETCHING[1]!.source;
-    root.render(
+    await _fixture.root0.rerender(
       <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />,
     );
     await expect
-      .poll(() => host!.querySelector('[role="note"]')?.textContent ?? "", { timeout: 20_000 })
+      .poll(() => _fixture.host!.querySelector('[role="note"]')?.textContent ?? "", {
+        timeout: 20_000,
+      })
       .toContain("Outside content not loaded");
-    const link = host.querySelector<HTMLAnchorElement>('[role="note"] a');
+    const link = _fixture.host.querySelector<HTMLAnchorElement>('[role="note"] a');
     expect(link?.getAttribute("href")).toBe(`https://example.invalid/${PROBE}/pixel.png`);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(host.querySelector(".scient-mermaid-inline svg")).not.toBeNull();
+    expect(_fixture.host.querySelector(".scient-mermaid-inline svg")).not.toBeNull();
     await settle();
     expect(await allProbeRequests()).toEqual([]);
   });
@@ -279,6 +308,9 @@ describe("chat diagrams draw with no network access", () => {
   it.each<MermaidTheme>(["light", "dark"])(
     "draws ordinary %s diagrams exactly as the page did, with no note",
     async (theme) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       for (const source of ORDINARY) {
         const isolated = await renderMermaidDiagram(source, theme);
         const page = await renderMermaidDiagram(source, theme, "page");
@@ -289,6 +321,9 @@ describe("chat diagrams draw with no network access", () => {
   );
 
   it("preserves generated MathML in sequence labels and exports spaced math as an image", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const { svg } = await renderMermaidDiagram(
       "sequenceDiagram\nAlice->>Bob: $$\\frac{d}{dx}\\mathbf{v} + \\sqrt{2} + \\text{total cost}$$",
       "light",
@@ -304,6 +339,9 @@ describe("chat diagrams draw with no network access", () => {
   });
 
   it("does not return executable MathML label attributes or embedded resources", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const { svg } = await renderMermaidDiagram(
       `flowchart LR\nA["<math href='javascript:alert(1)'><mi onclick='alert(1)'>x</mi><annotation-xml encoding='text/html'><img src='https://example.invalid/${PROBE}/math.png' onerror='alert(1)'></annotation-xml></math>"]`,
       "light",
@@ -321,6 +359,9 @@ describe("chat diagrams draw with no network access", () => {
   });
 
   it("mirrors math styles and bundled fonts loaded after the frame opened", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     // The frame is open and has drawn; KaTeX's stylesheet and fonts arrive only now, as in chat.
     await renderMermaidDiagram("flowchart LR\nBefore --> Math", "light");
     const { renderScientTexToHtml } = await import("../math/katexRuntime");
@@ -347,6 +388,9 @@ describe("chat diagrams draw with no network access", () => {
   });
 
   it("lets the frame load only the app's own fonts, never another origin's", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const frame = await sharedIsolatedMermaid();
     const policy = frame.window.document
       .querySelector('meta[http-equiv="Content-Security-Policy"]')
@@ -375,6 +419,9 @@ describe("chat diagrams draw with no network access", () => {
   });
 
   it("measures first-draw latency and a long thread's diagrams", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const timed = async (run: () => Promise<unknown>) => {
       const start = performance.now();
       await run();
@@ -405,14 +452,20 @@ describe("stripping outside loads from a drawn SVG", () => {
   const svg = (body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>#d .node{fill:red}</style>${body}</svg>`;
 
-  it("leaves an SVG with nothing to load byte for byte", () => {
+  it("leaves an SVG with nothing to load byte for byte", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const plain = svg(
       '<a href="https://example.org"><g style="fill:url(#grad)"><text>hi</text></g></a>',
     );
     expect(stripSvgExternalResources(plain)).toEqual({ svg: plain, blocked: [] });
   });
 
-  it("removes every kind of outside load and names each address", () => {
+  it("removes every kind of outside load and names each address", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const { svg: stripped, blocked } = stripSvgExternalResources(
       svg(
         [
@@ -444,7 +497,10 @@ describe("stripping outside loads from a drawn SVG", () => {
     expect(stripped).toContain("data:image/gif");
   });
 
-  it("drops every attribute whose value loads like CSS, and animations that set a link", () => {
+  it("drops every attribute whose value loads like CSS, and animations that set a link", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const { svg: stripped, blocked } = stripSvgExternalResources(
       svg(
         [
@@ -474,3 +530,97 @@ describe("stripping outside loads from a drawn SVG", () => {
     );
   });
 });
+
+describe("native chat Mermaid interactions", () => {
+  it("keeps startup scanning and an authored callback inert in the actual Card", async () => {
+    const callback = vi.fn();
+    using _pageCallback = stubGlobal("scientDiagramCallback", callback);
+    const frame = await sharedIsolatedMermaid();
+    const nativeWindow = frame.window as Window & {
+      mermaid: typeof import("mermaid").default;
+      scientDiagramCallback: () => void;
+    };
+    const previousCallback = Object.getOwnPropertyDescriptor(nativeWindow, "scientDiagramCallback");
+    Object.defineProperty(nativeWindow, "scientDiagramCallback", {
+      configurable: true,
+      value: callback,
+    });
+    using _frameCallback = {
+      [Symbol.dispose]() {
+        if (previousCallback) {
+          Object.defineProperty(nativeWindow, "scientDiagramCallback", previousCallback);
+        } else {
+          Reflect.deleteProperty(nativeWindow, "scientDiagramCallback");
+        }
+      },
+    };
+    const source = [
+      '%%{init: {"securityLevel":"loose","startOnLoad":true}}%%',
+      "flowchart LR",
+      'callbackNode["Authored callback target"] --> B["Still local"]',
+      "click callbackNode scientDiagramCallback",
+    ].join("\n");
+    await using screen = await _fixtureRender(
+      <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />,
+      { router: false },
+    );
+    await expect
+      .poll(() => screen.container.querySelector(".scient-mermaid-inline svg") !== null)
+      .toBe(true);
+    const native = nativeWindow.mermaid;
+    expect(native.mermaidAPI.getConfig()).toMatchObject({
+      securityLevel: "strict",
+      startOnLoad: false,
+    });
+
+    const unrelated = nativeWindow.document.createElement("div");
+    unrelated.className = "mermaid";
+    unrelated.textContent = "flowchart LR\nUnrelated --> Source";
+    nativeWindow.document.body.append(unrelated);
+    using _unrelated = { [Symbol.dispose]: () => unrelated.remove() };
+    using run = vi.spyOn(native, "run");
+    await native.contentLoaded();
+    expect(run).not.toHaveBeenCalled();
+    expect(unrelated.textContent).toBe("flowchart LR\nUnrelated --> Source");
+    expect(unrelated.querySelector("svg")).toBeNull();
+
+    const control = document.createElement("button");
+    control.textContent = "Callback calibration";
+    control.addEventListener("click", () => nativeWindow.scientDiagramCallback());
+    screen.container.append(control);
+    await userEvent.click(control);
+    expect(callback).toHaveBeenCalledOnce();
+    callback.mockClear();
+    control.remove();
+
+    const target = [
+      ...screen.container.querySelectorAll<SVGGElement>(".scient-mermaid-inline g.node"),
+    ].find((node) => node.textContent?.includes("Authored callback target"));
+    expect(target).toBeDefined();
+    await userEvent.click(page.elementLocator(target!));
+    expect(callback).not.toHaveBeenCalled();
+    expect(native.mermaidAPI.getConfig()).toMatchObject({
+      securityLevel: "strict",
+      startOnLoad: false,
+    });
+  });
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

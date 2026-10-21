@@ -4,7 +4,7 @@
  * request at all — the isolated frame refuses the load — and falls back to
  * its source.
  */
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { getMermaidRuntimePromise, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { captureWordDiagrams } from "./captureDiagrams";
@@ -56,12 +56,15 @@ const FETCHING = {
 /** State diagrams take a `classDef` style list as the rest of the line, so CSS `url()` parses. */
 const STYLED_STATE = `stateDiagram-v2\nclassDef c background-image:url(/${PROBE}/state.png)\n[*] --> A:::c`;
 
-afterEach(() => {
+async function _cleanupFixture0(_fixture: _Fixture) {
   performance.clearResourceTimings();
-});
+}
 
 describe("Word diagram capture with the real Mermaid", () => {
   it("records a request to the probe, so an absent one means nothing was fetched", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const image = new Image();
     image.src = `/${PROBE}/control.png`;
     // Under a loaded machine the answer can take longer than the settle delay.
@@ -69,6 +72,9 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("needs isolation: Mermaid's strict draw in the page requests a label's image", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await renderMermaidDiagram(
       FETCHING.labelImage.replace("label.png", "page.png"),
       "light",
@@ -79,6 +85,9 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("renders math, URLs and url( as text, and theme directives to PNG", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const results = await capture([
       'flowchart LR\nA["$$\\frac{1}{2}$$"] --> B["$$\\beta$$ and https://example.org/x"]',
       "%%{init: {'theme': 'forest', 'flowchart': {'curve': 'linear'}}}%%\nflowchart LR\nA[image: plot] --> B",
@@ -90,12 +99,18 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("falls back for a diagram over chat's size limit, not Mermaid's stand-in image", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     // Few edges, one long label: Mermaid parses it, then draws a stand-in over maxTextSize.
     const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
     expect(await capture([oversized])).toEqual(["render-failed"]);
   });
 
   it("makes no request for a diagram that names an outside resource, and falls back", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const results = await capture(Object.values(FETCHING));
     await settle();
     expect(results).toEqual(Object.values(FETCHING).map(() => "render-failed"));
@@ -103,6 +118,9 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("refuses every load in the frame itself, before any request", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const mermaid = await openIsolatedMermaid();
     try {
       for (const [name, source] of Object.entries(FETCHING)) {
@@ -128,6 +146,9 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("refuses styles and settings that name an outside resource before drawing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const styles = [STYLED_STATE, STYLED_STATE.replace("url(", "u\\72l(")];
     // They are valid diagrams, so it is the style check that refuses them.
     const mermaid = await openIsolatedMermaid();
@@ -147,6 +168,9 @@ describe("Word diagram capture with the real Mermaid", () => {
   });
 
   it("checks the settings Mermaid decodes, not the escaped text", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const { default: mermaid } = await getMermaidRuntimePromise();
     const parsed = await mermaid.parse(
       '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(probe)"}}}%%\nflowchart LR\nA --> B',
@@ -155,3 +179,20 @@ describe("Word diagram capture with the real Mermaid", () => {
     expect(parsed && parsed.config.themeVariables?.primaryColor).toBe("url(probe)");
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

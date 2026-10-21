@@ -360,6 +360,24 @@ export const ProjectDirectoryOperation = Schema.Literals([
   "read-directory",
 ]);
 export type ProjectDirectoryOperation = typeof ProjectDirectoryOperation.Type;
+// Untracked files git ignores. Wholly ignored folders such as `node_modules`
+// are left out, so the list stays small enough to pick from.
+export const ProjectListIgnoredFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
+
+export const ProjectIgnoredFile = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  byteLength: NonNegativeInt,
+});
+export type ProjectIgnoredFile = typeof ProjectIgnoredFile.Type;
+
+export const ProjectListIgnoredFilesResult = Schema.Struct({
+  files: Schema.Array(ProjectIgnoredFile),
+  truncated: Schema.Boolean,
+});
+export type ProjectListIgnoredFilesResult = typeof ProjectListIgnoredFilesResult.Type;
 
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",
@@ -513,6 +531,8 @@ export const ProjectReadFileInput = Schema.Struct({
   // Workspace-relative, or an absolute host path for a file outside the
   // workspace. Only workspace-relative paths can be written back.
   relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  // Optional files can be absent without failing the read.
+  allowMissing: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -528,11 +548,16 @@ export type ProjectFilePublicationAttention = typeof ProjectFilePublicationAtten
 export const ProjectFilePublicationOutcome = Schema.Literals(["unchanged", "retained-attention"]);
 export type ProjectFilePublicationOutcome = typeof ProjectFilePublicationOutcome.Type;
 
+// SCIENT-FORK:START — absence is not a content revision or a writable file snapshot.
+export const PROJECT_MISSING_FILE_REVISION = "missing";
+// SCIENT-FORK:END
+
 export const ProjectReadFileResult = Schema.Struct({
   relativePath: FilePathString,
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  /** A byte revision for existing files; PROJECT_MISSING_FILE_REVISION when exists is false. */
   revision: TrimmedNonEmptyString,
   // Optional for rolling compatibility with servers predating managed-path
   // read-only metadata. Current servers always provide it.
@@ -542,6 +567,8 @@ export const ProjectReadFileResult = Schema.Struct({
   // or a link that leads out. Optional: older servers do not say.
   outsideWorkspace: Schema.optional(Schema.Boolean),
   publicationAttention: Schema.optional(ProjectFilePublicationAttention),
+  // Omitted by older servers; false only for an absent optional file.
+  exists: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -14,10 +15,12 @@ import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
 
 import * as BootService from "../cloud/bootService.ts";
+import * as ServerConfig from "../config.ts";
 import {
   acquireRelayClientForLink,
   headlessSessionConfig,
   reportCloudDisconnectResults,
+  reportServiceOnboarding,
 } from "./connect.ts";
 import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
 
@@ -51,7 +54,7 @@ it.effect("detects headless operation from individual SSH config values", () =>
 it.effect("treats cancelling optional background setup as a successful skip", () =>
   Effect.gen(function* () {
     const result = yield* recoverServiceOnboardingOffer(Effect.fail(new Terminal.QuitError({})));
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
 );
 
@@ -60,7 +63,7 @@ it.effect("keeps a successful connection when a remote service update is pending
     const result = yield* recoverServiceOnboardingOffer(
       Effect.fail(new BootService.BootServiceUpdatePendingError()),
     );
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
 );
 
@@ -68,7 +71,7 @@ it.effect("does not offer the inherited global service during Scient onboarding"
   Effect.gen(function* () {
     const result = yield* offerServiceDuringOnboarding;
     const output = (yield* TestConsole.logLines).join("\n");
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
     assert.include(output, "safety envelope is enabled");
     assert.notInclude(output, "distinct Scient service identity");
   }).pipe(
@@ -77,6 +80,37 @@ it.effect("does not offer the inherited global service during Scient onboarding"
         NodeServices.layer,
         TestConsole.layer,
         Layer.succeed(BootService.BootService, unreachableBootService),
+      ),
+    ),
+  ),
+);
+
+it.effect("reports a pending handoff without claiming the service is ready", () =>
+  Effect.gen(function* () {
+    const lines: string[] = [];
+    const report = (outcome: "pending" | "ready") =>
+      reportServiceOnboarding(outcome).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(Console.Console, {
+          ...globalThis.console,
+          log: (...args) => {
+            lines.push(args.map(String).join(" "));
+          },
+        }),
+      );
+    yield* report("pending");
+    assert.notInclude(lines.join("\n"), "Background service ready");
+    assert.notInclude(lines.join("\n"), "Start the server");
+    assert.include(lines.join("\n"), "Background service restarting");
+    lines.length = 0;
+    yield* report("ready");
+    assert.include(lines.join("\n"), "Background service ready");
+    assert.notInclude(lines.join("\n"), "restarting");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest("/tmp", { prefix: "scient-connect-report-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
       ),
     ),
   ),

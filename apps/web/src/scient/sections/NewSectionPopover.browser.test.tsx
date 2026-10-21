@@ -1,20 +1,19 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { NewSectionPopover, type SectionCreateAnchor } from "./NewSectionPopover";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
@@ -34,7 +33,8 @@ const MACHINES = [
   { environmentId: "lab" as EnvironmentId, label: "Lab server" },
 ];
 
-function renderForm(
+async function renderForm(
+  _fixture: _Fixture,
   submit: (name: string) => Promise<boolean>,
   native = false,
   onMachine?: (environmentId: EnvironmentId) => void,
@@ -80,17 +80,22 @@ function renderForm(
       </>
     );
   }
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<Probe />);
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<Probe />);
 }
 
 it.each([false, true])(
   "opens a compact nonmodal form beside its element or native-menu origin (%s)",
   async (native) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const submit = vi.fn(async () => true);
-    renderForm(submit, native);
+    await renderForm(_fixture, submit, native);
     await nextFrame();
     await userEvent.click(document.querySelector("button")!);
     await nextFrame();
@@ -119,8 +124,11 @@ it.each([false, true])(
 );
 
 it("dismisses by outside click without submitting", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const submit = vi.fn(async () => true);
-  renderForm(submit);
+  await renderForm(_fixture, submit);
   await nextFrame();
   await userEvent.click(document.querySelector("button")!);
   await nextFrame();
@@ -132,9 +140,12 @@ it("dismisses by outside click without submitting", async () => {
 });
 
 it("names the machine an empty section goes to, and keeps the form open while choosing", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const submit = vi.fn(async () => true);
   const onMachine = vi.fn();
-  renderForm(submit, false, onMachine);
+  await renderForm(_fixture, submit, false, onMachine);
   await nextFrame();
   await userEvent.click(document.querySelector("button")!);
   await nextFrame();
@@ -162,8 +173,11 @@ it("names the machine an empty section goes to, and keeps the form open while ch
 });
 
 it("keeps a failed name for retry and closes with Escape", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const submit = vi.fn(async () => false);
-  renderForm(submit);
+  await renderForm(_fixture, submit);
   await nextFrame();
   await userEvent.click(document.querySelector("button")!);
   await nextFrame();
@@ -177,3 +191,22 @@ it("keeps a failed name for retry and closes with Escape", async () => {
   await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull());
   expect(document.activeElement).toBe(document.querySelector("button"));
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -54,3 +54,18 @@
   overflow-wrap: normal;
   word-break: normal;
 }
+
+/* Wide inline expressions scroll without expanding the prose column. */
+.scient-math-inline {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.scient-math-inline:focus-visible,
+.scient-math-display:focus-visible {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}

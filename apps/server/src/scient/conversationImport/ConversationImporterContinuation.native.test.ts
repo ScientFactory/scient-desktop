@@ -79,6 +79,7 @@ const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   })).messages;
 });
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
+import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import {
@@ -3303,6 +3304,7 @@ it.live(
               Layer.mergeAll(
                 Layer.mock(TerminalManager)({ close: () => Effect.void }),
                 Layer.mock(PreviewManager)({ close: () => Effect.void }),
+                Layer.mock(ScheduledTaskService)({ deleteForThread: () => Effect.void }),
               ),
             ),
           ),

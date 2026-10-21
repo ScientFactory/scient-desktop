@@ -136,8 +136,9 @@ Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
 `ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
 hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
 (#14924) and the pressed wrap toggle (#13208) are ported. Returning the generic code block to
-`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Settled Mermaid, Vega-Lite and Plotly
-fences render through `scient/presentation/ScientRichFence.tsx` in place of T3's
+`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Closed Mermaid fences render
+even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
+through `scient/presentation/ScientRichFence.tsx` in place of T3's
 `chat/MermaidDiagram.tsx`. `ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
 names; every Scient edit there sits in a `SCIENT-FORK` region that names its owner. The Copy
 message rich flavour reads chat's Markdown through `scient/clipboard/chatMarkdownPipeline.ts`,

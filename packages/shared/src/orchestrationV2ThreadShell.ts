@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
+  OrchestrationV2PendingRuntimeRequestSummary,
   ProviderInstanceId,
   ThreadId,
   ScientCompletedAnswer,
@@ -8,7 +9,10 @@ import type {
 import * as DateTime from "effect/DateTime";
 import { RuntimeRequestId, TurnId, orchestrationV2RunWorkStartedAt } from "@t3tools/contracts";
 
-import { derivePendingBackgroundWork } from "./orchestrationV2PendingBackgroundWork.ts";
+import {
+  deriveBlockedOnThreadWait,
+  derivePendingBackgroundWork,
+} from "./orchestrationV2PendingBackgroundWork.ts";
 import { isOrchestrationV2TurnItemVisible } from "./orchestrationV2Timeline.ts";
 import {
   latestRootProviderFailure,
@@ -49,21 +53,24 @@ export function threadShellFromProjection(
       .sort(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-      )[0] ??
-    secretRequestAsPendingInput(
-      projection.turnItems
-        .filter(
-          (item) =>
-            item.type === "secret_request" &&
-            item.status === "waiting" &&
-            item.runId !== null &&
-            liveRunIds.has(item.runId),
+      )[0] ?? null;
+  const pendingSecretRequest =
+    pendingRuntimeRequest === null || pendingRuntimeRequest.responseCapability.type === "message"
+      ? secretRequestAsPendingInput(
+          projection.turnItems
+            .filter(
+              (item) =>
+                item.type === "secret_request" &&
+                item.status === "waiting" &&
+                item.runId !== null &&
+                liveRunIds.has(item.runId),
+            )
+            .sort(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+            )[0] ?? null,
         )
-        .sort(
-          (left, right) =>
-            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-        )[0] ?? null,
-    );
+      : null;
   const userMessages = projection.messages
     .filter((message) => message.role === "user")
     .sort(
@@ -112,6 +119,10 @@ export function threadShellFromProjection(
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
     activeRunId: activeRun?.id ?? null,
+    blockedOnThreadWait: deriveBlockedOnThreadWait({
+      activeRun,
+      turnItems: projection.turnItems,
+    }),
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
@@ -121,13 +132,15 @@ export function threadShellFromProjection(
       providerSession?.lastError ?? null,
     ),
     pendingRuntimeRequest:
-      pendingRuntimeRequest === null
+      pendingSecretRequest ??
+      (pendingRuntimeRequest === null
         ? null
         : {
             id: pendingRuntimeRequest.id,
             kind: pendingRuntimeRequest.kind,
             createdAt: pendingRuntimeRequest.createdAt,
-          },
+            blocking: pendingRuntimeRequest.responseCapability.type !== "message",
+          }),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
@@ -314,18 +327,13 @@ export function isActivityRunForShell(
 /** A waiting secret card uses the shell's pending-input summary without runtime authority. */
 export function secretRequestAsPendingInput(
   item: OrchestrationV2ThreadProjection["turnItems"][number] | null,
-): OrchestrationV2ThreadProjection["runtimeRequests"][number] | null {
+): OrchestrationV2PendingRuntimeRequestSummary | null {
   if (item?.type !== "secret_request" || item.nodeId === null) return null;
   return {
     id: RuntimeRequestId.make(item.id),
-    nodeId: item.nodeId,
-    providerTurnId: item.providerTurnId,
-    nativeRequestRef: null,
     kind: "user_input",
-    status: "pending",
-    responseCapability: { type: "message" },
     createdAt: item.startedAt ?? item.updatedAt,
-    resolvedAt: null,
+    blocking: true,
   };
 }
 

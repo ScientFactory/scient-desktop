@@ -1,6 +1,7 @@
-import { act, createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { render as _fixtureRender, type Screen, act } from "../test/render";
+import { createElement } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   areShortcutModifierStatesEqual,
@@ -17,32 +18,34 @@ const emptyState = (): ShortcutModifierState => ({
 });
 
 describe("useShortcutModifierState", () => {
-  let root: Root;
-  let container: HTMLDivElement;
+  async function _setupFixture0(_fixture: _Fixture) {
+    _fixture.container = document.createElement("div");
+    document.body.append(_fixture.container);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.container, router: false }),
+    );
+  }
 
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    container.remove();
+  async function _cleanupFixture1(_fixture: _Fixture) {
+    await act(async () => await _fixture.root0.unmount());
+    _fixture.container.remove();
     vi.unstubAllGlobals();
-  });
+  }
 
   it.each(["keyup", "paste", "blur"] as const)(
     "does not render for unchanged modifiers after %s resets the state",
     async (reset) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
       const render = vi.fn();
       function Consumer() {
         render(useShortcutModifierState());
         return null;
       }
       await act(async () => {
-        root.render(createElement(Consumer));
+        await _fixture.root0.rerender(createElement(Consumer));
       });
       const press = async (type: "keydown" | "keyup", key: string, shiftKey = false) => {
         await act(async () => {
@@ -90,7 +93,9 @@ function keyboardEventLike(type: "keydown" | "keyup", init: Partial<KeyboardEven
 }
 
 describe("shortcutModifierState", () => {
-  it("compares modifier states by value", () => {
+  it("compares modifier states by value", async () => {
+    await using _fixture = _createFixture();
+
     expect(
       areShortcutModifierStatesEqual(
         { metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
@@ -105,7 +110,9 @@ describe("shortcutModifierState", () => {
     ).toBe(false);
   });
 
-  it("preserves the current object when modifier values do not change", () => {
+  it("preserves the current object when modifier values do not change", async () => {
+    await using _fixture = _createFixture();
+
     const initialState = emptyState();
     const nextState = shortcutModifierStateAfterKeyboardEvent(
       initialState,
@@ -114,7 +121,9 @@ describe("shortcutModifierState", () => {
     expect(nextState).toBe(initialState);
   });
 
-  it("tracks bare modifier keydown and keyup events explicitly", () => {
+  it("tracks bare modifier keydown and keyup events explicitly", async () => {
+    await using _fixture = _createFixture();
+
     let state = emptyState();
     state = shortcutModifierStateAfterKeyboardEvent(
       state,
@@ -175,7 +184,9 @@ describe("shortcutModifierState", () => {
     });
   });
 
-  it("ignores poisoned modifier flags on non-modifier keys", () => {
+  it("ignores poisoned modifier flags on non-modifier keys", async () => {
+    await using _fixture = _createFixture();
+
     // A dictation paste (synthetic ⌘V) can leave the browser reporting
     // metaKey=true on later real key events.
     const state = shortcutModifierStateAfterKeyboardEvent(
@@ -185,7 +196,9 @@ describe("shortcutModifierState", () => {
     expect(state).toEqual(emptyState());
   });
 
-  it("clears a held modifier when a non-modifier key reports it released", () => {
+  it("clears a held modifier when a non-modifier key reports it released", async () => {
+    await using _fixture = _createFixture();
+
     const heldMeta: ShortcutModifierState = {
       metaKey: true,
       ctrlKey: false,
@@ -199,3 +212,22 @@ describe("shortcutModifierState", () => {
     expect(state).toEqual(emptyState());
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

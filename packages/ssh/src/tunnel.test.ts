@@ -144,8 +144,6 @@ describe("ssh tunnel scripts", () => {
       script,
       'T3_LOCK="$HOME/.scient-next/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
-    assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
-    assert.include(script, 'mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"');
     assert.include(script, 'if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then');
     assert.include(script, 'if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then');
     assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 360 ]; then');
@@ -191,7 +189,6 @@ describe("ssh tunnel scripts", () => {
       assert.include(SshTunnel.buildRemoteLaunchScript(options), runner);
       assert.include(SshTunnel.buildRemotePairingScript(stateKey, options), runner);
     }
-    assert.include(SshTunnel.buildRemoteT3RunnerScript(ARCHIVE), '"$$" > "$T3_LOCK/pid.tmp"');
   });
 
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -384,7 +381,6 @@ describe("ssh tunnel scripts", () => {
 
   it("embeds the runner in the launch script byte for byte", () => {
     const runner = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
-    assert.include(runner, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid.tmp"');
     assert.include(SshTunnel.buildRemoteLaunchScript(ARCHIVE), runner);
   });
 
@@ -1244,13 +1240,22 @@ describe("remote port picker", () => {
   );
 });
 
-const runScript = (home: string, args: ReadonlyArray<string>) =>
+const runScript = (
+  home: string,
+  args: ReadonlyArray<string>,
+  options?: {
+    path?: string;
+    stdin?: Stream.Stream<Uint8Array>;
+    onStderrLine?: (line: string) => Effect.Effect<void>;
+  },
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: process.env.PATH ?? "", HOME: home },
+        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
         extendEnv: false,
+        ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -1264,9 +1269,11 @@ const runScript = (home: string, args: ReadonlyArray<string>) =>
         ),
         child.stderr.pipe(
           Stream.decodeText(),
+          Stream.splitLines,
+          Stream.tap((line) => options?.onStderrLine?.(line) ?? Effect.void),
           Stream.runFold(
             () => "",
-            (acc, chunk) => acc + chunk,
+            (acc, line) => `${acc}${line}\n`,
           ),
         ),
         child.exitCode.pipe(Effect.map(Number)),
@@ -1282,7 +1289,8 @@ describe("archive runner script", () => {
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 
-  const runRunner = (home: string, runner: string) => runScript(home, [runner, "--version"]);
+  const runRunner = (home: string, runner: string, options?: Parameters<typeof runScript>[2]) =>
+    runScript(home, [runner, "--version"], options);
 
   // stem, checksummed in SHA256SUMS. When an installer validates it in its
   // staging directory, it checks the lock holds that live installer's numeric
@@ -1303,7 +1311,7 @@ describe("archive runner script", () => {
         "#!/bin/sh",
         'case "$0" in',
         "  */.staging-*)",
-        `    owner="$(cat "$HOME/.scient-next/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
+        `    owner="$(cat "$HOME/.scient-next/runtime/versions/.${archiveVersion}.install.lock" 2>/dev/null || true)"`,
         '    case "$owner" in ""|*[!0-9]*) echo "Invalid installer PID: $owner" >&2; exit 1 ;; esac',
         '    kill -0 "$owner" || exit 1',
         '    printf "%s\\n" "$owner" >> "$HOME/install-owner"',
@@ -1342,10 +1350,45 @@ describe("archive runner script", () => {
           .readFileString(`${home}/install-owner`)
           .pipe(Effect.map((text) => text.trim().split("\n")));
 
-        const results = yield* Effect.all(
-          [runRunner(home, runner), runRunner(home, runner), runRunner(home, runner)],
-          { concurrency: "unbounded" },
-        );
+        // Reproduce mkdir succeeding on EEXIST, even on hosts without the uutils bug.
+        const bin = `${root}/bin`;
+        yield* fs.makeDirectory(bin);
+        for (const [name, script] of Object.entries({
+          mkdir: 'PATH=${PATH#*:}\nexec mkdir -p "$@"',
+          tar: 'echo >> "${0%/*}/installs"\necho installing >&2\nread -r release\nPATH=${PATH#*:}\nexec tar "$@"',
+          sleep: 'echo waiting >&2\nPATH=${PATH#*:}\nexec sleep "$@"',
+        })) {
+          yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
+          yield* fs.chmod(`${bin}/${name}`, 0o755);
+        }
+        const path = `${bin}:${process.env.PATH ?? ""}`;
+        const installing = yield* Deferred.make<void>();
+        const contended = yield* Deferred.make<void>();
+        // Hold the first extraction until another runner either waits for the lock
+        // or incorrectly begins installing. This forces contention without timing assumptions.
+        const first = yield* runRunner(home, runner, {
+          path,
+          stdin: Stream.fromEffect(
+            Deferred.await(contended).pipe(Effect.as(new TextEncoder().encode("release\n"))),
+          ),
+          onStderrLine: (line) =>
+            line === "installing"
+              ? Deferred.succeed(installing, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(installing);
+        const contender = runRunner(home, runner, {
+          path,
+          stdin: Stream.make(new TextEncoder().encode("release\n")),
+          onStderrLine: (line) =>
+            line === "installing" || line === "waiting"
+              ? Deferred.succeed(contended, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        const results = yield* Effect.all([Fiber.join(first), contender, contender], {
+          concurrency: "unbounded",
+        });
+        assert.equal(yield* fs.readFileString(`${bin}/installs`), "\n");
         for (const result of results) {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
@@ -1362,18 +1405,27 @@ describe("archive runner script", () => {
 
         const lock = `${versionsDir}/.${archiveVersion}.install.lock`;
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
-        yield* fs.makeDirectory(lock);
-        yield* fs.writeFileString(`${lock}/pid`, "999999\n");
+        yield* fs.writeFileString(lock, "999999\n");
         const afterDead = yield* runRunner(home, runner);
         assert.equal(afterDead.exitCode, 0, afterDead.stderr);
         assert.lengthOf(yield* installOwners, 2);
 
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
-        yield* fs.makeDirectory(lock);
+        yield* fs.writeFileString(lock, "");
         const afterUnowned = yield* runRunner(home, runner);
         assert.equal(afterUnowned.exitCode, 0, afterUnowned.stderr);
         assert.lengthOf(yield* installOwners, 3);
         assert.isFalse(yield* fs.exists(lock));
+
+        // SCIENT-FORK:START — a previous release used a PID inside a directory lock.
+        yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
+        yield* fs.makeDirectory(lock);
+        yield* fs.writeFileString(`${lock}/pid`, "999999\n");
+        const afterLegacyDead = yield* runRunner(home, runner);
+        assert.equal(afterLegacyDead.exitCode, 0, afterLegacyDead.stderr);
+        assert.lengthOf(yield* installOwners, 4);
+        assert.isFalse(yield* fs.exists(lock));
+        // SCIENT-FORK:END
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
   );
@@ -1513,7 +1565,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           Stream.splitLines,
           Stream.runHead,
         );
-        return Number(Option.getOrThrow(port));
+        return { port: Number(Option.getOrThrow(port)), exitCode: server.exitCode };
       });
     return {
       home,
@@ -1548,7 +1600,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           `${launched.remotePort}`,
         );
 
-        const servicePort = yield* startDefaultHomeServer([]);
+        const { port: servicePort } = yield* startDefaultHomeServer([]);
         assert.deepEqual(yield* runLaunch, {
           remotePort: servicePort,
           serverKind: "external",
@@ -1653,9 +1705,19 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
             `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 100 ] || exit 1; sleep 0.1; done`,
           ]).pipe(Effect.map((result) => assert.equal(result.exitCode, 0, condition)));
         yield* waitUntil(`ps -o comm= -p ${parent.pid} | grep -q sleep`);
-        process.kill(zombie, "SIGKILL");
-        yield* waitUntil(`ps -o stat= -p ${zombie} | grep -q Z`);
         // SCIENT-FORK:END
+        process.kill(zombie, "SIGKILL");
+        // SIGKILL delivery is asynchronous; establish the zombie fixture before launching.
+        const zombieState = yield* runScript(home, [
+          "-c",
+          `attempt=0; while [ "$attempt" -lt 100 ]; do
+            state=$(ps -o stat= -p ${zombie}) || exit 1
+            case "$state" in *Z*) printf '%s\\n' "$state"; exit 0;; esac
+            attempt=$((attempt + 1))
+          done; printf '%s\\n' "$state"; exit 1`,
+        ]);
+        assert.equal(zombieState.exitCode, 0, zombieState.stdout);
+        assert.include(zombieState.stdout, "Z");
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
           `${home}/.scient-next/userdata/server-runtime.json`,
@@ -1701,7 +1763,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         const fs = yield* FileSystem.FileSystem;
         const { stateDir, runLaunch, startDefaultHomeServer } = yield* prepareLaunch;
         yield* fs.writeFileString(`${stateDir}/managed`, "managed\n");
-        const servicePort = yield* startDefaultHomeServer(["--answer-once"]);
+        const { port: servicePort } = yield* startDefaultHomeServer(["--answer-once"]);
 
         assert.deepEqual(yield* runLaunch, { remotePort: servicePort, serverKind: "external" });
         assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
@@ -1713,13 +1775,36 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     "launches a replacement when the adopted server exits during the handover",
     () =>
       Effect.gen(function* () {
-        const { readManagedPid, runLaunch, launchManaged, startDefaultHomeServer } =
+        const fs = yield* FileSystem.FileSystem;
+        const { home, launch, readManagedPid, launchManaged, startDefaultHomeServer } =
           yield* prepareLaunch;
         const { pid: previousPid } = yield* launchManaged;
-        yield* startDefaultHomeServer(["--exit-after-answer"], { unreaped: true });
+        const server = yield* startDefaultHomeServer(["--exit-after-answer"]);
+        const adopted = yield* Deferred.make<void>();
+        const script = yield* fs.readFileString(launch);
+        const adoption = 'ADOPTED_PID="$DEFAULT_RUNTIME_PID"';
+        assert.include(script, adoption);
+        // A flushed response can arrive before process exit. Hold the launcher at
+        // adoption until the fixture has exited, then test its handover check.
+        yield* fs.writeFileString(
+          launch,
+          script.replace(adoption, `${adoption}\n    echo adopted >&2\n    read -r release`),
+        );
 
-        const result = yield* runLaunch;
-        assert.equal(result.serverKind, "managed");
+        const result = yield* runScript(home, [launch, "test-state"], {
+          stdin: Stream.fromEffect(
+            Deferred.await(adopted).pipe(
+              Effect.andThen(server.exitCode.pipe(Effect.orDie)),
+              Effect.as(new TextEncoder().encode("release\n")),
+            ),
+          ),
+          onStderrLine: (line) =>
+            line === "adopted"
+              ? Deferred.succeed(adopted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.equal(launchResult(result.stdout).serverKind, "managed");
         const replacementPid = yield* readManagedPid;
         assert.notEqual(replacementPid, previousPid);
         assert.isTrue(isAlive(replacementPid));
@@ -1735,7 +1820,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const { home, launchManaged, startDefaultHomeServer } = yield* prepareLaunch;
-        const t3Port = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+        const { port: t3Port } = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
 
         const { launched } = yield* launchManaged;
         assert.notEqual(launched.remotePort, t3Port);
@@ -1768,7 +1853,9 @@ INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ProjectlessT
         db.close();
         yield* fs.writeFileString(`${legacyState}/settings.json`, '{"fixture":true}\n');
         // The managed server an earlier Scient launcher left on ~/.t3.
-        const legacyPort = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+        const { port: legacyPort, exitCode } = yield* startDefaultHomeServer([], {
+          baseDir: `${home}/.t3`,
+        });
         const legacyRuntime = JSON.parse(
           yield* fs.readFileString(`${legacyState}/server-runtime.json`),
         );
@@ -1789,6 +1876,12 @@ INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ProjectlessT
         );
         const migrated = yield* runScript(home, [migration, "test-state"]);
         assert.equal(migrated.exitCode, 0, migrated.stderr);
+        const stopped = yield* exitCode.pipe(Effect.flip);
+        assert.equal(stopped.reason._tag, "Unknown");
+        assert.include(
+          String(stopped.reason.cause),
+          "Process interrupted due to receipt of signal: 'SIGTERM'",
+        );
         yield* launchManaged;
         assert.isFalse(yield* isListening(legacyPort));
         assert.equal(

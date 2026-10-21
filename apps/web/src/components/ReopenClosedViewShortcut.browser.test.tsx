@@ -2,9 +2,9 @@ import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contra
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   keybindings: [] as ResolvedKeybindingsConfig,
@@ -86,33 +86,8 @@ const snapshot = {
   canGoForward: false,
   updatedAt: "2026-09-22T12:00:00.000Z",
 } as const;
-let root: Root;
-let menuAction: ((action: string) => void) | undefined;
 
-async function render() {
-  await act(() => root.render(<ReopenClosedViewShortcut />));
-}
-
-function press(target: Element = document.body) {
-  const event = new KeyboardEvent("keydown", {
-    key: "T",
-    ctrlKey: true,
-    shiftKey: true,
-    bubbles: true,
-    cancelable: true,
-  });
-  target.dispatchEvent(event);
-  return event;
-}
-
-function openCommandPalette() {
-  const palette = document.createElement("div");
-  palette.dataset.commandPalette = "";
-  document.body.append(palette);
-  return palette;
-}
-
-beforeEach(() => {
+function setup() {
   vi.clearAllMocks();
   Object.assign(state, {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -127,8 +102,13 @@ beforeEach(() => {
     terminalUiStateByThreadKey: {},
     suppressedTerminalIdsByThreadKey: {},
   });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+}
+
+async function renderShortcut() {
+  let menuAction: ((action: string) => void) | undefined;
+  const previousBridge = Object.getOwnPropertyDescriptor(window, "desktopBridge");
+  await using stack = new AsyncDisposableStack();
+  stack.use(vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64"));
   window.desktopBridge = {
     preview: { setForwardedShortcuts: state.setShortcuts },
     onMenuAction: (listener: (action: string) => void) => {
@@ -138,23 +118,52 @@ beforeEach(() => {
       };
     },
   } as unknown as NonNullable<typeof window.desktopBridge>;
-  root = createRoot(document.createElement("div"));
-});
+  stack.defer(() => {
+    if (previousBridge) Object.defineProperty(window, "desktopBridge", previousBridge);
+    else delete window.desktopBridge;
+  });
+  stack.use(await render(<ReopenClosedViewShortcut />));
+  const environment = stack.move();
+  return {
+    menuAction(action: string) {
+      if (!menuAction) throw new Error("The mounted shortcut must own its native menu listener.");
+      menuAction(action);
+    },
+    /** Attaches an element to the document until the test ends. */
+    append(element: HTMLElement) {
+      document.body.append(element);
+      environment.defer(() => element.remove());
+      return element;
+    },
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  };
+}
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  delete window.desktopBridge;
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+function press(target: Element = document.body) {
+  const event = new KeyboardEvent("keydown", {
+    key: "T",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function commandPalette() {
+  const palette = document.createElement("div");
+  palette.dataset.commandPalette = "";
+  return palette;
+}
 
 describe("root reopen shortcut", () => {
   it("restores a tab from settings to its owning remote thread", async () => {
+    setup();
     useClosedViewStore
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await render();
+    await using _view = await renderShortcut();
     await act(() => {
       expect(press().defaultPrevented).toBe(true);
     });
@@ -166,32 +175,35 @@ describe("root reopen shortcut", () => {
   });
 
   it("leaves native shortcuts alone without history or while the palette is open", async () => {
-    await render();
+    setup();
+    await using view = await renderShortcut();
     expect(press().defaultPrevented).toBe(false);
     await act(() => {
       useClosedViewStore
         .getState()
         .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
     });
-    openCommandPalette();
+    view.append(commandPalette());
     expect(press().defaultPrevented).toBe(false);
     expect(state.navigate).not.toHaveBeenCalled();
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
   it("lets the keybinding recorder capture the chord", async () => {
+    setup();
     useClosedViewStore
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await render();
+    await using view = await renderShortcut();
     const recorder = document.createElement("input");
     recorder.dataset.keybindingCapture = "";
-    document.body.append(recorder);
+    view.append(recorder);
     expect(press(recorder).defaultPrevented).toBe(false);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
+    setup();
     useClosedViewStore
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "files", id: "files" } });
@@ -202,7 +214,7 @@ describe("root reopen shortcut", () => {
         finish = resolve;
       }),
     );
-    await render();
+    await using _view = await renderShortcut();
     await act(() => {
       press();
       press();
@@ -217,6 +229,7 @@ describe("root reopen shortcut", () => {
   });
 
   it("does not create a second browser when navigation fails after restoring it", async () => {
+    setup();
     const store = useClosedViewStore.getState();
     const older = store.remember({
       kind: "panel-tab",
@@ -226,7 +239,7 @@ describe("root reopen shortcut", () => {
     store.remember({ kind: "browser", threadRef: ref, snapshot });
     state.openPreview.mockResolvedValue(AsyncResult.success({ tabId: "new-tab" }));
     state.navigate.mockRejectedValueOnce(new Error("navigation failed"));
-    await render();
+    await using _view = await renderShortcut();
     await act(() => {
       press();
     });
@@ -238,7 +251,7 @@ describe("root reopen shortcut", () => {
     );
     expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([older]);
     await act(() => {
-      menuAction?.("view.reopenClosed");
+      _view.menuAction("view.reopenClosed");
     });
     expect(state.openPreview).toHaveBeenCalledOnce();
     expect(
@@ -250,6 +263,7 @@ describe("root reopen shortcut", () => {
   it.each(["files", "file", "browser"] as const)(
     "keeps a failed %s restore retryable without blocking older history",
     async (kind) => {
+      setup();
       const store = useClosedViewStore.getState();
       const older = store.remember({
         kind: "panel-tab",
@@ -276,7 +290,7 @@ describe("root reopen shortcut", () => {
       );
       state.workspaceAvailable = false;
       state.openPreview.mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("offline"))));
-      await render();
+      await using _view = await renderShortcut();
       await act(() => {
         press();
       });
@@ -286,7 +300,7 @@ describe("root reopen shortcut", () => {
       ]);
       expect(state.navigate).not.toHaveBeenCalled();
       await act(() => {
-        menuAction?.("view.reopenClosed");
+        _view.menuAction("view.reopenClosed");
       });
       expect(
         selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).activeSurfaceId,
@@ -307,6 +321,7 @@ describe("root reopen shortcut", () => {
   );
 
   it("forwards the chord to a focused desktop browser only while history exists", async () => {
+    setup();
     const forwardedCommands = () =>
       (state.setShortcuts.mock.lastCall as unknown as [Array<{ command: string }>])[0].map(
         ({ command }) => command,
@@ -314,17 +329,18 @@ describe("root reopen shortcut", () => {
     useClosedViewStore
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await render();
+    await using _view = await renderShortcut();
     expect(forwardedCommands()).toContain("view.reopenClosed");
     await act(() => {
-      menuAction?.("view.reopenClosed");
+      _view.menuAction("view.reopenClosed");
     });
     expect(useClosedViewStore.getState().entries).toEqual([]);
     expect(forwardedCommands()).not.toContain("view.reopenClosed");
   });
 
   it("always forwards the layout toggles out of a focused desktop browser", async () => {
-    await render();
+    setup();
+    await using _view = await renderShortcut();
     expect(state.setShortcuts).toHaveBeenLastCalledWith([
       expect.objectContaining({ command: "sidebar.toggle" }),
       expect.objectContaining({ command: "rightPanel.toggle" }),

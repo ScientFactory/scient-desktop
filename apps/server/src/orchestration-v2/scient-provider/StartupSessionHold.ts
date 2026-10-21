@@ -80,11 +80,14 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
    * new activity cannot slip in between, and the new timer is installed only
    * while that claim is still current.
    */
-  const rearmDeclined = (
-    providerSessionId: ProviderSessionId,
-    suppressed: { readonly runtime: ProviderAdapterV2SessionRuntime; readonly generation: number },
-  ) =>
-    Effect.gen(function* () {
+  const rearmDeclined = Effect.fn("StartupSessionHold.rearmDeclined")(
+    function* (
+      providerSessionId: ProviderSessionId,
+      suppressed: {
+        readonly runtime: ProviderAdapterV2SessionRuntime;
+        readonly generation: number;
+      },
+    ) {
       const key = deps.sessionKey(providerSessionId);
       const now = yield* Clock.currentTimeMillis;
       const generation = suppressed.generation + 1;
@@ -128,14 +131,24 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
       });
       // Superseded meanwhile: the current owner of the entry owns its timer.
       if (!installed) yield* deps.cancelIdleFiber(idleFiber);
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
-          providerSessionId,
-          cause,
-        }),
+    },
+    (
+      effect,
+      providerSessionId,
+      _argument1: {
+        readonly runtime: ProviderAdapterV2SessionRuntime;
+        readonly generation: number;
+      },
+    ) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
+            providerSessionId,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
 
   const endReservation = (providerSessionId: ProviderSessionId) =>
     Effect.suspend(() => {

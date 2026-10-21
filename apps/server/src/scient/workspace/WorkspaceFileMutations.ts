@@ -3398,32 +3398,31 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
      * Reads run while owning the root, so they never pair a newer epoch with older bytes.
      * `missingOf` names the path whose absence the read should report, if any.
      */
-    const ownedRead = <A, E, R>(
+    const ownedRead = Effect.fn("WorkspaceFileMutations.ownedRead")(function* <A, E, R>(
       input: { cwd: string; relativePath?: string },
       missingOf: (root: string) => Promise<boolean>,
       read: (
         attention: ProjectFilePublicationAttention | null,
         settlement: WorkspaceFileReadSettlement,
       ) => Effect.Effect<A, E, R>,
-    ) =>
-      Effect.gen(function* () {
-        const context = yield* Effect.context<R>();
-        const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-        const exit = yield* owned(
-          { cwd: input.cwd, relativePath: input.relativePath ?? "." },
-          normalized,
-          async (signal) => {
-            const root = await NodeFSP.realpath(normalized);
-            return owning(root, signal, async () =>
-              Effect.runPromiseExitWith(context)(
-                read(null, { currentMissing: await missingOf(root) }),
-                { signal },
-              ),
-            );
-          },
-        );
-        return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
-      });
+    ) {
+      const context = yield* Effect.context<R>();
+      const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
+      const exit = yield* owned(
+        { cwd: input.cwd, relativePath: input.relativePath ?? "." },
+        normalized,
+        async (signal) => {
+          const root = await NodeFSP.realpath(normalized);
+          return owning(root, signal, async () =>
+            Effect.runPromiseExitWith(context)(
+              read(null, { currentMissing: await missingOf(root) }),
+              { signal },
+            ),
+          );
+        },
+      );
+      return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
+    });
     const settledFileRead: WorkspaceFileMutationMethods["withSettledFileRead"] = (input, read) =>
       ownedRead(
         input,
@@ -3741,31 +3740,32 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           return owning(root, signal, () => plainEpochOf(root));
         });
       }),
-      withWorkspacePublicationFence: <A, E, R>(
+      withWorkspacePublicationFence: Effect.fn(
+        "WorkspaceFileMutations.withWorkspacePublicationFence",
+      )(function* <A, E, R>(
         input: { cwd: string; expectedEpoch: string },
         commit: () => Effect.Effect<A, E, R>,
-      ) =>
-        Effect.gen(function* () {
-          const context = yield* Effect.context<R>();
-          const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-          const exit = yield* owned(
-            { cwd: input.cwd, relativePath: "." },
-            normalized,
-            async (signal) => {
-              const root = await NodeFSP.realpath(normalized);
-              return owning(root, signal, async () => {
-                if ((await plainEpochOf(root)) !== input.expectedEpoch)
-                  throw new RetainedMutationError(
-                    "target",
-                    "Workspace mutated after build admission.",
-                    "build-fence",
-                  );
-                return Effect.runPromiseExitWith(context)(commit(), { signal });
-              });
-            },
-          );
-          return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
-        }),
+      ) {
+        const context = yield* Effect.context<R>();
+        const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
+        const exit = yield* owned(
+          { cwd: input.cwd, relativePath: "." },
+          normalized,
+          async (signal) => {
+            const root = await NodeFSP.realpath(normalized);
+            return owning(root, signal, async () => {
+              if ((await plainEpochOf(root)) !== input.expectedEpoch)
+                throw new RetainedMutationError(
+                  "target",
+                  "Workspace mutated after build admission.",
+                  "build-fence",
+                );
+              return Effect.runPromiseExitWith(context)(commit(), { signal });
+            });
+          },
+        );
+        return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
+      }),
       listFileVersions: () =>
         Effect.succeed({
           versions: [],

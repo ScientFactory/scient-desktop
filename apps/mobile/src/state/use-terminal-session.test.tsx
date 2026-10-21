@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { RegistryContext } from "@effect/atom-react";
 import type { TerminalSummary } from "@t3tools/contracts";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";

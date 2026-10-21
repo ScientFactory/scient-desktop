@@ -129,8 +129,8 @@ const make = Effect.gen(function* () {
       trackedInputs: [path.resolve(workspaceRoot, document.relativePath), discovered.executable],
       searchPath: environment.TEXINPUTS ?? null,
       pathDelimiter: delimiter,
-      run: (directory, forceReprocess, onRetirementFailure) =>
-        Effect.gen(function* () {
+      run: Effect.fn("LatexTikzPreview.run")(
+        function* (directory, forceReprocess, onRetirementFailure) {
           const sourcePath = path.join(directory, "picture.tex");
           const preamble = /\\documentclass\b/u.test(input.preamble)
             ? input.preamble
@@ -231,7 +231,9 @@ const make = Effect.gen(function* () {
               ? `${message} Tectonic previews use only cached bundle files. If files are missing, use the document’s explicit Build action to resolve them, then run this preview again.`
               : message,
           );
-        }).pipe(Effect.timeout("150 seconds")),
+        },
+        (effect) => effect.pipe(Effect.timeout("150 seconds")),
+      ),
     });
   });
   return LatexTikzPreview.of({

@@ -219,16 +219,15 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const cleanupActive = (active: ActiveRuntimeOperation, mode: ActiveRuntimeCleanupMode) =>
     settleActive(active, mode, Effect.void);
 
-  const cleanupIfCurrent = (
+  const cleanupIfCurrent = Effect.fn("ProviderRuntimeManager.cleanupIfCurrent")(function* (
     instanceId: ProviderInstanceId,
     operationId: string,
     mode: ActiveRuntimeCleanupMode,
-  ) =>
-    Effect.gen(function* () {
-      const active = yield* takeIfCurrent(instanceId, operationId);
-      if (active) yield* cleanupActive(active, mode);
-      return active;
-    });
+  ) {
+    const active = yield* takeIfCurrent(instanceId, operationId);
+    if (active) yield* cleanupActive(active, mode);
+    return active;
+  });
 
   const cleanupAll = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, new Map());
@@ -287,25 +286,27 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   // until nothing would be interrupted. Idle sessions resume from their resume
   // cursor on the next message. After waiting, idle must hold for a second
   // poll: a queued follow-up starts its turn moments after the previous one.
-  const waitForIdleTurns = (provider: ProviderDriverKind, onFirstWait: Effect.Effect<void>) =>
-    Effect.gen(function* () {
-      let waited = false;
-      let confirmedIdle = false;
-      while (true) {
-        if (yield* activity.isBusy(provider)) {
-          confirmedIdle = false;
-          if (!waited) {
-            yield* onFirstWait;
-            waited = true;
-          }
-        } else if (!waited || confirmedIdle) {
-          return;
-        } else {
-          confirmedIdle = true;
+  const waitForIdleTurns = Effect.fn("ProviderRuntimeManager.waitForIdleTurns")(function* (
+    provider: ProviderDriverKind,
+    onFirstWait: Effect.Effect<void>,
+  ) {
+    let waited = false;
+    let confirmedIdle = false;
+    while (true) {
+      if (yield* activity.isBusy(provider)) {
+        confirmedIdle = false;
+        if (!waited) {
+          yield* onFirstWait;
+          waited = true;
         }
-        yield* Effect.sleep(IDLE_POLL_INTERVAL);
+      } else if (!waited || confirmedIdle) {
+        return;
+      } else {
+        confirmedIdle = true;
       }
-    });
+      yield* Effect.sleep(IDLE_POLL_INTERVAL);
+    }
+  });
 
   const plan: ProviderRuntimeManagerShape["plan"] = Effect.fn("ProviderRuntimeManager.plan")(
     function* (input) {
@@ -510,29 +511,30 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             ? cleanupInterruptedStart(input.instanceId, operationId)
             : cleanupIfCurrent(input.instanceId, operationId, "interrupt").pipe(Effect.asVoid);
 
-      const publishProgress = (progress: ProviderManagedRuntimeProgress) =>
-        Effect.gen(function* () {
-          const current = (yield* Ref.get(activeRef)).get(input.instanceId);
-          if (current?.operationId !== operationId) return;
-          yield* providerRegistry.setProviderManagedRuntimeSummary({
-            instanceId: input.instanceId,
-            runtime: {
-              ...baseSummary,
-              operation: operation({
-                operationId,
-                action: input.action,
-                status: progress.status,
-                startedAt,
-                message: progress.message,
-                ...(progress.downloadedBytes === undefined
-                  ? {}
-                  : { downloadedBytes: progress.downloadedBytes }),
-                ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
-                ...(progress.waitingForIdle ? { waitingForIdle: true } : {}),
-              }),
-            },
-          });
+      const publishProgress = Effect.fn("ProviderRuntimeManager.publishProgress")(function* (
+        progress: ProviderManagedRuntimeProgress,
+      ) {
+        const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+        if (current?.operationId !== operationId) return;
+        yield* providerRegistry.setProviderManagedRuntimeSummary({
+          instanceId: input.instanceId,
+          runtime: {
+            ...baseSummary,
+            operation: operation({
+              operationId,
+              action: input.action,
+              status: progress.status,
+              startedAt,
+              message: progress.message,
+              ...(progress.downloadedBytes === undefined
+                ? {}
+                : { downloadedBytes: progress.downloadedBytes }),
+              ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+              ...(progress.waitingForIdle ? { waitingForIdle: true } : {}),
+            }),
+          },
         });
+      });
 
       const displayName = PROVIDER_DISPLAY_NAMES[target.provider] ?? target.provider;
       // Before commit the staged change is still cancellable, so the wait is

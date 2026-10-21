@@ -1,8 +1,9 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor as ProseEditor } from "@tiptap/core";
 import type { Editor } from "@pierre/diffs/edit";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -24,19 +25,17 @@ import template28 from "./fixtures/mock-medical-article.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
-let root: Root;
-let host: HTMLDivElement;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+}
 const frame = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 async function settleRect(measure: () => DOMRect) {
-  let previous = "",
-    since = 0;
+  let previous = "";
+  let since = 0;
   await expect
     .poll(
       () => {
@@ -54,14 +53,16 @@ async function settleRect(measure: () => DOMRect) {
     )
     .toBe(true);
 }
-async function mount(input: string, name: string) {
+async function mount(_fixture: _Fixture, input: string, name: string) {
   await page.viewport(1300, 900);
-  host = document.createElement("div");
-  host.style.cssText = "width:1250px;height:840px;display:flex";
-  host.dataset.testid = "split-browser-host";
-  host.setAttribute("data-latex-split", "true");
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1250px;height:840px;display:flex";
+  _fixture.host.dataset.testid = "split-browser-host";
+  _fixture.host.setAttribute("data-latex-split", "true");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   let sourceEditor: Editor<"file", unknown, undefined> | undefined;
   let current = input;
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
@@ -146,28 +147,30 @@ async function mount(input: string, name: string) {
       </>
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   await expect
     .poll(
       () =>
-        host.querySelector<HTMLElement & { editor: ProseEditor }>(".scient-latex-visual-document")
-          ?.editor,
+        _fixture.host.querySelector<HTMLElement & { editor: ProseEditor }>(
+          ".scient-latex-visual-document",
+        )?.editor,
     )
     .toBeTruthy();
   await expect
     .poll(
-      () => host.querySelector("diffs-container")?.shadowRoot?.querySelector("[data-content]"),
+      () =>
+        _fixture.host.querySelector("diffs-container")?.shadowRoot?.querySelector("[data-content]"),
       { timeout: 15_000 },
     )
     .toBeTruthy();
   await userEvent.click(
-    host
+    _fixture.host
       .querySelector("diffs-container")!
       .shadowRoot!.querySelector<HTMLElement>("[data-content]")!,
     { position: { x: 100, y: 10 } },
   );
   await expect.poll(() => sourceEditor?.getFile(), { timeout: 15_000 }).toBeTruthy();
-  const visual = host.querySelector<HTMLElement & { editor: ProseEditor }>(
+  const visual = _fixture.host.querySelector<HTMLElement & { editor: ProseEditor }>(
     ".scient-latex-visual-document",
   )!.editor;
   await expect
@@ -176,7 +179,10 @@ async function mount(input: string, name: string) {
   await document.fonts.ready;
   await expect
     .poll(
-      () => [...host.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
+      () =>
+        [..._fixture.host.querySelectorAll(".scient-latex-math-preview")].every(
+          mathReadingPreviewReady,
+        ),
       { timeout: 15_000 },
     )
     .toBe(true);
@@ -245,16 +251,21 @@ it.each([
 ] as const)(
   "template %s: native word selection updates Source without jumping, then survives pane handoff",
   async (name, source, word) => {
-    const state = await mount(source, name);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const state = await mount(_fixture, source, name);
     if (name === "26-footnote") {
       await page
         .getByRole("button", { name: "Return to footnote 1 marker", exact: true })
         .nth(0)
         .click();
       await page.getByRole("button", { name: "Edit text", exact: true }).click();
-      await expect.poll(() => host.querySelector('[aria-label="Footnote text"]')).toBeTruthy();
+      await expect
+        .poll(() => _fixture.host.querySelector('[aria-label="Footnote text"]'))
+        .toBeTruthy();
     }
-    const scroll = host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     wordPosition(state.visual.view.dom, word);
     await frame();
     await settleRect(() => wordPosition(state.visual.view.dom, word, false).box);
@@ -263,13 +274,13 @@ it.each([
     let before = scroll.scrollTop;
     const pointer = () => {
       before = scroll.scrollTop;
-      host.removeEventListener("pointerdown", pointer, true);
+      _fixture.host.removeEventListener("pointerdown", pointer, true);
     };
-    host.addEventListener("pointerdown", pointer, true);
+    _fixture.host.addEventListener("pointerdown", pointer, true);
     const cell = hit.element.closest<HTMLElement>("[data-table-cell]");
     if (cell) {
-      const bounds = hit.element.getBoundingClientRect(),
-        cellBounds = cell.getBoundingClientRect();
+      const bounds = hit.element.getBoundingClientRect();
+      const cellBounds = cell.getBoundingClientRect();
       await page
         .getByRole("textbox", { name: cell.getAttribute("aria-label")!, exact: true })
         .nth(0)
@@ -283,8 +294,8 @@ it.each([
       const field = state.visual.view.dom.querySelector<HTMLElement>(
         '[aria-label="Literal text"]',
       )!;
-      const bounds = hit.element.getBoundingClientRect(),
-        fieldBounds = field.getBoundingClientRect();
+      const bounds = hit.element.getBoundingClientRect();
+      const fieldBounds = field.getBoundingClientRect();
       await page
         .getByRole("textbox", { name: "Literal text", exact: true })
         .nth(0)
@@ -339,7 +350,7 @@ it.each([
       .nth(0)
       .click({ position: { x: 100, y: 100 } });
     expect(state.source().getViewState().selections).toEqual(selection);
-    const container = host.querySelector("diffs-container")!;
+    const container = _fixture.host.querySelector("diffs-container")!;
     await expect
       .poll(
         () =>
@@ -362,7 +373,10 @@ it.each([
 );
 
 it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async () => {
-  const state = await mount(template26, "cancel-source");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const state = await mount(_fixture, template26, "cancel-source");
   const hit = wordPosition(state.visual.view.dom, "פסקה");
   const bounds = hit.element.getBoundingClientRect();
   const before = state.source().getViewState().selections;
@@ -373,7 +387,7 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
       clientY: bounds.top + hit.position.y,
     }),
   );
-  host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
+  _fixture.host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
   await frame();
   expect(state.reveals).toHaveLength(0);
   expect(state.source().getViewState().selections).toEqual(before);
@@ -386,7 +400,10 @@ it.each([
 ] as const)(
   "template 26: clicking inside %s reveals its authored cell",
   async (name, match, word, expected) => {
-    const state = await mount(template26, `26-math-${name}`);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const state = await mount(_fixture, template26, `26-math-${name}`);
     let mathNode: HTMLElement | null = null;
     state.visual.state.doc.descendants((node, at) => {
       if (
@@ -422,8 +439,8 @@ it.each([
       return null;
     };
     await expect.poll(glyph).toBeTruthy();
-    const bounds = glyph()!,
-      rootBounds = field().getBoundingClientRect();
+    const bounds = glyph()!;
+    const rootBounds = field().getBoundingClientRect();
     field().dataset.testid = "active-math-field";
     await page
       .getByTestId("active-math-field")
@@ -451,3 +468,22 @@ it.each([
   },
   30_000,
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

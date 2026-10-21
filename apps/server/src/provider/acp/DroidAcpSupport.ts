@@ -263,62 +263,56 @@ export function resolveAdvertisedDroidAuthMethodId(input: {
  */
 const DROID_HEADLESS_AUTH_META = { headless: true } as const;
 
-export const makeDroidAcpRuntime = (
+export const makeDroidAcpRuntime = Effect.fn("DroidAcpSupport.makeDroidAcpRuntime")(function* (
   input: DroidAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const {
-      authenticationMode = "active",
-      runtimeSettingsPath,
-      modelTools,
-      ...runtimeInput
-    } = input;
-    if (modelTools === "disabled")
-      return yield* new EffectAcpErrors.AcpRequestError({
-        code: -32603,
-        errorMessage: "Scient cannot run Droid without tools in this process.",
-      });
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...runtimeInput,
-        spawn: buildDroidAcpSpawnInput(
-          input.droidSettings,
-          input.cwd,
-          input.environment,
-          input.systemPrompt,
-          runtimeSettingsPath,
-        ),
-        authMethodId:
-          authenticationMode === "passive"
-            ? undefined
-            : (initializeResult) =>
-                resolveAdvertisedDroidAuthMethodId({
-                  environment: input.environment,
-                  advertisedAuthMethods: (initializeResult.authMethods ?? []).map(
-                    (method) => method.id,
-                  ),
-                }),
-        authenticateMeta: DROID_HEADLESS_AUTH_META,
-        // Every write waits for Droid's own report of the new value. Droid answers
-        // `set_config_option` with `{}` and then publishes the applied state in a
-        // `config_option_update` (0.183.0, 0.200.0, 0.213.0, 0.230.0); an empty
-        // acknowledgement must never stand in for that report, least of all for
-        // autonomy, and nothing reported before the answer counts.
-        configOptionTransport: "request-confirmed",
-      }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
+> {
+  const { authenticationMode = "active", runtimeSettingsPath, modelTools, ...runtimeInput } = input;
+  if (modelTools === "disabled")
+    return yield* new EffectAcpErrors.AcpRequestError({
+      code: -32603,
+      errorMessage: "Scient cannot run Droid without tools in this process.",
+    });
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...runtimeInput,
+      spawn: buildDroidAcpSpawnInput(
+        input.droidSettings,
+        input.cwd,
+        input.environment,
+        input.systemPrompt,
+        runtimeSettingsPath,
       ),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
+      authMethodId:
+        authenticationMode === "passive"
+          ? undefined
+          : (initializeResult) =>
+              resolveAdvertisedDroidAuthMethodId({
+                environment: input.environment,
+                advertisedAuthMethods: (initializeResult.authMethods ?? []).map(
+                  (method) => method.id,
+                ),
+              }),
+      authenticateMeta: DROID_HEADLESS_AUTH_META,
+      // Every write waits for Droid's own report of the new value. Droid answers
+      // `set_config_option` with `{}` and then publishes the applied state in a
+      // `config_option_update` (0.183.0, 0.200.0, 0.213.0, 0.230.0); an empty
+      // acknowledgement must never stand in for that report, least of all for
+      // autonomy, and nothing reported before the answer counts.
+      configOptionTransport: "request-confirmed",
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+      ),
+    ),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+});
 
 // ── Config-option parsing ────────────────────────────────────────────────
 
@@ -549,25 +543,27 @@ export function requestedDroidEffortFromSelection(
  * model list: a Scient model's connection says what changed (key, removal,
  * Use with); a native model is no longer offered by this Droid.
  */
-const requireOfferedDroidModel = (runtime: DroidModelEffortRuntime, modelId: string) =>
-  Effect.gen(function* () {
-    const modelOption = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
-      category: "model",
-      id: "model",
-    });
-    if (
-      modelOption === undefined ||
-      flattenSelectOptions(modelOption).some((entry) => entry.value === modelId)
-    )
-      return;
-    return yield* new EffectAcpErrors.AcpRequestError({
-      code: -32602,
-      errorMessage:
-        runtime.describeUnavailableModel?.(modelId) ??
-        `Droid no longer offers "${modelId}". Pick another model.`,
-      data: { configId: modelOption.id, receivedValue: modelId },
-    });
+const requireOfferedDroidModel = Effect.fn("DroidAcpSupport.requireOfferedDroidModel")(function* (
+  runtime: DroidModelEffortRuntime,
+  modelId: string,
+) {
+  const modelOption = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+    category: "model",
+    id: "model",
   });
+  if (
+    modelOption === undefined ||
+    flattenSelectOptions(modelOption).some((entry) => entry.value === modelId)
+  )
+    return;
+  return yield* new EffectAcpErrors.AcpRequestError({
+    code: -32602,
+    errorMessage:
+      runtime.describeUnavailableModel?.(modelId) ??
+      `Droid no longer offers "${modelId}". Pick another model.`,
+    data: { configId: modelOption.id, receivedValue: modelId },
+  });
+});
 
 /**
  * Applies model first, then reasoning effort: Droid validates effort values
@@ -585,13 +581,13 @@ const requireOfferedDroidModel = (runtime: DroidModelEffortRuntime, modelId: str
  * request for it is the same wish; any other level was picked in the
  * conversation and must be applied as asked.
  */
-const configureDroidModelAndEffort = (input: {
-  readonly runtime: DroidModelEffortRuntime;
-  readonly requestedModel: string | undefined;
-  readonly requestedEffort: string | undefined;
-  readonly validationOnly?: boolean;
-}): Effect.Effect<DroidReplacedDefault | undefined, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
+const configureDroidModelAndEffort = Effect.fn("DroidAcpSupport.configureDroidModelAndEffort")(
+  function* (input: {
+    readonly runtime: DroidModelEffortRuntime;
+    readonly requestedModel: string | undefined;
+    readonly requestedEffort: string | undefined;
+    readonly validationOnly?: boolean;
+  }): Effect.fn.Return<DroidReplacedDefault | undefined, EffectAcpErrors.AcpError> {
     let requestedEffort = input.requestedEffort;
     // The Droid default and a blank model are no choice: Droid keeps its own.
     const trimmedModel = input.requestedModel?.trim();
@@ -710,7 +706,8 @@ const configureDroidModelAndEffort = (input: {
           errorMessage: `Droid did not retain the requested reasoning effort "${requestedEffort}". The runtime reported "${reported ?? "unknown"}"; the prompt was not sent.`,
         })
     );
-  });
+  },
+);
 
 /** The configured default of a Scient model and the level Droid runs in its place. */
 export interface DroidReplacedDefault {
@@ -805,69 +802,67 @@ export function resolveDroidAutonomyModeId(runtimeMode: RuntimeMode): string {
  * because only Droid's answer says whether it runs that level (one more write
  * per Scient model with reasoning).
  */
-export const discoverDroidModels = (
+export const discoverDroidModels = Effect.fn("DroidAcpSupport.discoverDroidModels")(function* (
   runtime: DroidModelEffortRuntime,
-): Effect.Effect<ReadonlyArray<DroidDiscoveredModel>, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
-    const configOptions = yield* runtime.getConfigOptions;
-    const initialModels = buildDroidModelsFromConfigOptions(configOptions);
-    if (initialModels.length === 0) return [];
-    const modelOption = findSelectOption(configOptions, isModelConfigOption);
-    // Restore what was actually selected, not the first catalog entry.
-    const originalSlug =
-      typeof modelOption?.currentValue === "string" && modelOption.currentValue.trim() !== ""
-        ? modelOption.currentValue.trim()
-        : initialModels[0]!.slug;
-    const effortSelector = { id: DROID_EFFORT_CONFIG_ID, category: "thought_level" };
-    const originalEffort = findSelectDroidConfigOption(configOptions, effortSelector)?.currentValue;
-    // Droid keeps the reasoning level across model switches, so the levels
-    // written for the walked models would stay on the original model.
-    const restore = Effect.gen(function* () {
-      yield* runtime.setModel(originalSlug);
-      if (typeof originalEffort !== "string") return;
-      const effort = findSelectDroidConfigOption(yield* runtime.getConfigOptions, effortSelector);
-      if (effort !== undefined && effort.currentValue !== originalEffort)
-        yield* runtime.setConfigOption(effort.id, originalEffort);
-    });
-
-    const observeLadder = (
-      model: DroidDiscoveredModel,
-    ): Effect.Effect<DroidDiscoveredModel, EffectAcpErrors.AcpError> =>
-      Effect.gen(function* () {
-        // Droid's runtime-level setModel contract returns only after the
-        // authoritative config_option_update reflects this selection.
-        yield* runtime.setModel(model.slug);
-        // A level Droid will not run at all is the thread's error to report.
-        const replacedDefault =
-          runtime.getReasoningMetadata?.(model.slug) == null
-            ? undefined
-            : yield* applyDroidModelAndEffort({
-                runtime,
-                requestedModel: undefined,
-                requestedEffort: undefined,
-              }).pipe(Effect.catch(() => Effect.succeed(undefined)));
-        const snapshot = buildDroidModelsFromConfigOptions(yield* runtime.getConfigOptions);
-        const observed = snapshot.find((entry) => entry.slug === model.slug);
-        return {
-          slug: model.slug,
-          name: model.name,
-          capabilitiesObserved: observed?.capabilitiesObserved === true,
-          currentEffortValue: observed?.currentEffortValue,
-          efforts: observed?.efforts ?? [],
-          providerCostLabel: model.providerCostLabel,
-          replacedDefault,
-        } satisfies DroidDiscoveredModel;
-      });
-
-    return yield* Effect.forEach(initialModels, observeLadder, { concurrency: 1 }).pipe(
-      // Restoration runs on every exit path — including a caller timeout that
-      // interrupts this effect — so the walk cannot leave an unrelated model
-      // or level selected. A failing restore fails the walk; the probe then
-      // degrades to the snapshot inventory with unknown ladders rather than
-      // wrong ones.
-      Effect.onExit(() => restore),
-    );
+): Effect.fn.Return<ReadonlyArray<DroidDiscoveredModel>, EffectAcpErrors.AcpError> {
+  const configOptions = yield* runtime.getConfigOptions;
+  const initialModels = buildDroidModelsFromConfigOptions(configOptions);
+  if (initialModels.length === 0) return [];
+  const modelOption = findSelectOption(configOptions, isModelConfigOption);
+  // Restore what was actually selected, not the first catalog entry.
+  const originalSlug =
+    typeof modelOption?.currentValue === "string" && modelOption.currentValue.trim() !== ""
+      ? modelOption.currentValue.trim()
+      : initialModels[0]!.slug;
+  const effortSelector = { id: DROID_EFFORT_CONFIG_ID, category: "thought_level" };
+  const originalEffort = findSelectDroidConfigOption(configOptions, effortSelector)?.currentValue;
+  // Droid keeps the reasoning level across model switches, so the levels
+  // written for the walked models would stay on the original model.
+  const restore = Effect.gen(function* () {
+    yield* runtime.setModel(originalSlug);
+    if (typeof originalEffort !== "string") return;
+    const effort = findSelectDroidConfigOption(yield* runtime.getConfigOptions, effortSelector);
+    if (effort !== undefined && effort.currentValue !== originalEffort)
+      yield* runtime.setConfigOption(effort.id, originalEffort);
   });
+
+  const observeLadder = Effect.fn("DroidAcpSupport.observeLadder")(function* (
+    model: DroidDiscoveredModel,
+  ): Effect.fn.Return<DroidDiscoveredModel, EffectAcpErrors.AcpError> {
+    // Droid's runtime-level setModel contract returns only after the
+    // authoritative config_option_update reflects this selection.
+    yield* runtime.setModel(model.slug);
+    // A level Droid will not run at all is the thread's error to report.
+    const replacedDefault =
+      runtime.getReasoningMetadata?.(model.slug) == null
+        ? undefined
+        : yield* applyDroidModelAndEffort({
+            runtime,
+            requestedModel: undefined,
+            requestedEffort: undefined,
+          }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+    const snapshot = buildDroidModelsFromConfigOptions(yield* runtime.getConfigOptions);
+    const observed = snapshot.find((entry) => entry.slug === model.slug);
+    return {
+      slug: model.slug,
+      name: model.name,
+      capabilitiesObserved: observed?.capabilitiesObserved === true,
+      currentEffortValue: observed?.currentEffortValue,
+      efforts: observed?.efforts ?? [],
+      providerCostLabel: model.providerCostLabel,
+      replacedDefault,
+    } satisfies DroidDiscoveredModel;
+  });
+
+  return yield* Effect.forEach(initialModels, observeLadder, { concurrency: 1 }).pipe(
+    // Restoration runs on every exit path — including a caller timeout that
+    // interrupts this effect — so the walk cannot leave an unrelated model
+    // or level selected. A failing restore fails the walk; the probe then
+    // degrades to the snapshot inventory with unknown ladders rather than
+    // wrong ones.
+    Effect.onExit(() => restore),
+  );
+});
 
 // ── Composer capability mapping ─────────────────────────────────────────
 

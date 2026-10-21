@@ -1,6 +1,7 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { lazy, useEffect, useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { EnvironmentId } from "@t3tools/contracts";
 
@@ -52,16 +53,17 @@ import {
 import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
 
-let root: Root | undefined;
-let container: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  container?.remove();
-  root = undefined;
-  container = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.container?.remove();
+  _fixture.root0 = undefined;
+  _fixture.container = undefined;
+}
 
 it("keeps one centered message until the document is parsed, then shows it without a cover", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(1200, 900);
   const source = String.raw`\documentclass{article}
 \usepackage{amsmath}
@@ -117,10 +119,12 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
       </ScientSurfaceSuspense>
     );
   }
-  container = document.createElement("div");
-  container.style.cssText = "display:flex;flex-direction:column;width:1000px;height:800px";
-  document.body.append(container);
-  root = createRoot(container);
+  _fixture.container = document.createElement("div");
+  _fixture.container.style.cssText = "display:flex;flex-direction:column;width:1000px;height:800px";
+  document.body.append(_fixture.container);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
   const face = new FontFace("KaTeX_OpeningPresentationFixture", 'local("Arial")');
   const load = vi.spyOn(face, "load").mockImplementation(() => new Promise<FontFace>(() => {}));
   document.fonts.add(face);
@@ -129,16 +133,16 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
   const failures: string[] = [];
   let center: number | undefined;
   const sample = () => {
-    if (!sampling || !container) return;
-    if (!container.querySelector(".scient-latex-visual-document")) {
-      const labels = container.querySelectorAll<HTMLElement>(
+    if (!sampling || !_fixture.container) return;
+    if (!_fixture.container.querySelector(".scient-latex-visual-document")) {
+      const labels = _fixture.container.querySelectorAll<HTMLElement>(
         '.scient-latex-document-preparation span:not([aria-hidden="true"])',
       );
       if (labels.length !== 1)
         failures.push(`Expected one opening message, found ${labels.length}`);
       const label = labels[0];
       if (
-        container.querySelectorAll(
+        _fixture.container.querySelectorAll(
           ".scient-latex-document-preparation [data-latex-preparation-spinner]",
         ).length !== 1
       )
@@ -157,8 +161,10 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     requestAnimationFrame(sample);
   };
   try {
-    root.render(<Pipeline />);
-    await expect.poll(() => container!.textContent).toContain(LATEX_DOCUMENT_PREPARATION_LABEL);
+    await _fixture.root0.rerender(<Pipeline />);
+    await expect
+      .poll(() => _fixture.container!.textContent)
+      .toContain(LATEX_DOCUMENT_PREPARATION_LABEL);
     requestAnimationFrame(sample);
     change("module");
     await expect.poll(() => resolveModule).toBeTypeOf("function");
@@ -166,21 +172,25 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     resolveModule({ default: LatexProjectVisualEditor });
     change("root");
     await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
-    expect(container.textContent).not.toContain("Finding the document");
+    expect(_fixture.container.textContent).not.toContain("Finding the document");
     change("layout");
     await expect
-      .poll(() => container!.querySelector(".scient-latex-visual-document"), { timeout: 15000 })
+      .poll(() => _fixture.container!.querySelector(".scient-latex-visual-document"), {
+        timeout: 15000,
+      })
       .toBeTruthy();
     sampling = false;
     expect(samples).toBeGreaterThan(2);
     expect(failures).toEqual([]);
     // Parsed content appears directly: no cover, no busy page, even while a
     // document font is still loading.
-    expect(container.querySelector(".scient-latex-document-preparation")).toBeNull();
-    expect(container.querySelector("[aria-busy='true']")).toBeNull();
-    const documentElement = container.querySelector<HTMLElement>(".scient-latex-visual-document")!;
+    expect(_fixture.container.querySelector(".scient-latex-document-preparation")).toBeNull();
+    expect(_fixture.container.querySelector("[aria-busy='true']")).toBeNull();
+    const documentElement = _fixture.container.querySelector<HTMLElement>(
+      ".scient-latex-visual-document",
+    )!;
     await expect.poll(() => documentElement.textContent).toContain("Paragraph 0.");
-    const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    const scroll = _fixture.container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     const first = [...documentElement.querySelectorAll("p")].find((paragraph) =>
       paragraph.textContent?.startsWith("Paragraph 0."),
     )!;
@@ -196,3 +206,22 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     clearVisualDraft(draftKey);
   }
 }, 30000);
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

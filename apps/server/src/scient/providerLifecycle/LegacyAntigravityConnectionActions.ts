@@ -292,23 +292,24 @@ export function makeAntigravityConnectionActionsFromRuntime(
 ): ProviderConnectionActions {
   return {
     methods: ["antigravity_google"],
-    start: (method: ProviderConnectionMethod) =>
-      Effect.gen(function* () {
-        if (method !== "antigravity_google") {
-          return yield* connectionError("Antigravity does not support this sign-in method.");
-        }
-        const process = yield* runtime.startLogin;
-        return {
-          authorizationUrl: process.authorizationUrl,
-          authorizationUrlKind: process.authorizationUrlKind,
-          initialStatus: "waiting_for_browser",
-          ...(process.submitAuthorizationCode
-            ? { submitAuthorizationCode: process.submitAuthorizationCode }
-            : {}),
-          waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
-          cancel: process.cancel,
-        };
-      }),
+    start: Effect.fn("LegacyAntigravityConnectionActions.start")(function* (
+      method: ProviderConnectionMethod,
+    ) {
+      if (method !== "antigravity_google") {
+        return yield* connectionError("Antigravity does not support this sign-in method.");
+      }
+      const process = yield* runtime.startLogin;
+      return {
+        authorizationUrl: process.authorizationUrl,
+        authorizationUrlKind: process.authorizationUrlKind,
+        initialStatus: "waiting_for_browser",
+        ...(process.submitAuthorizationCode
+          ? { submitAuthorizationCode: process.submitAuthorizationCode }
+          : {}),
+        waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
+        cancel: process.cancel,
+      };
+    }),
     disconnect: runtime.logout,
   };
 }
@@ -412,8 +413,8 @@ export const makeAntigravityConnectionActions = Effect.fn("AntigravityConnection
       ),
     );
 
-    const spawnInteractive = (args: ReadonlyArray<string> = []) =>
-      Effect.gen(function* () {
+    const spawnInteractiveEffect = Effect.fn("LegacyAntigravityConnectionActions.spawnInteractive")(
+      function* (args: ReadonlyArray<string>) {
         const resolved = yield* resolveSpawnCommand(settings.binaryPath || "agy", args, {
           env: agyEnvironment,
           extendEnv: false,
@@ -437,7 +438,10 @@ export const makeAntigravityConnectionActions = Effect.fn("AntigravityConnection
               connectionError("Scient could not start the Antigravity sign-in terminal.", cause),
             ),
           );
-      });
+      },
+    );
+
+    const spawnInteractive = (args: ReadonlyArray<string> = []) => spawnInteractiveEffect(args);
 
     const startLogin = Effect.gen(function* () {
       if (yield* isLoggedIn) {

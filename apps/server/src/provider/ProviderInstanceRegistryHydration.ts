@@ -79,15 +79,28 @@ export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettin
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
+      const serverSettings = yield* Settings.ServerSettingsService;
       yield* settingsChanges.pipe(
-        Stream.runForEach((next) =>
-          mutator
-            .reconcile(deriveProviderInstanceConfigMap(next))
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-              ),
+        Stream.runForEach(() =>
+          // The subscription predates the seed read, so a queued change can be
+          // older than the seed. A failed current read must never replay an older emission.
+          serverSettings.getSettings.pipe(
+            // SCIENT-FORK:START — an unrelated secret failure must not retain a revoked native runtime.
+            Effect.catch((error) =>
+              error.operation === "read-secret"
+                ? serverSettings.withSettingsSnapshot(Effect.succeed, {
+                    allowUnresolvedSecrets: true,
+                  })
+                : Effect.fail(error),
             ),
+            // SCIENT-FORK:END
+            Effect.flatMap((current) =>
+              mutator.reconcile(deriveProviderInstanceConfigMap(current)),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
+            ),
+          ),
         ),
         Effect.forkScoped,
       );
@@ -113,12 +126,8 @@ export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettin
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* Settings.ServerSettingsService;
-    // SCIENT-FORK:START — subscribe before the seed read so no settings update is lost.
-    // Subscribe before reading the seed snapshot. This closes both possible
-    // loss windows: an update published while the snapshot is being read is
-    // queued for reconcile, and the consumer is subscribed before it forks.
+    // Subscribe before the seed read so saves during registry construction are queued.
     const settingsChanges = yield* serverSettings.subscribeChanges;
-    // SCIENT-FORK:END
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );

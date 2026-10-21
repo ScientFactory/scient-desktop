@@ -169,47 +169,46 @@ export const makeRunningForkTextSnapshots = (input: {
   const { owner: current, eventRouting, eventSink, providerEventIngestor } = input;
   const snapshotTextFloors = new Map<string, string>();
   return {
-    capture: (event: ProviderTextSnapshotBatch) =>
-      Effect.gen(function* () {
-        const owner = event.owner;
-        const routing = yield* Ref.get(eventRouting);
-        if (
-          owner.threadId !== current.threadId ||
-          owner.runId !== current.runId ||
-          owner.activeAttemptId !== current.activeAttemptId ||
-          owner.rootNodeId !== current.rootNodeId ||
-          owner.runOrdinal !== current.runOrdinal ||
-          owner.providerThreadId !== current.providerThreadId ||
-          owner.providerSessionId !== current.providerSessionId ||
-          owner.providerInstanceId !== current.providerInstanceId ||
-          owner.driver !== current.driver ||
-          routing.rootTurnEnded ||
-          routing.rootProviderTurnId !== owner.providerTurnId ||
-          eventSink.captureRunningForkText === undefined
-        )
-          return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-        const normalized = yield* Effect.forEach(event.events, (frame) =>
-          providerEventIngestor.normalize({
-            providerSessionId: current.providerSessionId,
-            providerInstanceId: current.providerInstanceId,
-            threadId: current.threadId,
-            runId: current.runId,
-            nodeId: current.rootNodeId,
-            event: frame,
-          }),
-        );
-        const capture = yield* eventSink.captureRunningForkText({
-          owner,
-          events: normalized.flat(),
-        });
-        for (const frame of event.events) {
-          if (frame.type === "message.updated")
-            snapshotTextFloors.set(`message.updated:${frame.message.id}`, frame.message.text);
-          if (frame.type === "turn_item.updated" && frame.turnItem.type === "assistant_message")
-            snapshotTextFloors.set(`turn_item.updated:${frame.turnItem.id}`, frame.turnItem.text);
-        }
-        return capture;
-      }),
+    capture: Effect.fn("runningForkSource.capture")(function* (event: ProviderTextSnapshotBatch) {
+      const owner = event.owner;
+      const routing = yield* Ref.get(eventRouting);
+      if (
+        owner.threadId !== current.threadId ||
+        owner.runId !== current.runId ||
+        owner.activeAttemptId !== current.activeAttemptId ||
+        owner.rootNodeId !== current.rootNodeId ||
+        owner.runOrdinal !== current.runOrdinal ||
+        owner.providerThreadId !== current.providerThreadId ||
+        owner.providerSessionId !== current.providerSessionId ||
+        owner.providerInstanceId !== current.providerInstanceId ||
+        owner.driver !== current.driver ||
+        routing.rootTurnEnded ||
+        routing.rootProviderTurnId !== owner.providerTurnId ||
+        eventSink.captureRunningForkText === undefined
+      )
+        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+      const normalized = yield* Effect.forEach(event.events, (frame) =>
+        providerEventIngestor.normalize({
+          providerSessionId: current.providerSessionId,
+          providerInstanceId: current.providerInstanceId,
+          threadId: current.threadId,
+          runId: current.runId,
+          nodeId: current.rootNodeId,
+          event: frame,
+        }),
+      );
+      const capture = yield* eventSink.captureRunningForkText({
+        owner,
+        events: normalized.flat(),
+      });
+      for (const frame of event.events) {
+        if (frame.type === "message.updated")
+          snapshotTextFloors.set(`message.updated:${frame.message.id}`, frame.message.text);
+        if (frame.type === "turn_item.updated" && frame.turnItem.type === "assistant_message")
+          snapshotTextFloors.set(`turn_item.updated:${frame.turnItem.id}`, frame.turnItem.text);
+      }
+      return capture;
+    }),
     floor: (deliveredEvent: ProviderAdapterV2Event): ProviderAdapterV2Event | null => {
       const text =
         deliveredEvent.type === "message.updated"

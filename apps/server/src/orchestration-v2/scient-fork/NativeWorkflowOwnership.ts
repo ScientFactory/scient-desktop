@@ -154,6 +154,7 @@ export function routeWorkflowSubagentEvent(
     const previous = coordinators.get(task.id);
     const ownedThreadIds = new Set(state.ownedThreadIds);
     const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
+    const ownedProviderTurns = new Map(state.ownedProviderTurns);
     const workflowMemberParents = new Map(state.workflowMemberParents);
     if (
       ownership.ownsRun &&
@@ -195,6 +196,9 @@ export function routeWorkflowSubagentEvent(
         previous.providerThreadId !== input.providerThreadId
       ) {
         ownedProviderThreadIds.delete(previous.providerThreadId);
+        for (const [turnId, providerThreadId] of ownedProviderTurns) {
+          if (providerThreadId === previous.providerThreadId) ownedProviderTurns.delete(turnId);
+        }
       }
       for (const [id, member] of members) {
         if (member.parentNodeId === task.id) members.delete(id);
@@ -206,6 +210,7 @@ export function routeWorkflowSubagentEvent(
         ...state,
         ownedThreadIds,
         ownedProviderThreadIds,
+        ownedProviderTurns,
         workflowMemberParents,
         workflowCoordinators: coordinators,
         workflowMembers: members,
@@ -264,78 +269,88 @@ interface WorkflowTrackedProjection {
 }
 
 /** Stop tracking every row a transferred workflow coordinator took with it. */
-export const releaseRevokedWorkflowTracking = <Open extends WorkflowTrackedProjection>(
+export const releaseRevokedWorkflowTracking = Effect.fn(
+  "NativeWorkflowOwnership.releaseRevokedWorkflowTracking",
+)(function* <Open extends WorkflowTrackedProjection>(
   revoked: RevokedWorkflowOwnership,
   tracked: {
     readonly openRunOwnedSubagents: Ref.Ref<Open>;
     readonly activeBackgroundTurnItems: Ref.Ref<ReadonlySet<OrchestrationV2TurnItem["id"]>>;
     readonly activeChildProviderTurns: Ref.Ref<ReadonlySet<ProviderTurnId>>;
-    readonly activeChildSubagents: Ref.Ref<ReadonlySet<NodeId>>;
+    readonly activeChildSubagents: Ref.Ref<ReadonlyMap<NodeId, ThreadId>>;
+    readonly ownedProviderTurns: ProviderEventRoutingState["ownedProviderTurns"];
   },
-) =>
-  Effect.gen(function* () {
-    const { ids, threadIds: revokedThreadIds } = revoked;
-    const {
-      openRunOwnedSubagents,
-      activeBackgroundTurnItems,
-      activeChildProviderTurns,
-      activeChildSubagents,
-    } = tracked;
-    const open = yield* Ref.get(openRunOwnedSubagents);
-    const revokedIds = new Set([
-      ...ids,
-      // Rich workflow members are runless rows on the coordinator child
-      // thread. They lose the old subscriber with that exact child owner.
-      ...Array.from(open.subagents.values())
-        .filter((task) => revokedThreadIds.has(task.threadId))
-        .map((task) => task.id),
-    ]);
-    const revokedItemIds = new Set([
-      ...Array.from(open.turnItems.values())
-        .filter((item) => revokedIds.has(item.subagentId))
-        .map((item) => item.id),
-      ...Array.from(open.childTurnItems.values())
-        .filter((item) => revokedThreadIds.has(item.threadId))
-        .map((item) => item.id),
-    ]);
-    yield* Ref.update(
-      activeBackgroundTurnItems,
-      (current) => new Set(Array.from(current).filter((id) => !revokedItemIds.has(id))),
-    );
-    const revokedTurnIds = new Set(
-      Array.from(open.nodes.values()).flatMap((node) =>
-        revokedThreadIds.has(node.threadId) && node.providerTurnId !== null
-          ? [node.providerTurnId]
-          : [],
-      ),
-    );
-    yield* Ref.update(
-      activeChildProviderTurns,
-      (current) => new Set(Array.from(current).filter((id) => !revokedTurnIds.has(id))),
-    );
-    yield* Ref.update(
-      activeChildSubagents,
-      (current) => new Set(Array.from(current).filter((id) => !revokedIds.has(id))),
-    );
-    yield* Ref.update(openRunOwnedSubagents, (current) => ({
-      ...current,
-      subagents: new Map(Array.from(current.subagents).filter(([id]) => !revokedIds.has(id))),
-      nodes: new Map(
-        Array.from(current.nodes).filter(
-          ([id, node]) => !revokedIds.has(id) && !revokedThreadIds.has(node.threadId),
+) {
+  const { ids, threadIds: revokedThreadIds } = revoked;
+  const {
+    openRunOwnedSubagents,
+    activeBackgroundTurnItems,
+    activeChildProviderTurns,
+    activeChildSubagents,
+  } = tracked;
+  const open = yield* Ref.get(openRunOwnedSubagents);
+  const revokedIds = new Set([
+    ...ids,
+    // Rich workflow members are runless rows on the coordinator child
+    // thread. They lose the old subscriber with that exact child owner.
+    ...Array.from(open.subagents.values())
+      .filter((task) => revokedThreadIds.has(task.threadId))
+      .map((task) => task.id),
+  ]);
+  const revokedItemIds = new Set([
+    ...Array.from(open.turnItems.values())
+      .filter((item) => revokedIds.has(item.subagentId))
+      .map((item) => item.id),
+    ...Array.from(open.childTurnItems.values())
+      .filter((item) => revokedThreadIds.has(item.threadId))
+      .map((item) => item.id),
+  ]);
+  yield* Ref.update(
+    activeBackgroundTurnItems,
+    (current) => new Set(Array.from(current).filter((id) => !revokedItemIds.has(id))),
+  );
+  const revokedTurnIds = new Set(
+    Array.from(open.nodes.values()).flatMap((node) =>
+      revokedThreadIds.has(node.threadId) && node.providerTurnId !== null
+        ? [node.providerTurnId]
+        : [],
+    ),
+  );
+  yield* Ref.update(
+    activeChildProviderTurns,
+    (current) =>
+      new Set(
+        Array.from(current).filter(
+          (id) => !revokedTurnIds.has(id) && tracked.ownedProviderTurns.has(id),
         ),
       ),
-      turnItems: new Map(Array.from(current.turnItems).filter(([id]) => !revokedIds.has(id))),
-      childTurnItems: new Map(
-        Array.from(current.childTurnItems).filter(
-          ([, item]) => !revokedThreadIds.has(item.threadId),
+  );
+  yield* Ref.update(
+    activeChildSubagents,
+    (current) =>
+      new Map(
+        Array.from(current).filter(
+          ([id, threadId]) => !revokedIds.has(id) && !revokedThreadIds.has(threadId),
         ),
       ),
-      linkedChildThreadIds: new Set(
-        Array.from(current.linkedChildThreadIds).filter((id) => !revokedThreadIds.has(id)),
+  );
+  yield* Ref.update(openRunOwnedSubagents, (current) => ({
+    ...current,
+    subagents: new Map(Array.from(current.subagents).filter(([id]) => !revokedIds.has(id))),
+    nodes: new Map(
+      Array.from(current.nodes).filter(
+        ([id, node]) => !revokedIds.has(id) && !revokedThreadIds.has(node.threadId),
       ),
-      linkedWorkflowMemberIds: new Set(
-        Array.from(current.linkedWorkflowMemberIds).filter((id) => !revokedIds.has(id)),
-      ),
-    }));
-  });
+    ),
+    turnItems: new Map(Array.from(current.turnItems).filter(([id]) => !revokedIds.has(id))),
+    childTurnItems: new Map(
+      Array.from(current.childTurnItems).filter(([, item]) => !revokedThreadIds.has(item.threadId)),
+    ),
+    linkedChildThreadIds: new Set(
+      Array.from(current.linkedChildThreadIds).filter((id) => !revokedThreadIds.has(id)),
+    ),
+    linkedWorkflowMemberIds: new Set(
+      Array.from(current.linkedWorkflowMemberIds).filter((id) => !revokedIds.has(id)),
+    ),
+  }));
+});

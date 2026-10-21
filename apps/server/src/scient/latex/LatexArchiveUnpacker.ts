@@ -86,63 +86,64 @@ export const make = Effect.gen(function* () {
   // bsdtar as `tar`, and Linux only ever reads the `.tar.xz` asset.
   const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";
 
-  const unpack: LatexArchiveUnpacker["Service"]["unpack"] = (input) =>
-    Effect.gen(function* () {
-      if (input.archive !== "seven-zip-sfx" && input.archive !== "tar-xz") {
-        return yield* new LatexArchiveUnpackError({
-          reason: "unsupported-archive",
-          detail: `Scient cannot expand a ${String(input.archive)} bundle.`,
-        });
-      }
-      if (platform === "win32") {
-        const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
-        if (!present) {
-          return yield* new LatexArchiveUnpackError({
-            reason: "unpacker-unavailable",
-            detail: `This computer has no ${command}, which Scient needs to expand the download.`,
-          });
-        }
-      }
-      const result = yield* processRunner
-        .run({
-          command,
-          args: tinyTexUnpackArguments(input),
-          timeout: UNPACK_TIMEOUT,
-          maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LatexArchiveUnpackError({
-                reason: "unpack-failed",
-                detail: `Scient could not run tar to expand the LaTeX distribution: ${cause.message}`,
-              }),
-          ),
-        );
-      if (result.timedOut) {
-        return yield* new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: "Expanding the LaTeX distribution took too long and was stopped.",
-        });
-      }
-      const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
-      if (missingTar) {
+  const unpack: LatexArchiveUnpacker["Service"]["unpack"] = Effect.fn(
+    "LatexArchiveUnpacker.unpack",
+  )(function* (input) {
+    if (input.archive !== "seven-zip-sfx" && input.archive !== "tar-xz") {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unsupported-archive",
+        detail: `Scient cannot expand a ${String(input.archive)} bundle.`,
+      });
+    }
+    if (platform === "win32") {
+      const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
+      if (!present) {
         return yield* new LatexArchiveUnpackError({
           reason: "unpacker-unavailable",
           detail: `This computer has no ${command}, which Scient needs to expand the download.`,
         });
       }
-      if (result.code !== 0) {
-        return yield* new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: `Expanding the LaTeX distribution failed: ${
-            result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
-          }`,
-        });
-      }
-    });
+    }
+    const result = yield* processRunner
+      .run({
+        command,
+        args: tinyTexUnpackArguments(input),
+        timeout: UNPACK_TIMEOUT,
+        maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new LatexArchiveUnpackError({
+              reason: "unpack-failed",
+              detail: `Scient could not run tar to expand the LaTeX distribution: ${cause.message}`,
+            }),
+        ),
+      );
+    if (result.timedOut) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: "Expanding the LaTeX distribution took too long and was stopped.",
+      });
+    }
+    const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
+    if (missingTar) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpacker-unavailable",
+        detail: `This computer has no ${command}, which Scient needs to expand the download.`,
+      });
+    }
+    if (result.code !== 0) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: `Expanding the LaTeX distribution failed: ${
+          result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
+        }`,
+      });
+    }
+  });
 
   return LatexArchiveUnpacker.of({ unpack });
 });

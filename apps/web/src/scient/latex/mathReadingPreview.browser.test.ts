@@ -1,10 +1,9 @@
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { installMathReadingPreview } from "./mathReadingPreview";
 
-const hosts: HTMLElement[] = [];
-function preview() {
+function preview(_fixture: _Fixture) {
   const host = document.createElement("span");
-  hosts.push(host);
+  _fixture.hosts.push(host);
   document.body.append(host);
   const root = installMathReadingPreview(host);
   const content = root.querySelector<HTMLElement>("[data-math-preview-content]")!;
@@ -12,19 +11,22 @@ function preview() {
   return { host, root, content };
 }
 
-afterEach(() => {
-  hosts.splice(0).forEach((host) => host.remove());
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  _fixture.hosts.splice(0).forEach((host) => host.remove());
+}
 
-it("styles each formula from the same text without duplicating content or changing its state", () => {
-  const first = preview();
+it("styles each formula from the same text without duplicating content or changing its state", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const first = preview(_fixture);
   const style = first.root.querySelector("style")!;
   expect(first.root.adoptedStyleSheets).toHaveLength(0);
   expect(style.textContent).not.toMatch(/@font-face/u);
   expect(style.textContent).toContain("::selection");
   first.content.dataset.mathPreviewReady = "";
   for (let index = 0; index < 100; index++) {
-    const next = preview();
+    const next = preview(_fixture);
     expect(next.root.querySelector("style")!.textContent).toBe(style.textContent);
     expect(next.content.textContent).toBe("x");
   }
@@ -37,7 +39,10 @@ it("styles each formula from the same text without duplicating content or changi
 
 // A shared adopted stylesheet made every later style update cost time in
 // proportion to all formulas: 36 ms per update at 4,000 formulas.
-it("keeps adding a formula cheap in a document with thousands of them", () => {
+it("keeps adding a formula cheap in a document with thousands of them", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const container = document.createElement("div");
   document.body.append(container);
   try {
@@ -61,3 +66,21 @@ it("keeps adding a formula cheap in a document with thousands of them", () => {
     container.remove();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    hosts: [] as HTMLElement[],
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

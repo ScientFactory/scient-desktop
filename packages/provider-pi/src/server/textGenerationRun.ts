@@ -241,7 +241,13 @@ export const makePiRunJson = (run: {
               (cause) =>
                 new TextGenerationError({
                   operation: input.operation,
-                  detail: cause.detail,
+                  detail:
+                    cause.kind === "request" && cause.command === "set_model"
+                      ? `Pi rejected model '${input.modelSelection.model}': ${cause.detail}. ` +
+                        "If the model comes from a Pi extension or package, text generation cannot use it " +
+                        "because it runs Pi with --no-extensions. Pick a built-in Pi model or one defined " +
+                        "in Pi's models.json."
+                      : cause.detail,
                   cause,
                 }),
             ),

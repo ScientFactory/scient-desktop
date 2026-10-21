@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { stubGlobal as _fixtureStubGlobal } from "../../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 import { scheduleMathFieldMount } from "./mathFieldMountQueue";
 
 const cancellations: Array<() => void> = [];
@@ -7,13 +8,16 @@ function job(callback: () => void, priority = 0) {
   cancellations.push(queued.cancel);
   return queued;
 }
-afterEach(() => {
+async function _cleanupFixture0(_fixture: _Fixture) {
   for (const cancel of cancellations.splice(0)) cancel();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
+}
 
 it("finishes prioritized preview work without waiting for an animation frame", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
   const completed: string[] = [];
   job(() => completed.push("outside viewport"), 0);
@@ -24,6 +28,9 @@ it("finishes prioritized preview work without waiting for an animation frame", a
 });
 
 it("keeps cancellation local and flushes explicit editing exactly once", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const completed: string[] = [];
   job(() => completed.push("canceled"), 3).cancel();
   const editing = job(() => completed.push("editing"), 4);
@@ -35,6 +42,9 @@ it("keeps cancellation local and flushes explicit editing exactly once", async (
 });
 
 it("defers preview work while input is pending and resumes afterward", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const scheduling = (navigator as Navigator & { scheduling: { isInputPending(): boolean } })
     .scheduling;
   const pending = vi.spyOn(scheduling, "isInputPending").mockReturnValue(true);
@@ -47,7 +57,10 @@ it("defers preview work while input is pending and resumes afterward", async () 
 });
 
 it("also progresses without animation frames when the task scheduler is unavailable", async () => {
-  vi.stubGlobal("scheduler", undefined);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.stack.use(_fixtureStubGlobal("scheduler", undefined));
   vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
   const completed: string[] = [];
   job(() => completed.push("reading"));
@@ -55,6 +68,9 @@ it("also progresses without animation frames when the task scheduler is unavaila
 });
 
 it("continues other previews after one scheduled view throws", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const report = vi.spyOn(window, "reportError").mockImplementation(() => {});
   const failure = new Error("Synthetic preview failure");
   const completed: string[] = [];
@@ -68,13 +84,35 @@ it("continues other previews after one scheduled view throws", async () => {
 });
 
 it("publishes visible previews when background tasks are starved by layout", async () => {
-  vi.stubGlobal("scheduler", {
-    postTask(callback: () => void, options: { priority: string }) {
-      if (options.priority === "background") return new Promise<void>(() => {});
-      return Promise.resolve().then(callback);
-    },
-  });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.stack.use(
+    _fixtureStubGlobal("scheduler", {
+      postTask(callback: () => void, options: { priority: string }) {
+        if (options.priority === "background") return new Promise<void>(() => {});
+        return Promise.resolve().then(callback);
+      },
+    }),
+  );
   const completed: string[] = [];
   job(() => completed.push("visible"), 2);
   await expect.poll(() => completed, { timeout: 180, interval: 10 }).toEqual(["visible"]);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

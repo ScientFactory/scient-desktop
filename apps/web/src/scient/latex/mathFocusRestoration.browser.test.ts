@@ -1,39 +1,36 @@
 import { MathfieldElement } from "mathlive";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 MathfieldElement.fontsDirectory = null;
 MathfieldElement.soundsDirectory = null;
 
-let field: MathfieldElement;
-let previousRestoration: boolean;
-
-beforeEach(async () => {
-  previousRestoration = MathfieldElement.restoreFocusWhenDocumentFocused;
+async function _setupFixture0(_fixture: _Fixture) {
+  _fixture.previousRestoration = MathfieldElement.restoreFocusWhenDocumentFocused;
   MathfieldElement.restoreFocusWhenDocumentFocused = true;
-  field = new MathfieldElement({ mathVirtualKeyboardPolicy: "manual" });
-  field.value = "x^2+1";
-  document.body.append(field);
+  _fixture.field = new MathfieldElement({ mathVirtualKeyboardPolicy: "manual" });
+  _fixture.field.value = "x^2+1";
+  document.body.append(_fixture.field);
   const focused = new Promise<void>((resolve) =>
-    field.addEventListener("focus", () => resolve(), { once: true }),
+    _fixture.field.addEventListener("focus", () => resolve(), { once: true }),
   );
-  field.focus();
+  _fixture.field.focus();
   await focused;
-  await expect.poll(() => field.hasFocus()).toBe(true);
-});
+  await expect.poll(() => _fixture.field.hasFocus()).toBe(true);
+}
 
-afterEach(() => {
-  field.remove();
+async function _cleanupFixture1(_fixture: _Fixture) {
+  _fixture.field.remove();
   // Clear unpatched listeners too when demonstrating the regression.
   document.dispatchEvent(new FocusEvent("focusin"));
   document.dispatchEvent(new MouseEvent("click"));
   window.dispatchEvent(new Event("focus"));
-  MathfieldElement.restoreFocusWhenDocumentFocused = previousRestoration;
+  MathfieldElement.restoreFocusWhenDocumentFocused = _fixture.previousRestoration;
   vi.restoreAllMocks();
-});
+}
 
-async function blurAndObserveRestoration() {
+async function blurAndObserveRestoration(_fixture: _Fixture) {
   const registrations = vi.spyOn(document, "addEventListener");
-  field.blur();
+  _fixture.field.blur();
   const restorationCalls = () =>
     registrations.mock.calls.filter(
       ([type, , options]) =>
@@ -45,36 +42,72 @@ async function blurAndObserveRestoration() {
 }
 
 it("releases pending document-focus restoration when the math field is removed", async () => {
-  const signals = await blurAndObserveRestoration();
-  field.remove();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const signals = await blurAndObserveRestoration(_fixture);
+  _fixture.field.remove();
   expect(signals.every((signal) => signal?.aborted)).toBe(true);
-  expect(field.value).toBe("x^2+1");
+  expect(_fixture.field.value).toBe("x^2+1");
 });
 
 it.each(["focusin", "click"])("cancels both restoration listeners on document %s", async (type) => {
-  const signals = await blurAndObserveRestoration();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const signals = await blurAndObserveRestoration(_fixture);
   document.dispatchEvent(new Event(type));
   expect(signals.every((signal) => signal?.aborted)).toBe(true);
   window.dispatchEvent(new Event("blur"));
   window.dispatchEvent(new Event("focus"));
-  expect(field.hasFocus()).toBe(false);
-  expect(field.value).toBe("x^2+1");
+  expect(_fixture.field.hasFocus()).toBe(false);
+  expect(_fixture.field.value).toBe("x^2+1");
 });
 
 it("keeps window-focus restoration for a connected field", async () => {
-  await blurAndObserveRestoration();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await blurAndObserveRestoration(_fixture);
   window.dispatchEvent(new Event("blur"));
   window.dispatchEvent(new Event("focus"));
-  await expect.poll(() => field.hasFocus()).toBe(true);
-  expect(field.value).toBe("x^2+1");
+  await expect.poll(() => _fixture.field.hasFocus()).toBe(true);
+  expect(_fixture.field.value).toBe("x^2+1");
 });
 
 it("does not restore a removed field after the window loses focus", async () => {
-  const signals = await blurAndObserveRestoration();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const signals = await blurAndObserveRestoration(_fixture);
   window.dispatchEvent(new Event("blur"));
-  field.remove();
+  _fixture.field.remove();
   window.dispatchEvent(new Event("focus"));
-  expect(field.hasFocus()).toBe(false);
+  expect(_fixture.field.hasFocus()).toBe(false);
   expect(signals.every((signal) => signal?.aborted)).toBe(true);
-  expect(field.value).toBe("x^2+1");
+  expect(_fixture.field.value).toBe("x^2+1");
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    field: undefined! as MathfieldElement,
+    previousRestoration: undefined! as boolean,
+
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -110,236 +110,233 @@ export const scriptedOmpRpc = (input: {
   };
   const find = (provider: string, id: string) =>
     state.models.find((model) => model.provider === provider && model.id === id);
-  const makeProcess = (options: OmpRpcProcessOptions) =>
-    Effect.gen(function* () {
-      const sessionDir = options.sessionDir ?? NodeOS.tmpdir();
-      const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
-      const delivered = yield* Queue.unbounded<void>();
-      promptDelivered = Queue.peek(delivered);
-      const encoder = new TextEncoder();
-      const decoder = new TextDecoder();
-      const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
-      raw = (text) => Queue.offer(stdout, encoder.encode(text)).pipe(Effect.asVoid);
-      tryEmit = (frames) => Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)));
-      close = Queue.end(stdout).pipe(Effect.asVoid);
-      const respond = (frame: Frame, data?: unknown, error?: string) =>
-        line({
-          id: frame.id,
-          type: "response",
-          command: frame.type,
-          success: error === undefined,
-          ...(data === undefined ? {} : { data }),
-          ...(error === undefined ? {} : { error }),
-        });
-      // The run of the latest prompt ends, and OMP 18.3.1 reports its result.
-      finish = Queue.take(delivered).pipe(
-        Effect.andThen(
-          Effect.suspend(() =>
-            Effect.forEach(
-              [
-                { type: "agent_start" },
-                { type: "agent_end", messages: [], isTerminal: true },
-                ...(lastPromptId === undefined
-                  ? []
-                  : [
-                      {
-                        type: "prompt_result",
-                        id: lastPromptId,
-                        agentInvoked: true,
-                        status: "completed",
-                      },
-                    ]),
-              ],
-              (frame) => Queue.offer(stdout, line(frame)),
-              { discard: true },
-            ),
+  const makeProcess = Effect.fn("scriptedOmpRpc.makeProcess")(function* (
+    options: OmpRpcProcessOptions,
+  ) {
+    const sessionDir = options.sessionDir ?? NodeOS.tmpdir();
+    const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+    const delivered = yield* Queue.unbounded<void>();
+    promptDelivered = Queue.peek(delivered);
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
+    raw = (text) => Queue.offer(stdout, encoder.encode(text)).pipe(Effect.asVoid);
+    tryEmit = (frames) => Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)));
+    close = Queue.end(stdout).pipe(Effect.asVoid);
+    const respond = (frame: Frame, data?: unknown, error?: string) =>
+      line({
+        id: frame.id,
+        type: "response",
+        command: frame.type,
+        success: error === undefined,
+        ...(data === undefined ? {} : { data }),
+        ...(error === undefined ? {} : { error }),
+      });
+    // The run of the latest prompt ends, and OMP 18.3.1 reports its result.
+    finish = Queue.take(delivered).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          Effect.forEach(
+            [
+              { type: "agent_start" },
+              { type: "agent_end", messages: [], isTerminal: true },
+              ...(lastPromptId === undefined
+                ? []
+                : [
+                    {
+                      type: "prompt_result",
+                      id: lastPromptId,
+                      agentInvoked: true,
+                      status: "completed",
+                    },
+                  ]),
+            ],
+            (frame) => Queue.offer(stdout, line(frame)),
+            { discard: true },
           ),
         ),
-      );
-      const reply = (frame: Frame, bytes: number): Uint8Array => {
-        state.frames.push(frame);
-        const refused = input.commandError?.(frame);
-        if (refused) return respond(frame, undefined, refused);
-        if (
-          frame.type !== "get_state" &&
-          frame.type !== "negotiate_protocol" &&
-          frame.type !== "set_subagent_subscription" &&
-          frame.type !== "set_event_filter" &&
-          frame.type !== "get_available_commands"
-        ) {
-          state.log.push(
-            frame.type === "set_model"
-              ? `set_model ${frame.provider}/${frame.modelId}`
-              : frame.type === "set_thinking_level"
-                ? `set_thinking_level ${frame.level}`
-                : frame.type,
-          );
+      ),
+    );
+    const reply = (frame: Frame, bytes: number): Uint8Array => {
+      state.frames.push(frame);
+      const refused = input.commandError?.(frame);
+      if (refused) return respond(frame, undefined, refused);
+      if (
+        frame.type !== "get_state" &&
+        frame.type !== "negotiate_protocol" &&
+        frame.type !== "set_subagent_subscription" &&
+        frame.type !== "set_event_filter" &&
+        frame.type !== "get_available_commands"
+      ) {
+        state.log.push(
+          frame.type === "set_model"
+            ? `set_model ${frame.provider}/${frame.modelId}`
+            : frame.type === "set_thinking_level"
+              ? `set_thinking_level ${frame.level}`
+              : frame.type,
+        );
+      }
+      switch (frame.type) {
+        case "negotiate_protocol":
+          return respond(frame, { protocolVersion: 2 });
+        case "set_event_filter":
+          return respond(frame, { events: frame.events ?? null }, input.eventFilterError);
+        case "new_session":
+          state.sessionOrdinal++;
+          state.sessionFile = undefined;
+          return respond(frame, {});
+        case "get_state": {
+          NodeFS.mkdirSync(sessionDir, { recursive: true });
+          const sessionFile =
+            state.sessionFile ??
+            NodePath.join(sessionDir, `models-session-${state.sessionOrdinal}.jsonl`);
+          if (!NodeFS.existsSync(sessionFile)) NodeFS.writeFileSync(sessionFile, "{}\n");
+          return respond(frame, {
+            model: state.model,
+            ...(input.reportThinkingLevel?.() === false
+              ? {}
+              : { thinkingLevel: state.thinkingLevel }),
+            sessionFile,
+            sessionId: `models-session-${state.sessionOrdinal}`,
+            isStreaming: state.streaming,
+            hasPendingAsyncWork: state.pendingAsyncWork,
+            isSettled: !state.pendingAsyncWork,
+          });
         }
-        switch (frame.type) {
-          case "negotiate_protocol":
-            return respond(frame, { protocolVersion: 2 });
-          case "set_event_filter":
-            return respond(frame, { events: frame.events ?? null }, input.eventFilterError);
-          case "new_session":
-            state.sessionOrdinal++;
-            state.sessionFile = undefined;
-            return respond(frame, {});
-          case "get_state": {
-            NodeFS.mkdirSync(sessionDir, { recursive: true });
-            const sessionFile =
-              state.sessionFile ??
-              NodePath.join(sessionDir, `models-session-${state.sessionOrdinal}.jsonl`);
-            if (!NodeFS.existsSync(sessionFile)) NodeFS.writeFileSync(sessionFile, "{}\n");
-            return respond(frame, {
-              model: state.model,
-              ...(input.reportThinkingLevel?.() === false
-                ? {}
-                : { thinkingLevel: state.thinkingLevel }),
-              sessionFile,
-              sessionId: `models-session-${state.sessionOrdinal}`,
-              isStreaming: state.streaming,
-              hasPendingAsyncWork: state.pendingAsyncWork,
-              isSettled: !state.pendingAsyncWork,
-            });
-          }
-          case "switch_session": {
-            // OMP 18.6.3: a provider/modelId pair replaces the saved model and
-            // skips its check; an unknown pair fails before the switch.
-            const bound = frame.provider !== undefined && frame.modelId !== undefined;
-            if (bound && !find(frame.provider ?? "", frame.modelId ?? ""))
-              return respond(
-                frame,
-                undefined,
-                `Model not found: ${frame.provider}/${frame.modelId}`,
-              );
-            if (!bound && input.savedModelUnrestorable)
-              return respond(
-                frame,
-                undefined,
-                `Could not restore model ${state.model.provider}/${state.model.id}`,
-              );
-            if (input.switchCancelled) return respond(frame, { cancelled: true });
-            state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
-            if (bound) state.model = { provider: frame.provider ?? "", id: frame.modelId ?? "" };
-            if (input.switchErrorAfterChange)
-              return respond(frame, undefined, input.switchErrorAfterChange);
-            return respond(frame, { cancelled: false });
-          }
-          case "get_available_models":
+        case "switch_session": {
+          // OMP 18.6.3: a provider/modelId pair replaces the saved model and
+          // skips its check; an unknown pair fails before the switch.
+          const bound = frame.provider !== undefined && frame.modelId !== undefined;
+          if (bound && !find(frame.provider ?? "", frame.modelId ?? ""))
+            return respond(frame, undefined, `Model not found: ${frame.provider}/${frame.modelId}`);
+          if (!bound && input.savedModelUnrestorable)
             return respond(
               frame,
-              state.modelsResponse ?? { models: state.models },
-              state.modelsError,
+              undefined,
+              `Could not restore model ${state.model.provider}/${state.model.id}`,
             );
-          case "get_available_commands":
-            return respond(frame, {
-              commands: [
-                { name: "help", source: "builtin" },
-                { name: "review", source: "builtin" },
-                { name: "compact", source: "builtin" },
-              ],
-            });
-          case "set_model": {
-            const provider = frame.provider ?? "";
-            const modelId = frame.modelId ?? "";
-            const refused = input.setModelError?.(provider, modelId);
-            if (refused) return respond(frame, undefined, refused);
-            if (!find(provider, modelId)) {
-              return respond(frame, undefined, `Model not found: ${provider}/${modelId}`);
-            }
-            const selected = input.substitute?.[`${provider}/${modelId}`] ?? {
-              provider,
-              id: modelId,
-            };
-            const model = find(selected.provider, selected.id);
-            if (!model) return respond(frame, undefined, `Model not found: ${provider}/${modelId}`);
-            state.model = { provider: selected.provider, id: selected.id };
-            state.thinkingLevel = model.reasoning
-              ? (model.thinking?.defaultLevel ?? "medium")
-              : "off";
-            return respond(frame, { provider, id: modelId });
-          }
-          case "set_thinking_level": {
-            const level = frame.level ?? "off";
-            const refused = input.setThinkingLevelError?.(level);
-            if (refused) return respond(frame, undefined, refused);
-            state.thinkingLevel =
-              input.clamp?.[`${state.model.provider}/${state.model.id}`]?.[level] ?? level;
-            return respond(frame);
-          }
-          case "prompt":
-          case "steer":
-            state.prompts.push({ frame, bytes });
-            if (frame.type === "prompt") lastPromptId = String(frame.id);
-            return respond(frame, undefined, input.promptError);
-          default:
-            return respond(frame, {});
+          if (input.switchCancelled) return respond(frame, { cancelled: true });
+          state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
+          if (bound) state.model = { provider: frame.provider ?? "", id: frame.modelId ?? "" };
+          if (input.switchErrorAfterChange)
+            return respond(frame, undefined, input.switchErrorAfterChange);
+          return respond(frame, { cancelled: false });
         }
-      };
-      const client = yield* makeOmpRpcClient(
-        {
-          stdout: Stream.fromQueue(stdout),
-          write: (bytes) =>
-            Effect.forEach(
-              decoder
-                .decode(bytes)
-                .split("\n")
-                .filter((text) => text.trim().length > 0),
-              (text) => {
-                const frame = decodeJson(text) as Frame;
-                const answer = reply(frame, Buffer.byteLength(text) + 1);
-                return Effect.forEach(
-                  (input.beforeReply?.(frame) ?? []).map(line),
-                  (bytes) => Queue.offer(stdout, bytes),
-                  { discard: true },
-                ).pipe(
-                  Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
-                  Effect.andThen(
-                    input.silentReply?.(frame) ? Effect.void : Queue.offer(stdout, answer),
-                  ),
-                  Effect.andThen(
-                    frame.type === "prompt" ? Queue.offer(delivered, undefined) : Effect.void,
-                  ),
-                );
-              },
-              { discard: true },
-            ),
-        },
-        options.onFrame ? { onFrame: options.onFrame } : {},
-      );
-      yield* (input.readyDelay ?? Effect.void).pipe(
-        Effect.andThen(
-          Queue.offer(
-            stdout,
-            line({
-              type: "ready",
-              protocolVersion: 1,
-              supportedProtocolVersions: input.supportedProtocolVersions ?? [1, 2],
-              maxFrameBytes: input.maxFrameBytes ?? 1_048_576,
-              maxReassembledFrameBytes: 67_108_864,
-            }),
+        case "get_available_models":
+          return respond(
+            frame,
+            state.modelsResponse ?? { models: state.models },
+            state.modelsError,
+          );
+        case "get_available_commands":
+          return respond(frame, {
+            commands: [
+              { name: "help", source: "builtin" },
+              { name: "review", source: "builtin" },
+              { name: "compact", source: "builtin" },
+            ],
+          });
+        case "set_model": {
+          const provider = frame.provider ?? "";
+          const modelId = frame.modelId ?? "";
+          const refused = input.setModelError?.(provider, modelId);
+          if (refused) return respond(frame, undefined, refused);
+          if (!find(provider, modelId)) {
+            return respond(frame, undefined, `Model not found: ${provider}/${modelId}`);
+          }
+          const selected = input.substitute?.[`${provider}/${modelId}`] ?? {
+            provider,
+            id: modelId,
+          };
+          const model = find(selected.provider, selected.id);
+          if (!model) return respond(frame, undefined, `Model not found: ${provider}/${modelId}`);
+          state.model = { provider: selected.provider, id: selected.id };
+          state.thinkingLevel = model.reasoning
+            ? (model.thinking?.defaultLevel ?? "medium")
+            : "off";
+          return respond(frame, { provider, id: modelId });
+        }
+        case "set_thinking_level": {
+          const level = frame.level ?? "off";
+          const refused = input.setThinkingLevelError?.(level);
+          if (refused) return respond(frame, undefined, refused);
+          state.thinkingLevel =
+            input.clamp?.[`${state.model.provider}/${state.model.id}`]?.[level] ?? level;
+          return respond(frame);
+        }
+        case "prompt":
+        case "steer":
+          state.prompts.push({ frame, bytes });
+          if (frame.type === "prompt") lastPromptId = String(frame.id);
+          return respond(frame, undefined, input.promptError);
+        default:
+          return respond(frame, {});
+      }
+    };
+    const client = yield* makeOmpRpcClient(
+      {
+        stdout: Stream.fromQueue(stdout),
+        write: (bytes) =>
+          Effect.forEach(
+            decoder
+              .decode(bytes)
+              .split("\n")
+              .filter((text) => text.trim().length > 0),
+            (text) => {
+              const frame = decodeJson(text) as Frame;
+              const answer = reply(frame, Buffer.byteLength(text) + 1);
+              return Effect.forEach(
+                (input.beforeReply?.(frame) ?? []).map(line),
+                (bytes) => Queue.offer(stdout, bytes),
+                { discard: true },
+              ).pipe(
+                Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
+                Effect.andThen(
+                  input.silentReply?.(frame) ? Effect.void : Queue.offer(stdout, answer),
+                ),
+                Effect.andThen(
+                  frame.type === "prompt" ? Queue.offer(delivered, undefined) : Effect.void,
+                ),
+              );
+            },
+            { discard: true },
           ),
-        ),
-        Effect.forkScoped,
-      );
-      return {
-        ...client,
-        redaction: makeOmpRedaction(input.environment ?? {}, []),
-        version: input.version ?? "18.3.1",
-        runtimeVersion: input.version ?? "18.3.1",
-        shutdown: Effect.sync(() => {
-          state.shutdowns++;
-        }).pipe(Effect.andThen(Queue.end(stdout)), Effect.as(cleanExit)),
-        // The custom-model bridge's barrier: registers late models.
-        refreshModels: () =>
-          Effect.sync(() => {
-            state.log.push("refresh");
-            for (const model of input.lateModels ?? []) {
-              if (!find(model.provider, model.id)) state.models.push(model);
-            }
+      },
+      options.onFrame ? { onFrame: options.onFrame } : {},
+    );
+    yield* (input.readyDelay ?? Effect.void).pipe(
+      Effect.andThen(
+        Queue.offer(
+          stdout,
+          line({
+            type: "ready",
+            protocolVersion: 1,
+            supportedProtocolVersions: input.supportedProtocolVersions ?? [1, 2],
+            maxFrameBytes: input.maxFrameBytes ?? 1_048_576,
+            maxReassembledFrameBytes: 67_108_864,
           }),
-      };
-    });
+        ),
+      ),
+      Effect.forkScoped,
+    );
+    return {
+      ...client,
+      redaction: makeOmpRedaction(input.environment ?? {}, []),
+      version: input.version ?? "18.3.1",
+      runtimeVersion: input.version ?? "18.3.1",
+      shutdown: Effect.sync(() => {
+        state.shutdowns++;
+      }).pipe(Effect.andThen(Queue.end(stdout)), Effect.as(cleanExit)),
+      // The custom-model bridge's barrier: registers late models.
+      refreshModels: () =>
+        Effect.sync(() => {
+          state.log.push("refresh");
+          for (const model of input.lateModels ?? []) {
+            if (!find(model.provider, model.id)) state.models.push(model);
+          }
+        }),
+    };
+  });
   return {
     state,
     makeProcess,

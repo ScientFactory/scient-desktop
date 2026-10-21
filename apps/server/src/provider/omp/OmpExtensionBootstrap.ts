@@ -208,11 +208,12 @@ export const sweepStaleOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.swee
       const pid = Number(pidText);
       return Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && ompProcessAlive(pid);
     };
-    const removeIfStale = (file: string) =>
-      Effect.gen(function* () {
-        if (!(yield* changedBeforeStart(file))) return;
-        yield* fs.remove(file, { recursive: true, force: true }).pipe(Effect.ignore);
-      });
+    const removeIfStale = Effect.fn("OmpExtensionBootstrap.removeIfStale")(function* (
+      file: string,
+    ) {
+      if (!(yield* changedBeforeStart(file))) return;
+      yield* fs.remove(file, { recursive: true, force: true }).pipe(Effect.ignore);
+    });
 
     const extensions = path.join(input.stateDir, input.target.stateNamespace, "extensions");
     for (const name of yield* list(extensions)) {

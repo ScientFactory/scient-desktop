@@ -484,6 +484,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               slug: "gpt-live-codex",
               name: "GPT Live Codex",
               isCustom: false,
+              isDefault: true,
               capabilities: codexModelCapabilities,
             },
           ]);

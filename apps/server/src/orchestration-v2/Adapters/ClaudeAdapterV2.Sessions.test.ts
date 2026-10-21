@@ -173,6 +173,11 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         assert.isFunction(callback);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
+        const ordinaryToolRequest = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "runtime_request.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
         const ordinaryToolResult = yield* Effect.promise(() =>
           canUseTool!(
             "Bash",
@@ -183,11 +188,26 @@ describe("ClaudeAdapterV2 resume compaction", () => {
               requestId: "request-bash-full-access",
             },
           ),
-        );
-        assert.deepEqual(ordinaryToolResult, {
+        ).pipe(Effect.forkScoped);
+        const ordinaryRequest = yield* Fiber.join(ordinaryToolRequest);
+        assert.isTrue(Option.isSome(ordinaryRequest));
+        if (
+          Option.isNone(ordinaryRequest) ||
+          ordinaryRequest.value.type !== "runtime_request.updated"
+        ) {
+          return;
+        }
+        // CLI-forwarded asks still require a decision under native bypass.
+        assert.equal(ordinaryRequest.value.runtimeRequest.kind, "command");
+        yield* runtime.respondToRuntimeRequest({
+          requestId: ordinaryRequest.value.runtimeRequest.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(ordinaryToolResult), {
           behavior: "allow",
           updatedInput: { command: "pwd" },
           toolUseID: "tool-bash-full-access",
+          decisionClassification: "user_temporary",
         });
         const longQuestion = `Choose a deployment target: ${"region ".repeat(80)}`;
         const questionRequestEvent = yield* runtime.events.pipe(

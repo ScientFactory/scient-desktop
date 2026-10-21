@@ -1,5 +1,6 @@
+import { render as _fixtureRender } from "../../../test/render";
 import { EnvironmentId, type ScientLatexArtworkRequest } from "@t3tools/contracts";
-import { createRoot } from "react-dom/client";
+
 import { expect, it, vi } from "vite-plus/test";
 
 const captured = vi.hoisted(() => ({
@@ -39,16 +40,20 @@ async function runPreview(panel: HTMLElement) {
 it.each(["scient-latex-figure-panel", "scient-latex-compiled-algorithm"])(
   "requests artwork at the unscaled width of %s after observing layout",
   async (className) => {
+    await using _fixture = _createFixture();
+
     captured.requests.length = 0;
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
     const panel = document.createElement("div");
     panel.className = className;
     panel.style.cssText = "box-sizing:border-box;width:420px;padding:7px;border:3px solid black";
     document.body.append(panel);
-    const root = createRoot(panel);
+    const root = _fixture.stack.use(
+      await _fixtureRender(null, { container: panel, router: false }),
+    );
     const source = String.raw`\begin{tikzpicture}\draw (0,0)--(1,1);\end{tikzpicture}`;
     try {
-      root.render(
+      await root.rerender(
         <LatexTikzArtwork
           source={source}
           preamble="\\usepackage{tikz}"
@@ -73,13 +78,15 @@ it.each(["scient-latex-figure-panel", "scient-latex-compiled-algorithm"])(
         "false",
       );
     } finally {
-      root.unmount();
+      await root.unmount();
       panel.remove();
     }
   },
 );
 
 it("decodes an isolated raster without starting PDF paint and retains its physical size", async () => {
+  await using _fixture = _createFixture();
+
   captured.requests.length = 0;
   captured.pdfLoads.mockClear();
   const pixels = document.createElement("canvas");
@@ -101,9 +108,9 @@ it("decodes an isolated raster without starting PDF paint and retains its physic
   panel.className = "scient-latex-figure-panel";
   panel.style.width = "420px";
   document.body.append(panel);
-  const root = createRoot(panel);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: panel, router: false }));
   try {
-    root.render(
+    await root.rerender(
       <LatexTikzArtwork
         source={String.raw`\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}`}
         preamble="\\usepackage{tikz}"
@@ -121,13 +128,15 @@ it("decodes an isolated raster without starting PDF paint and retains its physic
     expect(captured.pdfLoads).not.toHaveBeenCalled();
     expect(panel.querySelector("[role=status]")).toBeNull();
   } finally {
-    root.unmount();
+    await root.unmount();
     panel.remove();
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
   }
 });
 
 it("retains the PDF renderer for responses without native pixels", async () => {
+  await using _fixture = _createFixture();
+
   captured.requests.length = 0;
   const destroy = vi.fn(async () => {});
   const render = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
@@ -146,9 +155,9 @@ it("retains the PDF renderer for responses without native pixels", async () => {
   panel.className = "scient-latex-figure-panel";
   panel.style.width = "420px";
   document.body.append(panel);
-  const root = createRoot(panel);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: panel, router: false }));
   try {
-    root.render(
+    await root.rerender(
       <LatexTikzArtwork
         source={String.raw`\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}`}
         preamble="\\usepackage{tikz}"
@@ -166,7 +175,7 @@ it("retains the PDF renderer for responses without native pixels", async () => {
     expect(render).toHaveBeenCalledOnce();
     expect(destroy).toHaveBeenCalledOnce();
   } finally {
-    root.unmount();
+    await root.unmount();
     panel.remove();
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
     captured.pdfLoads.mockReset();
@@ -174,6 +183,8 @@ it("retains the PDF renderer for responses without native pixels", async () => {
 });
 
 it("releases a raster that finishes decoding after its editor is unmounted", async () => {
+  await using _fixture = _createFixture();
+
   captured.requests.length = 0;
   captured.pdfLoads.mockClear();
   let finishDecode!: (bitmap: ImageBitmap) => void;
@@ -193,10 +204,10 @@ it("releases a raster that finishes decoding after its editor is unmounted", asy
   panel.className = "scient-latex-figure-panel";
   panel.style.width = "420px";
   document.body.append(panel);
-  const root = createRoot(panel);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: panel, router: false }));
   let unmounted = false;
   try {
-    root.render(
+    await root.rerender(
       <LatexTikzArtwork
         source={String.raw`\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}`}
         preamble="\\usepackage{tikz}"
@@ -209,14 +220,14 @@ it("releases a raster that finishes decoding after its editor is unmounted", asy
     await expect.poll(() => decode.mock.calls.length).toBe(1);
     const canvas = panel.querySelector("canvas")!;
     const paint = vi.spyOn(canvas.getContext("2d")!, "drawImage");
-    root.unmount();
+    await root.unmount();
     unmounted = true;
     finishDecode({ width: 8, height: 4, close } as ImageBitmap);
     await expect.poll(() => close.mock.calls.length).toBe(1);
     expect(paint).not.toHaveBeenCalled();
     expect(captured.pdfLoads).not.toHaveBeenCalled();
   } finally {
-    if (!unmounted) root.unmount();
+    if (!unmounted) await root.unmount();
     decode.mockRestore();
     panel.remove();
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
@@ -226,13 +237,17 @@ it("releases a raster that finishes decoding after its editor is unmounted", asy
 it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorithmNumber"] as const)(
   "requires a new action when the preview %s changes",
   async (field) => {
+    await using _fixture = _createFixture();
+
     captured.requests.length = 0;
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
     const panel = document.createElement("div");
     panel.className = "scient-latex-figure-panel";
     panel.style.width = "420px";
     document.body.append(panel);
-    const root = createRoot(panel);
+    const root = _fixture.stack.use(
+      await _fixtureRender(null, { container: panel, router: false }),
+    );
     const original = {
       source: String.raw`\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}`,
       preamble: "\\usepackage{tikz}",
@@ -250,7 +265,7 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
       algorithmNumber: 2,
     };
     try {
-      root.render(<LatexTikzArtwork {...original} />);
+      await root.rerender(<LatexTikzArtwork {...original} />);
       await expect.poll(() => panel.textContent).toContain("this is not a sandbox");
       await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
       expect(captured.requests).toEqual([]);
@@ -263,7 +278,7 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
         workspaceRoot: original.cwd,
         relativePath: original.relativePath,
       });
-      root.render(<LatexTikzArtwork {...original} {...{ [field]: changes[field] }} />);
+      await root.rerender(<LatexTikzArtwork {...original} {...{ [field]: changes[field] }} />);
       await expect
         .poll(() => panel.querySelector("button")?.textContent)
         .toBe("Run this drawing preview");
@@ -271,7 +286,7 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
       await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
       expect(captured.requests.length).toBe(1);
       // Returning to previously admitted text must not revive the old action.
-      root.render(<LatexTikzArtwork {...original} />);
+      await root.rerender(<LatexTikzArtwork {...original} />);
       await expect
         .poll(() => panel.querySelector("button")?.textContent)
         .toBe("Run this drawing preview");
@@ -280,8 +295,25 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
       await runPreview(panel);
       await expect.poll(() => captured.requests.length).toBe(2);
     } finally {
-      root.unmount();
+      await root.unmount();
       panel.remove();
     }
   },
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

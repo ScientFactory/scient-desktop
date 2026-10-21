@@ -89,6 +89,21 @@ const testLayer = Layer.mergeAll(
 const mockAgentPath = NodeURL.fileURLToPath(
   new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
 );
+const withNativeContentReceipts = (content: Queue.Queue<string>): DroidAcpRuntimeFactory =>
+  Effect.fn("DroidAdapterV2.test.nativeContentReceipts")(function* (input) {
+    const native = yield* makeDroidAcpRuntime(input);
+    return {
+      ...native,
+      getEvents: () =>
+        native
+          .getEvents()
+          .pipe(
+            Stream.tap((event) =>
+              event._tag === "ContentDelta" ? Queue.offer(content, event.text) : Effect.void,
+            ),
+          ),
+    };
+  });
 const harness = Effect.fnUntraced(function* (
   locked = false,
   truncated = false,
@@ -651,6 +666,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          const content = yield* Queue.unbounded<string>();
           const h = yield* harness(false, false, false, undefined, {
             body: `function onPrompt() {
           let previous = "";
@@ -663,16 +679,19 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           }, 5);
         }`,
             idleMillis: 300,
+            makeRuntime: withNativeContentReceipts(content),
           });
           yield* TestClock.adjust("2 hours");
           yield* h.send(1, "full-access");
           for (const pulse of ["one", "two", "three", "four", "five"]) {
             yield* h.signal(pulse);
+            assert.equal(yield* Queue.take(content), pulse);
+            // Native activity precedes the controlled clock's coalesced publication.
+            yield* TestClock.adjust(250);
             yield* untilRecorded(
               h,
               (event) => event.type === "message.updated" && event.message.text.endsWith(pulse),
             );
-            yield* TestClock.adjust(250);
             assert.lengthOf(terminals(h), 0);
           }
           yield* TestClock.adjust(100);
@@ -2001,21 +2020,26 @@ it.layer(testLayer)("DroidAdapterV2 idle supervision", (it) => {
   it.effect("resets the deadline on real native activity instead of total turn duration", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const content = yield* Queue.unbounded<string>();
         const h = yield* harness(false, false, false, undefined, {
-          body: `function onPrompt() { ${ready}
+          body: `function onPrompt() {
         const watch = fs.watch(".", (_event, name) => {
           if (name !== "watchdog-signal") return;
           watch.close();
           update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "activity-reset" } });
         });
+        ${ready}
       }`,
+          makeRuntime: withNativeContentReceipts(content),
         });
         yield* h.send(1, "full-access");
         yield* h.ready;
+        assert.equal(yield* Queue.take(content), "watchdog-ready");
         yield* TestClock.adjust("9 minutes");
         yield* h.signalActivity;
-        yield* h.waitForMessage("activity-reset");
+        assert.equal(yield* Queue.take(content), "activity-reset");
         yield* TestClock.adjust("9 minutes");
+        yield* h.waitForMessage("activity-reset");
         assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
         yield* TestClock.adjust("2 minutes");
         assert.equal((yield* h.terminal).status, "failed");

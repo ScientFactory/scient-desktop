@@ -1,10 +1,11 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { EnvironmentId, type DesktopUpdateState } from "@t3tools/contracts";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
@@ -95,16 +96,14 @@ vi.mock("../../scient/conversationImport/requests", () => ({
   requestConversationImport: fixture.importConversation,
 }));
 
-let host: HTMLDivElement | undefined;
-let root: Root | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   fixture.everything = null;
   fixture.remoteThreads = [];
   setUpdateEverythingRun(() => null);
   vi.clearAllMocks();
-});
+}
 
 const updateState: DesktopUpdateState = {
   enabled: true,
@@ -125,7 +124,7 @@ const updateState: DesktopUpdateState = {
   canRetry: false,
 };
 
-async function mountFooter(width: number, state: DesktopUpdateState) {
+async function mountFooter(_fixture: _Fixture, width: number, state: DesktopUpdateState) {
   fixture.updateState = state;
   const environmentId = EnvironmentId.make("sidebar-geometry-primary");
   fixture.environments = [
@@ -183,12 +182,14 @@ async function mountFooter(width: number, state: DesktopUpdateState) {
       },
     },
   ];
-  host = document.createElement("div");
-  Object.assign(host.style, { width: `${width}px`, margin: "20px", background: "white" });
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  Object.assign(_fixture.host.style, { width: `${width}px`, margin: "20px", background: "white" });
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   // The app root's registry carries the shared update-run state the pill reads.
-  root.render(
+  await _fixture.root0.rerender(
     <AppAtomRegistryProvider>
       <SidebarProvider className="min-h-0">
         <TooltipProvider>
@@ -199,13 +200,16 @@ async function mountFooter(width: number, state: DesktopUpdateState) {
       </SidebarProvider>
     </AppAtomRegistryProvider>,
   );
-  await expect.poll(() => host!.querySelectorAll("button").length).toBeGreaterThan(3);
+  await expect.poll(() => _fixture.host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
 
 it.each(["available", "downloading", "downloaded", "error"] as const)(
   "keeps %s updates inside the minimum sidebar and preserves overflow actions",
   async (status) => {
-    await mountFooter(216, {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    await mountFooter(_fixture, 216, {
       ...updateState,
       status,
       ...(status === "downloading" ? { downloadPercent: 57 } : {}),
@@ -219,10 +223,10 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
     await expect
       .element(page.getByRole("button", { name: "Usage", exact: true, includeHidden: true }))
       .not.toBeVisible();
-    const footer = host!
-      .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+    const footer = _fixture
+      .host!.querySelector<HTMLElement>('[data-sidebar="footer"]')!
       .getBoundingClientRect();
-    const buttons = [...host!.querySelectorAll("button")].filter(
+    const buttons = [..._fixture.host!.querySelectorAll("button")].filter(
       (button) => button.getClientRects().length,
     );
     let previousRight = footer.left;
@@ -245,7 +249,7 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
     await page.getByRole("menuitem", { name: "Import conversation" }).click();
     expect(fixture.importConversation).toHaveBeenCalledOnce();
 
-    host!.style.width = "280px";
+    _fixture.host!.style.width = "280px";
     await expect.element(more).not.toBeVisible();
     await expect
       .element(page.getByRole("button", { name: "Import conversation", includeHidden: true }))
@@ -256,7 +260,7 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
     if (status === "downloaded" && import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/restart-wide.png`,
-        element: host!,
+        element: _fixture.host!,
       });
     }
   },
@@ -320,12 +324,12 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   };
 }
 
-function expectFooterInOrder() {
-  const footer = host!
-    .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+function expectFooterInOrder(_fixture: _Fixture) {
+  const footer = _fixture
+    .host!.querySelector<HTMLElement>('[data-sidebar="footer"]')!
     .getBoundingClientRect();
   let previousRight = footer.left;
-  for (const visible of [...host!.querySelectorAll("button")].filter(
+  for (const visible of [..._fixture.host!.querySelectorAll("button")].filter(
     (candidate) => candidate.getClientRects().length,
   )) {
     const bounds = visible.getBoundingClientRect();
@@ -345,8 +349,11 @@ it.each([
 ] as const)(
   "keeps the other-updates circle at 20px beside the %s app control",
   async (status, appLabel) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     fixture.everything = everythingFixture();
-    await mountFooter(216, status === "idle" ? idleUpdateState : updateState);
+    await mountFooter(_fixture, 216, status === "idle" ? idleUpdateState : updateState);
     const circle = page.getByRole("button", { name: "Other updates available" });
     await expect.element(circle).toBeVisible();
     const app = page.getByRole("button", { name: new RegExp(`^${appLabel}`) });
@@ -359,19 +366,22 @@ it.each([
     expect(
       Math.abs(appBounds.top + appBounds.height / 2 - (bounds.top + bounds.height / 2)),
     ).toBeLessThanOrEqual(0.5);
-    expectFooterInOrder();
+    expectFooterInOrder(_fixture);
     if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-${status}.png`,
-        element: host!,
+        element: _fixture.host!,
       });
     }
   },
 );
 
 it("lists other updates with text actions and updates them without a confirmation", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   fixture.everything = everythingFixture();
-  await mountFooter(216, idleUpdateState);
+  await mountFooter(_fixture, 216, idleUpdateState);
   await page.getByRole("button", { name: "Other updates available" }).click();
   const updateAll = page.getByRole("button", { name: "Update all" });
   await expect.element(updateAll).toBeVisible();
@@ -411,10 +421,13 @@ it("lists other updates with text actions and updates them without a confirmatio
   const app = page.getByRole("button", { name: /^Check for updates/ }).element();
   expect(bounds.left + bounds.width / 2 + 12).toBeLessThan(app.getBoundingClientRect().left);
   await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
-  expectFooterInOrder();
+  expectFooterInOrder(_fixture);
 });
 
 it("asks once inline before Update all stops running threads", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   fixture.everything = everythingFixture();
   fixture.remoteThreads = [
     // A running turn with a follow-up queued behind it, and one on an older server.
@@ -422,7 +435,7 @@ it("asks once inline before Update all stops running threads", async () => {
     { activeRunId: null, status: "running" },
     { activeRunId: null, activityRunStatus: null, status: "idle" },
   ];
-  await mountFooter(216, idleUpdateState);
+  await mountFooter(_fixture, 216, idleUpdateState);
   await page.getByRole("button", { name: "Other updates available" }).click();
   const updateAll = page.getByRole("button", { name: "Update all" });
   await updateAll.click();
@@ -446,6 +459,9 @@ it("asks once inline before Update all stops running threads", async () => {
 });
 
 it("keeps an asking row's Update on the shared right edge without truncating its name", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const fixtureValue = everythingFixture();
   fixture.everything = {
     ...fixtureValue,
@@ -456,7 +472,7 @@ it("keeps an asking row's Update on the shared right edge without truncating its
     { activeRunId: "run-2", activityRunStatus: "running", status: "queued" },
     { activeRunId: null, status: "running" },
   ];
-  await mountFooter(216, idleUpdateState);
+  await mountFooter(_fixture, 216, idleUpdateState);
   await page.getByRole("button", { name: "Other updates available" }).click();
   const rowUpdate = page.getByRole("button", { name: "Update", exact: true });
   await rowUpdate.click();
@@ -493,9 +509,12 @@ it("keeps an asking row's Update on the shared right edge without truncating its
 it.each(["Later", "Restart"] as const)(
   "counts down above the Restart pill, and %s decides the restart",
   async (choice) => {
-    await mountFooter(216, updateState);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    await mountFooter(_fixture, 216, updateState);
     // Room above the footer for the countdown, which otherwise flips below the pill.
-    host!.style.marginTop = "120px";
+    _fixture.host!.style.marginTop = "120px";
     window.scrollTo(0, 0);
     setUpdateEverythingRun(() => ({
       localVersion: "0.6.21",
@@ -545,9 +564,12 @@ function countedEverythingFixture() {
 }
 
 it("starts a pass that downloads this app at once when it stops no threads", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const { value, run } = countedEverythingFixture();
   fixture.everything = value;
-  await mountFooter(216, availableUpdateState);
+  await mountFooter(_fixture, 216, availableUpdateState);
   await page.getByRole("button", { name: /^Update: / }).click();
   await expect.poll(() => run.mock.calls.length).toBe(1);
   expect(run.mock.calls[0]![0].admitServer).toBeTypeOf("function");
@@ -556,15 +578,18 @@ it("starts a pass that downloads this app at once when it stops no threads", asy
 });
 
 it("asks above the pill before a pass that downloads this app stops running threads", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const { value, run } = countedEverythingFixture();
   fixture.everything = value;
   fixture.remoteThreads = [
     { activeRunId: "run-1", activityRunStatus: "running", status: "queued" },
     { activeRunId: null, status: "running" },
   ];
-  await mountFooter(216, availableUpdateState);
+  await mountFooter(_fixture, 216, availableUpdateState);
   // Room above the footer for the card, which otherwise flips below the pill.
-  host!.style.marginTop = "120px";
+  _fixture.host!.style.marginTop = "120px";
   window.scrollTo(0, 0);
   const pill = page.getByRole("button", { name: /^Update: / });
   await pill.click();
@@ -641,7 +666,10 @@ it("asks above the pill before a pass that downloads this app stops running thre
 // SCIENT-FORK:END
 
 it("keeps all four utilities equally spaced and inset while updates are idle", async () => {
-  await mountFooter(216, {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mountFooter(_fixture, 216, {
     ...updateState,
     status: "idle",
     downloadedVersion: null,
@@ -651,20 +679,25 @@ it("keeps all four utilities equally spaced and inset while updates are idle", a
     .element(page.getByRole("button", { name: "More sidebar actions", includeHidden: true }))
     .not.toBeVisible();
   const buttons = [
-    ...host!.querySelectorAll<HTMLButtonElement>('[data-sidebar="menu-button"]'),
+    ..._fixture.host!.querySelectorAll<HTMLButtonElement>('[data-sidebar="menu-button"]'),
   ].filter((button) => button.getClientRects().length);
   expect(buttons).toHaveLength(4);
   const rects = buttons.map((button) => button.getBoundingClientRect());
-  expect(rects[0]!.left - host!.getBoundingClientRect().left).toBe(12);
+  expect(rects[0]!.left - _fixture.host!.getBoundingClientRect().left).toBe(12);
   expect(rects.slice(1).map((rect, index) => rect.left - rects[index]!.right)).toEqual([4, 4, 4]);
 });
 
 it("shows a compact current-project tooltip with its keyboard shortcut", async () => {
-  host = document.createElement("div");
-  Object.assign(host.style, { width: "280px", margin: "20px" });
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  Object.assign(_fixture.host.style, { width: "280px", margin: "20px" });
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <SidebarProvider className="min-h-0">
       <TooltipProvider delay={0}>
         <SidebarNewThreadRow
@@ -687,3 +720,22 @@ it("shows a compact current-project tooltip with its keyboard shortcut", async (
     });
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

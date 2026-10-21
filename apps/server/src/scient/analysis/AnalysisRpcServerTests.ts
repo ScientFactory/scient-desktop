@@ -28,27 +28,26 @@ export const registerAnalysisRpcTests = (
     getWsServerUrl,
     withWsRpcClient,
   } = harness;
-  const buildAppUnderTest = () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "scient-analysis-rpc-settings-",
-      });
-      const { settingsPath } = yield* deriveServerPaths(baseDir, undefined);
-      yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
-      // Runtime preferences read the real settings owner, not the router's mock.
-      yield* fs.writeFileString(
-        settingsPath,
-        yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
-          scientificComputing: {
-            schemaVersion: 1,
-            languages: { matlab: { enabled: true, executable: "" } },
-          },
-        }),
-      );
-      return yield* buildServer({ config: { baseDir } });
+  const buildAppUnderTest = Effect.fn("AnalysisRpcServerTests.buildAppUnderTest")(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({
+      prefix: "scient-analysis-rpc-settings-",
     });
+    const { settingsPath } = yield* deriveServerPaths(baseDir, undefined);
+    yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+    // Runtime preferences read the real settings owner, not the router's mock.
+    yield* fs.writeFileString(
+      settingsPath,
+      yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
+        scientificComputing: {
+          schemaVersion: 1,
+          languages: { matlab: { enabled: true, executable: "" } },
+        },
+      }),
+    );
+    return yield* buildServer({ config: { baseDir } });
+  });
 
   it.effect("runs a project-owned MATLAB file through the analysis RPC and streams output", () =>
     Effect.gen(function* () {

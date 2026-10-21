@@ -420,6 +420,13 @@ are normalized into bounded families; unrecognized values collapse to safe categ
 instrumentation is not automatically authorized by appearing in upstream code: it must either map to
 an existing Scient event or be explicitly reviewed and added to the Scient contract.
 
+Upstream's `installId`, `install.owner_observed`, and hashed Connect, OpenAI,
+Claude, or client-device owner graph are not Scient analytics. The inherited
+`recordOwners` service method is a no-op compatibility boundary, not permission
+to read or transmit those identities. Hashing an account or device identifier
+does not make its collection authorized. Generic T3 delivery and relay tracing
+remain disabled independently of Scient's sharing preference.
+
 The detailed current event schema and tests live in `packages/scient-analytics`. Historical design
 and capability evidence remains in
 [`docs/reports/scient-specific-capabilities.md`](../reports/scient-specific-capabilities.md).

@@ -1,10 +1,11 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useEffect, useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -25,30 +26,30 @@ import "./scient-latex.css";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 
 const source = latexBenchmarkDocument({ pages: 8 });
-let container: HTMLDivElement;
-let root: Root;
+
 let published: string;
 let publications: number;
 let key = "";
 /** Changes the document's source as Source or another editor would. */
-let replaceSource: (next: string) => void = () => {};
 
-beforeEach(async () => {
+async function _setupFixture0(_fixture: _Fixture) {
   await page.viewport(1300, 950);
-  container = document.createElement("div");
-  container.style.cssText = "display:flex;flex-direction:column;width:1100px;height:900px";
-  document.body.append(container);
-  root = createRoot(container);
+  _fixture.container = document.createElement("div");
+  _fixture.container.style.cssText = "display:flex;flex-direction:column;width:1100px;height:900px";
+  document.body.append(_fixture.container);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
   published = source;
   publications = 0;
-});
-afterEach(() => {
-  root.unmount();
-  container.remove();
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0.unmount();
+  _fixture.container.remove();
   clearVisualDraft(key);
-});
+}
 
-async function open(draftKey: string, initial = source, loaded = true) {
+async function open(_fixture: _Fixture, draftKey: string, initial = source, loaded = true) {
   key = draftKey;
   published = initial;
   clearVisualDraft(key);
@@ -56,10 +57,10 @@ async function open(draftKey: string, initial = source, loaded = true) {
     const [value, setValue] = useState(initial);
     const owner = useLatexVisualTestOwner(value);
     useEffect(() => {
-      replaceSource = (next) => {
+      _fixture.publishReplaceSource((next) => {
         published = next;
         setValue(next);
-      };
+      });
     }, []);
     return (
       <LatexVisualEditor
@@ -81,10 +82,10 @@ async function open(draftKey: string, initial = source, loaded = true) {
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   const editor = () =>
     (
-      container.querySelector(".scient-latex-visual-document") as
+      _fixture.container.querySelector(".scient-latex-visual-document") as
         | (HTMLElement & { editor?: Editor })
         | null
     )?.editor;
@@ -163,11 +164,11 @@ function changedLength(before: string, after: string) {
 }
 
 /** Every formula preview rendered. Edits are measured apart from rendering. */
-async function formulasRendered() {
+async function formulasRendered(_fixture: _Fixture) {
   await expect
     .poll(
       () =>
-        [...container.querySelectorAll(".scient-latex-math-preview")].every((preview) =>
+        [..._fixture.container.querySelectorAll(".scient-latex-math-preview")].every((preview) =>
           preview.shadowRoot
             ?.querySelector("[data-math-preview-content]")
             ?.hasAttribute("data-math-preview-ready"),
@@ -176,7 +177,9 @@ async function formulasRendered() {
     )
     .toBe(true);
   const editor = (
-    container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
+    _fixture.container.querySelector(".scient-latex-visual-document") as HTMLElement & {
+      editor: Editor;
+    }
   ).editor;
   await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
 }
@@ -204,6 +207,10 @@ function topOf(editor: Editor, position: number) {
 }
 
 it("moves from section controls into Math and preserves both edits", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const initial = String.raw`\documentclass{article}
 \usepackage{amsmath}
 \begin{document}
@@ -211,7 +218,7 @@ New heading
 
 Body text.
 \end{document}`;
-  const editor = await open("visual-section-to-math", initial);
+  const editor = await open(_fixture, "visual-section-to-math", initial);
   editor.commands.setTextSelection(2);
   await page.getByRole("button", { name: "Text", exact: true }).click();
   await page.getByRole("menuitem", { name: "Paragraph style", exact: true }).click();
@@ -228,7 +235,7 @@ Body text.
   await page.getByRole("menuitem", { name: "Paragraph style", exact: true }).click();
   await page.getByRole("button", { name: "Math", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Inline math", exact: true }).click();
-  await expect.poll(() => container.querySelector("math-field")).toBeTruthy();
+  await expect.poll(() => _fixture.container.querySelector("math-field")).toBeTruthy();
   await userEvent.keyboard("x+1");
   // About 220 ms locally; slow CI runners take several times longer.
   await expect.poll(() => published, { timeout: 5000 }).toContain("x+1");
@@ -237,12 +244,16 @@ Body text.
 });
 
 it("opens without publishing source or creating undo history", async () => {
-  const editor = await open("visual-stability-open");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-open");
   await new Promise((resolve) => setTimeout(resolve, 500));
   expect(publications).toBe(0);
   expect(published).toBe(source);
   expect(undoDepth(editor.state)).toBe(0);
-  expect(container.querySelector("[aria-busy='true']")).toBeNull();
+  expect(_fixture.container.querySelector("[aria-busy='true']")).toBeNull();
   // Forward references are numbered from the whole document, not left as keys.
   expect(editor.view.dom.textContent).not.toMatch(/\[eq:bench-\d+\]/u);
   // Progressive loading ends with exactly the parsed document.
@@ -251,7 +262,11 @@ it("opens without publishing source or creating undo history", async () => {
 }, 30000);
 
 it("a structural edit after opening rewrites only its own source", async () => {
-  const editor = await open("visual-stability-local-edit");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-local-edit");
   let last = 0;
   editor.state.doc.forEach((node, offset) => {
     if (node.type.name === "paragraph") last = offset + node.nodeSize;
@@ -265,8 +280,12 @@ it("a structural edit after opening rewrites only its own source", async () => {
 }, 30000);
 
 it("typing, splitting and joining keep content above still without app scrolling", async () => {
-  const editor = await open("visual-stability-typing");
-  await formulasRendered();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-typing");
+  await formulasRendered(_fixture);
   const scroll = scroller(editor);
   // Page gaps and paragraphs crossing pages can fill the middle of one scroll
   // position; step past them to a long paragraph with a block visible above it.
@@ -314,7 +333,11 @@ it("typing, splitting and joining keep content above still without app scrolling
 }, 60000);
 
 it("formulas finishing above the reading area do not move it", async () => {
-  const editor = await open("visual-stability-rendering");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-rendering");
   const scroll = scroller(editor);
   scroll.scrollTop = (scroll.scrollHeight - scroll.clientHeight) * 0.6;
   await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
@@ -327,14 +350,18 @@ it("formulas finishing above the reading area do not move it", async () => {
   const stop = afterPaint(() => {
     moved = Math.max(moved, Math.abs(reading.getBoundingClientRect().top - start));
   });
-  await formulasRendered();
+  await formulasRendered(_fixture);
   await new Promise((resolve) => setTimeout(resolve, 300));
   stop();
   expect(moved).toBeLessThan(1);
 }, 40000);
 
 it("PDF page markers follow edits, become stale and disappear with their text", async () => {
-  const editor = await open("visual-stability-markers");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-markers");
   const paragraphs: number[] = [];
   editor.state.doc.forEach((node, offset) => {
     if (node.type.name === "paragraph") paragraphs.push(offset);
@@ -381,7 +408,12 @@ it("PDF page markers follow edits, become stale and disappear with their text", 
 }, 30000);
 
 it("shows each block's footnotes beneath it and redraws only notes that change", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-footnotes",
     String.raw`\documentclass{article}
 \begin{document}
@@ -446,6 +478,10 @@ Another paragraph\footnote{Second note.} ends here\footnote{Third note.}.
 }, 30000);
 
 it("renumbers equations and their references when an equation moves above another", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const sentence = String.raw`See \eqref{eq:a} and \eqref{eq:b}.`;
   const equation = (name: string, body: string) =>
     String.raw`\begin{equation}${body}\label{eq:${name}}\end{equation}`;
@@ -456,6 +492,7 @@ ${blocks.join("\n\n")}
 \end{document}
 `;
   const editor = await open(
+    _fixture,
     "visual-stability-renumber",
     document(equation("a", "a=1"), sentence, equation("b", "b=2")),
   );
@@ -471,7 +508,7 @@ ${blocks.join("\n\n")}
   await expect.poll(references).toEqual(["(1)", "(2)"]);
   // The second equation moves above the first in the source; the sentence
   // that refers to both is unchanged.
-  replaceSource(document(equation("b", "b=2"), equation("a", "a=1"), sentence));
+  _fixture.replaceSource(document(equation("b", "b=2"), equation("a", "a=1"), sentence));
   const formulas = () => {
     const found: string[] = [];
     editor.state.doc.forEach((node) => {
@@ -497,13 +534,18 @@ const equationNumbers = (editor: Editor) =>
   );
 
 it("numbers the new document when another revision arrives while loading", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-revision-while-loading",
     latexBenchmarkDocument({ pages: 60 }),
     false,
   );
   expect(editor.view.dom.dataset.latexLoading).toBe("true");
-  replaceSource(String.raw`\documentclass{article}
+  _fixture.replaceSource(String.raw`\documentclass{article}
 \begin{document}
 \begin{equation}a=1\label{eq:a}\end{equation}
 
@@ -526,23 +568,31 @@ See \eqref{eq:b} and \eqref{eq:a}.
 }, 30000);
 
 it("numbers equations before the reading position when a document reopens there", async () => {
-  let editor = await open("visual-stability-reopen");
-  await formulasRendered();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  let editor = await open(_fixture, "visual-stability-reopen");
+  await formulasRendered(_fixture);
   const expected = equationNumbers(editor);
   expect(expected.length).toBeGreaterThan(10);
   const scroll = scroller(editor);
   scroll.scrollTop = scroll.scrollHeight * 0.7;
   await frames(3);
-  root.render(<></>);
+  await _fixture.root0.rerender(<></>);
   await frames(2);
-  editor = await open("visual-stability-reopen");
+  editor = await open(_fixture, "visual-stability-reopen");
   // It opened at the remembered block and loaded the blocks before it.
   expect(scroller(editor).scrollTop).toBeGreaterThan(0);
   await expect.poll(() => equationNumbers(editor), { timeout: 20000 }).toEqual(expected);
 }, 60000);
 
 it("keeps a page marker with its block when content is inserted right before it", async () => {
-  const editor = await open("visual-stability-marker-boundary");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-marker-boundary");
   const paragraphs: number[] = [];
   editor.state.doc.forEach((node, offset) => {
     if (node.type.name === "paragraph") paragraphs.push(offset);
@@ -563,8 +613,12 @@ it("keeps a page marker with its block when content is inserted right before it"
 }, 30000);
 
 it("keeps the line at the top still when text above it grows its own paragraph", async () => {
-  const editor = await open("visual-stability-line-anchor");
-  await formulasRendered();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-line-anchor");
+  await formulasRendered(_fixture);
   const scroll = scroller(editor);
   // A paragraph several lines tall, its second line at the top of the reading area.
   let paragraph = -1;
@@ -592,21 +646,25 @@ it("keeps the line at the top still when text above it grows its own paragraph",
 }, 30000);
 
 it("returns to where a document that opens at once was read", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const long = String.raw`\documentclass{article}
 \begin{document}
 ${"A single long paragraph that is read part of the way down. ".repeat(110)}
 \end{document}
 `;
-  let editor = await open("visual-stability-short-reopen", long);
+  let editor = await open(_fixture, "visual-stability-short-reopen", long);
   expect(editor.view.dom.dataset.latexLoading).toBeUndefined();
   // A reader scrolls the laid-out document: its font and pages are in place.
   await document.fonts.ready;
   await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
   scroller(editor).scrollTop = 300;
   await frames(3);
-  root.render(<></>);
+  await _fixture.root0.rerender(<></>);
   await frames(2);
-  editor = await open("visual-stability-short-reopen", long);
+  editor = await open(_fixture, "visual-stability-short-reopen", long);
   // Where reading resumes once the pages are laid out; a busy runner can still
   // be placing them three frames after opening.
   await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 20000 }).toBe(true);
@@ -615,8 +673,12 @@ ${"A single long paragraph that is read part of the way down. ".repeat(110)}
 }, 30000);
 
 it("keeps a scroll made before the reading line is taken again, corrects drift, and ignores clamping", async () => {
-  const editor = await open("visual-stability-scroll-then-layout");
-  await formulasRendered();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-scroll-then-layout");
+  await formulasRendered(_fixture);
   const scroll = scroller(editor);
   // Content above everything grows, and pages settle, right after a scroll:
   // in the same task (a restored position, the caret followed) or from the
@@ -678,6 +740,10 @@ it("keeps a scroll made before the reading line is taken again, corrects drift, 
 }, 30000);
 
 it("renumbers a reference in an unchanged title when labels change places", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const document = (first: string, second: string) => String.raw`\documentclass{article}
 \usepackage{amsthm}
 \newtheorem{theorem}{Theorem}
@@ -691,16 +757,21 @@ A statement.
 \end{theorem}
 \end{document}
 `;
-  const editor = await open("visual-stability-swapped-labels", document("a", "b"));
+  const editor = await open(_fixture, "visual-stability-swapped-labels", document("a", "b"));
   const reference = () =>
     editor.view.dom.querySelector('[data-latex-prose-text="[eq:b]"]')?.textContent;
   await expect.poll(reference).toBe("(2)");
-  replaceSource(document("b", "a"));
+  _fixture.replaceSource(document("b", "a"));
   await expect.poll(reference).toBe("(1)");
 }, 30000);
 
 it("moves a footnote band with its note when the paragraph is split after it", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-footnote-split",
     String.raw`\documentclass{article}
 \begin{document}
@@ -724,7 +795,11 @@ A noted paragraph\footnote{The note.} with more text after the note.
 }, 30000);
 
 it("removes a page marker with the equation it begins at", async () => {
-  const editor = await open("visual-stability-marker-equation");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-marker-equation");
   let equation = -1;
   editor.state.doc.forEach((node, offset) => {
     if (equation < 0 && offset > 0 && node.type.name === "latexDisplayMath") equation = offset;
@@ -747,7 +822,11 @@ it("removes a page marker with the equation it begins at", async () => {
 }, 30000);
 
 it("removes a page marker when its block is replaced, but keeps it when the block is retyped", async () => {
-  const editor = await open("visual-stability-marker-replace");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-marker-replace");
   const paragraphs: number[] = [];
   editor.state.doc.forEach((node, offset) => {
     if (node.type.name === "paragraph") paragraphs.push(offset);
@@ -776,7 +855,12 @@ it("removes a page marker when its block is replaced, but keeps it when the bloc
 }, 30000);
 
 it("keeps a footnote band with its note when text after the note is replaced by paragraphs", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-footnote-replace",
     String.raw`\documentclass{article}
 \begin{document}
@@ -814,7 +898,12 @@ The following paragraph.
 }, 30000);
 
 it("draws the band again when a noted paragraph is replaced by one with the same note", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-footnote-same-note",
     String.raw`\documentclass{article}
 \begin{document}
@@ -837,7 +926,11 @@ The following paragraph.
 }, 30000);
 
 it("removes a page marker when its equation is replaced by another", async () => {
-  const editor = await open("visual-stability-marker-equation-replace");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture, "visual-stability-marker-equation-replace");
   let equation = -1;
   editor.state.doc.forEach((node, offset) => {
     if (equation < 0 && offset > 0 && node.type.name === "latexDisplayMath") equation = offset;
@@ -860,7 +953,12 @@ it("removes a page marker when its equation is replaced by another", async () =>
 }, 30000);
 
 it("keeps a run-in heading beside its paragraph when a page marker sits between them", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-run-in-marker",
     String.raw`\documentclass{article}
 \begin{document}
@@ -895,9 +993,14 @@ ${"Text that follows the run-in heading on the same line. ".repeat(8)}
 it.each([String.raw`\columnbreak`, String.raw`\columnbreak[4]`])(
   "breaks the column after the line an inline %s ends, and again after typing",
   async (command) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const words = (prefix: string) =>
       Array.from({ length: 40 }, (_, index) => `${prefix}${index}`).join(" ");
     const editor = await open(
+      _fixture,
       `visual-stability-column-break-${command.length}`,
       String.raw`\documentclass{article}
 \usepackage{multicol}
@@ -958,8 +1061,13 @@ Closing paragraph.
 );
 
 it("keeps an open footnote editor above the next line set against a short display", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const note = "A note long enough to wrap over several lines in its editor. ".repeat(4);
   const editor = await open(
+    _fixture,
     "visual-stability-raised-footnote",
     String.raw`\documentclass{article}
 \usepackage{amsmath}
@@ -1000,7 +1108,12 @@ After.
 }, 30000);
 
 it("raises a line holding a formula being edited above later lines set against short displays", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-raised-formula",
     String.raw`\documentclass{article}
 \usepackage{amsmath}
@@ -1029,10 +1142,15 @@ After.
 }, 30000);
 
 it("keeps a list uncontained while a footnote inside it is being edited", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const filler = Array.from({ length: 30 }, (_, index) => `Filler paragraph ${index}.`).join(
     "\n\n",
   );
   const editor = await open(
+    _fixture,
     "visual-stability-nested-footnote",
     String.raw`\documentclass{article}
 \begin{document}
@@ -1063,9 +1181,14 @@ After the list.
 });
 
 it("shows a two-column document in printable-width columns", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const paragraph = (name: string) =>
     `${name} ${Array.from({ length: 60 }, (_, index) => `word${index}`).join(" ")}`;
   const editor = await open(
+    _fixture,
     "visual-stability-twocolumn",
     String.raw`\documentclass[twocolumn]{article}
 \begin{document}
@@ -1096,7 +1219,12 @@ ${paragraph("Following")}
 });
 
 it("renders a block marked for measuring, however specific the containment rule is", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const editor = await open(
+    _fixture,
     "visual-stability-measure-marker",
     String.raw`\documentclass{article}
 \begin{document}
@@ -1118,6 +1246,10 @@ An ordinary paragraph.
 });
 
 it("undoes splitting and joining a paragraph that continues after a display", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const initial = String.raw`\documentclass{article}
 \usepackage{amsmath}
 \begin{document}
@@ -1132,7 +1264,7 @@ They converge to
 $X_\infty$, and the limit is used below.
 \end{document}
 `;
-  const editor = await open("visual-stability-split-after-display", initial);
+  const editor = await open(_fixture, "visual-stability-split-after-display", initial);
   let caret = -1;
   editor.state.doc.descendants((node, position) => {
     if (caret < 0 && node.isText && node.text!.startsWith(" are prediction"))
@@ -1168,3 +1300,32 @@ $X_\infty$, and the limit is used below.
   for (let event = 0; event < events; event++) expect(editor.commands.redo()).toBe(true);
   await expect.poll(() => published).toBe(edited);
 }, 60000);
+
+function _createFixture() {
+  let _published_replaceSource = (() => {}) as (next: string) => void;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get replaceSource() {
+      return _published_replaceSource;
+    },
+    publishReplaceSource(next: typeof _published_replaceSource) {
+      _published_replaceSource = next;
+      return next;
+    },
+
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

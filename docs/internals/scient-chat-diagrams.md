@@ -8,14 +8,16 @@ canonical chat Markdown.
 Scient owns `apps/web/src/scient/diagrams`: the lazy Mermaid runtime, inline
 card, expanded viewer, export helpers, styles, and tests. The inherited T3 host
 has one renderer branch in `ChatMarkdown.tsx`, inside a marked `SCIENT-FORK`
-region of the `pre` renderer: a settled fence whose language is `mermaid` is
-passed through `scient/presentation/ScientRichFence.tsx` to
-`MermaidDiagramCard`. While the message streams, and for every other fence, the
-code goes through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block). A
-static seam audit keeps that integration narrow during upstream refreshes. Because Markdown file
-previews already share `ChatMarkdown`, they receive the same behavior without a
-second viewer integration.
+region of the `pre` renderer: eligible rich fences pass through
+`scient/presentation/ScientRichFence.tsx` to their owned renderer, including
+`MermaidDiagramCard` for Mermaid. A closed Mermaid fence may render while the
+rest of the message streams. Unfinished streaming Mermaid fences stay on the
+source-code path; Plotly and Vega-Lite fences wait for the message to settle.
+Ordinary fences use Scient's `MarkdownCodeBlock`
+(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block).
+Mounted consumer tests protect these boundaries during upstream refreshes.
+Because Markdown file previews already share `ChatMarkdown`, they receive the
+same behavior without a second viewer integration.
 
 There is no wire-format, database, attachment, artifact-store, or Markdown AST
 fork. The source already present in the assistant message is authoritative;
@@ -29,7 +31,8 @@ diagram card.
 ## Rendering pipeline
 
 The exact-pinned `mermaid` 12.0.0 package is locally bundled and loaded only
-when a settled diagram enters a 400 px viewport margin. The initial chat bundle
+when an eligible diagram enters a 400 px viewport margin, including a closed
+Mermaid fence during streaming. The initial chat bundle
 does not import Mermaid. Chat, Markdown previews and the editor draw in one
 long-lived hidden frame shared with Word export's renderer
 (`diagrams/isolatedMermaid.ts`): its Content Security Policy allows only
@@ -134,7 +137,7 @@ retain the original. Opening a recovered preview cannot create an editor
 transaction or save a file. No agent invocation, extra validation tool, or
 layout-changing recovery notice is added.
 
-The settled card has explicit loading, ready, source, and error states. A parse
+The diagram card has explicit loading, ready, source, and error states. A parse
 failure shows one compact error line with adjacent repair, copy, and retry icons.
 The failed diagram has no separate toolbar or diagram menu. Its source sits
 directly below, using the same `MarkdownCodeBlock` as ordinary chat fences:
@@ -227,8 +230,15 @@ DOM mocks alone cannot establish these properties.
 
 Co-located unit tests cover source bounds, declaration-first parsing with
 accessibility metadata, SVG id/reference rebasing, portable
-filenames, standalone export preparation, Markdown round-tripping, and the
-single `ChatMarkdown` seam. Server tests assert the shared awareness contract,
+filenames, standalone export preparation, and Markdown round-tripping.
+`ChatMarkdown.browser.test.tsx` covers the actual rich-fence consumer, including
+metadata, rendered appearance, and Mermaid versus chart streaming behavior.
+Card interaction tests measure inline geometry and exercise the expanded
+dialog's source and image actions through the export boundaries; native Mermaid
+browser tests check effective startup/security configuration and inert authored
+callbacks. The Plotly runtime loader test controls the dynamic-module boundary
+to cover concurrent consumers, rejection, retry, and successful caching.
+Server tests assert the shared awareness contract,
 its capability gate, and every built-in provider delivery decision. The production build is the bundle
 gate: Mermaid must remain in lazy chunks rather than the entry bundle.
 `docs/fixtures/scient-chat-diagrams.md` is the manual light/dark corpus for the
@@ -257,10 +267,13 @@ claim. Fix canonical SVG serialization and browser rasterization in a separate
 targeted export pass. Do not rewrite authors' Mermaid source to conceal these
 representation-layer failures.
 
-When T3 changes `ChatMarkdown.tsx`, reapply only the import and settled-fence
-branch, then rerun the diagram seam test. T3 has its own chat Mermaid renderer
-(`chat/MermaidDiagram.tsx`, #15067); Scient does not ship it, and the host
-routes every settled Mermaid fence to Scient's card. Scient's renderer is kept
+When T3 changes `ChatMarkdown.tsx`, preserve only the narrow owned rich-fence
+import and branch, including the closed-Mermaid streaming boundary. Run the
+`ChatMarkdown.browser.test.tsx` diagram cases and the co-located diagram
+interaction/native-renderer tests rather than a source-text wiring audit.
+T3 has its own chat Mermaid renderer (`chat/MermaidDiagram.tsx`, #15067);
+Scient does not ship it, and the host routes eligible Mermaid fences to
+Scient's card. Scient's renderer is kept
 because it draws in the isolated no-network frame and adds export, syntax
 recovery and source repair, which T3's renderer does not have. Revisit the
 choice if T3's renderer gains an isolated frame and an export path that

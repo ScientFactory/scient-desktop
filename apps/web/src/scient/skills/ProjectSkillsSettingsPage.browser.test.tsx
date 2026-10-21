@@ -1,28 +1,31 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import { EnvironmentId, ProjectId, type OrchestrationProjectShell } from "@t3tools/contracts";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { ProjectSkillsSettingsPage } from "./ProjectSkillsSettingsPage";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const environmentId = EnvironmentId.make("local-environment");
 const projects = [
@@ -66,7 +69,8 @@ vi.mock("./ProjectSkillsSettings", () => ({
     <div data-testid="settings" data-project-id={projectId} data-environment-id={environmentId} />
   ),
 }));
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (_actualRouter) => ({
+  ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 vi.mock("../../components/settings/settingsLayout", () => ({
@@ -75,27 +79,52 @@ vi.mock("../../components/settings/settingsLayout", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <section>{children}</section>,
 }));
 
-it("opens, switches, and closes projects from the shared source selector", () => {
-  mount(<ProjectSkillsSettingsPage />);
-  const items = () => [...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")];
+it("opens, switches, and closes projects from the shared source selector", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await mount(_fixture, <ProjectSkillsSettingsPage />);
+  const items = () => [
+    ..._fixture.host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]"),
+  ];
   const expanded = () => items().map((item) => item.getAttribute("aria-expanded") === "true");
-  const settings = () => host.querySelector<HTMLElement>('[data-testid="settings"]');
+  const settings = () => _fixture.host.querySelector<HTMLElement>('[data-testid="settings"]');
   expect(items()).toHaveLength(2);
   expect(expanded()).toEqual([false, false]);
   expect(
-    [...host.querySelectorAll<HTMLElement>('[data-testid="favicon"]')].map((item) =>
+    [..._fixture.host.querySelectorAll<HTMLElement>('[data-testid="favicon"]')].map((item) =>
       JSON.parse(item.dataset.project!),
     ),
   ).toEqual(projects);
   expect(settings()).toBeNull();
-  act(() => items()[1]!.click());
+  await act(() => items()[1]!.click());
   expect(expanded()).toEqual([false, true]);
   expect(settings()?.dataset.projectId).toBe(projects[1].id);
   expect(settings()?.dataset.environmentId).toBe(environmentId);
-  act(() => items()[0]!.click());
+  await act(() => items()[0]!.click());
   expect(expanded()).toEqual([true, false]);
   expect(settings()?.dataset.projectId).toBe(projects[0].id);
-  act(() => items()[0]!.click());
+  await act(() => items()[0]!.click());
   expect(expanded()).toEqual([false, false]);
   expect(settings()).toBeNull();
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -1,6 +1,6 @@
+import { render as _fixtureRender } from "../../../test/render";
 import "../../index.css";
 
-import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 import { SelectionCitationToolbar } from "./AssistantSelectionToolbar";
@@ -9,10 +9,14 @@ it.each([
   { pointer: { x: 700, y: 350 }, expected: { x: 240, y: 224 } },
   { pointer: { x: 215, y: 215 }, expected: { x: 215, y: 215 } },
 ])("anchors model selection to ink bounds for pointer $pointer", async ({ pointer, expected }) => {
+  await using _fixture = _createFixture();
+
   const viewport = document.createElement("div");
   viewport.style.cssText = "position:fixed;left:50px;top:50px;width:300px;height:400px";
   document.body.append(viewport);
-  const root = createRoot(viewport);
+  const root = _fixture.stack.use(
+    await _fixtureRender(null, { container: viewport, router: false }),
+  );
   const sourceAnchor = {
     source: viewport,
     viewport,
@@ -23,7 +27,7 @@ it.each([
   const onCite = vi.fn(() => true);
   const selectionReady = vi.fn();
   try {
-    root.render(
+    await root.rerender(
       <SelectionCitationToolbar
         viewport={viewport}
         capture={() => ({ citation, sourceAnchor })}
@@ -55,7 +59,24 @@ it.each([
     action()!.click();
     expect(onCite).toHaveBeenCalledWith(citation, sourceAnchor);
   } finally {
-    root.unmount();
+    await root.unmount();
     viewport.remove();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

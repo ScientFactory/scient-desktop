@@ -4,31 +4,15 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { render } from "../../../test/render";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { getDriverOption } from "./providerDriverMeta";
 
 const environmentId = EnvironmentId.make("local");
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 const driver = ProviderDriverKind.make("codex");
 
@@ -54,43 +38,41 @@ async function renderCard(
   mode: ComponentProps<typeof ProviderInstanceCard>["mode"],
   overrides: Partial<ComponentProps<typeof ProviderInstanceCard>> = {},
 ) {
-  await act(async () =>
-    root.render(
-      <ProviderInstanceCard
-        environmentId={environmentId}
-        instanceId={liveProvider.instanceId}
-        instance={{ driver: liveProvider.driver }}
-        driverOption={getDriverOption(liveProvider.driver)}
-        liveProvider={liveProvider}
-        mode={mode}
-        onUpdate={() => undefined}
-        hiddenModels={[]}
-        favoriteModels={[]}
-        modelOrder={[]}
-        onHiddenModelsChange={() => undefined}
-        onFavoriteModelsChange={() => undefined}
-        onToggleFavorite={() => undefined}
-        onModelOrderChange={() => undefined}
-        {...overrides}
-      />,
-    ),
+  return render(
+    <ProviderInstanceCard
+      environmentId={environmentId}
+      instanceId={liveProvider.instanceId}
+      instance={{ driver: liveProvider.driver }}
+      driverOption={getDriverOption(liveProvider.driver)}
+      liveProvider={liveProvider}
+      mode={mode}
+      onUpdate={() => undefined}
+      hiddenModels={[]}
+      favoriteModels={[]}
+      modelOrder={[]}
+      onHiddenModelsChange={() => undefined}
+      onFavoriteModelsChange={() => undefined}
+      onToggleFavorite={() => undefined}
+      onModelOrderChange={() => undefined}
+      {...overrides}
+    />,
   );
 }
 
 describe("ProviderInstanceCard", () => {
   it("shows the account email by default and lets the user hide and reveal it", async () => {
-    await renderCard(
+    await using screen = await renderCard(
       provider({ auth: { status: "authenticated", email: "developer@example.com" } }),
       "editor",
     );
-    expect(container.textContent).toContain("Authenticated as");
-    expect(container.textContent).toContain("developer@example.com");
+    expect(screen.container.textContent).toContain("Authenticated as");
+    expect(screen.container.textContent).toContain("developer@example.com");
 
-    const toggle = container.querySelector<HTMLButtonElement>(
+    const toggle = screen.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Toggle account email visibility"]',
     )!;
     await userEvent.click(toggle);
-    expect(container.textContent).not.toContain("developer@example.com");
+    expect(screen.container.textContent).not.toContain("developer@example.com");
 
     await userEvent.click(toggle);
     expect(toggle.textContent).toBe("developer@example.com");
@@ -99,7 +81,7 @@ describe("ProviderInstanceCard", () => {
   it.each(["list", "editor"] as const)(
     "surfaces a failed probe message in the %s",
     async (mode) => {
-      await renderCard(
+      await using screen = await renderCard(
         provider({
           version: null,
           status: "error",
@@ -110,11 +92,11 @@ describe("ProviderInstanceCard", () => {
         mode,
       );
       if (mode === "editor") {
-        expect(container.textContent).toContain("Unavailable");
-        expect(container.textContent).toContain("is not a symlink");
+        expect(screen.container.textContent).toContain("Unavailable");
+        expect(screen.container.textContent).toContain("is not a symlink");
       } else {
-        expect(container.textContent).not.toContain("Unavailable");
-        expect(container.textContent).not.toContain("is not a symlink");
+        expect(screen.container.textContent).not.toContain("Unavailable");
+        expect(screen.container.textContent).not.toContain("is not a symlink");
       }
     },
   );
@@ -144,8 +126,11 @@ describe("Pi status copy", () => {
     enabled = true,
     isUpdating = false,
   ) {
-    await renderCard(value, mode, { instance: { driver, enabled }, isUpdating });
-    return container.textContent ?? "";
+    await using screen = await renderCard(value, mode, {
+      instance: { driver, enabled },
+      isUpdating,
+    });
+    return screen.container.textContent ?? "";
   }
 
   it.each(["list", "editor"] as const)(
@@ -228,8 +213,7 @@ describe("Pi status copy", () => {
   it.each(["list", "editor"] as const)(
     "reports native update progress in the quiet Pi %s without changing its runtime authority",
     async (mode) => {
-      const markup = await render(
-        mode,
+      await using screen = await renderCard(
         {
           ...liveProvider,
           updateState: {
@@ -240,11 +224,12 @@ describe("Pi status copy", () => {
             output: null,
           },
         },
-        true,
-        true,
+        mode,
+        { instance: { driver, enabled: true }, isUpdating: true },
       );
+      const markup = screen.container.textContent ?? "";
       expect(markup).toContain("Updating · Installing package");
-      expect(container.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      expect(screen.container.querySelector('[aria-live="polite"]')?.textContent).toContain(
         "Installing package",
       );
       expect(markup).not.toContain("Authentication is model-specific");
@@ -302,12 +287,12 @@ describe("Pi status copy", () => {
         },
       },
     };
-    await renderCard(managedProvider, "editor", {
+    await using screen = await renderCard(managedProvider, "editor", {
       instance: { driver, enabled: true },
       onRunUpdate: () => undefined,
       onInstallRecommended: () => undefined,
     });
-    const markup = container.textContent ?? "";
+    const markup = screen.container.textContent ?? "";
 
     expect(markup).toContain("Update available");
     expect(markup).toContain("Incompatible");
@@ -324,7 +309,7 @@ describe("Scient account presentation", () => {
   ])(
     "keeps $kind subscription ($authLabel) above its visible account row",
     async ({ kind, authLabel }) => {
-      await renderCard(
+      await using screen = await renderCard(
         provider({
           instanceId: ProviderInstanceId.make(kind),
           driver: ProviderDriverKind.make(kind),
@@ -336,15 +321,15 @@ describe("Scient account presentation", () => {
         }),
         "editor",
       );
-      const account = container.querySelector<HTMLButtonElement>(
+      const account = screen.container.querySelector<HTMLButtonElement>(
         'button[aria-label="Toggle account email visibility"]',
       )!;
       expect(account).not.toBeNull();
       expect(account.textContent).toBe("developer@example.com");
       expect(account.className).not.toContain("blur-");
-      expect(container.textContent).toContain("Authenticated as");
+      expect(screen.container.textContent).toContain("Authenticated as");
       if (authLabel) {
-        const label = [...container.querySelectorAll("p")].find(
+        const label = [...screen.container.querySelectorAll("p")].find(
           (element) => element.textContent === authLabel,
         )!;
         expect(label).toBeDefined();
@@ -352,7 +337,7 @@ describe("Scient account presentation", () => {
           account.getBoundingClientRect().top,
         );
         expect(label.nextElementSibling?.textContent).toContain("Authenticated as");
-        expect(container.textContent).not.toContain("\u00b7 " + authLabel);
+        expect(screen.container.textContent).not.toContain("\u00b7 " + authLabel);
       } else {
         expect(account.closest(".grid")?.firstElementChild?.textContent).toContain(
           "Authenticated as",
@@ -367,11 +352,12 @@ describe("Scient account presentation", () => {
       auth: { status: "unauthenticated", required: true },
       connection: { methods: ["codex_browser"], canDisconnect: false, operation: null },
     });
-    await renderCard(value, "list");
-    expect(container.querySelector('[aria-pressed="false"]')).not.toBeNull();
-    expect(container.textContent).not.toContain("Sign-in required");
-    await renderCard(value, "editor");
-    expect(container.textContent).toContain("Sign-in required");
+    await using screen = await renderCard(value, "list");
+    expect(screen.container.querySelector('[aria-pressed="false"]')).not.toBeNull();
+    expect(screen.container.textContent).not.toContain("Sign-in required");
+    await screen[Symbol.asyncDispose]();
+    await using editorScreen = await renderCard(value, "editor");
+    expect(editorScreen.container.textContent).toContain("Sign-in required");
   });
 });
 // SCIENT-FORK:END

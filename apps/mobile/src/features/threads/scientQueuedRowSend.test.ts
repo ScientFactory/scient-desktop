@@ -12,6 +12,8 @@ function run(id: string, ordinal: number, status: string) {
     id,
     ordinal,
     status,
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "test-model" },
     userMessageId: `message:${id}`,
     queuePosition: status === "queued" ? ordinal : null,
     queueHeld: status === "queued",
@@ -22,7 +24,10 @@ function run(id: string, ordinal: number, status: string) {
 
 function projection(runs: ReadonlyArray<object>, turnItems: ReadonlyArray<object> = []) {
   return {
-    thread: { providerInstanceId: "codex" },
+    thread: {
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "test-model" },
+    },
     runs,
     messages: [],
     turnItems,

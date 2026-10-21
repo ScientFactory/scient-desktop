@@ -29,10 +29,8 @@ export const workspaceResolverForTest = (
     { readonly projectId: string | null; readonly scope: WorkspaceScope }
   >,
 ): WorkspaceBindingResolver["Service"] => {
-  const resolveWorkspaceRoot: WorkspaceBindingResolver["Service"]["resolveWorkspaceRoot"] = (
-    root,
-  ) =>
-    Effect.gen(function* () {
+  const resolveWorkspaceRoot: WorkspaceBindingResolver["Service"]["resolveWorkspaceRoot"] =
+    Effect.fn("WorkspaceBindingTestUtils.resolveWorkspaceRoot")(function* (root) {
       const entry = entries.get(root);
       if (entry === undefined)
         return yield* new WorkspaceBindingResolutionError({

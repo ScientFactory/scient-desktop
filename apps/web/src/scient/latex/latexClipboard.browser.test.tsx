@@ -1,8 +1,9 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { isMacKeyboard } from "../keyboard/keys";
@@ -18,30 +19,30 @@ import { LatexVisualEditor } from "./LatexVisualEditor";
 import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
 let source = "";
 let edits = 0;
 const draftKey = "clipboard-regression";
 const document = (body: string) =>
   `\\documentclass{article}\n\\usepackage{amsmath,hyperref,natbib}\n\\begin{document}\n${body}\n\\end{document}`;
 
-afterEach(() => {
-  root?.unmount();
-  root = undefined;
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.root0 = undefined;
+  _fixture.host?.remove();
   clearVisualDraft(draftKey);
-});
+}
 
-async function mount(body: string, disabled = false) {
+async function mount(_fixture: _Fixture, body: string, disabled = false) {
   await page.viewport(1300, 900);
   source = document(body);
   edits = 0;
   clearVisualDraft(draftKey);
-  host = window.document.createElement("div");
-  host.style.cssText = "width:1100px;height:850px";
-  window.document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = window.document.createElement("div");
+  _fixture.host.style.cssText = "width:1100px;height:850px";
+  window.document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   const initial = source;
   function Harness() {
     const [text, setText] = useState(initial);
@@ -67,15 +68,16 @@ async function mount(body: string, disabled = false) {
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   await expect
     .poll(
       () =>
-        host.querySelector<HTMLElement & { editor: Editor }>(".scient-latex-visual-document")
-          ?.editor,
+        _fixture.host.querySelector<HTMLElement & { editor: Editor }>(
+          ".scient-latex-visual-document",
+        )?.editor,
     )
     .toBeTruthy();
-  const editor = host.querySelector<HTMLElement & { editor: Editor }>(
+  const editor = _fixture.host.querySelector<HTMLElement & { editor: Editor }>(
     ".scient-latex-visual-document",
   )!.editor;
   await expect
@@ -109,7 +111,10 @@ it.each([
   String.raw`\footnote{Footnote text.}`,
   String.raw`\protect \ref{sec:one}`,
 ])("copies a selected command through the real editor event: %s", async (command) => {
-  const editor = await mount(command);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, command);
   const original = source;
   const undo = editor.can().undo();
   selectCommand(editor);
@@ -122,8 +127,11 @@ it.each([
 });
 
 it("copies and pastes mixed commands, escaping and Hebrew, then undoes and reopens exact source", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const body = String.raw`לפני 50\% \ref{sec:one} \citep[see][p.~7]{alpha,beta} \href{https://example.test}{Read this} \footnote{Footnote text.} אחרי.`;
-  const editor = await mount(body + "\n\nDestination.");
+  const editor = await mount(_fixture, body + "\n\nDestination.");
   const original = source;
   editor.commands.setTextSelection({ from: 1, to: editor.state.doc.firstChild!.nodeSize - 1 });
   const transfer = clipboard(editor, "copy");
@@ -139,17 +147,20 @@ it("copies and pastes mixed commands, escaping and Hebrew, then undoes and reope
   expect(source.match(/\\footnote\{Footnote text\.\}/gu)).toHaveLength(2);
   editor.commands.undo();
   await expect.poll(() => source).toBe(original);
-  root?.unmount();
-  root = undefined;
-  host.remove();
-  const reopened = await mount(body + "\n\nDestination.");
+  await _fixture.root0?.unmount();
+  _fixture.root0 = undefined;
+  _fixture.host.remove();
+  const reopened = await mount(_fixture, body + "\n\nDestination.");
   expect(source).toBe(original);
   reopened.commands.setTextSelection({ from: 1, to: reopened.state.doc.firstChild!.nodeSize - 1 });
   expect(clipboard(reopened, "copy").getData("text/plain")).toBe(body);
 }, 45000);
 
 it("cuts the selected command to the clipboard and undo restores exact source", async () => {
-  const editor = await mount(String.raw`Before \ref{sec:one} after.`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, String.raw`Before \ref{sec:one} after.`);
   const original = source;
   selectCommand(editor);
   expect(clipboard(editor, "cut").getData("text/plain")).toBe(String.raw`\ref{sec:one}`);
@@ -160,14 +171,17 @@ it("cuts the selected command to the clipboard and undo restores exact source", 
 });
 
 it("uses browser Copy and Cut shortcuts and restores source with keyboard Undo", async () => {
-  const editor = await mount(String.raw`Before \ref{sec:one} after.`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, String.raw`Before \ref{sec:one} after.`);
   const original = source;
   const copied: string[] = [];
   const cut: string[] = [];
-  host.addEventListener("copy", (event) =>
+  _fixture.host.addEventListener("copy", (event) =>
     copied.push(event.clipboardData?.getData("text/plain") ?? ""),
   );
-  host.addEventListener("cut", (event) =>
+  _fixture.host.addEventListener("cut", (event) =>
     cut.push(event.clipboardData?.getData("text/plain") ?? ""),
   );
   editor.commands.focus(undefined, { scrollIntoView: false });
@@ -185,7 +199,13 @@ it("uses browser Copy and Cut shortcuts and restores source with keyboard Undo",
 });
 
 it("copies a nested open selection without copying its unselected text", async () => {
-  const editor = await mount(String.raw`\begin{quote}Before \ref{sec:one} after.\end{quote}`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(
+    _fixture,
+    String.raw`\begin{quote}Before \ref{sec:one} after.\end{quote}`,
+  );
   const original = source;
   let position: number | null = null;
   editor.state.doc.descendants((node, at) => {
@@ -203,8 +223,11 @@ it("copies a nested open selection without copying its unselected text", async (
 });
 
 it("preserves existing formula and table copy events", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const table = String.raw`\begin{tabular}{ll}A & B \\ C & D\end{tabular}`;
-  const editor = await mount("$x+1$\n\n" + table);
+  const editor = await mount(_fixture, "$x+1$\n\n" + table);
   const original = source;
   const nodes: { position: number; type: string }[] = [];
   editor.state.doc.descendants((node, position) => {
@@ -226,7 +249,10 @@ it("preserves existing formula and table copy events", async () => {
 });
 
 it("copies read-only source without enabling cut or paste", async () => {
-  const editor = await mount(String.raw`Before \ref{sec:one} after.`, true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, String.raw`Before \ref{sec:one} after.`, true);
   const original = source;
   selectCommand(editor);
   expect(clipboard(editor, "copy").getData("text/plain")).toBe(String.raw`\ref{sec:one}`);
@@ -239,8 +265,11 @@ it("copies read-only source without enabling cut or paste", async () => {
 });
 
 it("stress-tests thirty mixed-command copy/paste/undo cycles without source drift", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const body = String.raw`שלום \ref{sec:one} \citep[see][p.~7]{alpha,beta} \href{https://example.test}{Link} \footnote{Note} סוף.`;
-  const editor = await mount(body + "\n\nDestination.");
+  const editor = await mount(_fixture, body + "\n\nDestination.");
   const original = source;
   for (let round = 0; round < 30; round++) {
     const before = edits;
@@ -256,3 +285,22 @@ it("stress-tests thirty mixed-command copy/paste/undo cycles without source drif
     await expect.poll(() => source).toBe(original);
   }
 }, 60000);
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -5,26 +6,26 @@ import {
   ProviderInstanceId,
   type ProviderConnectionOperation,
 } from "@t3tools/contracts";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 // Toasts read the current thread from the route; there is none here.
-vi.mock("@tanstack/react-router", () => ({ useParams: () => null }));
+vi.mock("@tanstack/react-router", async (_actualRouter) => ({
+  ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
+  useParams: () => null,
+}));
 
 import { ToastProvider } from "../../components/ui/toast";
 import { resetProviderSignInForTests, startProviderSignIn } from "./providerSignInFlow";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   resetProviderSignInForTests();
-});
+}
 
 function waiting(signInRequestId: string, operationId: string): ProviderConnectionOperation {
   return {
@@ -55,11 +56,16 @@ it.each([
   ["blocked", "Antigravity sign-in page blocked"],
   ["failed", "Antigravity sign-in didn’t open"],
 ] as const)("keeps the %s notification title on one line", async (outcome, title) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(1000, 650);
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<ToastProvider />);
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<ToastProvider />);
   // The provider must be listening before the notification is added.
   await new Promise((resolve) => setTimeout(resolve, 50));
   // The real opener: a browser tab whose popup is blocked, or a page that fails to open.
@@ -87,3 +93,22 @@ it.each([
   await expect.element(page.getByText(title)).toBeVisible();
   expect(titleLines(title)).toBe(1);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

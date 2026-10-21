@@ -4,7 +4,7 @@ import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
 describe("buildRuntimeInstructions", () => {
   it("requires explicit registration of every PR and stack layer", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
-    expect(instructions).toContain("When the t3-code MCP server exposes link_pull_request");
+    expect(instructions).toContain("When the MCP server named t3-code exposes link_pull_request");
     expect(instructions).toContain("with the full PR URL immediately after creating a PR");
     expect(instructions).toContain("For a stack, call it for every layer");
     expect(instructions).toContain("call list_thread_pull_requests and link any PR");
@@ -21,6 +21,14 @@ describe("buildRuntimeInstructions", () => {
     },
   );
 
+  it("uses the host product in agent wake-up instructions without renaming the MCP server", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex", productName: "Scient" });
+    expect(instructions).toContain("running in Scient through the Codex harness.");
+    expect(instructions).toContain("Scient wakes you when checks finish");
+    expect(instructions).toContain("MCP server named t3-code exposes link_pull_request");
+    expect(instructions).toContain("As a delegated child task, do not watch or poll PRs");
+    expect(instructions).not.toContain("T3 Code");
+  });
   it("keeps known model and effort metadata on one line", () => {
     expect(
       buildRuntimeInstructions({

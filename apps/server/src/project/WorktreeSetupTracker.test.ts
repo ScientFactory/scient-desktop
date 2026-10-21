@@ -11,6 +11,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as WorktreeSetupTracker from "./WorktreeSetupTracker.ts";
 
+const isWorktreeSetupSnapshot = Schema.is(WorktreeSetupSnapshot);
+
 const threadId = ThreadId.make("thread-1");
 
 describe("WorktreeSetupTracker", () => {
@@ -212,7 +214,7 @@ describe("WorktreeSetupTracker", () => {
       expect(snapshot?.stages[1]?.detail?.length).toBe(200);
       expect(snapshot?.stages[1]?.tail[0]?.length).toBe(400);
       expect(snapshot?.error?.length).toBe(1000);
-      expect(Schema.is(WorktreeSetupSnapshot)(snapshot)).toBe(true);
+      expect(isWorktreeSetupSnapshot(snapshot)).toBe(true);
     }),
   );
 });

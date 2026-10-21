@@ -1,6 +1,5 @@
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
-import { sharedIsolatedMermaid } from "./isolatedMermaid";
 import { substituteMeasuredImages, substituteSvgImageLinks } from "./measuredImages";
 import {
   isMermaidSyntaxError,
@@ -186,6 +185,7 @@ async function renderIsolatedTemplate(
   source: string,
   theme: MermaidTheme,
 ): Promise<CachedMermaidDiagram> {
+  const { sharedIsolatedMermaid } = await import("./isolatedMermaid");
   const frame = await sharedIsolatedMermaid();
   const result = await frame.render(source, { theme, awaitRefusals: false });
   if (!result.svg.includes("<svg")) {

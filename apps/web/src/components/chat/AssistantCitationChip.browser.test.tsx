@@ -4,15 +4,15 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, useState, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useState, type ComponentProps, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { userEvent } from "vite-plus/test/browser";
 import { assistantCitationHash } from "~/lib/assistantCitationNavigation";
 import { fileCitationHash } from "~/scient/markdownEditor/fileCitationNavigation";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { act, render } from "../../../test/render";
 
 const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn(), navigate: vi.fn() }));
 vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
@@ -58,11 +58,21 @@ const citation = {
   suffix: "",
 };
 
-let root: Root;
-let container: HTMLDivElement;
-let sourceAnchor: AssistantCitationSourceAnchor;
+// The mocked source observer is shared, so every test starts by resetting it.
+function setup() {
+  mocks.observeSource.mockReset().mockReturnValue(mocks.dispose);
+  mocks.dispose.mockClear();
+  mocks.navigate.mockClear();
+  const source = document.createElement("p");
+  source.textContent = "hello";
+  document.body.append(source);
+  const range = document.createRange();
+  range.selectNodeContents(source);
+  const sourceAnchor = { source, range, viewport: document.body } as AssistantCitationSourceAnchor;
+  return { sourceAnchor, [Symbol.dispose]: () => source.remove() };
+}
 
-async function mount(onSave = vi.fn(() => true)) {
+function mount(sourceAnchor: AssistantCitationSourceAnchor, onSave: () => boolean) {
   function Composer() {
     const [open, setOpen] = useState(true);
     return (
@@ -73,8 +83,7 @@ async function mount(onSave = vi.fn(() => true)) {
       />
     );
   }
-  await act(async () => root.render(<Composer />));
-  return onSave;
+  return render(<Composer />);
 }
 
 const textarea = () =>
@@ -104,31 +113,11 @@ async function clickButton(label: string) {
   await act(async () => button!.click());
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  mocks.observeSource.mockReset().mockReturnValue(mocks.dispose);
-  mocks.dispose.mockClear();
-  mocks.navigate.mockReset();
-  const source = document.createElement("p");
-  source.textContent = "hello";
-  document.body.append(source);
-  const range = document.createRange();
-  range.selectNodeContents(source);
-  sourceAnchor = { source, range, viewport: document.body } as AssistantCitationSourceAnchor;
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
-
 describe("citation comment source disappearance", () => {
   it("preserves an over-length draft at the composer until it can be shortened and saved", async () => {
-    const onSave = await mount();
+    using source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(source.sourceAnchor, onSave);
     const draft = "x".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH + 1);
     await typeComment(draft);
     await removeSource();
@@ -146,7 +135,9 @@ describe("citation comment source disappearance", () => {
   });
 
   it("preserves a rejected save and allows a later retry", async () => {
-    const onSave = await mount(vi.fn(() => false));
+    using source = setup();
+    const onSave = vi.fn(() => false);
+    await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("keep this draft");
     await removeSource();
 
@@ -159,7 +150,9 @@ describe("citation comment source disappearance", () => {
   });
 
   it("still allows explicit cancellation after source disappearance", async () => {
-    const onSave = await mount(vi.fn(() => false));
+    using source = setup();
+    const onSave = vi.fn(() => false);
+    await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("discard this draft");
     await removeSource();
     onSave.mockClear();
@@ -169,7 +162,9 @@ describe("citation comment source disappearance", () => {
   });
 
   it("saves and closes when the source disappears with a valid draft", async () => {
-    const onSave = await mount();
+    using source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(source.sourceAnchor, onSave);
     await typeComment("saved comment");
     await removeSource();
     expect(onSave).toHaveBeenCalledWith("saved comment");
@@ -199,9 +194,9 @@ describe("citation hover content", () => {
     suffix: "",
   };
 
-  const sourceLink = () => container.querySelector<HTMLAnchorElement>("a")!;
-  async function hoverFile() {
-    await act(async () => userEvent.hover(sourceLink()));
+  const sourceLink = (container: HTMLElement) => container.querySelector<HTMLAnchorElement>("a")!;
+  async function hoverFile(container: HTMLElement) {
+    await act(async () => userEvent.hover(sourceLink(container)));
     await vi.waitFor(async () => {
       await act(async () => {});
       expect(document.querySelector('[data-slot="tooltip-popup"]')).not.toBeNull();
@@ -211,11 +206,12 @@ describe("citation hover content", () => {
   it.each([false, true])(
     "renders a compact card instead of a native title (composer: %s)",
     async (composer) => {
-      await act(async () =>
-        root.render(<AssistantCitationChip citation={fileCitation} composer={composer} />),
+      using _source = setup();
+      await using screen = await render(
+        <AssistantCitationChip citation={fileCitation} composer={composer} />,
       );
-      expect(sourceLink().hasAttribute("title")).toBe(false);
-      const popup = await hoverFile();
+      expect(sourceLink(screen.container).hasAttribute("title")).toBe(false);
+      const popup = await hoverFile(screen.container);
       expect(popup.textContent).toContain("workingPlaceholder.ts");
       expect(popup.textContent).toContain("/Users/someone/project/apps/web/src/components/chat/");
       expect(popup.textContent).toContain("Lines 12–18");
@@ -225,21 +221,25 @@ describe("citation hover content", () => {
     },
   );
   it("marks citations captured from unsaved drafts", async () => {
-    await act(async () =>
-      root.render(<AssistantCitationChip citation={{ ...fileCitation, origin: "draft" }} />),
+    using _source = setup();
+    await using screen = await render(
+      <AssistantCitationChip citation={{ ...fileCitation, origin: "draft" }} />,
     );
-    expect((await hoverFile()).textContent).toContain("Lines 12–18 · unsaved at capture");
+    expect((await hoverFile(screen.container)).textContent).toContain(
+      "Lines 12–18 · unsaved at capture",
+    );
   });
   it.each([true, false])(
     "shows the assistant quote and source with saved comment: %s",
     async (withComment) => {
+      using _source = setup();
       const quoted = {
         ...citation,
         text: "hello\nquoted source",
         ...(withComment ? { comment: "Explain this result" } : {}),
       };
-      await act(async () => root.render(<AssistantCitationChip citation={quoted} />));
-      const trigger = container.querySelector<HTMLButtonElement>(
+      await using screen = await render(<AssistantCitationChip citation={quoted} />);
+      const trigger = screen.container.querySelector<HTMLButtonElement>(
         'button[aria-label^="Quoted assistant text:"]',
       )!;
       await act(async () => trigger.click());
@@ -271,11 +271,12 @@ describe("citation hover content", () => {
   it.each([false, true])(
     "keeps file citations navigating to their exact captured source (composer: %s)",
     async (composer) => {
-      await act(async () =>
-        root.render(<AssistantCitationChip citation={fileCitation} composer={composer} />),
+      using _source = setup();
+      await using screen = await render(
+        <AssistantCitationChip citation={fileCitation} composer={composer} />,
       );
       expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
-      const source = sourceLink();
+      const source = sourceLink(screen.container);
       expect(source.getAttribute("href")).toBe(
         "/" +
           fileCitation.environmentId +

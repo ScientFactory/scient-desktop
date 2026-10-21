@@ -263,17 +263,19 @@ const make = Effect.gen(function* () {
       )
       .pipe(mapError("replace-project"));
 
-  const needsRebuild = (projectId: string) =>
-    Effect.gen(function* () {
+  const needsRebuild = Effect.fn("AnalysisRunIndex.needsRebuild")(
+    function* (projectId: string) {
       const rows = yield* sql<ProjectionStateRow>`
         SELECT revision, clean FROM scient_analysis_run_index_state
         WHERE project_id = ${projectId}
       `;
       return rows.length === 0 || rows[0]!.clean !== 1;
-    }).pipe(mapError("needs-rebuild"));
+    },
+    (effect) => effect.pipe(mapError("needs-rebuild")),
+  );
 
-  const listNonTerminal = (projectId: string) =>
-    Effect.gen(function* () {
+  const listNonTerminal = Effect.fn("AnalysisRunIndex.listNonTerminal")(
+    function* (projectId: string) {
       const rows = yield* sql<IndexedRunRow>`
         SELECT summary_json FROM scient_analysis_run_index
         WHERE project_id = ${projectId}
@@ -283,10 +285,12 @@ const make = Effect.gen(function* () {
       return yield* Effect.forEach(rows, (row) => decodeSummary(row.summary_json), {
         concurrency: 16,
       });
-    }).pipe(mapError("list-non-terminal"));
+    },
+    (effect) => effect.pipe(mapError("list-non-terminal")),
+  );
 
-  const listRetainedTerminal = (projectId: string) =>
-    Effect.gen(function* () {
+  const listRetainedTerminal = Effect.fn("AnalysisRunIndex.listRetainedTerminal")(
+    function* (projectId: string) {
       const rows = yield* sql<IndexedRunRow>`
         SELECT summary_json FROM scient_analysis_run_index
         WHERE project_id = ${projectId}
@@ -297,13 +301,12 @@ const make = Effect.gen(function* () {
       return yield* Effect.forEach(rows, (row) => decodeSummary(row.summary_json), {
         concurrency: 16,
       });
-    }).pipe(mapError("list-retained-terminal"));
+    },
+    (effect) => effect.pipe(mapError("list-retained-terminal")),
+  );
 
-  const storageSummary = (input: {
-    readonly projectId: string;
-    readonly relativePath?: string | undefined;
-  }) =>
-    Effect.gen(function* () {
+  const storageSummary = Effect.fn("AnalysisRunIndex.storageSummary")(
+    function* (input: { readonly projectId: string; readonly relativePath?: string | undefined }) {
       const rows =
         input.relativePath === undefined
           ? yield* sql<StorageSummaryRow>`
@@ -333,15 +336,17 @@ const make = Effect.gen(function* () {
         artifactBytes: Number(row?.artifact_bytes ?? 0),
         totalBytes: Number(row?.total_bytes ?? 0),
       } satisfies AnalysisStorageSummary;
-    }).pipe(mapError("storage-summary"));
+    },
+    (effect) => effect.pipe(mapError("storage-summary")),
+  );
 
-  const list = (input: {
-    readonly projectId: string;
-    readonly relativePath?: string | undefined;
-    readonly limit: number;
-    readonly cursor?: string | undefined;
-  }) =>
-    Effect.gen(function* () {
+  const list = Effect.fn("AnalysisRunIndex.list")(
+    function* (input: {
+      readonly projectId: string;
+      readonly relativePath?: string | undefined;
+      readonly limit: number;
+      readonly cursor?: string | undefined;
+    }) {
       const cursor = input.cursor === undefined ? null : decodeCursor(input.cursor);
       if (input.cursor !== undefined && cursor === null) {
         return yield* new AnalysisRunIndexError({
@@ -392,13 +397,16 @@ const make = Effect.gen(function* () {
         hasMore,
         nextCursor: hasMore && decoded.length > 0 ? cursorFor(decoded[decoded.length - 1]!) : null,
       } satisfies AnalysisListRunsResult;
-    }).pipe(
-      Effect.mapError((cause) =>
-        isAnalysisRunIndexError(cause)
-          ? cause
-          : new AnalysisRunIndexError({ operation: "list", cause }),
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isAnalysisRunIndexError(cause)
+            ? cause
+            : new AnalysisRunIndexError({ operation: "list", cause }),
+        ),
       ),
-    );
+  );
 
   return AnalysisRunIndex.of({
     replaceProject,

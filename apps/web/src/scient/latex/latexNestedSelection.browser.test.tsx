@@ -1,6 +1,7 @@
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen } from "../../../test/render";
+
 import { createRef } from "react";
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { MenuSub, MenuSubTrigger, MenuSubPopup } from "~/components/ui/menu";
 import { DockMenu, DockCommandItem } from "../writing/dockChrome";
@@ -11,38 +12,37 @@ import { mathBracketsTemplate } from "./mathBrackets";
 import { mathEditingScopes, mathSelectionPoint, mathCaretRect } from "./mathLiveSelection";
 import "./scient-latex.css";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-const field = createRef<LatexMathFieldHandle>();
 const frame = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 
-afterEach(async () => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   await frame();
-});
+}
 
-async function mount(value: string, display = false) {
+async function mount(_fixture: _Fixture, value: string, display = false) {
   const Container = display ? "div" : "p";
   await page.viewport(1400, 900);
-  host = document.createElement("div");
-  host.className = "scient-latex-visual-workspace";
-  host.style.cssText =
+  _fixture.host = document.createElement("div");
+  _fixture.host.className = "scient-latex-visual-workspace";
+  _fixture.host.style.cssText =
     "position:relative; width:900px; height:500px; background:white; color:black; padding:40px;";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <>
       <div className="scient-latex-writing-toolbar">
         <DockMenu label="Selection actions" icon={<span>Selection actions</span>}>
           <DockCommandItem
             onClick={() => {
-              const math = host!.querySelector<MathfieldElement>("math-field")!;
+              const math = _fixture.host!.querySelector<MathfieldElement>("math-field")!;
               runLatexSelectionCommand(math, "selectionScopeExpand");
             }}
           >
@@ -53,7 +53,7 @@ async function mount(value: string, display = false) {
             <MenuSubPopup>
               <DockCommandItem
                 onClick={() => {
-                  const math = host!.querySelector<MathfieldElement>("math-field")!;
+                  const math = _fixture.host!.querySelector<MathfieldElement>("math-field")!;
                   runLatexSelectionCommand(math, "selectionScopeExpand");
                 }}
               >
@@ -67,7 +67,7 @@ async function mount(value: string, display = false) {
         <div className="scient-latex-visual-document" data-latex-windowed="true">
           <Container className={display ? "scient-latex-visual-display-math" : undefined}>
             <LatexMathField
-              ref={field}
+              ref={_fixture.field}
               value={value}
               disabled={false}
               display={display}
@@ -87,10 +87,12 @@ async function mount(value: string, display = false) {
       </div>
     </>,
   );
-  await expect.poll(() => host?.querySelector(".scient-latex-mathfield")).toBeTruthy();
-  field.current!.focus();
-  await expect.poll(() => host?.querySelector("math-field"), { timeout: 10000 }).toBeTruthy();
-  const math = host.querySelector<MathfieldElement>("math-field")!;
+  await expect.poll(() => _fixture.host?.querySelector(".scient-latex-mathfield")).toBeTruthy();
+  _fixture.field.current!.focus();
+  await expect
+    .poll(() => _fixture.host?.querySelector("math-field"), { timeout: 10000 })
+    .toBeTruthy();
+  const math = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
   await frame();
   await userEvent.click(math);
@@ -123,9 +125,12 @@ function offset(math: MathfieldElement, value: string) {
 }
 
 it("includes the bracket base when selection crosses into its exponent", async () => {
-  const math = await mount(String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
-  const x = offset(math, "x"),
-    exponent = offset(math, "2");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
+  const x = offset(math, "x");
+  const exponent = offset(math, "2");
   for (const start of [x, x + 1]) {
     math.selection = { ranges: [[start, exponent]] };
     await frame();
@@ -141,7 +146,10 @@ it("includes the bracket base when selection crosses into its exponent", async (
 });
 
 it("Select All starts with bold text inside the underbrace label", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
 
@@ -169,7 +177,10 @@ const selectionBoxes = () => [
 it.each([true, false])(
   "keeps all math guide corners visible inside bold, subscript and equation slots (display=%s)",
   async (display) => {
-    const math = await mount(String.raw`\mathbf{h}_{i}`, display);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const math = await mount(_fixture, String.raw`\mathbf{h}_{i}`, display);
     for (const position of [
       offset(math, "h") - 1,
       offset(math, "h"),
@@ -181,7 +192,7 @@ it.each([true, false])(
       math.position = position;
       await frame();
       await frame();
-      const guide = host!.querySelector<HTMLElement>(
+      const guide = _fixture.host!.querySelector<HTMLElement>(
         ".scient-latex-scope-outline:not([data-guide])",
       );
       expect(guide, `guide at ${position}`).toBeTruthy();
@@ -215,6 +226,9 @@ it.each([true, false])(
 it.each([true, false])(
   "places a collapsed caret in newly inserted nested argument slots (display=%s)",
   async (display) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     for (const command of [
       String.raw`\mathbf{}`,
       String.raw`\frac{#?}{#?}`,
@@ -222,9 +236,9 @@ it.each([true, false])(
       String.raw`\hat{#?}`,
       String.raw`\begin{pmatrix}#? & #? \\ #? & #?\end{pmatrix}`,
     ]) {
-      const math = await mount("x", display);
+      const math = await mount(_fixture, "x", display);
       math.position = math.lastOffset;
-      field.current!.insert(command);
+      _fixture.field.current!.insert(command);
       await document.fonts.ready;
       await frame();
       await frame();
@@ -233,40 +247,43 @@ it.each([true, false])(
       // Wait for their final geometry rather than reading a previous render.
       await expect
         .poll(() => {
-          const guide = host!.querySelector<HTMLElement>(
+          const guide = _fixture.host!.querySelector<HTMLElement>(
             ".scient-latex-scope-outline:not([data-guide])",
           );
           const caret = math.shadowRoot!.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
           if (!guide || !caret) return Infinity;
-          const stroke = mathCaretRect(math, caret),
-            bounds = guide.getBoundingClientRect();
+          const stroke = mathCaretRect(math, caret);
+          const bounds = guide.getBoundingClientRect();
           return Math.abs(stroke.left + stroke.width / 2 - (bounds.left + bounds.width / 2));
         })
         .toBeLessThan(1);
-      const guide = host!.querySelector<HTMLElement>(
+      const guide = _fixture.host!.querySelector<HTMLElement>(
         ".scient-latex-scope-outline:not([data-guide])",
       )!;
       expect(guide, command).toBeTruthy();
       const caret = math.shadowRoot!.querySelector<HTMLElement>(".ML__caret,.ML__text-caret")!;
-      const stroke = mathCaretRect(math, caret),
-        bounds = guide.getBoundingClientRect();
+      const stroke = mathCaretRect(math, caret);
+      const bounds = guide.getBoundingClientRect();
       expect(
         Math.abs(stroke.left + stroke.width / 2 - (bounds.left + bounds.width / 2)),
         command,
       ).toBeLessThan(1);
-      root!.unmount();
-      host!.remove();
-      root = undefined;
-      host = undefined;
+      await _fixture.root0!.unmount();
+      _fixture.host!.remove();
+      _fixture.root0 = undefined;
+      _fixture.host = undefined;
       await frame();
     }
   },
 );
 
 it("enters a bold wrapper after wrapping existing selected content", async () => {
-  const math = await mount("h", true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, "h", true);
   math.selection = { ranges: [[0, math.lastOffset]] };
-  field.current!.insert(String.raw`\mathbf{}`);
+  _fixture.field.current!.insert(String.raw`\mathbf{}`);
   await frame();
   expect(math.selectionIsCollapsed).toBe(true);
   expect(math.getValue("latex-without-placeholders")).toBe(String.raw`\mathbf{h}`);
@@ -279,9 +296,12 @@ it("enters a bold wrapper after wrapping existing selected content", async () =>
 it.each([true, false])(
   "new empty angle brackets match their type-and-delete layout (display=%s)",
   async (display) => {
-    const math = await mount(String.raw`\mathbf{h}_{i}=`, display);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const math = await mount(_fixture, String.raw`\mathbf{h}_{i}=`, display);
     math.position = math.lastOffset;
-    field.current!.insert(mathBracketsTemplate("angle", "angle", "auto")!);
+    _fixture.field.current!.insert(mathBracketsTemplate("angle", "angle", "auto")!);
     await document.fonts.ready;
     await frame();
     await frame();
@@ -291,8 +311,8 @@ it.each([true, false])(
     const measure = () => [
       math.shadowRoot!.querySelector<HTMLElement>(".ML__open")!.getBoundingClientRect(),
       math.shadowRoot!.querySelector<HTMLElement>(".ML__close")!.getBoundingClientRect(),
-      host!
-        .querySelector<HTMLElement>(".scient-latex-scope-outline:not([data-guide])")!
+      _fixture
+        .host!.querySelector<HTMLElement>(".scient-latex-scope-outline:not([data-guide])")!
         .getBoundingClientRect(),
     ];
     const initial = measure();
@@ -310,7 +330,10 @@ it.each([true, false])(
 );
 
 it("command completion enters the empty nested argument with an insertion caret", async () => {
-  const math = await mount("x", true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, "x", true);
   math.position = math.lastOffset;
   await userEvent.keyboard(String.raw`\frac`);
   await userEvent.keyboard("{Enter}");
@@ -323,7 +346,10 @@ it("command completion enters the empty nested argument with an insertion caret"
 });
 
 it("repeated Select All visits bold, label, underbrace, then equation", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   const source = math.getValue();
   math.position = offset(math, "m");
   await frame();
@@ -338,7 +364,10 @@ it("repeated Select All visits bold, label, underbrace, then equation", async ()
 });
 
 it("whole underbrace selection is connected and label/text selections stay local", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
   const scopes = mathEditingScopes(math);
@@ -361,9 +390,12 @@ it("whole underbrace selection is connected and label/text selections stay local
 });
 
 it("Select All can climb more than ten nested scopes", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   let source = "x";
   for (let i = 0; i < 6; i++) source = String.raw`\frac{${source}}{y}`;
-  const math = await mount(source);
+  const math = await mount(_fixture, source);
   math.position = offset(math, "x");
   await frame();
   const scopes = mathEditingScopes(math);
@@ -375,7 +407,10 @@ it("Select All can climb more than ten nested scopes", async () => {
 });
 
 it("caret movement and typing restart the Select All ladder", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
   await selectScope();
@@ -396,7 +431,10 @@ it("caret movement and typing restart the Select All ladder", async () => {
 });
 
 it("menu and submenu keep the selection and Select All ladder", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
   const scopes = mathEditingScopes(math);
@@ -418,7 +456,10 @@ it("menu and submenu keep the selection and Select All ladder", async () => {
 });
 
 it("Select All selects an empty matrix cell before its matrix", async () => {
-  const math = await mount(String.raw`\begin{pmatrix}x&\end{pmatrix}`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\begin{pmatrix}x&\end{pmatrix}`);
   const empty = model(math).atoms.find(
     (atom) =>
       atom.type === "first" && Array.isArray(atom.parentBranch) && atom.parentBranch[1] === 1,
@@ -435,9 +476,12 @@ it("Select All selects an empty matrix cell before its matrix", async () => {
 });
 
 it("pointer dragging across closing bracket and exponent selects the complete base", async () => {
-  const math = await mount(String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
-  const x = offset(math, "x"),
-    exponent = offset(math, "2");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
+  const x = offset(math, "x");
+  const exponent = offset(math, "2");
   const base = math.getElementInfo(x + 1)!.bounds!;
   const script = math.getElementInfo(exponent)!.bounds!;
   const field = math.getBoundingClientRect();
@@ -465,7 +509,10 @@ it("pointer dragging across closing bracket and exponent selects the complete ba
 });
 
 it("Escape from a menu restores focus without restarting the Select All ladder", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
   const scopes = mathEditingScopes(math);
@@ -482,7 +529,10 @@ it("Escape from a menu restores focus without restarting the Select All ladder",
 });
 
 it("Select All preserves distinct bracket, script and cell scopes even when their ranges match", async () => {
-  const math = await mount(String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\begin{pmatrix}\left(x\right)^2&y\end{pmatrix}`);
   math.position = offset(math, "x");
   await frame();
   const scopes = mathEditingScopes(math);
@@ -501,7 +551,10 @@ it("Select All preserves distinct bracket, script and cell scopes even when thei
 });
 
 it("clicking back inside a nested scope restarts Select All", async () => {
-  const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
   math.position = offset(math, "m");
   await frame();
   await selectScope();
@@ -518,3 +571,24 @@ it("clicking back inside a nested scope restarts Select All", async () => {
   await selectScope();
   expect(math.selection.ranges).toEqual([[...inner.range]]);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  const field = createRef<LatexMathFieldHandle>();
+  return {
+    field,
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

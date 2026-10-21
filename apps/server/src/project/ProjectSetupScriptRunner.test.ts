@@ -2,7 +2,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { assert, it, vi } from "@effect/vitest";
+import { it, vi } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect } from "@effect/vitest";
 import { type OrchestrationProject, type TerminalEvent } from "@t3tools/contracts";
@@ -50,6 +50,7 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
     attachStream: () => Effect.die(new Error("unused")),
     observeStream: () => Effect.die(new Error("unused")),
+    resyncStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),

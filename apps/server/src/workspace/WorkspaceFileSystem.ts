@@ -13,6 +13,7 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
+import { PROJECT_MISSING_FILE_REVISION } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -335,6 +336,34 @@ export const make = Effect.gen(function* () {
     }
   };
 
+  // SCIENT-FORK:START — host and contained reads share dangling-link/absence semantics.
+  const canonicalReadTarget = async (absolutePath: string, allowMissing: boolean | undefined) => {
+    let candidate = absolutePath;
+    for (;;) {
+      try {
+        return {
+          realTargetPath: path.join(
+            await NodeFSP.realpath(candidate),
+            path.relative(candidate, absolutePath),
+          ),
+          exists: candidate === absolutePath,
+        };
+      } catch (error) {
+        if (!allowMissing || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const exists = await NodeFSP.lstat(candidate).then(
+          () => true,
+          (cause: NodeJS.ErrnoException) => {
+            if (cause.code !== "ENOENT") throw cause;
+            return false;
+          },
+        );
+        if (exists || path.dirname(candidate) === candidate) throw error;
+        candidate = path.dirname(candidate);
+      }
+    }
+  };
+  // SCIENT-FORK:END
+
   /**
    * Resolves the file a read targets, for one of two purposes.
    *
@@ -362,13 +391,13 @@ export const make = Effect.gen(function* () {
     const readHostFile = (hostPath: string) =>
       Effect.tryPromise({
         try: async () => {
-          const realTargetPath = await NodeFSP.realpath(hostPath);
+          const resolved = await canonicalReadTarget(hostPath, input.allowMissing);
           const realRoot = await NodeFSP.realpath(input.cwd).catch(() => null);
           return {
             relativePath: requestedPath,
-            realTargetPath,
+            realTargetPath: resolved.exists ? resolved.realTargetPath : null,
             readOnly: true,
-            outsideWorkspace: realRoot !== null && isOutside(realRoot, realTargetPath),
+            outsideWorkspace: realRoot !== null && isOutside(realRoot, resolved.realTargetPath),
           };
         },
         catch: (cause) =>
@@ -381,8 +410,11 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       });
-    if (path.isAbsolute(requestedPath)) {
-      return yield* readHostFile(requestedPath);
+    const hostPath = requestedPath.startsWith("~/")
+      ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+      : requestedPath;
+    if (path.isAbsolute(hostPath)) {
+      return yield* readHostFile(hostPath);
     }
 
     const resolveWithinRoot = workspacePaths.resolveRelativePathWithinRoot({
@@ -408,8 +440,8 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
+    const resolved = yield* Effect.tryPromise({
+      try: () => canonicalReadTarget(target.absolutePath, input.allowMissing),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -420,30 +452,30 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    if (!isInsideRealRoot(realWorkspaceRoot, realTargetPath)) {
+    if (!isInsideRealRoot(realWorkspaceRoot, resolved.realTargetPath)) {
       if (purpose === "contained") {
         return yield* new WorkspaceFilePathEscapeError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
           resolvedWorkspaceRoot: realWorkspaceRoot,
-          resolvedPath: realTargetPath,
+          resolvedPath: resolved.realTargetPath,
         });
       }
       // A symlink inside the project that leads out of it: show the file it
       // points to, but never edit it through the project.
       return {
         relativePath: target.relativePath,
-        realTargetPath,
+        realTargetPath: resolved.exists ? resolved.realTargetPath : null,
         readOnly: true,
         outsideWorkspace: true,
       };
     }
     const canonicalRelativePath = path
-      .relative(realWorkspaceRoot, realTargetPath)
+      .relative(realWorkspaceRoot, resolved.realTargetPath)
       .replaceAll("\\", "/");
     return {
       relativePath: target.relativePath,
-      realTargetPath,
+      realTargetPath: resolved.exists ? resolved.realTargetPath : null,
       readOnly: canonicalRelativePath !== target.relativePath,
       outsideWorkspace: false,
     };
@@ -454,7 +486,18 @@ export const make = Effect.gen(function* () {
     purpose: "view" | "contained",
   ) {
     const target = yield* resolveReadTarget(input, purpose);
+    const absentResult = {
+      relativePath: target.relativePath,
+      contents: "",
+      byteLength: 0,
+      truncated: false,
+      exists: false,
+      revision: PROJECT_MISSING_FILE_REVISION,
+      readOnly: true,
+      ...(target.outsideWorkspace ? { outsideWorkspace: true } : {}),
+    };
     const realTargetPath = target.realTargetPath;
+    if (realTargetPath === null) return absentResult;
 
     const currentRead = Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -480,9 +523,16 @@ export const make = Effect.gen(function* () {
             operation: "open",
             cause,
           }),
-      }),
+      }).pipe(
+        Effect.catchIf(
+          (error) =>
+            input.allowMissing === true && (error.cause as NodeJS.ErrnoException).code === "ENOENT",
+          () => Effect.succeed(null),
+        ),
+      ),
       (handle) =>
         Effect.gen(function* () {
+          if (handle === null) return absentResult;
           const stat = yield* Effect.tryPromise({
             try: () => handle.stat(),
             catch: (cause) =>
@@ -537,18 +587,20 @@ export const make = Effect.gen(function* () {
           };
         }),
       (handle) =>
-        Effect.tryPromise({
-          try: () => handle.close(),
-          catch: (cause) =>
-            new WorkspaceFileSystemOperationError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedPath: realTargetPath,
-              operationPath: realTargetPath,
-              operation: "close",
-              cause,
+        handle === null
+          ? Effect.void
+          : Effect.tryPromise({
+              try: () => handle.close(),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "close",
+                  cause,
+                }),
             }),
-        }),
     );
     return yield* currentRead;
   });
@@ -758,12 +810,13 @@ export const make = Effect.gen(function* () {
     );
   const inspectWriteTarget: WorkspaceFileSystem["Service"]["inspectWriteTarget"] = (input) =>
     assertWritableTarget(input).pipe(Effect.flatMap(mutations.inspectWriteTarget));
-  const renameFile: WorkspaceFileSystem["Service"]["renameFile"] = (input) =>
-    Effect.gen(function* () {
-      const source = yield* assertWritableTarget(input);
-      yield* assertWritableTarget({ ...source, relativePath: input.destinationRelativePath });
-      return yield* mutations.renameFile({ ...input, ...source });
-    });
+  const renameFile: WorkspaceFileSystem["Service"]["renameFile"] = Effect.fn(
+    "WorkspaceFileSystem.renameFile",
+  )(function* (input) {
+    const source = yield* assertWritableTarget(input);
+    yield* assertWritableTarget({ ...source, relativePath: input.destinationRelativePath });
+    return yield* mutations.renameFile({ ...input, ...source });
+  });
   const replaceFileRetained: WorkspaceFileSystem["Service"]["replaceFileRetained"] = (input) =>
     assertWritableTarget(input).pipe(
       Effect.flatMap((target) => mutations.replaceFileRetained({ ...input, ...target })),

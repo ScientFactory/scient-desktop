@@ -1,38 +1,52 @@
-import { act, useLayoutEffect, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  render as _fixtureRender,
+  type Screen,
+  fakeTimers as _fixtureFakeTimers,
+  act,
+} from "../../../test/render";
+import { useLayoutEffect, type ReactNode } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { REPAIR_SUCCESS_NOTICE_MS, useTransientRepairSuccess } from "./useTransientRepairSuccess";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 describe("useTransientRepairSuccess", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+  async function _setupFixture2(_fixture: _Fixture) {
+    _fixture.stack.use(_fixtureFakeTimers());
+  }
 
-  afterEach(() => {
+  async function _cleanupFixture3(_fixture: _Fixture) {
     vi.useRealTimers();
-  });
+  }
 
   it("shows repair success for four seconds and ignores other runtime actions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    _fixture.cleanup.defer(() => _cleanupFixture3(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     let notice!: ReturnType<typeof useTransientRepairSuccess>;
     function Probe() {
       const value = useTransientRepairSuccess(true);
@@ -41,13 +55,13 @@ describe("useTransientRepairSuccess", () => {
       });
       return null;
     }
-    mount(<Probe />);
+    await mount(_fixture, <Probe />);
 
-    act(() => notice.reportRuntimeActionSucceeded("remove"));
+    await act(() => notice.reportRuntimeActionSucceeded("remove"));
 
     expect(notice.repairSucceededRecently).toBe(false);
 
-    act(() => notice.reportRuntimeActionSucceeded("repair"));
+    await act(() => notice.reportRuntimeActionSucceeded("repair"));
 
     expect(notice.repairSucceededRecently).toBe(true);
 
@@ -60,3 +74,22 @@ describe("useTransientRepairSuccess", () => {
     expect(notice.repairSucceededRecently).toBe(false);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

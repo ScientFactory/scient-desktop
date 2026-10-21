@@ -16,8 +16,10 @@ import {
   RemoteEnvironmentAuthInvalidJsonError,
   RemoteEnvironmentAuthTimeoutError,
   resolveRemoteWebSocketConnectionUrl,
+  resolveRemoteDpopWebSocketConnectionUrl,
 } from "./remote.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RpcHttp from "../rpc/http.ts";
 
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
@@ -486,4 +488,56 @@ describe("remote environment authorization", () => {
       );
     }),
   );
+
+  // SCIENT-FORK:START — both auth modes must leave identity capabilities unread.
+  it.effect.each(["bearer", "dpop"] as const)(
+    "does not collect owner identities during %s authentication",
+    (method) =>
+      Effect.gen(function* () {
+        const fetch = recordedFetch(
+          Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+        );
+
+        const endpoint = {
+          wsBaseUrl: "wss://remote.example.com/",
+          httpBaseUrl: "https://remote.example.com/",
+        };
+        const connection =
+          method === "bearer"
+            ? resolveRemoteWebSocketConnectionUrl({ ...endpoint, bearerToken: "bearer-token" })
+            : resolveRemoteDpopWebSocketConnectionUrl({
+                ...endpoint,
+                accessToken: "access-token",
+                dpopProof: "dpop-proof",
+              });
+        const url = new URL(
+          yield* connection.pipe(
+            provideRemoteHttp(fetch.fetchFn),
+            Effect.provideService(
+              ClientCapabilities.CloudSession,
+              ClientCapabilities.CloudSession.of({
+                identity: Effect.die("Unexpected telemetry account read"),
+                clerkToken: Effect.die("Unexpected Connect credential read"),
+              }),
+            ),
+            Effect.provideService(ClientCapabilities.AnalyticsDevice, {
+              id: Effect.die("Unexpected analytics device read"),
+            }),
+          ),
+        );
+
+        expect(url.searchParams.get("wsTicket")).toBe("ws-ticket");
+        expect(url.searchParams.has("clientOwner")).toBe(false);
+        expect(url.searchParams.has("clientDevice")).toBe(false);
+        expectFetchCall(fetch.calls, 1, {
+          url: "https://remote.example.com/api/auth/websocket-ticket",
+          method: "POST",
+          headers:
+            method === "bearer"
+              ? { authorization: "Bearer bearer-token" }
+              : { authorization: "DPoP access-token", dpop: "dpop-proof" },
+        });
+      }),
+  );
+  // SCIENT-FORK:END
 });

@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import {
   EnvironmentId,
   ThreadId,
@@ -7,9 +8,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act, createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 // Only the transport is substituted. The hook, atom registry and preview
 // store run unchanged, including lazy evaluation and refresh notifications.
@@ -25,6 +26,8 @@ const harness = vi.hoisted(() => ({
   >(),
   events: new Map<string, Atom.Writable<EventResult>>(),
 }));
+
+vi.mock("~/env", () => ({ isElectron: true }));
 
 vi.mock("~/state/preview", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
@@ -74,10 +77,8 @@ import {
 } from "~/previewStateStore";
 import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
-import { usePreviewSession } from "./usePreviewSession";
+import { useDesktopHostedPreviewSessions, usePreviewSession } from "./usePreviewSession";
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
 let sequence = 0;
 let ref: ScopedThreadRef;
 
@@ -107,46 +108,108 @@ const result = (
   })),
 });
 
-async function mount() {
-  container = document.body.appendChild(document.createElement("div"));
-  root = createRoot(container);
+function DesktopSessionSync() {
+  useDesktopHostedPreviewSessions(ref.environmentId);
+  return null;
+}
+
+async function mount(_fixture: _Fixture, Component = SessionSync) {
+  _fixture.container = document.body.appendChild(document.createElement("div"));
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
   await act(async () => {
-    root!.render(createElement(AppAtomRegistryProvider, null, createElement(SessionSync)));
+    await _fixture.root0!.rerender(
+      createElement(AppAtomRegistryProvider, null, createElement(Component)),
+    );
   });
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   sequence += 1;
   ref = {
     environmentId: EnvironmentId.make(`preview-sync-${sequence}`),
     threadId: ThreadId.make(`thread-sync-${sequence}`),
   };
-});
+}
 
-afterEach(async () => {
-  await act(async () => root?.unmount());
-  root = null;
-  container?.remove();
-  container = null;
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = null;
+  _fixture.container?.remove();
+  _fixture.container = null;
   resetPreviewStateForTests();
   vi.unstubAllGlobals();
-});
+}
 
 describe("native preview session synchronization", () => {
+  it("discovers and closes a server tab in a background thread without mounting its chat", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture, DesktopSessionSync);
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+    previewEnvironment.events({ environmentId: ref.environmentId, input: {} });
+    const events = harness.events.get(ref.environmentId)!;
+    const baseline = result(1, ["agent-tab"]);
+    const snapshot = baseline.sessions[0]!;
+    await act(async () => {
+      appAtomRegistry.set(
+        events,
+        AsyncResult.success({
+          type: "opened",
+          threadId: ref.threadId,
+          tabId: snapshot.tabId,
+          snapshot,
+          serverEpoch: baseline.serverEpoch,
+          revision: baseline.revision,
+          createdAt: snapshot.updatedAt,
+        }),
+      );
+    });
+    expect(readThreadPreviewState(ref).sessions).toEqual({ "agent-tab": snapshot });
+    appAtomRegistry.set(listAtom(), AsyncResult.success(baseline));
+    expect(readThreadPreviewState(ref).listLoaded).toBe(true);
+    expect(readThreadPreviewState(ref).snapshot).toEqual(snapshot);
+
+    appAtomRegistry.set(
+      events,
+      AsyncResult.success({
+        type: "closed",
+        threadId: ref.threadId,
+        tabId: snapshot.tabId,
+        serverEpoch: baseline.serverEpoch,
+        revision: 2,
+        createdAt: snapshot.updatedAt,
+      }),
+    );
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+    expect(readThreadPreviewState(ref).activeTabId).toBeNull();
+  });
+
   it("evaluates the lazy list once and restores sessions that predate mounting", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const atom = listAtom();
-    await mount();
+    await mount(_fixture);
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(1);
     appAtomRegistry.set(atom, AsyncResult.success(result(1, ["restored"])));
     expect(readThreadPreviewState(ref).activeTabId).toBe("restored");
   });
 
   it("preserves a local tab while cached absence is waiting for a fresh response", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const atom = listAtom();
     appAtomRegistry.set(atom, AsyncResult.waiting(AsyncResult.success(result(1, []))));
+    _fixture.stack.defer(appAtomRegistry.mount(atom));
     applyPreviewServerSnapshot(ref, result(1, ["local"]).sessions[0]!);
-    await mount();
+    await mount(_fixture);
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(0);
     appAtomRegistry.set(atom, AsyncResult.success(result(2, ["local"])));
@@ -156,8 +219,13 @@ describe("native preview session synchronization", () => {
   });
 
   it("refreshes a completed cache without treating its old absence as authoritative", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const atom = listAtom();
     appAtomRegistry.set(atom, AsyncResult.success(result(1, [])));
+    _fixture.stack.defer(appAtomRegistry.mount(atom));
     reconcilePreviewServerSessions(ref, result(1, []));
     applyPreviewServerSnapshot(ref, result(1, ["local"]).sessions[0]!);
     applyPreviewDesktopState(ref, "local", {
@@ -173,7 +241,7 @@ describe("native preview session synchronization", () => {
       controller: "human",
       favicon: null,
     });
-    await mount();
+    await mount(_fixture);
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(1);
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     expect(readThreadPreviewState(ref).desktopOverlay?.zoomFactor).toBe(1.5);
@@ -183,8 +251,12 @@ describe("native preview session synchronization", () => {
   });
 
   it("retains newer event state when an older list response completes, then retries the list", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const atom = listAtom();
-    await mount();
+    await mount(_fixture);
     const snapshot = result(2, ["opened"]).sessions[0]!;
     previewEnvironment.events({ environmentId: ref.environmentId, input: {} });
     appAtomRegistry.set(
@@ -213,12 +285,35 @@ describe("native preview session synchronization", () => {
   });
 
   it("keeps the local snapshot on a completed failure and reconciles a later success", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const atom = listAtom();
     applyPreviewServerSnapshot(ref, result(1, ["local"]).sessions[0]!);
-    await mount();
+    await mount(_fixture);
     appAtomRegistry.set(atom, AsyncResult.failure(Cause.die("offline")));
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     appAtomRegistry.set(atom, AsyncResult.success(result(2, [])));
     expect(readThreadPreviewState(ref).activeTabId).toBeNull();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: null as HTMLDivElement | null,
+    stack,
+    cleanup,
+    root0: null as Screen | null,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

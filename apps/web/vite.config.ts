@@ -21,6 +21,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { scientPdfAssets } from "./scripts/scientPdfAssets";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -204,6 +205,7 @@ export default defineConfig(({ mode }) => {
       tanstackRouter({ autoCodeSplitting: true }),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
+      warmBundledDevPlugin(),
     ],
     optimizeDeps: {
       // Keep the barrel, icon factory and icons together: splitting only the
@@ -307,7 +309,8 @@ export default defineConfig(({ mode }) => {
       // Transform the whole module graph at server start instead of on the
       // first request. Without this, a cold worktree discovers and transforms
       // modules one import-level at a time while the browser waits — which
-      // over a tailnet origin turns into minutes of waterfall.
+      // over a tailnet origin turns into minutes of waterfall. Bundled dev
+      // ignores this; warmBundledDevPlugin covers it there.
       warmup: {
         // Component fixtures load their own entry. Warming the entire chat app
         // can hold their test page behind unrelated transforms and time it out.

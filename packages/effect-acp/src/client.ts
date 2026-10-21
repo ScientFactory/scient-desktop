@@ -880,16 +880,15 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
-    onTermination: (error) =>
-      Effect.gen(function* () {
-        yield* Effect.forEach(
-          promptCompletions.values(),
-          (completion) => Deferred.fail(completion, error),
-          { discard: true },
-        );
-        promptCompletions.clear();
-        yield* Effect.suspend(() => options.onTermination?.(error) ?? Effect.void);
-      }),
+    onTermination: Effect.fn("client.onTermination")(function* (error) {
+      yield* Effect.forEach(
+        promptCompletions.values(),
+        (completion) => Deferred.fail(completion, error),
+        { discard: true },
+      );
+      promptCompletions.clear();
+      yield* Effect.suspend(() => options.onTermination?.(error) ?? Effect.void);
+    }),
     ...(options.onOutgoingResponseFailure
       ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
       : {}),

@@ -1,9 +1,10 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -24,28 +25,28 @@ import twoColumnArticle from "./fixtures/paging-two-column-article.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
-let root: Root,
-  host: HTMLElement,
-  published: string,
-  key = "";
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+let published: string;
+let key = "";
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   clearVisualDraft(key);
-});
+}
 const frames = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
-async function mount(source: string, name: string) {
+async function mount(_fixture: _Fixture, source: string, name: string) {
   await page.viewport(1250, 950);
   key = `paging-${name}`;
   clearVisualDraft(key);
   published = source;
-  host = document.createElement("div");
-  host.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   function Harness() {
     const [value, setValue] = useState(source);
     const owner = useLatexVisualTestOwner(value);
@@ -69,10 +70,10 @@ async function mount(source: string, name: string) {
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   const editor = () =>
     (
-      host.querySelector(".scient-latex-visual-document") as
+      _fixture.host.querySelector(".scient-latex-visual-document") as
         | (HTMLElement & { editor?: Editor })
         | null
     )?.editor;
@@ -89,7 +90,10 @@ async function mount(source: string, name: string) {
   await document.fonts.ready;
   await expect
     .poll(
-      () => [...host.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
+      () =>
+        [..._fixture.host.querySelectorAll(".scient-latex-math-preview")].every(
+          mathReadingPreviewReady,
+        ),
       { timeout: 25000 },
     )
     .toBe(true);
@@ -105,7 +109,10 @@ it.each([
 ] as const)(
   "template %s has the compiled PDF's page count and opens without source or undo changes",
   async (name, source, pages) => {
-    const editor = await mount(source, name);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const editor = await mount(_fixture, source, name);
     // Page counts match the PDF only with the document's own fonts. Template 26
     // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
     // do not; there a substitute with other metrics gives a different count.
@@ -115,22 +122,22 @@ it.each([
         .toBe(pages);
     expect(published).toBe(source);
     expect(undoDepth(editor.state)).toBe(0);
-    expect(host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
+    expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
       latexPagedKey.getState(editor.state)!.plan!.pages,
     );
     const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
     if (screenshotDirectory) {
       await page.viewport(1250, 1700);
-      host.style.height = "1650px";
-      const scroll = host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+      _fixture.host.style.height = "1650px";
+      const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
       scroll.style.flex = "none";
-      scroll.style.height = `${host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
+      scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
       const spacer = document.createElement("div");
       spacer.style.height = "700px";
       scroll.append(spacer);
       await frames();
       for (let number = 1; number <= pages; number++) {
-        const sheet = host.querySelector<HTMLElement>(
+        const sheet = _fixture.host.querySelector<HTMLElement>(
           `.scient-latex-page-sheet[data-page="${number}"]`,
         )!;
         scroll.scrollTop +=
@@ -148,15 +155,18 @@ it.each([
 );
 
 it("template 15 repeats furniture at the next printable origin and preserves every editable row", async () => {
-  const editor = await mount(template15, "longtable");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template15, "longtable");
   await expect
-    .poll(() => host.querySelectorAll('[data-paged-repeat="true"]').length)
+    .poll(() => _fixture.host.querySelectorAll('[data-paged-repeat="true"]').length)
     .toBeGreaterThan(0);
-  expect(host.querySelectorAll("tr[data-latex-table-row]")).toHaveLength(41);
+  expect(_fixture.host.querySelectorAll("tr[data-latex-table-row]")).toHaveLength(41);
   const dimensions = latexPagedKey.getState(editor.state)!.plan!.dimensions;
   const paper = editor.view.dom.getBoundingClientRect();
   const scale = paper.width / editor.view.dom.offsetWidth;
-  const head = host.querySelector<HTMLElement>(
+  const head = _fixture.host.querySelector<HTMLElement>(
     '[data-paged-repeat="true"][data-latex-longtable-band="head"]',
   )!;
   expect(
@@ -170,6 +180,9 @@ it("template 15 repeats furniture at the next printable origin and preserves eve
   expect(published).toBe(template15);
 });
 it("mirrors body margins on facing pages while retaining authored paragraph positions", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const source = String.raw`\documentclass[twoside,a5paper]{article}
 \usepackage[inner=20mm,outer=30mm,top=18mm,bottom=18mm,bindingoffset=5mm]{geometry}
 \begin{document}
@@ -177,7 +190,7 @@ First page text.
 \newpage
 Second page text.
 \end{document}`;
-  const editor = await mount(source, "facing-pages");
+  const editor = await mount(_fixture, source, "facing-pages");
   const paragraphs = [...editor.view.dom.querySelectorAll("p")];
   const scale = editor.view.dom.getBoundingClientRect().width / editor.view.dom.offsetWidth;
   expect(
@@ -188,12 +201,15 @@ Second page text.
 });
 
 it("a paragraph can cross both columns and pages while every visible text fragment maps to its original position", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const source = String.raw`\documentclass[twocolumn,a5paper]{article}
 \usepackage[margin=18mm]{geometry}
 \begin{document}
 ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
 \end{document}`;
-  const editor = await mount(source, "long-paragraph");
+  const editor = await mount(_fixture, source, "long-paragraph");
   const state = latexPagedKey.getState(editor.state)!;
   expect(state.geometry.some((part) => part.column === 1)).toBe(true);
   expect(state.geometry.some((part) => part.page === 1)).toBe(true);
@@ -224,7 +240,10 @@ ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
 });
 
 it("template 28 keeps its title full width, restores two columns and renders running furniture as text", async () => {
-  const editor = await mount(template28, "article");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template28, "article");
   const paper = editor.view.dom.getBoundingClientRect();
   const scale = paper.width / editor.view.dom.offsetWidth;
   const dimensions = latexPagedKey.getState(editor.state)!.plan!.dimensions;
@@ -232,9 +251,9 @@ it("template 28 keeps its title full width, restores two columns and renders run
     ["Methods", 2],
     ["Discussion", 3],
   ] as const) {
-    const heading = [...host.querySelectorAll<HTMLElement>('[data-layout="macroHeading"]')].find(
-      (element) => element.textContent?.trim() === text,
-    )!;
+    const heading = [
+      ..._fixture.host.querySelectorAll<HTMLElement>('[data-layout="macroHeading"]'),
+    ].find((element) => element.textContent?.trim() === text)!;
     const expected =
       paper.top +
       ((pageNumber - 1) * (dimensions.height + dimensions.gap) + dimensions.top) * scale;
@@ -243,21 +262,21 @@ it("template 28 keeps its title full width, restores two columns and renders run
     expect(offset).toBeGreaterThanOrEqual(-1);
     expect(offset).toBeLessThan(3 * parseFloat(getComputedStyle(editor.view.dom).lineHeight));
   }
-  const tables = [...host.querySelectorAll("table")];
+  const tables = [..._fixture.host.querySelectorAll("table")];
   expect(tables).toHaveLength(2);
   expect(parseFloat(getComputedStyle(tables[1]!).fontSize)).toBeCloseTo(
     parseFloat(getComputedStyle(tables[0]!).fontSize),
     2,
   );
-  const title = host.querySelector<HTMLElement>('[data-layout="fullWidthTitle"]')!;
-  const paragraph = host.querySelector<HTMLElement>('[data-layout="sourceColumns"] p')!;
+  const title = _fixture.host.querySelector<HTMLElement>('[data-layout="fullWidthTitle"]')!;
+  const paragraph = _fixture.host.querySelector<HTMLElement>('[data-layout="sourceColumns"] p')!;
   expect(title.getBoundingClientRect().width).toBeGreaterThan(
     paragraph.getBoundingClientRect().width * 1.8,
   );
-  expect(host.querySelector(".scient-latex-running-header")!.textContent).toContain(
+  expect(_fixture.host.querySelector(".scient-latex-running-header")!.textContent).toContain(
     "Northbridge Journal",
   );
-  expect(host.querySelector(".scient-latex-running-header")!.textContent).not.toContain(
+  expect(_fixture.host.querySelector(".scient-latex-running-header")!.textContent).not.toContain(
     "\\scriptsize",
   );
   expect(latexPagedKey.getState(editor.state)?.geometry.some((part) => part.column === 1)).toBe(
@@ -266,7 +285,10 @@ it("template 28 keeps its title full width, restores two columns and renders run
 });
 
 it("detached measurements preserve mixed-script paragraph line heights", async () => {
-  const editor = await mount(template26, "natural-parity");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template26, "natural-parity");
   const scale = editor.view.dom.getBoundingClientRect().width / editor.view.dom.offsetWidth;
   let checked = 0;
   for (const element of editor.view.dom.querySelectorAll<HTMLElement>(":scope > p")) {
@@ -290,7 +312,11 @@ it("detached measurements preserve mixed-script paragraph line heights", async (
 });
 
 it("keeps paragraphs in source order around a note moved to the foot of the page", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass[10pt]{article}
 \usepackage[letterpaper,margin=1in]{geometry}
 \begin{document}
@@ -322,7 +348,7 @@ The second page starts here.
       );
       expect(parseFloat(blocks[index]!.style.top) || 0).toBeGreaterThanOrEqual(0);
     }
-    const notes = [...host.querySelectorAll<HTMLElement>(".scient-latex-footnote")];
+    const notes = [..._fixture.host.querySelectorAll<HTMLElement>(".scient-latex-footnote")];
     expect(notes).toHaveLength(2);
     for (const note of notes)
       expect(note.getBoundingClientRect().top).toBeGreaterThan(
@@ -343,7 +369,10 @@ The second page starts here.
 }, 60000);
 
 it("breaks a word across lines or columns only once, at a hyphen", async () => {
-  const editor = await mount(twoColumnArticle, "column-words");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, twoColumnArticle, "column-words");
   // Words inserted at the start slide the column cut through the text until a
   // hyphenated word lands on it; every layout on the way keeps words whole.
   let cut = false;
@@ -399,8 +428,8 @@ function expectWholeWords(editor: Editor) {
       const text = word.map((item) => item.character).join("");
       let breaks = 0;
       for (let at = 1; at < word.length; at++) {
-        const previous = word[at - 1]!.box,
-          current = word[at]!.box;
+        const previous = word[at - 1]!.box;
+        const current = word[at]!.box;
         if (!previous || !current) continue;
         if (Math.abs(current.top - previous.top) < 2) {
           expect(current.left, text).toBeGreaterThan(previous.left - 1);
@@ -433,6 +462,9 @@ async function insertAtArticleStart(editor: Editor, text: string) {
 }
 
 it("finds the first letter of a line that follows a hyphenation break", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const block = document.createElement("div");
   block.lang = "en";
   block.style.cssText = "width:120px;font:16px serif;hyphens:auto;text-align:justify";
@@ -462,7 +494,10 @@ it("finds the first letter of a line that follows a hyphenation break", async ()
 });
 
 it("sets a two-column article's title across both columns, above the body", async () => {
-  const editor = await mount(twoColumnArticle, "column-title");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, twoColumnArticle, "column-title");
   const heading = [...editor.view.dom.querySelectorAll<HTMLElement>("*")].find((element) =>
     element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
       ? element.value === "Layout fidelity specimen"
@@ -486,11 +521,15 @@ it("sets a two-column article's title across both columns, above the body", asyn
 }, 60000);
 
 it("draws no hyphen at line ends that stay in their column", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const han = "中文段落的每一行都在字与字之间换行".repeat(12);
   const words = "Hyphenation of considerably extraordinary vocabulary continues naturally. ".repeat(
     12,
   );
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass{article}
 \begin{document}
 ${han}
@@ -505,7 +544,10 @@ ${words}
 });
 
 it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async () => {
-  let editor = await mount(twoColumnArticle, "hyphen-edit");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  let editor = await mount(_fixture, twoColumnArticle, "hyphen-edit");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
     await insertAtArticleStart(editor, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
@@ -527,15 +569,18 @@ it("lays out an edit next to a drawn hyphen as a fresh opening of the result doe
     );
   const edited = { layout: layout(editor), hyphens: hyphens(editor) };
   const source = published;
-  root.unmount();
-  host.remove();
-  editor = await mount(source, "hyphen-edit-fresh");
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+  editor = await mount(_fixture, source, "hyphen-edit-fresh");
   expect(layout(editor)).toEqual(edited.layout);
   expect(hyphens(editor)).toEqual(edited.hyphens);
 }, 90000);
 
 it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async () => {
-  let editor = await mount(twoColumnArticle, "hyphen-replaced");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  let editor = await mount(_fixture, twoColumnArticle, "hyphen-replaced");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
     await insertAtArticleStart(editor, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
@@ -552,16 +597,20 @@ it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh 
     );
   const edited = hyphens(editor);
   const source = published;
-  root.unmount();
-  host.remove();
-  editor = await mount(source, "hyphen-replaced-fresh");
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+  editor = await mount(_fixture, source, "hyphen-replaced-fresh");
   expect(hyphens(editor)).toEqual(edited);
 }, 120000);
 
 it("draws no hyphen where Han text continues in the next column", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const han =
     "\u4e2d\u6587\u6bb5\u843d\u7684\u6bcf\u4e00\u884c\u90fd\u5728\u5b57\u4e0e\u5b57\u4e4b\u95f4\u6362\u884c";
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass[twocolumn]{article}
 \begin{document}
 ${han.repeat(240)}
@@ -574,3 +623,22 @@ ${han.repeat(240)}
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 }, 60000);
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

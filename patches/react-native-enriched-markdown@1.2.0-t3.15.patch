@@ -66,12 +66,12 @@ index 746bd66..faff51b 100644
      clipboard.setPrimaryClip(ClipData.newPlainText("Markdown", markdown))
    }
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
-index 386aeea..b448cc9 100644
+index 7b8b007..f0473cc 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
-@@ -3,12 +3,31 @@ package com.swmansion.enriched.markdown.utils.text.view
- import android.text.Spanned
+@@ -5,12 +5,30 @@ import com.swmansion.enriched.markdown.spans.CodePaddingSpan
  import com.swmansion.enriched.markdown.spans.LinkSpan
+ import com.swmansion.enriched.markdown.spans.MathSourceSpan
  import org.json.JSONObject
 +// SCIENT-FORK:START
 +import org.json.JSONArray
@@ -97,11 +97,10 @@ index 386aeea..b448cc9 100644
 +  fun sourceForLink(index: Int?, url: String): String? =
 +    index?.let { linkSources.getOrNull(it) }?.takeIf { it.url == url }?.source
 +  // SCIENT-FORK:END
-+
    companion object {
      fun parse(value: String?): SelectionClipboardConfig =
        runCatching {
-@@ -23,7 +42,15 @@ data class SelectionClipboardConfig(
+@@ -25,7 +43,15 @@ data class SelectionClipboardConfig(
                (values.opt(name) as? String)?.let { name to it }
              }.toMap()
          }
@@ -118,18 +117,18 @@ index 386aeea..b448cc9 100644
        }.getOrDefault(SelectionClipboardConfig())
    }
  }
-@@ -32,14 +59,23 @@ internal fun canonicalClipboardText(
+@@ -34,10 +60,19 @@ internal fun canonicalClipboardText(
    text: Spanned,
    config: SelectionClipboardConfig,
  ): String? {
--  val replacements =
+-  val links =
 -    text
 +  // SCIENT-FORK:START — captured spans retain full source even for a partial selection.
 +  val canonical = text.getSpans(0, text.length, CanonicalClipboardSpan::class.java)
 +    .map { Triple(text.getSpanStart(it).coerceAtLeast(0), text.getSpanEnd(it).coerceAtMost(text.length), it.text) }
 +    .filter { it.second > it.first }
 +  // SCIENT-FORK:END
-+  val replacements = (canonical + text
++  val links = canonical + text
        .getSpans(0, text.length, LinkSpan::class.java)
        .mapNotNull { link ->
 +        // SCIENT-FORK:START — context fallback cannot overwrite a bound file occurrence.
@@ -140,12 +139,7 @@ index 386aeea..b448cc9 100644
          config.linkTextByUrl[link.url]?.let { replacement ->
            Triple(text.getSpanStart(link).coerceAtLeast(0), text.getSpanEnd(link).coerceAtMost(text.length), replacement)
          }
--      }.filter { it.second > it.first }
-+      }.filter { it.second > it.first })
-       .sortedByDescending { it.first }
-   if (replacements.isEmpty()) return null
-   return StringBuilder(text.toString())
-@@ -48,9 +84,47 @@ internal fun canonicalClipboardText(
+@@ -66,9 +101,47 @@ internal fun canonicalClipboardText(
      }.toString()
  }
  
@@ -193,7 +187,7 @@ index 386aeea..b448cc9 100644
  ): String {
    fun escape(value: String) =
      value
-@@ -58,8 +132,14 @@ internal fun clipboardHtml(
+@@ -76,8 +149,14 @@ internal fun clipboardHtml(
        .replace("\"", "&quot;")
        .replace("<", "&lt;")
        .replace(">", "&gt;")
@@ -273,7 +267,7 @@ index 0000000..766e6b3
 +  }
 +}
 diff --git a/cpp/parser/MD4CParser.cpp b/cpp/parser/MD4CParser.cpp
-index 2b5ed19..c9436e7 100644
+index f4bf338..018e32a 100644
 --- a/cpp/parser/MD4CParser.cpp
 +++ b/cpp/parser/MD4CParser.cpp
 @@ -85,6 +85,7 @@ public:
@@ -321,7 +315,7 @@ diff --git a/ios/renderer/LinkRenderer.m b/ios/renderer/LinkRenderer.m
 index c9fd57d..9ba6502 100644
 --- a/ios/renderer/LinkRenderer.m
 +++ b/ios/renderer/LinkRenderer.m
-@@ -88,6 +88,29 @@ static NSRange ENRMCollapseLinkIntoPill(NSMutableAttributedString *output, NSRan
+@@ -88,6 +88,29 @@ - (void)renderNodeContent:(MarkdownASTNode *)node
  
    NSNumber *underlineStyle = @(linkUnderline ? NSUnderlineStyleSingle : NSUnderlineStyleNone);
  
@@ -352,7 +346,7 @@ index c9fd57d..9ba6502 100644
    [output addAttribute:NSLinkAttributeName value:url range:range];
  
 diff --git a/ios/utils/PasteboardUtils.m b/ios/utils/PasteboardUtils.m
-index 3e8c15d..fd83476 100644
+index 7e09d59..07b4f13 100644
 --- a/ios/utils/PasteboardUtils.m
 +++ b/ios/utils/PasteboardUtils.m
 @@ -1,4 +1,7 @@
@@ -360,62 +354,43 @@ index 3e8c15d..fd83476 100644
 +// SCIENT-FORK:START
 +#import "ENRMTextLinkAttributes.h"
 +// SCIENT-FORK:END
+ #import "CodeBackground.h"
+ #import "ENRMFeatureFlags.h"
  #import "ENRMImageAttachment.h"
- #import "ENRMLinkPillText.h"
- #import "HTMLGenerator.h"
-@@ -56,25 +59,40 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
- 
- #pragma mark - Public API
- 
-+// SCIENT-FORK:START — default Copy reconstructs each bound source before URL fallback.
- static NSString *canonicalClipboardText(NSAttributedString *text, StyleConfig *config)
- {
-   NSDictionary *links = config.selectionClipboard[@"linkTextByUrl"];
--  if (![links isKindOfClass:NSDictionary.class])
--    return nil;
--  NSMutableString *result = [text.string mutableCopy];
--  __block BOOL matched = NO;
--  [text enumerateAttribute:NSLinkAttributeName
--                   inRange:NSMakeRange(0, text.length)
--                   options:NSAttributedStringEnumerationReverse
-+  NSMutableArray<NSDictionary *> *replacements = [NSMutableArray array];
-+  [text enumerateAttribute:ENRMCanonicalClipboardAttributeName
-+                   inRange:NSMakeRange(0, text.length) options:0
-                 usingBlock:^(id value, NSRange range, BOOL *stop) {
--                  NSString *replacement = value ? links[[value description]] : nil;
-+                  if ([value isKindOfClass:NSDictionary.class] &&
-+                      [value[@"text"] isKindOfClass:NSString.class]) {
-+                    [replacements addObject:@{@"range": [NSValue valueWithRange:range], @"text": value[@"text"]}];
-+                  }
-+                }];
-+  [text enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, text.length) options:0
-+                usingBlock:^(id value, NSRange range, BOOL *stop) {
-+                  for (NSDictionary *entry in replacements) {
-+                    if (NSIntersectionRange(range, [entry[@"range"] rangeValue]).length) return;
-+                  }
-+                  NSString *replacement = [links isKindOfClass:NSDictionary.class] && value ? links[[value description]] : nil;
-                   if ([replacement isKindOfClass:NSString.class]) {
--                    [result replaceCharactersInRange:range withString:replacement];
--                    matched = YES;
-+                    [replacements addObject:@{@"range": [NSValue valueWithRange:range], @"text": replacement}];
-                   }
-                 }];
--  return matched ? result : nil;
-+  if (replacements.count == 0) return nil;
-+  [replacements sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-+    return [@([b[@"range"] rangeValue].location) compare:@([a[@"range"] rangeValue].location)];
-+  }];
-+  NSMutableString *result = [text.string mutableCopy];
-+  for (NSDictionary *entry in replacements) {
-+    [result replaceCharactersInRange:[entry[@"range"] rangeValue] withString:entry[@"text"]];
-+  }
-+  return result;
- }
-+// SCIENT-FORK:END
- 
- static NSString *escapeClipboardAttribute(NSString *value)
- {
-@@ -85,9 +103,61 @@ static NSString *escapeClipboardAttribute(NSString *value)
+@@ -71,8 +74,21 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
+   [text enumerateAttributesInRange:NSMakeRange(0, text.length)
+                            options:NSAttributedStringEnumerationReverse
+                         usingBlock:^(NSDictionary *attributes, NSRange range, BOOL *stop) {
++                          // SCIENT-FORK:START — bound source takes priority over link and math display.
++                          NSDictionary *canonical = attributes[ENRMCanonicalClipboardAttributeName];
++                          NSString *replacement = [canonical isKindOfClass:NSDictionary.class] ? canonical[@"text"] : nil;
++                          if ([replacement isKindOfClass:NSString.class]) {
++                            NSRange sourceRange;
++                            [text attribute:ENRMCanonicalClipboardAttributeName
++                                    atIndex:range.location longestEffectiveRange:&sourceRange
++                                    inRange:NSMakeRange(0, text.length)];
++                            if (range.location != sourceRange.location)
++                              return;
++                            range = sourceRange;
++                          } else {
++                          // SCIENT-FORK:END
+                           id link = attributes[NSLinkAttributeName];
+-                          NSString *replacement = link ? links[[link description]] : nil;
++                          replacement = link ? links[[link description]] : nil;
+                           if ([replacement isKindOfClass:NSString.class]) {
+                             NSRange linkRange;
+                             [text attribute:NSLinkAttributeName
+@@ -84,6 +100,9 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
+                               return;
+                             range = linkRange;
+                           }
++                          // SCIENT-FORK:START
++                          }
++                          // SCIENT-FORK:END
+ #if ENRICHED_MARKDOWN_MATH
+                           id attachment = attributes[NSAttachmentAttributeName];
+                           if (![replacement isKindOfClass:NSString.class] &&
+@@ -112,9 +131,61 @@ static void addHTMLData(NSMutableDictionary *items, NSAttributedString *attribut
                                  withString:@"&lt;"] stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"];
  }
  
@@ -478,7 +453,7 @@ index 3e8c15d..fd83476 100644
    NSMutableArray *encoded = [NSMutableArray array];
    if ([attributes isKindOfClass:NSDictionary.class]) {
      NSRegularExpression *validName = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z_][A-Za-z0-9:_-]*$"
-@@ -127,7 +197,7 @@ void copySelectionMarkdownToPasteboard(NSString *markdown, NSAttributedString *s
+@@ -154,7 +225,7 @@ void copySelectionMarkdownToPasteboard(NSString *markdown, NSAttributedString *s
      kUTIHTML : [[NSString stringWithFormat:@"<pre>%@</pre>", escapeClipboardAttribute(markdown)]
          dataUsingEncoding:NSUTF8StringEncoding]
    } mutableCopy];
@@ -487,7 +462,7 @@ index 3e8c15d..fd83476 100644
    copyItemsToPasteboard(items);
  }
  
-@@ -182,7 +252,7 @@ void copyAttributedStringToPasteboard(NSAttributedString *attributedString, NSSt
+@@ -209,7 +280,7 @@ void copyAttributedStringToPasteboard(NSAttributedString *attributedString, NSSt
      addHTMLData(items, attributedString, styleConfig);
    }
    if (canonicalText)

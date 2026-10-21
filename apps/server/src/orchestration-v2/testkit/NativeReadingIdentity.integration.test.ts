@@ -160,6 +160,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
   const releaseAcknowledgement = yield* Deferred.make<void>();
   const processed = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
   const events: ProviderAdapterV2Event[] = [];
+  const nativeContentDeltas: string[] = [];
   const opened: ClaudeAgentSdkQueryOpenInput[] = [];
   const offered: SDKUserMessage[] = [];
   let interruptions = 0;
@@ -253,7 +254,20 @@ function onPrompt(message) {
           }),
           environment: { PATH: process.env.PATH },
           sensitiveEnvironmentValues: [],
-          makeRuntime: makeDroidAcpRuntime,
+          makeRuntime: (input) =>
+            makeDroidAcpRuntime(input).pipe(
+              Effect.map((runtime) => ({
+                ...runtime,
+                getEvents: () =>
+                  runtime.getEvents().pipe(
+                    Stream.tap((event) =>
+                      Effect.sync(() => {
+                        if (event._tag === "ContentDelta") nativeContentDeltas.push(event.text);
+                      }),
+                    ),
+                  ),
+              })),
+            ),
           childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           selfInvocation: yield* resolveSelfInvocation(),
           onAuthenticationRejected: () => Effect.die("No authentication in reading peer"),
@@ -348,6 +362,7 @@ function onPrompt(message) {
     create,
     reopen,
     nativeLog: droid?.readLog(),
+    nativeContentDeltas,
     offers,
     offerAndWait,
     events,
@@ -491,6 +506,28 @@ it.live(
               assert.ok(reply);
               assert.equal(reply.text, text);
               assert.isFalse(reply.streaming);
+              // ACP coalesces snapshots, not native content or reading identities.
+              assert.deepEqual(h.nativeContentDeltas.slice((ordinal - 1) * 40), chunks);
+              const updates = h.events.flatMap((event) =>
+                event.type === "message.updated" &&
+                event.message.role === "assistant" &&
+                event.message.runId === run.id
+                  ? [event.message]
+                  : [],
+              );
+              assert.isNotEmpty(updates);
+              assert.equal(updates[0]!.text, chunks[0]);
+              assert.isTrue(updates[0]!.streaming);
+              let previousText = "";
+              for (const update of updates) {
+                assert.equal(update.id, reply.id);
+                assert.equal(update.threadId, threadId);
+                assert.isTrue(text.startsWith(update.text));
+                assert.isTrue(update.text.startsWith(previousText));
+                previousText = update.text;
+              }
+              assert.equal(updates.at(-1)!.text, text);
+              assert.isFalse(updates.at(-1)!.streaming);
               triples.push({ id: reply.id, runId: reply.runId, text: reply.text });
               const fresh = yield* (yield* ProjectionStoreV2).getThreadSnapshot(threadId);
               for (const saved of triples) {
@@ -514,12 +551,7 @@ it.live(
                 `Read turn ${index + 1}`,
               );
             }
-            assert.isAtLeast(
-              h.events.filter(
-                (event) => event.type === "message.updated" && event.message.role === "assistant",
-              ).length,
-              12 * 40,
-            );
+            assert.lengthOf(h.nativeContentDeltas, 12 * 40);
             assert.equal(h.counts().interruptions, 0);
             assert.lengthOf(
               h.events.filter((event) => event.type === "turn.terminal"),

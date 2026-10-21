@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -5,30 +6,32 @@ import {
   ProviderInstanceId,
   type CustomModelSaveInput,
 } from "@t3tools/contracts";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { ModelConnectionEditor } from "./ModelConnectionEditor";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 const droid = ProviderInstanceId.make("droid");
 
 it("adds a local endpoint model: its required limits are visible and submit", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onSave = vi.fn(async (_input: CustomModelSaveInput) => {});
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <ModelConnectionEditor
       settings={{ revision: 4, connections: [] }}
       target={{}}
@@ -72,11 +75,16 @@ it("adds a local endpoint model: its required limits are visible and submit", as
 });
 
 it("keeps invalid manual limits in view instead of silently refusing to save", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onSave = vi.fn(async (_input: CustomModelSaveInput) => {});
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <ModelConnectionEditor
       settings={{ revision: 4, connections: [] }}
       target={{}}
@@ -114,3 +122,22 @@ it("keeps invalid manual limits in view instead of silently refusing to save", a
     maxOutputTokens: 4096,
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

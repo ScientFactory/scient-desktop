@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { act, type ComponentType, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ProviderInstanceId, type RuntimeMode } from "@t3tools/contracts";
@@ -47,6 +46,13 @@ vi.mock("../../state/preferences", () => ({
   updateMobilePreferencesAtom: {},
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {}, serverEnvironment: {} }));
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: {
+    stateAtom: () => {
+      throw new Error("The runtime picker fixture has no environment connection");
+    },
+  },
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./new-task-flow-provider", () => ({ useNewTaskFlow: () => undefined }));
 vi.mock("../../state/use-model-option-memory", () => ({ rememberModelOptions: vi.fn() }));
@@ -58,6 +64,7 @@ vi.mock("react-native", () => ({
     <button onClick={onPress}>{children}</button>
   ),
   TextInput: () => null,
+  ActivityIndicator: () => null,
   RefreshControl: () => null,
   Alert: { alert: vi.fn() },
 }));
@@ -95,6 +102,9 @@ vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader:
 vi.mock("../../components/ui/AndroidAnchoredMenu", () => ({ AndroidAnchoredMenu: () => null }));
 vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
 vi.mock("../../components/ui/IconButton", () => ({ IconButton: () => null }));
+vi.mock("../../components/ui/useControlTheme", () => ({
+  useControlTheme: () => ({ colors: {}, colorScheme: "light", fontSize: 16 }),
+}));
 vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));

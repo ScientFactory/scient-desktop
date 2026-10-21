@@ -1,8 +1,8 @@
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 const setAudioMuted = vi.hoisted(() => vi.fn(async () => undefined));
 
@@ -91,115 +91,107 @@ function overlay(
   };
 }
 
-let root: Root;
-let container: HTMLDivElement;
 const noop = () => undefined;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  setAudioMuted.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-async function renderTabs(
+function tabs(
   first: DesktopPreviewFavicon | null,
   second?: DesktopPreviewFavicon,
   audio?: { audible?: boolean; audioMuted?: boolean },
   previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
 ) {
-  await act(() =>
-    root.render(
-      <RightPanelTabs
-        mode="inline"
-        open
-        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        getShortcutContext={() => ({
-          terminalFocus: false,
-          terminalOpen: false,
-          previewFocus: false,
-          previewOpen: false,
-          isWeb: true,
-          isDesktop: false,
-        })}
-        surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
-        environmentId={null}
-        activeSurfaceId={previewSurface.id}
-        pendingSurfaceIds={new Set()}
-        previewSessions={sessions}
-        desktopByTabId={{
-          "tab-1": overlay(first, audio),
-          ...(second ? { "tab-2": overlay(second) } : {}),
-        }}
-        {...(previewRuntimeTabId ? { previewRuntimeTabId } : {})}
-        terminalLabelsById={new Map()}
-        onActivate={noop}
-        onCloseSurface={noop}
-        onCloseOtherSurfaces={noop}
-        onCloseSurfacesToRight={noop}
-        onCloseAllSurfaces={noop}
-        onCopyFilePath={noop}
-        onAddBrowser={noop}
-        onAddBrowserInProfile={noop}
-        onAddTerminal={noop}
-        onAddPullRequest={noop}
-        onAddPullRequests={noop}
-        onAddDiff={noop}
-        onAddFiles={noop}
-        // SCIENT-FORK:START
-        onAddAgents={noop}
-        onAddSources={noop}
-        onAddCompute={noop}
-        agentsAvailable={false}
-        sourcesAvailable={false}
-        computeAvailable={false}
-        // SCIENT-FORK:END
-        onAddDevice={noop}
-        browserAvailable
-        terminalAvailable={false}
-        diffAvailable={false}
-        filesAvailable={false}
-        pullRequestAvailable={false}
-        pullRequestsAvailable={false}
-        deviceAvailable={false}
-      >
-        <div>content</div>
-      </RightPanelTabs>,
-    ),
+  return (
+    <RightPanelTabs
+      mode="inline"
+      open
+      keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+      surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
+      environmentId={null}
+      activeSurfaceId={previewSurface.id}
+      pendingSurfaceIds={new Set()}
+      previewSessions={sessions}
+      desktopByTabId={{
+        "tab-1": overlay(first, audio),
+        ...(second ? { "tab-2": overlay(second) } : {}),
+      }}
+      {...(previewRuntimeTabId ? { previewRuntimeTabId } : {})}
+      terminalLabelsById={new Map()}
+      onActivate={noop}
+      onCloseSurface={noop}
+      onCloseOtherSurfaces={noop}
+      onCloseSurfacesToRight={noop}
+      onCloseAllSurfaces={noop}
+      onCopyFilePath={noop}
+      onAddBrowser={noop}
+      onAddBrowserInProfile={noop}
+      onAddTerminal={noop}
+      onAddPullRequest={noop}
+      onAddPullRequests={noop}
+      onAddDiff={noop}
+      onAddFiles={noop}
+      onAddSources={() => {}}
+      onAddCompute={() => {}}
+      sourcesAvailable={false}
+      computeAvailable={false}
+      onAddAgents={noop}
+      agentsAvailable={false}
+      onAddDevice={noop}
+      browserAvailable
+      terminalAvailable={false}
+      diffAvailable={false}
+      filesAvailable={false}
+      pullRequestAvailable={false}
+      pullRequestsAvailable={false}
+      deviceAvailable={false}
+    >
+      <div>content</div>
+    </RightPanelTabs>
   );
 }
 
-const imageSources = () => [...container.querySelectorAll("img")].map((image) => image.src);
-const button = (name: string) =>
+function setup() {
+  setAudioMuted.mockClear();
+}
+
+function renderTabs(...args: Parameters<typeof tabs>) {
+  return render(tabs(...args));
+}
+
+const imageSources = (container: HTMLElement) =>
+  [...container.querySelectorAll("img")].map((image) => image.src);
+const button = (container: HTMLElement, name: string) =>
   [...container.querySelectorAll("button")].find((element) => element.ariaLabel === name);
 
 describe("preview tab favicon", () => {
   it("prefers a live capture and never asks a public provider about a private hostname", async () => {
-    await renderTabs(favicon(PIXEL_A, "http://24x.xf.local/"));
-    expect(imageSources()).toEqual([PIXEL_A]);
+    setup();
+    await using screen = await renderTabs(favicon(PIXEL_A, "http://24x.xf.local/"));
+    expect(imageSources(screen.container)).toEqual([PIXEL_A]);
 
-    await renderTabs(null);
-    expect(imageSources()).toEqual([]);
+    await screen.rerender(tabs(null));
+    expect(imageSources(screen.container)).toEqual([]);
   });
 
   it("keeps route-specific captures isolated between live tabs on one origin", async () => {
-    await renderTabs(
+    setup();
+    await using screen = await renderTabs(
       favicon(PIXEL_A, "http://24x.xf.local/"),
       favicon(PIXEL_B, "http://24x.xf.local/admin"),
     );
-    expect(imageSources()).toEqual([PIXEL_A, PIXEL_B]);
+    expect(imageSources(screen.container)).toEqual([PIXEL_A, PIXEL_B]);
   });
 
   it("hides a capture while the server session still describes another origin", async () => {
-    await renderTabs(favicon(PIXEL_A, "https://example.com/"));
-    expect(imageSources()).not.toContain(PIXEL_A);
+    setup();
+    await using screen = await renderTabs(favicon(PIXEL_A, "https://example.com/"));
+    expect(imageSources(screen.container)).not.toContain(PIXEL_A);
   });
 });
 
@@ -208,34 +200,37 @@ describe("preview tab audio toggle", () => {
     { audible: false, audioMuted: false },
     { audible: false, audioMuted: true },
   ])("is absent for a silent tab (muted=$audioMuted)", async (audio) => {
-    await renderTabs(null, undefined, audio);
-    expect(button("Mute Local site")).toBeUndefined();
-    expect(button("Unmute Local site")).toBeUndefined();
+    setup();
+    await using screen = await renderTabs(null, undefined, audio);
+    expect(button(screen.container, "Mute Local site")).toBeUndefined();
+    expect(button(screen.container, "Unmute Local site")).toBeUndefined();
   });
 
   it.each([
     { audioMuted: false, label: "Mute Local site", nextMuted: true },
     { audioMuted: true, label: "Unmute Local site", nextMuted: false },
   ])("$label addresses the desktop by runtime tab id", async ({ audioMuted, label, nextMuted }) => {
-    await renderTabs(null, undefined, { audible: true, audioMuted });
-    await act(() => button(label)!.click());
+    setup();
+    await using screen = await renderTabs(null, undefined, { audible: true, audioMuted });
+    await act(() => button(screen.container, label)!.click());
     expect(setAudioMuted).toHaveBeenCalledExactlyOnceWith("runtime:tab-1", nextMuted);
   });
 
   it("hides the toggle when no runtime tab id can be resolved", async () => {
-    await renderTabs(null, undefined, { audible: true }, null);
-    expect(button("Mute Local site")).toBeUndefined();
+    setup();
+    await using screen = await renderTabs(null, undefined, { audible: true }, null);
+    expect(button(screen.container, "Mute Local site")).toBeUndefined();
   });
 });
 
 // SCIENT-FORK:START
 {
-  function renderMarkup(node: import("react").ReactNode) {
-    act(() => root.render(node));
-    return container.innerHTML;
+  async function renderMarkup(node: import("react").ReactNode) {
+    await using screen = await render(node);
+    return screen.container.innerHTML;
   }
   describe("browser profile submenu", () => {
-    it("reserves touch clicks for opening the choices while mouse clicks use the default", () => {
+    it("reserves touch clicks for opening the choices while mouse clicks use the default", async () => {
       expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
       expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
       expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
@@ -311,14 +306,14 @@ describe("preview tab audio toggle", () => {
     };
   }
 
-  function renderTabs(
+  async function renderTabs(
     first: DesktopPreviewFavicon | null,
     second?: DesktopPreviewFavicon,
     audio?: { audible?: boolean; audioMuted?: boolean },
     previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
     previewSessions: Readonly<Record<string, PreviewSessionSnapshot>> = sessions,
   ) {
-    return renderMarkup(
+    return await renderMarkup(
       <RightPanelTabs
         mode="inline"
         open
@@ -378,8 +373,8 @@ describe("preview tab audio toggle", () => {
   }
 
   describe("RightPanelTabs preview favicon", () => {
-    it("applies automatic direction to the complete tab layout", () => {
-      const html = renderTabs(null, undefined, undefined, undefined, {
+    it("applies automatic direction to the complete tab layout", async () => {
+      const html = await renderTabs(null, undefined, undefined, undefined, {
         ...sessions,
         "tab-1": {
           ...sessions["tab-1"]!,
@@ -391,25 +386,25 @@ describe("preview tab audio toggle", () => {
       expect(html).toContain('<span class="min-w-0 flex-1 truncate text-start" dir="auto">');
     });
 
-    it("prefers a live capture and never asks Google about a private hostname", () => {
-      const captured = renderTabs(favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"));
-      expect(captured).toContain("data:image/png;base64,AAAA");
+    it("prefers a live capture and never asks Google about a private hostname", async () => {
+      const captured = await renderTabs(favicon(PIXEL_A, "http://24x.xf.local/"));
+      expect(captured).toContain(PIXEL_A);
       expect(captured).not.toContain("s2/favicons");
-      expect(renderTabs(null)).not.toContain("s2/favicons");
+      expect(await renderTabs(null)).not.toContain("s2/favicons");
     });
 
-    it("keeps route-specific captures isolated between live tabs on one origin", () => {
-      const html = renderTabs(
-        favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"),
-        favicon("data:image/png;base64,BBBB", "http://24x.xf.local/admin"),
+    it("keeps route-specific captures isolated between live tabs on one origin", async () => {
+      const html = await renderTabs(
+        favicon(PIXEL_A, "http://24x.xf.local/"),
+        favicon(PIXEL_B, "http://24x.xf.local/admin"),
       );
-      expect(html).toContain("data:image/png;base64,AAAA");
-      expect(html).toContain("data:image/png;base64,BBBB");
+      expect(html).toContain(PIXEL_A);
+      expect(html).toContain(PIXEL_B);
     });
 
-    it("hides a capture while the server session still describes another origin", () => {
-      const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
-      expect(html).not.toContain("data:image/png;base64,AAAA");
+    it("hides a capture while the server session still describes another origin", async () => {
+      const html = await renderTabs(favicon(PIXEL_A, "https://example.com/"));
+      expect(html).not.toContain(PIXEL_A);
     });
   });
 
@@ -419,16 +414,16 @@ describe("preview tab audio toggle", () => {
       { shortcut: "D", available: false, label: "Diff" },
     ] as const;
 
-    it("matches available surface shortcuts case-insensitively", () => {
+    it("matches available surface shortcuts case-insensitively", async () => {
       expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
       expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
     });
 
-    it("does not activate unavailable surfaces", () => {
+    it("does not activate unavailable surfaces", async () => {
       expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
     });
 
-    it("leaves modified, composing, and already-handled key events alone", () => {
+    it("leaves modified, composing, and already-handled key events alone", async () => {
       expect(
         surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true })),
       ).toBeNull();
@@ -449,14 +444,14 @@ describe("preview tab audio toggle", () => {
       },
     });
 
-    it("treats form fields and every editable region as typing contexts", () => {
+    it("treats form fields and every editable region as typing contexts", async () => {
       expect(surfaceShortcutTargetsTypingContext(makeTarget("input"))).toBe(true);
       expect(surfaceShortcutTargetsTypingContext(makeTarget("textarea"))).toBe(true);
       expect(surfaceShortcutTargetsTypingContext(makeTarget("select"))).toBe(true);
       expect(surfaceShortcutTargetsTypingContext(makeTarget("[contenteditable]"))).toBe(true);
     });
 
-    it("claims letters when focus sits outside any editable region", () => {
+    it("claims letters when focus sits outside any editable region", async () => {
       expect(surfaceShortcutTargetsTypingContext(null)).toBe(false);
       expect(surfaceShortcutTargetsTypingContext(makeTarget(null))).toBe(false);
     });
@@ -470,8 +465,8 @@ describe("preview tab audio toggle", () => {
       { audible: true, audioMuted: true, label: "Unmute Local site" },
     ] as const;
 
-    it.each(cases)("audible=$audible muted=$audioMuted", ({ audible, audioMuted, label }) => {
-      const html = renderTabs(null, undefined, { audible, audioMuted });
+    it.each(cases)("audible=$audible muted=$audioMuted", async ({ audible, audioMuted, label }) => {
+      const html = await renderTabs(null, undefined, { audible, audioMuted });
       if (label === null) {
         expect(html).not.toContain("Mute Local site");
         expect(html).not.toContain("Unmute Local site");
@@ -480,17 +475,17 @@ describe("preview tab audio toggle", () => {
       }
     });
 
-    it("addresses the desktop by runtime tab id, never the server session id", () => {
+    it("addresses the desktop by runtime tab id, never the server session id", async () => {
       const seen: string[] = [];
-      renderTabs(null, undefined, { audible: true }, (tabId) => {
+      await renderTabs(null, undefined, { audible: true }, (tabId) => {
         seen.push(tabId);
         return `runtime:${tabId}`;
       });
       expect(seen).toContain("tab-1");
     });
 
-    it("hides the toggle when no runtime tab id can be resolved", () => {
-      const html = renderTabs(null, undefined, { audible: true }, null);
+    it("hides the toggle when no runtime tab id can be resolved", async () => {
+      const html = await renderTabs(null, undefined, { audible: true }, null);
       expect(html).not.toContain("Mute Local site");
     });
   });
@@ -499,21 +494,21 @@ describe("preview tab audio toggle", () => {
     const overlay = (audioMuted: boolean) =>
       ({ audioMuted, audible: false }) as Parameters<typeof tabMuteMenuItem>[0]["overlay"];
 
-    it("stays disabled until the desktop tab exists", () => {
+    it("stays disabled until the desktop tab exists", async () => {
       expect(tabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
         label: "Mute tab",
         disabled: true,
       });
     });
 
-    it("stays disabled when no runtime tab id can be resolved", () => {
+    it("stays disabled when no runtime tab id can be resolved", async () => {
       expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false })).toEqual({
         label: "Mute tab",
         disabled: true,
       });
     });
 
-    it("offers mute and unmute once the tab is addressable", () => {
+    it("offers mute and unmute once the tab is addressable", async () => {
       expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true })).toEqual({
         label: "Mute tab",
         disabled: false,
@@ -526,7 +521,7 @@ describe("preview tab audio toggle", () => {
   });
 
   describe("RightPanelTabs context menu", () => {
-    it("offers explicit relative and full path actions for file tabs", () => {
+    it("offers explicit relative and full path actions for file tabs", async () => {
       expect(
         buildTabContextMenuItems({
           pathCopyFormats: ["relative", "full"],
@@ -544,7 +539,7 @@ describe("preview tab audio toggle", () => {
       ]);
     });
 
-    it("offers only a full path for host files outside the workspace", () => {
+    it("offers only a full path for host files outside the workspace", async () => {
       expect(
         buildTabContextMenuItems({
           pathCopyFormats: ["full"],
@@ -555,7 +550,7 @@ describe("preview tab audio toggle", () => {
       ).toEqual(["copy-full-path", "close", "close-others", "close-to-right", "close-all"]);
     });
 
-    it("does not add path actions to non-file tabs", () => {
+    it("does not add path actions to non-file tabs", async () => {
       expect(
         buildTabContextMenuItems({
           pathCopyFormats: [],
@@ -566,7 +561,7 @@ describe("preview tab audio toggle", () => {
       ).toEqual(["close", "close-others", "close-to-right", "close-all"]);
     });
 
-    it("preserves the preview mute action alongside the shared close actions", () => {
+    it("preserves the preview mute action alongside the shared close actions", async () => {
       expect(
         buildTabContextMenuItems({
           pathCopyFormats: [],
@@ -596,7 +591,7 @@ describe("preview tab audio toggle", () => {
       stack: null,
       snapshot: null,
     };
-    it("keeps unknown linked state authoritative and scopes matches to environment and host", () => {
+    it("keeps unknown linked state authoritative and scopes matches to environment and host", async () => {
       const threads = [{ environmentId, pullRequests: [link] }];
       expect(resolvePullRequestTabLink(threads, environmentId, "github.com", link)).toBe(link);
       expect(
@@ -606,7 +601,7 @@ describe("preview tab audio toggle", () => {
         resolvePullRequestTabLink(threads, environmentId, "github.enterprise.test", link),
       ).toBeUndefined();
     });
-    it("uses the newest snapshot when several threads link the same PR", () => {
+    it("uses the newest snapshot when several threads link the same PR", async () => {
       const snapshot = {
         state: "merged" as const,
         title: "API",

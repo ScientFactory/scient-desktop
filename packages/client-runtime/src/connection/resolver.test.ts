@@ -227,7 +227,21 @@ describe("ConnectionResolver", () => {
   it.effect("prepares a primary environment without remote capabilities", () =>
     Effect.gen(function* () {
       const layerBroker = yield* makeDependencies();
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      // SCIENT-FORK:START — direct sockets must not read telemetry identities.
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+        Effect.provide(layerBroker),
+        Effect.provideService(
+          ClientCapabilities.CloudSession,
+          ClientCapabilities.CloudSession.of({
+            identity: Effect.die("Unexpected telemetry account read"),
+            clerkToken: Effect.die("Unexpected Connect credential read"),
+          }),
+        ),
+        Effect.provideService(ClientCapabilities.AnalyticsDevice, {
+          id: Effect.die("Unexpected analytics device read"),
+        }),
+      );
+      // SCIENT-FORK:END
       const target = new PrimaryConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Primary",

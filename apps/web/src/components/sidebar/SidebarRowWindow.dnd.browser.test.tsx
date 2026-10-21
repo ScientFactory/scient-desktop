@@ -1,7 +1,8 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
-import { createRoot, type Root } from "react-dom/client";
+
 import { useState } from "react";
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -14,12 +15,10 @@ import {
   type SidebarListItem,
 } from "../Sidebar.logic";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+}
 
 function Slot({ item }: { item: SidebarListItem }) {
   const id = sidebarListItemId(item);
@@ -123,15 +122,17 @@ function Fixture() {
   );
 }
 
-async function mount() {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<Fixture />);
-  await expect.poll(() => host!.querySelectorAll("[data-thread-item]").length).toBe(101);
+async function mount(_fixture: _Fixture) {
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<Fixture />);
+  await expect.poll(() => _fixture.host!.querySelectorAll("[data-thread-item]").length).toBe(101);
   return {
-    row: (key: string) => host!.querySelector<HTMLElement>(`[data-thread-item="${key}"]`)!,
-    viewport: host.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!,
+    row: (key: string) => _fixture.host!.querySelector<HTMLElement>(`[data-thread-item="${key}"]`)!,
+    viewport: _fixture.host.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!,
   };
 }
 
@@ -164,25 +165,31 @@ async function startDrag(row: HTMLElement) {
 }
 
 it("uses the real sidebar sensor and sorting strategy to reorder mounted slots", async () => {
-  const fixture = await mount();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const fixture = await mount(_fixture);
   const source = fixture.row("thread-0");
   const target = fixture.row("thread-2");
   const x = await startDrag(source);
   const rect = target.getBoundingClientRect();
   pointer(document, "pointermove", x, rect.top + rect.height / 2);
   await expect
-    .poll(() => host!.querySelector("output")!.getAttribute("data-over-id"))
+    .poll(() => _fixture.host!.querySelector("output")!.getAttribute("data-over-id"))
     .toBe("thread-2");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
   await frame();
   await expect
-    .poll(() => host!.querySelector("output")!.textContent)
+    .poll(() => _fixture.host!.querySelector("output")!.textContent)
     .toContain('"activeOrder":["thread-1","thread-2","thread-0"');
   expect(source).toBe(fixture.row("thread-0"));
 });
 
 it("keeps the dragged body alive while scrolling to a previously empty settled slot", async () => {
-  const fixture = await mount();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const fixture = await mount(_fixture);
   const source = fixture.row("thread-0");
   const target = fixture.row("settled-thread");
   await expect.poll(() => target.dataset.sidebarRowBody).toBe("placeholder");
@@ -191,16 +198,35 @@ it("keeps the dragged body alive while scrolling to a previously empty settled s
   await frame();
   await expect.poll(() => target.dataset.sidebarRowBody).toBe("mounted");
   expect(source.dataset.sidebarRowBody).toBe("mounted");
-  expect(host!.querySelectorAll("[data-marker]")).toHaveLength(3);
+  expect(_fixture.host!.querySelectorAll("[data-marker]")).toHaveLength(3);
   const rect = target.getBoundingClientRect();
   pointer(document, "pointermove", x, rect.top + rect.height / 2);
   await expect
-    .poll(() => host!.querySelector("output")!.getAttribute("data-over-section"))
+    .poll(() => _fixture.host!.querySelector("output")!.getAttribute("data-over-section"))
     .toBe("settled");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
   await frame();
   await expect
-    .poll(() => host!.querySelector("output")!.textContent)
+    .poll(() => _fixture.host!.querySelector("output")!.textContent)
     .toContain('"section":"settled"');
   expect(source).toBe(fixture.row("thread-0"));
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

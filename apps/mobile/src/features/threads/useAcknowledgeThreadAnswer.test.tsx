@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, MessageId, RunId, TurnId, ThreadId } from "@t3tools/contracts";

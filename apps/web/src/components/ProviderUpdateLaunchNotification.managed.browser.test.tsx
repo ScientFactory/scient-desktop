@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import {
   type EnvironmentId,
   ProviderDriverKind,
@@ -5,9 +6,8 @@ import {
   type ProviderRuntimeOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildLocalEnvironmentUpdateGroups,
@@ -37,7 +37,10 @@ const testState = vi.hoisted(() => ({
   primaryPrompt: vi.fn(() => null),
 }));
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => testState.navigate }));
+vi.mock("@tanstack/react-router", async (_actualRouter) => ({
+  ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => testState.navigate,
+}));
 vi.mock("~/state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("~/connection/desktopLocal", () => ({ isDesktopLocalConnectionTarget: () => false }));
 vi.mock("~/scient/providerConnection/useProviderLifecycleController", () => ({
@@ -148,11 +151,8 @@ function setGroups(
   ).groups;
 }
 
-const roots: ReturnType<typeof createRoot>[] = [];
-let root: ReturnType<typeof createRoot>;
-
-async function render() {
-  await act(async () => root.render(<ManagedRuntimeUpdateNotification />));
+async function render(_fixture: _Fixture) {
+  await act(async () => await _fixture.root1.rerender(<ManagedRuntimeUpdateNotification />));
 }
 
 function toastTitled(title: string) {
@@ -172,7 +172,7 @@ async function click(action: { readonly onClick?: () => void } | undefined) {
   });
 }
 
-beforeEach(async () => {
+async function _setupFixture0(_fixture: _Fixture) {
   ({ ProviderUpdateLaunchNotification } = await import("./ProviderUpdateLaunchNotification"));
   const entry = new URL(
     "../scient/providerConnection/ManagedRuntimeUpdateNotification.tsx",
@@ -184,7 +184,7 @@ beforeEach(async () => {
   ManagedRuntimeUpdateNotification = notification.ManagedRuntimeUpdateNotification;
   testState.offersToasts = true;
   testState.primaryPrompt.mockClear();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   testState.groups = [];
   testState.toasts = [];
   testState.closed = [];
@@ -193,21 +193,27 @@ beforeEach(async () => {
   testState.startRuntimeAction.mockReset();
   testState.startRuntimeAction.mockResolvedValue(codex({ operation: { status: "preparing" } }));
   const host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  roots.push(root);
-});
+  document.body.append(_ownDOM(_fixture, host));
+  _fixture.root1 = _fixture.stack.use(
+    await _fixtureRender(null, { container: host, router: false }),
+  );
+  _fixture.root0.push(_fixture.root1);
+}
 
-afterEach(async () => {
-  for (const mounted of roots.splice(0)) await act(() => mounted.unmount());
-  document.body.replaceChildren();
+async function _cleanupFixture1(_fixture: _Fixture) {
+  for (const mounted of _fixture.root0.splice(0)) await act(() => mounted.unmount());
+  _clearOwnedDOM(_fixture);
   vi.unstubAllGlobals();
-});
+}
 
 describe("managed runtime update notification", () => {
   it("offers Update first and keeps Settings pointed at the exact provider", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
 
     const prompt = toastTitled("Update available for Codex v0.157.1 in macOS");
     expect(prompt.actionProps?.children).toBe("Update");
@@ -223,8 +229,12 @@ describe("managed runtime update notification", () => {
   });
 
   it("installs in place and reports the verified version", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     const prompt = toastTitled("Update available for Codex v0.157.1 in macOS");
 
     await click(prompt.actionProps);
@@ -240,7 +250,7 @@ describe("managed runtime update notification", () => {
     expect(toastTitled("Updating Codex v0.157.1").type).toBe("loading");
 
     setGroups({ id: macos, label: "macOS", providers: [codex({ operation: {} })] });
-    await render();
+    await render(_fixture);
     setGroups({
       id: macos,
       label: "macOS",
@@ -252,13 +262,17 @@ describe("managed runtime update notification", () => {
         }),
       ],
     });
-    await render();
+    await render(_fixture);
     expect(toastTitled("Codex updated to v0.157.1").type).toBe("success");
   });
 
   it("shows the server's wait for running turns and keeps Settings reachable", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     await click(toastTitled("Update available for Codex v0.157.1 in macOS").actionProps);
 
     setGroups({
@@ -274,7 +288,7 @@ describe("managed runtime update notification", () => {
         }),
       ],
     });
-    await render();
+    await render(_fixture);
     const waiting = toastTitled("Codex will update when idle");
     expect(waiting.description).toBe(
       "Ready. Waiting for running Codex turns to finish before switching.",
@@ -289,8 +303,12 @@ describe("managed runtime update notification", () => {
   });
 
   it("stays quiet when the update is cancelled from Settings", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     await click(toastTitled("Update available for Codex v0.157.1 in macOS").actionProps);
     const toastCount = testState.toasts.length;
 
@@ -299,14 +317,18 @@ describe("managed runtime update notification", () => {
       label: "macOS",
       providers: [codex({ operation: { status: "cancelled", message: "Cancelled." } })],
     });
-    await render();
+    await render(_fixture);
     expect(testState.toasts).toHaveLength(toastCount);
     expect(testState.closed).toContain(toastTitled("Updating Codex v0.157.1").id);
   });
 
   it("surfaces a failed install and retries it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     await click(toastTitled("Update available for Codex v0.157.1 in macOS").actionProps);
 
     setGroups({
@@ -314,7 +336,7 @@ describe("managed runtime update notification", () => {
       label: "macOS",
       providers: [codex({ operation: { status: "failed", message: "Checksum mismatch." } })],
     });
-    await render();
+    await render(_fixture);
     const failure = toastTitled("Codex update failed");
     expect(failure).toMatchObject({ type: "error", description: "Checksum mismatch." });
     expect(failure.data?.secondaryActionProps?.children).toBe("Settings");
@@ -324,20 +346,28 @@ describe("managed runtime update notification", () => {
   });
 
   it("reports a rejected start instead of waiting forever", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.startRuntimeAction.mockRejectedValue(new Error("The plan changed."));
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     await click(toastTitled("Update available for Codex v0.157.1 in macOS").actionProps);
-    await render();
+    await render(_fixture);
     expect(toastTitled("Codex update failed").description).toBe("The plan changed.");
   });
 
   it("opens every provider in Settings when updates span environments", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     setGroups(
       { id: macos, label: "macOS", providers: [codex()] },
       { id: wsl, label: "WSL", providers: [codex()] },
     );
-    await render();
+    await render(_fixture);
     await click(toastTitled("2 managed provider updates available").data?.secondaryActionProps);
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/settings/providers" });
   });
@@ -345,19 +375,61 @@ describe("managed runtime update notification", () => {
 
 describe("update availability on desktop", () => {
   it("leaves the managed runtime offer to the sidebar circle", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.offersToasts = false;
     setGroups({ id: macos, label: "macOS", providers: [codex()] });
-    await render();
+    await render(_fixture);
     expect(testState.toasts).toEqual([]);
   });
 
   it("mounts the provider CLI prompts only where toasts offer updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.offersToasts = false;
-    await act(async () => root.render(<ProviderUpdateLaunchNotification />));
+    await act(async () => await _fixture.root1.rerender(<ProviderUpdateLaunchNotification />));
     expect(testState.primaryPrompt).not.toHaveBeenCalled();
 
     testState.offersToasts = true;
-    await act(async () => root.render(<ProviderUpdateLaunchNotification key="browser" />));
+    await act(
+      async () => await _fixture.root1.rerender(<ProviderUpdateLaunchNotification key="browser" />),
+    );
     expect(testState.primaryPrompt).toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    stack,
+    cleanup,
+    root0: [] as Screen[],
+    root1: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
+}

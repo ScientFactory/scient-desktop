@@ -1,65 +1,87 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { describe, expect, it } from "vite-plus/test";
 
+import { act, render } from "../../../test/render";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
-let root: Root;
-let composer: ReturnType<typeof useComposerFocusState>;
-let isResting: boolean;
-
-function ComposerProbe() {
+function ComposerProbe({ _fixture }: { _fixture: _Fixture }) {
   const state = useComposerFocusState();
   useLayoutEffect(() => {
-    composer = state;
-    isResting = shouldUseRestingComposerLayout({
-      isExistingThread: true,
-      isMobileViewport: false,
-      isScrollCollapsed: state.isComposerScrollCollapsed,
-      hasExpandedChrome: false,
-      hasMultilinePrompt: false,
-      timelineOverflows: true,
-    });
+    _fixture.publishComposer(state);
+    _fixture.publishIsResting(
+      shouldUseRestingComposerLayout({
+        isExistingThread: true,
+        isMobileViewport: false,
+        isScrollCollapsed: state.isComposerScrollCollapsed,
+        hasExpandedChrome: false,
+        hasMultilinePrompt: false,
+        timelineOverflows: true,
+      }),
+    );
   });
   return null;
 }
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(document.createElement("div"));
-  await act(() => root.render(<ComposerProbe />));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
-
 describe("composer focus state", () => {
   it("stays expanded when the composer loses focus", async () => {
-    await act(() => composer.setIsComposerFocused(true));
-    expect(isResting).toBe(false);
+    await using _fixture = _createFixture();
 
-    await act(() => composer.setIsComposerFocused(false));
-    expect(isResting).toBe(false);
+    await using _screen = await render(<ComposerProbe _fixture={_fixture} />);
+    await act(() => _fixture.composer.setIsComposerFocused(true));
+    expect(_fixture.isResting).toBe(false);
+
+    await act(() => _fixture.composer.setIsComposerFocused(false));
+    expect(_fixture.isResting).toBe(false);
   });
 
   it("can collapse again on the next scroll after returning to the end", async () => {
-    await act(() => composer.setIsComposerScrollCollapsed(true));
-    expect(isResting).toBe(true);
+    await using _fixture = _createFixture();
 
-    await act(() => composer.restoreAfterTimelineReachedEnd());
-    expect(isResting).toBe(false);
+    await using _screen = await render(<ComposerProbe _fixture={_fixture} />);
+    await act(() => _fixture.composer.setIsComposerScrollCollapsed(true));
+    expect(_fixture.isResting).toBe(true);
 
-    await act(() => composer.setIsComposerScrollCollapsed(true));
-    expect(isResting).toBe(true);
+    await act(() => _fixture.composer.restoreAfterTimelineReachedEnd());
+    expect(_fixture.isResting).toBe(false);
+
+    await act(() => _fixture.composer.setIsComposerScrollCollapsed(true));
+    expect(_fixture.isResting).toBe(true);
   });
 
   it("does not move focus into the composer when the timeline reaches the end", async () => {
-    await act(() => composer.setIsComposerScrollCollapsed(true));
-    await act(() => composer.restoreAfterTimelineReachedEnd());
-    expect(isResting).toBe(false);
-    expect(composer.isComposerFocused).toBe(false);
+    await using _fixture = _createFixture();
+
+    await using _screen = await render(<ComposerProbe _fixture={_fixture} />);
+    await act(() => _fixture.composer.setIsComposerScrollCollapsed(true));
+    await act(() => _fixture.composer.restoreAfterTimelineReachedEnd());
+    expect(_fixture.isResting).toBe(false);
+    expect(_fixture.composer.isComposerFocused).toBe(false);
   });
 });
+
+function _createFixture() {
+  let isResting = false;
+  let _published_composer = undefined! as ReturnType<typeof useComposerFocusState>;
+
+  const stack = new AsyncDisposableStack();
+  return {
+    get isResting() {
+      return isResting;
+    },
+    publishIsResting(next: boolean) {
+      isResting = next;
+    },
+    get composer() {
+      return _published_composer;
+    },
+    publishComposer(next: typeof _published_composer) {
+      _published_composer = next;
+    },
+    stack,
+    async [Symbol.asyncDispose]() {
+      await stack.disposeAsync();
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

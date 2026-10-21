@@ -1,3 +1,4 @@
+import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -10,9 +11,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useState } from "react";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 const commands = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn(), connect: vi.fn() }));
@@ -127,17 +127,21 @@ function ProviderHeader(props: { readonly provider: ServerProvider }) {
 }
 
 const SURFACES = ["onboarding", "provider header"] as const;
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
 
-function renderSurface(surface: (typeof SURFACES)[number], provider: ServerProvider) {
-  if (!host) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
+async function renderSurface(
+  _fixture: _Fixture,
+  surface: (typeof SURFACES)[number],
+  provider: ServerProvider,
+) {
+  if (!_fixture.host) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
-  flushSync(() => {
-    root!.render(
+  await _fixtureAct(async () => {
+    await _fixture.root0!.rerender(
       surface === "onboarding" ? (
         <ScientGettingStartedShell
           canGoBack={false}
@@ -184,7 +188,7 @@ function renderSurface(surface: (typeof SURFACES)[number], provider: ServerProvi
   });
 }
 
-beforeEach(() => {
+async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
   locality.onThisDevice = true;
   commands.plan.mockResolvedValue({
@@ -197,27 +201,33 @@ beforeEach(() => {
     message: "Ready to install.",
   });
   commands.start.mockResolvedValue(operation({ status: "preparing" }));
-});
+}
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 describe.each(SURFACES)("%s runtime progress", (surface) => {
   it("survives start acknowledgement, closing details and remount without another transaction", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     await page.viewport(1280, 800);
-    renderSurface(surface, snapshot());
+    await renderSurface(_fixture, surface, snapshot());
     await page.getByRole("button", { name: "Install Codex", exact: true }).click();
     await expect.poll(() => commands.start.mock.calls.length).toBe(1);
 
     // Acknowledgement ends local pending; canonical snapshots own ongoing progress.
     await commands.start.mock.results[0]!.value;
-    renderSurface(surface, operation({}));
+    await renderSurface(_fixture, surface, operation({}));
     await expect.element(page.getByLabelText("Download progress 42%")).toBeVisible();
-    const busy = host!.querySelector<HTMLButtonElement>('button[aria-label="Installing Codex"]')!;
+    const busy = _fixture.host!.querySelector<HTMLButtonElement>(
+      'button[aria-label="Installing Codex"]',
+    )!;
     const loader = busy.querySelector("svg")!;
     const percent = busy.querySelector<HTMLElement>('[aria-label="Download progress 42%"]')!;
     expect(percent.className).toContain("text-muted-foreground");
@@ -232,27 +242,35 @@ describe.each(SURFACES)("%s runtime progress", (surface) => {
     await page.getByRole("button", { name: "Close details" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 
-    renderSurface(surface, operation({ downloadedBytes: 73 }));
+    await renderSurface(_fixture, surface, operation({ downloadedBytes: 73 }));
     await expect.element(page.getByLabelText("Download progress 73%")).toBeVisible();
-    const manage = host!.querySelector<HTMLButtonElement>('button[aria-label="Manage Codex"]')!;
+    const manage = _fixture.host!.querySelector<HTMLButtonElement>(
+      'button[aria-label="Manage Codex"]',
+    )!;
     expect(manage.textContent).not.toContain("Manage");
     expect(manage.disabled).toBe(false);
 
-    flushSync(() => root!.unmount());
-    root = createRoot(host!);
-    renderSurface(surface, operation({ downloadedBytes: 73 }));
+    await _fixtureAct(async () => await _fixture.root0!.unmount());
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host!, router: false }),
+    );
+    await renderSurface(_fixture, surface, operation({ downloadedBytes: 73 }));
     await expect.element(page.getByLabelText("Download progress 73%")).toBeVisible();
     await page.getByRole("button", { name: "Manage Codex", exact: true }).click();
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Close details" }).click();
 
-    renderSurface(surface, operation({ status: "testing" }));
+    await renderSurface(_fixture, surface, operation({ status: "testing" }));
     await expect.element(page.getByRole("button", { name: "Verifying Codex" })).toBeVisible();
-    expect(host!.textContent).not.toContain("73%");
+    expect(_fixture.host!.textContent).not.toContain("73%");
     for (const status of ["succeeded", "cancelled", "failed"] as const) {
-      renderSurface(surface, operation({ status, finishedAt: "2026-10-08T00:01:00.000Z" }));
-      expect(host!.querySelector('[role="status"]')).toBeNull();
-      expect(host!.textContent).not.toContain("Verifying");
+      await renderSurface(
+        _fixture,
+        surface,
+        operation({ status, finishedAt: "2026-10-08T00:01:00.000Z" }),
+      );
+      expect(_fixture.host!.querySelector('[role="status"]')).toBeNull();
+      expect(_fixture.host!.textContent).not.toContain("Verifying");
     }
     expect(commands.plan).toHaveBeenCalledTimes(1);
     expect(commands.start).toHaveBeenCalledTimes(1);
@@ -262,12 +280,16 @@ describe.each(SURFACES)("%s runtime progress", (surface) => {
 it.each([1280, 390])(
   "keeps the shortened onboarding description and list compact at %spx",
   async (width) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     await page.viewport(width, 800);
-    renderSurface("onboarding", snapshot());
-    const description = host!.querySelector("header p")!;
-    const heading = host!.querySelector("header h1")!;
+    await renderSurface(_fixture, "onboarding", snapshot());
+    const description = _fixture.host!.querySelector("header p")!;
+    const heading = _fixture.host!.querySelector("header h1")!;
     const content = heading.closest("header")!.parentElement!.parentElement!;
-    const list = host!.querySelector<HTMLElement>('[aria-label="AI providers"]')!;
+    const list = _fixture.host!.querySelector<HTMLElement>('[aria-label="AI providers"]')!;
     expect(description.textContent).toBe(
       "Use a ChatGPT, Claude, or Google subscription you already have.",
     );
@@ -276,7 +298,7 @@ it.each([1280, 390])(
     expect(getComputedStyle(description).marginTop).toBe("4px");
     expect(getComputedStyle(content).marginTop).toBe("8px");
     expect(list.getBoundingClientRect().top - description.getBoundingClientRect().bottom).toBe(12);
-    expect(host!.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
+    expect(_fixture.host!.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
     await expect.element(page.getByRole("button", { name: "Skip", exact: true })).toBeVisible();
   },
 );
@@ -310,14 +332,16 @@ describe("row sign-in", () => {
     };
   }
 
-  function renderRow(provider: ServerProvider, onManage: () => void) {
-    if (!host) {
-      host = document.createElement("div");
-      document.body.append(host);
-      root = createRoot(host);
+  async function renderRow(_fixture: _Fixture, provider: ServerProvider, onManage: () => void) {
+    if (!_fixture.host) {
+      _fixture.host = document.createElement("div");
+      document.body.append(_fixture.host);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.host, router: false }),
+      );
     }
-    flushSync(() => {
-      root!.render(
+    await _fixtureAct(async () => {
+      await _fixture.root0!.rerender(
         <ProviderSettingsLifecycleAction
           displayName="Provider"
           environmentId={EnvironmentId.make("local")}
@@ -333,12 +357,16 @@ describe("row sign-in", () => {
     ["cursor", "cursor_browser"],
     ["codex", "codex_browser"],
   ] as const)("starts %s sign-in with one click", async (driver, method) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onManage = vi.fn();
     const provider = signedOut(driver, [method]);
     commands.connect.mockResolvedValue(
       signedOut(driver, [method], waiting({ method, authorizationUrlKind: "primary" })),
     );
-    renderRow(provider, onManage);
+    await renderRow(_fixture, provider, onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect.poll(() => commands.connect.mock.calls).toEqual([[method]]);
     await commands.connect.mock.results[0]!.value;
@@ -351,14 +379,22 @@ describe("row sign-in", () => {
     ["droid", ["droid_device_pairing"]],
     ["antigravity", ["antigravity_credentials"]],
   ] as const)("opens the setup view for %s instead", async (driver, methods) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onManage = vi.fn();
-    renderRow(signedOut(driver, methods), onManage);
+    await renderRow(_fixture, signedOut(driver, methods), onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     expect(onManage).toHaveBeenCalledTimes(1);
     expect(commands.connect).not.toHaveBeenCalled();
   });
 
   it("also opens the setup view on another device, for pasting the return URL", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     locality.onThisDevice = false;
     const onManage = vi.fn();
     commands.connect.mockResolvedValue(
@@ -368,7 +404,7 @@ describe("row sign-in", () => {
         waiting({ authorizationUrlKind: "primary", authorizationResponseKind: "callback_url" }),
       ),
     );
-    renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
+    await renderRow(_fixture, signedOut("antigravity", ["antigravity_google"]), onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect.poll(() => commands.connect.mock.calls).toEqual([["antigravity_google"]]);
     await commands.connect.mock.results[0]!.value;
@@ -376,6 +412,10 @@ describe("row sign-in", () => {
   });
 
   it("continues in the setup view when the started flow asks for something", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onManage = vi.fn();
     commands.connect.mockResolvedValue(
       signedOut(
@@ -384,12 +424,16 @@ describe("row sign-in", () => {
         waiting({ authorizationUrlKind: "manual_fallback", acceptsAuthorizationCode: true }),
       ),
     );
-    renderRow(signedOut("antigravity", ["antigravity_google"]), onManage);
+    await renderRow(_fixture, signedOut("antigravity", ["antigravity_google"]), onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect.poll(() => onManage.mock.calls.length).toBe(1);
   });
 
   it("shows the server's starting state from the click", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     resetProviderSignInForTests({ open: async () => undefined });
     const onManage = vi.fn();
     const provider = {
@@ -409,7 +453,7 @@ describe("row sign-in", () => {
         operationOf: () => null,
       }),
     );
-    renderRow(provider, onManage);
+    await renderRow(_fixture, provider, onManage);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     const progress = page.getByRole("button", { name: "Starting Provider", exact: true });
@@ -422,8 +466,13 @@ describe("row sign-in", () => {
   });
 
   it("retries a failed sign-in, with the reason on hover", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onManage = vi.fn();
-    renderRow(
+    await renderRow(
+      _fixture,
       signedOut(
         "antigravity",
         ["antigravity_google"],
@@ -445,8 +494,13 @@ describe("row sign-in", () => {
   });
 
   it("shows a slow start on the row and opens the setup view from it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onManage = vi.fn();
-    renderRow(
+    await renderRow(
+      _fixture,
       signedOut(
         "antigravity",
         ["antigravity_google"],
@@ -468,3 +522,22 @@ describe("row sign-in", () => {
     expect(commands.connect).not.toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -59,7 +59,7 @@ export function useChatEnvironmentHtmlPreview<AssetError, PreviewError>(input: {
   readonly openPreview: OpenPreviewMutation<PreviewError>;
 }) {
   const { threadRef, preparedConnection, createAssetUrl, openPreview } = input;
-  const openEnvironmentHtmlInPreview = (path: string) => {
+  const openEnvironmentHtmlInPreview = (path: string, isCurrent?: () => boolean) => {
     if (!threadRef || preparedConnection._tag === "None") {
       return Promise.resolve(
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
@@ -74,6 +74,7 @@ export function useChatEnvironmentHtmlPreview<AssetError, PreviewError>(input: {
     return openEnvironmentFileInPreview({
       threadRef,
       path,
+      ...(isCurrent ? { isCurrent } : {}),
       httpBaseUrl: preparedConnection.value.httpBaseUrl,
       createAssetUrl,
       openPreview,
@@ -99,8 +100,12 @@ export function useChatFileLinkOpening(input: {
   readonly openMarkdownFileInPreview: (
     path: string,
     workspaceRelativePath: string,
+    isCurrent?: () => boolean,
   ) => OpenInPreviewResult;
-  readonly openEnvironmentHtmlInPreview: (path: string) => OpenInPreviewResult;
+  readonly openEnvironmentHtmlInPreview: (
+    path: string,
+    isCurrent?: () => boolean,
+  ) => OpenInPreviewResult;
 }) {
   const {
     threadRef,
@@ -120,6 +125,7 @@ export function useChatFileLinkOpening(input: {
   const planFileLinkOpen = async (
     askedPath: string,
     clientPath: string,
+    waitMs = FILE_LINK_RESOLVE_WAIT_MS,
   ): Promise<{ readonly plan: ChatFileOpenPlan; readonly location: string }> => {
     const input = chatFileLinkResolveInput({
       linkPath: askedPath,
@@ -133,7 +139,7 @@ export function useChatFileLinkOpening(input: {
       resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
         result._tag === "Success" ? result.value : null,
       ),
-      FILE_LINK_RESOLVE_WAIT_MS,
+      waitMs,
       null,
     );
     return {
@@ -151,13 +157,21 @@ export function useChatFileLinkOpening(input: {
     panelPath: string,
     line: number | undefined,
     authoredHomeRelative: boolean,
+    findWorkspaceMatch?: () => Promise<string | null>,
   ) => {
     if (!threadRef) return;
     const isCurrentClick = claimFileLinkClick(threadRef);
     void (async () => {
+      const deadline = Date.now() + FILE_LINK_RESOLVE_WAIT_MS;
+      const match = findWorkspaceMatch
+        ? await settleWithin(findWorkspaceMatch(), FILE_LINK_RESOLVE_WAIT_MS, null)
+        : null;
+      if (!isCurrentClick()) return;
+      const target = match ?? panelPath;
       const { plan, location } = await planFileLinkOpen(
-        authoredHomeRelative ? panelPath : workspaceLocatorAskPath(panelPath, cwd),
-        authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,
+        authoredHomeRelative ? target : workspaceLocatorAskPath(target, cwd),
+        authoredHomeRelative ? clientPlacedLinkPath(target, cwd) : target,
+        Math.max(0, deadline - Date.now()),
       );
       if (!isCurrentClick()) return;
       useRightPanelStore
@@ -165,8 +179,11 @@ export function useChatFileLinkOpening(input: {
         .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
     })();
   };
-  const openFileInPanel = (panelPath: string, line: number | undefined) =>
-    openLinkInPanel(panelPath, line, false);
+  const openFileInPanel = (
+    panelPath: string,
+    line: number | undefined,
+    findWorkspaceMatch?: () => Promise<string | null>,
+  ) => openLinkInPanel(panelPath, line, false, findWorkspaceMatch);
   const openHomeRelativeLinkInPanel = (panelPath: string, line: number | undefined) =>
     openLinkInPanel(panelPath, line, true);
   // Outside media opens in the media viewer when its file exists. A missing
@@ -216,18 +233,36 @@ export function useChatFileLinkOpening(input: {
       useRightPanelStore.getState().openFile(threadRef, location);
       return superseded;
     }
-    if (plan.kind === "resolved" && cwd) {
-      return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
+    try {
+      let opening: OpenInPreviewResult;
+      if (plan.kind === "resolved" && cwd) {
+        opening = openMarkdownFileInPreview(
+          workspaceFileHostPath(plan.path, cwd),
+          plan.path,
+          isCurrentClick,
+        );
+      } else if (location !== clientPath) {
+        opening =
+          cwd && !isAbsolutePath(location)
+            ? openMarkdownFileInPreview(
+                workspaceFileHostPath(location, cwd),
+                location,
+                isCurrentClick,
+              )
+            : openEnvironmentHtmlInPreview(location, isCurrentClick);
+      } else {
+        opening =
+          cwd && workspaceRelativePath
+            ? openMarkdownFileInPreview(filePath, workspaceRelativePath, isCurrentClick)
+            : openEnvironmentHtmlInPreview(filePath, isCurrentClick);
+      }
+      const result = await opening;
+      return isCurrentClick() ? result : superseded;
+    } catch (cause) {
+      // A stale failure must not start the file-preview fallback as a new click.
+      if (!isCurrentClick()) return superseded;
+      throw cause;
     }
-    if (location !== clientPath) {
-      // A home-relative page, opened where the environment says it is.
-      return cwd && !isAbsolutePath(location)
-        ? openMarkdownFileInPreview(workspaceFileHostPath(location, cwd), location)
-        : openEnvironmentHtmlInPreview(location);
-    }
-    return cwd && workspaceRelativePath
-      ? openMarkdownFileInPreview(filePath, workspaceRelativePath)
-      : openEnvironmentHtmlInPreview(filePath);
   };
   return {
     openFileInPanel: useStableCallback(openFileInPanel),

@@ -102,10 +102,10 @@ export function matlabBridgePathCandidates(directory: string): ReadonlyArray<str
   );
 }
 
-export const resolveMatlabBridgePath = (
-  directory: string,
-): Effect.Effect<string, ComputeRuntimeError, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
+export const resolveMatlabBridgePath = Effect.fn("MatlabComputeRuntime.resolveMatlabBridgePath")(
+  function* (
+    directory: string,
+  ): Effect.fn.Return<string, ComputeRuntimeError, FileSystem.FileSystem> {
     const fileSystem = yield* FileSystem.FileSystem;
     const candidates = matlabBridgePathCandidates(directory);
     for (const candidate of candidates) {
@@ -120,7 +120,8 @@ export const resolveMatlabBridgePath = (
     return yield* runtimeError(
       `Unable to find ${MATLAB_BRIDGE_SCRIPT_NAME} with its shared ${BRIDGE_SCRIPT_NAME} sibling. Looked in: ${candidates.join(", ")}.`,
     );
-  });
+  },
+);
 
 function hostCandidates(): ReadonlyArray<string> {
   return ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python"];

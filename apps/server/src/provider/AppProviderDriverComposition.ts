@@ -53,94 +53,94 @@ type GrokCompositionExtension = {
 
 const GROK_DRIVER = ProviderDriverKind.make("grok");
 
-const resolveGrokRuntime = (
+const resolveGrokRuntime = Effect.fn("AppProviderDriverComposition.resolveGrokRuntime")(function* (
   input: GrokRuntimeResolverInput,
-): Effect.Effect<
+): Effect.fn.Return<
   GrokRuntimeResolution<GrokCompositionRequirements, GrokCompositionExtension>,
   ProviderDriverError,
   GrokCompositionRequirements
-> =>
-  Effect.gen(function* () {
-    const host = yield* ProviderHost;
-    const serverConfig = yield* ServerConfig;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const processEnvironment = yield* mergeProviderInstanceEnvironment(
-      input.environment,
-      input.hostEnvironment,
-    );
-    const managedRuntime = yield* makeGrokManagedRuntimeResolution({
-      settings: input.config,
-      baseDir: host.paths.baseDir,
-      environment: processEnvironment,
-      spawner,
-      managedInstallationAllowed: serverConfig.mode === "desktop",
-    });
-    const effectiveConfig = {
-      ...input.config,
-      enabled: input.enabled,
-      binaryPath: managedRuntime.effectiveBinaryPath,
-    } satisfies GrokSettings;
-    const managedOnlyMaintenance = managedRuntime.usesManagedPath
-      ? {
-          resolve: () =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({
-                provider: GROK_DRIVER,
-                packageName: null,
-              }),
-            ),
-        }
-      : undefined;
-    const skillActions: ProviderSkillActions = {
-      setEnabled: (skill) =>
-        setGrokSkillEnabled({
-          environment: processEnvironment,
-          cwd: host.paths.cwd,
-          name: skill.name,
-          enabled: skill.enabled,
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError((cause) => ({ message: cause.detail, cause })),
-        ),
-    };
-
-    return {
-      effectiveConfig,
-      effectiveEnvironment: processEnvironment,
-      ...(managedOnlyMaintenance === undefined
-        ? {}
-        : { maintenanceResolver: managedOnlyMaintenance }),
-      decorateSnapshot: (snapshot: ServerProvider) => ({
-        ...snapshot,
-        connection: {
-          methods: ["grok_account", "grok_device_code"],
-          canDisconnect:
-            snapshot.auth.status === "authenticated" && snapshot.auth.type === "grok_account",
-          operation: snapshot.connection?.operation ?? null,
-          runtime: managedRuntime.summary,
-        },
-      }),
-      composeInstance: (instance) =>
-        Effect.gen(function* () {
-          const nativeSessions = yield* makeNativeSessionShutdown(instance.orchestrationAdapter);
-          const actions = yield* makeGrokConnectionActions(
-            effectiveConfig,
-            processEnvironment,
-            spawner,
-          );
-          return {
-            ...instance,
-            orchestrationAdapter: nativeSessions.adapter,
-            connectionActions: withGrokSessionShutdown(actions, nativeSessions.closeSessions),
-            managedRuntimeActions: managedRuntime.actions,
-            skillActions,
-          };
-        }),
-    };
+> {
+  const host = yield* ProviderHost;
+  const serverConfig = yield* ServerConfig;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const processEnvironment = yield* mergeProviderInstanceEnvironment(
+    input.environment,
+    input.hostEnvironment,
+  );
+  const managedRuntime = yield* makeGrokManagedRuntimeResolution({
+    settings: input.config,
+    baseDir: host.paths.baseDir,
+    environment: processEnvironment,
+    spawner,
+    managedInstallationAllowed: serverConfig.mode === "desktop",
   });
+  const effectiveConfig = {
+    ...input.config,
+    enabled: input.enabled,
+    binaryPath: managedRuntime.effectiveBinaryPath,
+  } satisfies GrokSettings;
+  const managedOnlyMaintenance = managedRuntime.usesManagedPath
+    ? {
+        resolve: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({
+              provider: GROK_DRIVER,
+              packageName: null,
+            }),
+          ),
+      }
+    : undefined;
+  const skillActions: ProviderSkillActions = {
+    setEnabled: (skill) =>
+      setGrokSkillEnabled({
+        environment: processEnvironment,
+        cwd: host.paths.cwd,
+        name: skill.name,
+        enabled: skill.enabled,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError((cause) => ({ message: cause.detail, cause })),
+      ),
+  };
+
+  return {
+    effectiveConfig,
+    effectiveEnvironment: processEnvironment,
+    ...(managedOnlyMaintenance === undefined
+      ? {}
+      : { maintenanceResolver: managedOnlyMaintenance }),
+    decorateSnapshot: (snapshot: ServerProvider) => ({
+      ...snapshot,
+      connection: {
+        methods: ["grok_account", "grok_device_code"],
+        canDisconnect:
+          snapshot.auth.status === "authenticated" && snapshot.auth.type === "grok_account",
+        operation: snapshot.connection?.operation ?? null,
+        runtime: managedRuntime.summary,
+      },
+    }),
+    composeInstance: Effect.fn("AppProviderDriverComposition.composeInstance")(
+      function* (instance) {
+        const nativeSessions = yield* makeNativeSessionShutdown(instance.orchestrationAdapter);
+        const actions = yield* makeGrokConnectionActions(
+          effectiveConfig,
+          processEnvironment,
+          spawner,
+        );
+        return {
+          ...instance,
+          orchestrationAdapter: nativeSessions.adapter,
+          connectionActions: withGrokSessionShutdown(actions, nativeSessions.closeSessions),
+          managedRuntimeActions: managedRuntime.actions,
+          skillActions,
+        };
+      },
+    ),
+  };
+});
 
 /** The Grok implementation registered in the server, with Scient lifecycle authority composed in. */
 export const GrokDriver = makeGrokDriver<GrokCompositionRequirements, GrokCompositionExtension>({
@@ -158,23 +158,22 @@ const acpRegistryPackageDriver = makeAcpRegistryDriver({
 /** Keep installation ownership in Scient while the package owns ACP Registry protocol behavior. */
 export const AcpRegistryDriver = {
   ...acpRegistryPackageDriver,
-  create: (input) =>
-    Effect.gen(function* () {
-      const host = yield* ProviderHost;
-      const hostEnvironment = yield* HostProcess.Environment;
-      const processEnvironment = yield* mergeProviderInstanceEnvironment(
-        input.environment,
-        hostEnvironment,
-      );
-      const settings = { ...input.config, enabled: input.enabled } satisfies AcpRegistrySettings;
-      const managedRuntimeActions = yield* makeAcpRegistryManagedRuntimeActions({
-        instanceId: input.instanceId,
-        settings,
-        environment: processEnvironment,
-        instanceEnvironment: input.environment,
-        cwd: host.paths.cwd,
-      });
-      const instance = yield* acpRegistryPackageDriver.create(input);
-      return { ...instance, managedRuntimeActions };
-    }),
+  create: Effect.fn("AppProviderDriverComposition.create")(function* (input) {
+    const host = yield* ProviderHost;
+    const hostEnvironment = yield* HostProcess.Environment;
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      input.environment,
+      hostEnvironment,
+    );
+    const settings = { ...input.config, enabled: input.enabled } satisfies AcpRegistrySettings;
+    const managedRuntimeActions = yield* makeAcpRegistryManagedRuntimeActions({
+      instanceId: input.instanceId,
+      settings,
+      environment: processEnvironment,
+      instanceEnvironment: input.environment,
+      cwd: host.paths.cwd,
+    });
+    const instance = yield* acpRegistryPackageDriver.create(input);
+    return { ...instance, managedRuntimeActions };
+  }),
 } satisfies ScientProviderDriver<AcpRegistrySettings, AcpRegistryCompositionEnv>;

@@ -8,12 +8,12 @@ import {
   type ProjectWriteFileResult,
   type ProjectRenameFileResult,
   type ProjectDeleteFileResult,
-  type ProjectReadFileInput,
-  type ProjectReadFileResult,
   type ProjectFileWatchEvent,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   ProjectId,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ThreadId,
   type AuthSessionState,
   type ScopedProjectRef,
@@ -26,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
@@ -45,7 +46,9 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { EnvironmentProject } from "./models.ts";
-import { createProjectEnvironmentAtoms, projectFileOperationKey } from "./projectCommands.ts";
+import { createProjectEnvironmentAtoms } from "./projectCommands.ts";
+const decodeReadFileInput = Schema.decodeUnknownSync(ProjectReadFileInput);
+const decodeReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -76,7 +79,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5, path: "/repo/foo" };
   const fileEvents = yield* Queue.unbounded<ProjectFileWatchEvent>();
-  const readResponse = { wait: Effect.void as Effect.Effect<void> };
+  const readResponse = { wait: Effect.void as Effect.Effect<void>, missing: false };
   const supervisor = EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
@@ -87,7 +90,24 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
             Effect.gen(function* () {
               const byteLength = file.byteLength;
               yield* readResponse.wait;
-              return { relativePath: "foo", byteLength, contents: "old", truncated: false };
+              return decodeReadFileResult(
+                readResponse.missing
+                  ? {
+                      relativePath: "foo",
+                      byteLength: 0,
+                      contents: "",
+                      truncated: false,
+                      revision: "missing",
+                      exists: false,
+                    }
+                  : {
+                      relativePath: "foo",
+                      byteLength,
+                      contents: "old",
+                      revision: "read",
+                      truncated: false,
+                    },
+              );
             }),
           [WS_METHODS.projectsWriteFile]: () =>
             Effect.sync(() => {
@@ -111,7 +131,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
               metadataRequests.push(input.paths);
               return {
                 entries: input.paths.map((path) =>
-                  path === file.path || path === "/repo/./foo"
+                  !readResponse.missing && (path === file.path || path === "/repo/./foo")
                     ? { kind: "file" as const, byteLength: file.byteLength }
                     : null,
                 ),
@@ -181,6 +201,36 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
 });
 
 describe("writeFile metadata", () => {
+  it.effect("preserves optional read results without seeding metadata for an absent file", () =>
+    Effect.gen(function* () {
+      const h = yield* makeMetadataHarness();
+      h.readResponse.missing = true;
+      const input = { cwd: "/repo", relativePath: "foo", allowMissing: true };
+      expect.soft(decodeReadFileInput(input)).toEqual(input);
+      const result = yield* AtomRegistry.getResult(
+        h.registry,
+        h.commands.readFile({ environmentId: ENVIRONMENT_ID, input }),
+        { suspendOnWaiting: true },
+      );
+      expect.soft(result).toEqual({
+        relativePath: "foo",
+        byteLength: 0,
+        contents: "",
+        truncated: false,
+        revision: "missing",
+        exists: false,
+      });
+      const metadata = h.commands.fileMetadata({
+        environmentId: ENVIRONMENT_ID,
+        input: { path: "/repo/foo" },
+      });
+      expect(
+        yield* AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true }),
+      ).toBeNull();
+      expect(h.metadataRequests).toEqual([["/repo/foo"]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reuses a current file read without another metadata request", () =>
     Effect.gen(function* () {
       const h = yield* makeMetadataHarness();

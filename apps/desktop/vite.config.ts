@@ -1,5 +1,5 @@
 import "vite-plus/test/config";
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defaultInclude, defineConfig } from "vite-plus";
 
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
@@ -20,6 +20,7 @@ const publicConfigDefine = {
       : "",
   ),
 };
+const preloadTests = ["src/scient/spelling/preloadSampler.test.ts"];
 
 export default defineConfig({
   run: {
@@ -160,5 +161,24 @@ export default defineConfig({
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
     setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
+          exclude: [...defaultExclude, ...preloadTests],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "preload",
+          include: preloadTests,
+          // The sampler runs inside Electron's isolated preload, not the web renderer.
+          environment: "happy-dom",
+        },
+      },
+    ],
   },
 });

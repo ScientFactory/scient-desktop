@@ -246,40 +246,41 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     }
   };
 
-  const handleStdinChunk = (chunk: Uint8Array) =>
-    Effect.gen(function* () {
-      stdinBuffer += new TextDecoder().decode(chunk);
-      while (true) {
-        const newline = stdinBuffer.indexOf("\n");
-        if (newline === -1) return;
-        const line = stdinBuffer.slice(0, newline);
-        stdinBuffer = stdinBuffer.slice(newline + 1);
-        if (line.length === 0) continue;
-        const record = decodeJsonLine(line) as PiRpcRecord;
-        allRequests.push(record);
-        yield* Queue.offer(requests, record);
-        if (record.type === "prompt" && blockPromptWrite) {
-          blockPromptWrite = false;
-          yield* Deferred.await(promptWriteReleased);
-        }
-        if (record["type"] === "get_state" && deferState) {
-          deferState = false;
-          deferredStateRequest = record;
-          continue;
-        }
-        if (record["type"] === "get_session_stats" && deferStats) {
-          deferStats = false;
-          deferredStatsRequest = record;
-          continue;
-        }
-        if (record["type"] === deferredLifecycle) {
-          deferredLifecycle = undefined;
-          continue;
-        }
-        const response = respondTo(record);
-        if (response !== null) yield* emit(response);
+  const handleStdinChunk = Effect.fn("PiAdapterV2.fixture.handleStdinChunk")(function* (
+    chunk: Uint8Array,
+  ) {
+    stdinBuffer += new TextDecoder().decode(chunk);
+    while (true) {
+      const newline = stdinBuffer.indexOf("\n");
+      if (newline === -1) return;
+      const line = stdinBuffer.slice(0, newline);
+      stdinBuffer = stdinBuffer.slice(newline + 1);
+      if (line.length === 0) continue;
+      const record = decodeJsonLine(line) as PiRpcRecord;
+      allRequests.push(record);
+      yield* Queue.offer(requests, record);
+      if (record.type === "prompt" && blockPromptWrite) {
+        blockPromptWrite = false;
+        yield* Deferred.await(promptWriteReleased);
       }
-    });
+      if (record["type"] === "get_state" && deferState) {
+        deferState = false;
+        deferredStateRequest = record;
+        continue;
+      }
+      if (record["type"] === "get_session_stats" && deferStats) {
+        deferStats = false;
+        deferredStatsRequest = record;
+        continue;
+      }
+      if (record["type"] === deferredLifecycle) {
+        deferredLifecycle = undefined;
+        continue;
+      }
+      const response = respondTo(record);
+      if (response !== null) yield* emit(response);
+    }
+  });
 
   let lastSpawn: { readonly args: ReadonlyArray<string>; readonly env: NodeJS.ProcessEnv } = {
     args: [],
@@ -311,13 +312,14 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     }),
   );
 
-  const takeRequest = (type: string): Effect.Effect<PiRpcRecord> =>
-    Effect.gen(function* () {
-      while (true) {
-        const record = yield* Queue.take(requests);
-        if (record["type"] === type) return record;
-      }
-    });
+  const takeRequest = Effect.fn("PiAdapterV2.fixture.takeRequest")(function* (
+    type: string,
+  ): Effect.fn.Return<PiRpcRecord> {
+    while (true) {
+      const record = yield* Queue.take(requests);
+      if (record["type"] === type) return record;
+    }
+  });
 
   return {
     spawner,
@@ -328,35 +330,33 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     deferNextStats: () => {
       deferStats = true;
     },
-    resolveDeferredStats: () =>
-      Effect.gen(function* () {
-        assert.isDefined(deferredStatsRequest);
-        const record = deferredStatsRequest!;
-        deferredStatsRequest = undefined;
-        yield* emit({
-          type: "response",
-          id: record.id,
-          command: "get_session_stats",
-          success: true,
-          data: {},
-        });
-      }),
+    resolveDeferredStats: Effect.fn("PiAdapterV2.fixture.resolveDeferredStats")(function* () {
+      assert.isDefined(deferredStatsRequest);
+      const record = deferredStatsRequest!;
+      deferredStatsRequest = undefined;
+      yield* emit({
+        type: "response",
+        id: record.id,
+        command: "get_session_stats",
+        success: true,
+        data: {},
+      });
+    }),
     deferNextState: () => {
       deferState = true;
     },
-    resolveDeferredState: (data) =>
-      Effect.gen(function* () {
-        const record = deferredStateRequest;
-        assert.isDefined(record);
-        deferredStateRequest = undefined;
-        yield* emit({
-          type: "response",
-          id: record!["id"],
-          command: "get_state",
-          success: true,
-          data,
-        });
-      }),
+    resolveDeferredState: Effect.fn("PiAdapterV2.fixture.resolveDeferredState")(function* (data) {
+      const record = deferredStateRequest;
+      assert.isDefined(record);
+      deferredStateRequest = undefined;
+      yield* emit({
+        type: "response",
+        id: record!["id"],
+        command: "get_state",
+        success: true,
+        data,
+      });
+    }),
     failNextState: () => {
       failState = true;
     },
@@ -438,13 +438,14 @@ const openRuntime = Effect.fnUntraced(function* (
     ),
     Effect.forkScoped,
   );
-  const takeEvent = (predicate: (event: ProviderAdapterV2Event) => boolean) =>
-    Effect.gen(function* () {
-      while (true) {
-        const event = yield* Queue.take(emitted);
-        if (predicate(event)) return event;
-      }
-    });
+  const takeEvent = Effect.fn("PiAdapterV2.fixture.takeEvent")(function* (
+    predicate: (event: ProviderAdapterV2Event) => boolean,
+  ) {
+    while (true) {
+      const event = yield* Queue.take(emitted);
+      if (predicate(event)) return event;
+    }
+  });
   return { runtime, takeEvent, observed };
 });
 
@@ -510,8 +511,8 @@ const startTurn = Effect.fnUntraced(function* (
   });
 });
 
-const expectModelFailure = (errorMessage: string, expectedMessage = errorMessage) =>
-  Effect.gen(function* () {
+const expectModelFailure = Effect.fn("PiAdapterV2.fixture.expectModelFailure")(
+  function* (errorMessage: string, expectedMessage = errorMessage) {
     const fake = yield* makeFakePi;
     const { runtime, takeEvent } = yield* openRuntime(fake);
     const providerThread = yield* runtime.ensureThread({
@@ -547,7 +548,10 @@ const expectModelFailure = (errorMessage: string, expectedMessage = errorMessage
         terminal.status === "failed" &&
         terminal.failure.message === expectedMessage,
     );
-  }).pipe(Effect.scoped, Effect.provide(testLayer));
+  },
+  (effect, _argument0: string, _argument1?) =>
+    effect.pipe(Effect.scoped, Effect.provide(testLayer)),
+);
 export {
   isNativeStartReceiptError,
   testLayer,

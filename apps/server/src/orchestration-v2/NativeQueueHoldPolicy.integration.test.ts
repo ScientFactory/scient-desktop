@@ -4313,6 +4313,17 @@ it.live(
                 const second = yield* trace.at("B-offer", takeOffer);
                 assert.equal(second.input.runId, queuedB.id);
                 assert.equal(second.input.runtimePolicy.cwd, workspaceB);
+                assert.notEqual(
+                  second.input.providerThread.providerSessionId,
+                  first.input.providerThread.providerSessionId,
+                );
+                assert.isTrue(
+                  Option.isNone(
+                    yield* (yield* ProviderSessionManagerV2).get(
+                      first.input.providerThread.providerSessionId!,
+                    ),
+                  ),
+                );
                 assert.lengthOf(offers, 2);
                 const startedB = yield* orchestrator.getThreadProjection(threadId);
                 const checkpointA = startedB.checkpoints.find(

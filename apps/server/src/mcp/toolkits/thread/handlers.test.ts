@@ -121,7 +121,10 @@ const makeHarness = Effect.fn("threadToolPolicy.makeHarness")(function* (
         Effect.sync(() => {
           calls.run.push(id);
           const scheduled = tasks.find((entry) => entry.id === id)!;
-          return { task: { ...scheduled, runCount: 1, lastRunStatus: "running" as const } };
+          return {
+            task: { ...scheduled, runCount: 1, lastRunStatus: "running" as const },
+            threadId: null,
+          };
         }),
     }),
     Layer.mock(ThreadSearch.ThreadSearch)({

@@ -151,20 +151,19 @@ export function bridgePathCandidates(directory: string): ReadonlyArray<string> {
  * work around, and saying so at startup is more useful than saying it the
  * first time a user opens a panel.
  */
-export const resolveBridgePath = (
+export const resolveBridgePath = Effect.fn("PythonComputeRuntime.resolveBridgePath")(function* (
   directory: string,
-): Effect.Effect<string, ComputeRuntimeError, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const candidates = bridgePathCandidates(directory);
-    for (const candidate of candidates) {
-      const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
-      if (exists) return candidate;
-    }
-    return yield* runtimeError(
-      `Unable to find ${BRIDGE_SCRIPT_NAME}. Looked in: ${candidates.join(", ")}.`,
-    );
-  });
+): Effect.fn.Return<string, ComputeRuntimeError, FileSystem.FileSystem> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const candidates = bridgePathCandidates(directory);
+  for (const candidate of candidates) {
+    const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (exists) return candidate;
+  }
+  return yield* runtimeError(
+    `Unable to find ${BRIDGE_SCRIPT_NAME}. Looked in: ${candidates.join(", ")}.`,
+  );
+});
 
 /**
  * Runs the probe script on one candidate interpreter and returns its stdout.
@@ -179,117 +178,110 @@ export const resolveBridgePath = (
  * probe sees what a launch will see. Without that the probe could report
  * packages that the bridge, started under the launch policy, cannot import.
  */
-export const makeSpawnProbe = (
+export const makeSpawnProbe = Effect.fn("PythonComputeRuntime.makeSpawnProbe")(function* (
   processes: ExecutionProcessPort,
   options: {
     readonly environment: Readonly<Record<string, string>>;
     readonly cwd: string;
     readonly timeout?: Duration.Duration;
   },
-): Effect.Effect<
+): Effect.fn.Return<
   (
     executable: string,
     acquireUsage?: Effect.Effect<() => void, ComputeRuntimeError>,
   ) => Effect.Effect<string, ComputeRuntimeError>
-> =>
-  Effect.gen(function* () {
-    // The port wants an id per run. Nothing reads it here; it only has to tell
-    // two probes apart in a trace.
-    const runCounter = yield* Ref.make(0);
-    const timeout = options.timeout ?? PROBE_TIMEOUT;
+> {
+  // The port wants an id per run. Nothing reads it here; it only has to tell
+  // two probes apart in a trace.
+  const runCounter = yield* Ref.make(0);
+  const timeout = options.timeout ?? PROBE_TIMEOUT;
 
-    return (executable: string, acquireUsage?: Effect.Effect<() => void, ComputeRuntimeError>) =>
-      Effect.gen(function* () {
-        const count = yield* Ref.updateAndGet(runCounter, (value) => value + 1);
-        const start = processes
-          .start({
-            runId: ExecutionRunId.make(`scient-compute-probe-${String(count)}`),
-            executable,
-            args: PROBE_ARGS,
-            cwd: options.cwd,
-            environment: options.environment,
-            extendEnv: false,
-          })
-          .pipe(Effect.mapError((cause) => runtimeError(`Unable to run ${executable}.`, cause)));
-        const handle = yield* acquireUsage === undefined
-          ? start
-          : Effect.uninterruptible(
-              Effect.gen(function* () {
-                const release = yield* acquireUsage;
-                const handle = yield* start.pipe(Effect.onError(() => Effect.sync(release)));
-                // Scope closure is not proof that the process tree stopped. Keep
-                // its generation reserved if cleanup fails, even on cancellation.
-                yield* Effect.addFinalizer(() =>
-                  handle.cancel.pipe(
-                    Effect.andThen(Effect.sync(release)),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(
-                        "Python probe cleanup failed; its managed environment remains protected",
-                        { cause },
-                      ),
+  return (executable: string, acquireUsage?: Effect.Effect<() => void, ComputeRuntimeError>) =>
+    Effect.gen(function* () {
+      const count = yield* Ref.updateAndGet(runCounter, (value) => value + 1);
+      const start = processes
+        .start({
+          runId: ExecutionRunId.make(`scient-compute-probe-${String(count)}`),
+          executable,
+          args: PROBE_ARGS,
+          cwd: options.cwd,
+          environment: options.environment,
+          extendEnv: false,
+        })
+        .pipe(Effect.mapError((cause) => runtimeError(`Unable to run ${executable}.`, cause)));
+      const handle = yield* acquireUsage === undefined
+        ? start
+        : Effect.uninterruptible(
+            Effect.gen(function* () {
+              const release = yield* acquireUsage;
+              const handle = yield* start.pipe(Effect.onError(() => Effect.sync(release)));
+              // Scope closure is not proof that the process tree stopped. Keep
+              // its generation reserved if cleanup fails, even on cancellation.
+              yield* Effect.addFinalizer(() =>
+                handle.cancel.pipe(
+                  Effect.andThen(Effect.sync(release)),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning(
+                      "Python probe cleanup failed; its managed environment remains protected",
+                      { cause },
                     ),
                   ),
-                );
-                return handle;
+                ),
+              );
+              return handle;
+            }),
+          );
+      // Drained on its own fiber, so an interpreter that writes more than a
+      // pipe holds cannot block on a reader that is waiting for it to exit.
+      const stdoutRef = yield* Ref.make("");
+      const stdoutBytesRef = yield* Ref.make(0);
+      const outputExceeded = yield* Deferred.make<void>();
+      const drain = yield* handle.output.pipe(
+        Stream.runForEach((chunk) =>
+          chunk.stream !== "stdout"
+            ? Effect.void
+            : Effect.gen(function* () {
+                const bytes = Buffer.byteLength(chunk.text, "utf8");
+                const total = yield* Ref.updateAndGet(stdoutBytesRef, (current) => current + bytes);
+                if (total > MAXIMUM_PROBE_STDOUT_BYTES) {
+                  yield* Deferred.succeed(outputExceeded, undefined);
+                  return;
+                }
+                yield* Ref.update(stdoutRef, (text) => text + chunk.text);
               }),
-            );
-        // Drained on its own fiber, so an interpreter that writes more than a
-        // pipe holds cannot block on a reader that is waiting for it to exit.
-        const stdoutRef = yield* Ref.make("");
-        const stdoutBytesRef = yield* Ref.make(0);
-        const outputExceeded = yield* Deferred.make<void>();
-        const drain = yield* handle.output.pipe(
-          Stream.runForEach((chunk) =>
-            chunk.stream !== "stdout"
-              ? Effect.void
-              : Effect.gen(function* () {
-                  const bytes = Buffer.byteLength(chunk.text, "utf8");
-                  const total = yield* Ref.updateAndGet(
-                    stdoutBytesRef,
-                    (current) => current + bytes,
-                  );
-                  if (total > MAXIMUM_PROBE_STDOUT_BYTES) {
-                    yield* Deferred.succeed(outputExceeded, undefined);
-                    return;
-                  }
-                  yield* Ref.update(stdoutRef, (text) => text + chunk.text);
-                }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logDebug("compute probe output ended early", { cause }),
-          ),
-          Effect.forkScoped,
-        );
-        const exitCode = yield* Effect.raceFirst(
-          handle.exitCode.pipe(
-            Effect.mapError((cause) => runtimeError(`Unable to wait for ${executable}.`, cause)),
-            Effect.timeoutOption(timeout),
-          ),
-          Deferred.await(outputExceeded).pipe(Effect.as(Option.none<number>())),
-        );
-        // A silent interpreter is killed as a tree: the probe is isolated, but
-        // nothing stops it from having started something of its own.
-        if (Option.isNone(exitCode)) yield* handle.cancel.pipe(Effect.ignoreCause());
-        yield* Fiber.join(drain).pipe(
-          Effect.timeoutOption(PROBE_DRAIN_GRACE),
-          Effect.ignoreCause(),
-        );
-        if (Option.isNone(exitCode)) {
-          if ((yield* Ref.get(stdoutBytesRef)) > MAXIMUM_PROBE_STDOUT_BYTES) {
-            return yield* runtimeError(
-              `${executable} exceeded the ${String(MAXIMUM_PROBE_STDOUT_BYTES)}-byte probe output limit.`,
-            );
-          }
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logDebug("compute probe output ended early", { cause }),
+        ),
+        Effect.forkScoped,
+      );
+      const exitCode = yield* Effect.raceFirst(
+        handle.exitCode.pipe(
+          Effect.mapError((cause) => runtimeError(`Unable to wait for ${executable}.`, cause)),
+          Effect.timeoutOption(timeout),
+        ),
+        Deferred.await(outputExceeded).pipe(Effect.as(Option.none<number>())),
+      );
+      // A silent interpreter is killed as a tree: the probe is isolated, but
+      // nothing stops it from having started something of its own.
+      if (Option.isNone(exitCode)) yield* handle.cancel.pipe(Effect.ignoreCause());
+      yield* Fiber.join(drain).pipe(Effect.timeoutOption(PROBE_DRAIN_GRACE), Effect.ignoreCause());
+      if (Option.isNone(exitCode)) {
+        if ((yield* Ref.get(stdoutBytesRef)) > MAXIMUM_PROBE_STDOUT_BYTES) {
           return yield* runtimeError(
-            `${executable} did not answer the probe in ${Duration.format(timeout)}.`,
+            `${executable} exceeded the ${String(MAXIMUM_PROBE_STDOUT_BYTES)}-byte probe output limit.`,
           );
         }
-        if (exitCode.value !== 0) {
-          return yield* runtimeError(`${executable} exited with code ${String(exitCode.value)}.`);
-        }
-        return yield* Ref.get(stdoutRef);
-      }).pipe(Effect.scoped);
-  });
+        return yield* runtimeError(
+          `${executable} did not answer the probe in ${Duration.format(timeout)}.`,
+        );
+      }
+      if (exitCode.value !== 0) {
+        return yield* runtimeError(`${executable} exited with code ${String(exitCode.value)}.`);
+      }
+      return yield* Ref.get(stdoutRef);
+    }).pipe(Effect.scoped);
+});
 
 /**
  * The Python binding this server can actually run.

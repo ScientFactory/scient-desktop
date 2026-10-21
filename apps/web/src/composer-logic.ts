@@ -2,9 +2,11 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import type {
   AssistantCitation,
   ComposerCitation,
+  EnvironmentId,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — composer citations include quotes from workspace files.
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
   serializeComposerCitation,
   withComposerCitationComment,
@@ -28,6 +30,20 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+export function isPathSuggestionCurrent(
+  searchTarget: ComposerPathSearchTarget,
+  trigger: ComposerTrigger | null,
+  environmentId: EnvironmentId | null,
+  cwd: string | null,
+) {
+  return (
+    trigger?.kind === "path" &&
+    searchTarget.environmentId === environmentId &&
+    searchTarget.cwd === cwd &&
+    searchTarget.query === trigger.query.trim()
+  );
 }
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {

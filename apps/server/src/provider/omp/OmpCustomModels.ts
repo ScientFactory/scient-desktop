@@ -603,24 +603,25 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           return current.filter((connection) => !pendingCredentialIds.has(connection.id));
         };
         /** Adopt a fresh resolution. Runs under the authority permit. */
-        const adopt = (current: ReadonlyArray<ResolvedModelConnection>) =>
-          Effect.gen(function* () {
-            resolvedConnections = current;
-            const active = activeConnections(current);
-            const change = customModelRuntimeChange(loaded, current, instanceId);
-            if (change === "revoke" || requiresCredentialRestart(loaded, current)) {
-              yield* retire;
-              return yield* fail(modelsChangedDetail);
-            }
-            const signature = payloadSignature(active);
-            if (signature !== publishedSignature) {
-              publishedSignature = signature;
-              yield* SubscriptionRef.update(barrier, (state) => ({
-                ...state,
-                generation: state.generation + 1,
-              }));
-            }
-          });
+        const adopt = Effect.fn("OmpCustomModels.adopt")(function* (
+          current: ReadonlyArray<ResolvedModelConnection>,
+        ) {
+          resolvedConnections = current;
+          const active = activeConnections(current);
+          const change = customModelRuntimeChange(loaded, current, instanceId);
+          if (change === "revoke" || requiresCredentialRestart(loaded, current)) {
+            yield* retire;
+            return yield* fail(modelsChangedDetail);
+          }
+          const signature = payloadSignature(active);
+          if (signature !== publishedSignature) {
+            publishedSignature = signature;
+            yield* SubscriptionRef.update(barrier, (state) => ({
+              ...state,
+              generation: state.generation + 1,
+            }));
+          }
+        });
         /**
          * Re-read the connections when the settings revision changed (or it is
          * unknown, or `force` is set). This is the only secret-store read after
@@ -682,15 +683,16 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           ),
           Effect.mapError((cause) => new OmpRpcProtocolError({ detail: cause.detail, cause })),
         );
-        const refreshModels = (): Effect.Effect<void, OmpRpcError | OmpModelRefreshError> =>
-          Effect.gen(function* () {
+        const refreshModels = Effect.fn("OmpCustomModels.refreshModels")(
+          function* (): Effect.fn.Return<void, OmpRpcError | OmpModelRefreshError> {
             yield* synchronize(undefined, true);
             const target = yield* SubscriptionRef.modify(barrier, (state) => [
               state.generation + 1,
               { ...state, generation: state.generation + 1 },
             ]);
             yield* awaitApplied(target);
-          });
+          },
+        );
         const effectContext = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(effectContext);
 

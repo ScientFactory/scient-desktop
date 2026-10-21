@@ -1,17 +1,15 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { EnvironmentId, ThreadSectionId, type ThreadSection } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { RegistryContext } from "@effect/atom-react";
+import { useLayoutEffect } from "react";
+
+import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ update: vi.fn() }));
 vi.mock("../../rpc/atomRegistry", async () => {
   const { AtomRegistry } = await import("effect/reactivity");
   return { appAtomRegistry: AtomRegistry.make() };
-});
-vi.mock("@effect/atom-react", async () => {
-  const { appAtomRegistry } = await import("../../rpc/atomRegistry");
-  return { useAtomValue: (atom: never) => appAtomRegistry.get(atom) };
 });
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -67,33 +65,38 @@ function setConfigs(entries: ReadonlyArray<readonly [string, ConfigLike]>) {
   appAtomRegistry.set(environmentServerConfigsAtom as never, new Map(entries) as never);
 }
 
-let catalogs: ReturnType<typeof useThreadSectionCatalogs>;
-let renderer: Root;
-function Probe() {
+function Probe({ _fixture }: { _fixture: _Fixture }) {
   const value = useThreadSectionCatalogs();
   useLayoutEffect(() => {
-    catalogs = value;
+    _fixture.publishCatalogs(value);
   });
   return null;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
+  const unmountConfig = appAtomRegistry.mount(environmentServerConfigsAtom);
+  _fixture.stack.defer(unmountConfig);
   appAtomRegistry.set(primaryEnvironmentIdAtom as never, "primary" as never);
   setConfigs([
     ["primary", config([research])],
     ["remote", config([field])],
   ]);
   mocks.update.mockReset();
-  act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <Probe _fixture={_fixture} />
+      </RegistryContext.Provider>,
+    );
   });
-});
-afterEach(() => {
-  act(() => renderer.unmount());
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0.unmount());
   vi.unstubAllGlobals();
-});
+}
 
 /** Resolves like the server: applies the patch to that environment's stored settings. */
 function serverAcceptsWrites() {
@@ -113,7 +116,11 @@ function serverAcceptsWrites() {
   );
 }
 
-it("lists each environment that stores sections, primary first", () => {
+it("lists each environment that stores sections, primary first", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setConfigs([
     ["remote", config([field])],
     ["old", config([], false)],
@@ -124,7 +131,11 @@ it("lists each environment that stores sections, primary first", () => {
   expect(listed[1]!.sections).toEqual([field]);
 });
 
-it("keeps a catalog's identity while its stored sections are unchanged", () => {
+it("keeps a catalog's identity while its stored sections are unchanged", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const sections = [research];
   setConfigs([["primary", config(sections)]]);
   const first = appAtomRegistry.get(sectionCatalogsAtom)[0];
@@ -132,7 +143,11 @@ it("keeps a catalog's identity while its stored sections are unchanged", () => {
   expect(appAtomRegistry.get(sectionCatalogsAtom)[0]).toBe(first);
 });
 
-it("lists catalogs without a primary environment, as the hosted app does", () => {
+it("lists catalogs without a primary environment, as the hosted app does", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   appAtomRegistry.set(primaryEnvironmentIdAtom as never, null as never);
   setConfigs([["remote", config([field])]]);
   expect(appAtomRegistry.get(sectionCatalogsAtom).map((catalog) => catalog.environmentId)).toEqual([
@@ -141,8 +156,12 @@ it("lists catalogs without a primary environment, as the hosted app does", () =>
 });
 
 it("creates a section on its own environment and never writes the primary", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   serverAcceptsWrites();
-  const created = await catalogs.create(REMOTE, "notes");
+  const created = await _fixture.catalogs.create(REMOTE, "notes");
   expect(created?.name).toBe("Notes");
   expect(mocks.update).toHaveBeenCalledTimes(1);
   const request = mocks.update.mock.calls[0]![0];
@@ -155,21 +174,35 @@ it("creates a section on its own environment and never writes the primary", asyn
 });
 
 it("renames and removes by environment and section id", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   serverAcceptsWrites();
-  const renamed = await catalogs.rename({ environmentId: REMOTE, sectionId: "field" }, "Lab");
+  const renamed = await _fixture.catalogs.rename(
+    { environmentId: REMOTE, sectionId: "field" },
+    "Lab",
+  );
   expect(renamed?.kind).toBe("renamed");
   expect(mocks.update.mock.calls[0]![0].environmentId).toBe(REMOTE);
-  const removed = await catalogs.remove({ environmentId: PRIMARY, sectionId: "research" });
+  const removed = await _fixture.catalogs.remove({ environmentId: PRIMARY, sectionId: "research" });
   expect(removed?.section.id).toBe("research");
   expect(mocks.update.mock.calls[1]![0].environmentId).toBe(PRIMARY);
 });
 
 it("does not resolve a section id against another environment's catalog", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   // Research is on the primary; the remote has no section of that id.
   mocks.update.mockResolvedValue(
     AsyncResult.success({ threadSections: [field], threadSectionsGeneralIndex: 0 }),
   );
-  const result = await catalogs.rename({ environmentId: REMOTE, sectionId: "research" }, "Lab");
+  const result = await _fixture.catalogs.rename(
+    { environmentId: REMOTE, sectionId: "research" },
+    "Lab",
+  );
   expect(result).toEqual({ kind: "missing" });
   // Only the confirming write, which changes nothing on the remote.
   expect(mocks.update).toHaveBeenCalledTimes(1);
@@ -178,24 +211,40 @@ it("does not resolve a section id against another environment's catalog", async 
 });
 
 it("marks a section occupied without a write once it is recorded", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setConfigs([["remote", config([{ ...field, environmentIds: ["remote"] }])]]);
-  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(true);
+  expect(await _fixture.catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(
+    true,
+  );
   expect(mocks.update).not.toHaveBeenCalled();
 });
 
 it("clears an old empty stamp on the section's own environment when a thread is filed", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setConfigs([
     ["primary", config([research])],
     ["remote", config([{ ...field, emptySince: "2020-01-01T00:00:00.000Z" }])],
   ]);
   serverAcceptsWrites();
-  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(true);
+  expect(await _fixture.catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(
+    true,
+  );
   const request = mocks.update.mock.calls[0]![0];
   expect(request.environmentId).toBe(REMOTE);
   expect(request.input.patch.threadSections).toEqual([{ ...field, environmentIds: ["remote"] }]);
 });
 
 it("marks a section created a moment ago, before this client's copy shows it", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const fresh: ThreadSection = { id: ThreadSectionId.make("fresh"), name: "Fresh", order: 1 };
   const onServer = { threadSections: [field, fresh], threadSectionsGeneralIndex: 0 };
   mocks.update.mockImplementation(async ({ input }) => {
@@ -204,30 +253,46 @@ it("marks a section created a moment ago, before this client's copy shows it", a
     }
     return AsyncResult.success(onServer);
   });
-  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "fresh" })).toBe(true);
+  expect(await _fixture.catalogs.markOccupied({ environmentId: REMOTE, sectionId: "fresh" })).toBe(
+    true,
+  );
   expect(onServer.threadSections.find((entry) => entry.id === "fresh")?.environmentIds).toEqual([
     "remote",
   ]);
 });
 
 it("reports a section the server confirms is gone", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   mocks.update.mockResolvedValue(
     AsyncResult.success({ threadSections: [field], threadSectionsGeneralIndex: 0 }),
   );
-  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "deleted" })).toBe(false);
+  expect(
+    await _fixture.catalogs.markOccupied({ environmentId: REMOTE, sectionId: "deleted" }),
+  ).toBe(false);
   expect(mocks.update).toHaveBeenCalledTimes(1);
 });
 
 it("refuses writes to an environment that stores no sections", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setConfigs([
     ["primary", config([research])],
     ["old", config([], false)],
   ]);
-  expect(await catalogs.create(EnvironmentId.make("old"), "Notes")).toBeNull();
+  expect(await _fixture.catalogs.create(EnvironmentId.make("old"), "Notes")).toBeNull();
   expect(mocks.update).not.toHaveBeenCalled();
 });
 
 it("runs each environment's writes independently", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   let resolvePrimary!: (value: unknown) => void;
   mocks.update.mockImplementation(({ environmentId }: { environmentId: string }) =>
     environmentId === "primary"
@@ -241,8 +306,14 @@ it("runs each environment's writes independently", async () => {
           }),
         ),
   );
-  const primaryWrite = catalogs.rename({ environmentId: PRIMARY, sectionId: "research" }, "Papers");
-  const remoteWrite = catalogs.rename({ environmentId: REMOTE, sectionId: "field" }, "Lab");
+  const primaryWrite = _fixture.catalogs.rename(
+    { environmentId: PRIMARY, sectionId: "research" },
+    "Papers",
+  );
+  const remoteWrite = _fixture.catalogs.rename(
+    { environmentId: REMOTE, sectionId: "field" },
+    "Lab",
+  );
   expect((await remoteWrite)?.kind).toBe("renamed");
   resolvePrimary(
     AsyncResult.success({
@@ -254,6 +325,10 @@ it("runs each environment's writes independently", async () => {
 });
 
 it("cancels a cleanup queued behind another catalog write when its snapshot becomes stale", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setConfigs([["primary", config([{ ...research, emptySince: "2020-01-01T00:00:00.000Z" }])]]);
   let resolve!: (value: unknown) => void;
   mocks.update.mockReturnValue(
@@ -261,9 +336,12 @@ it("cancels a cleanup queued behind another catalog write when its snapshot beco
       resolve = done;
     }),
   );
-  const rename = catalogs.rename({ environmentId: PRIMARY, sectionId: "research" }, "Renamed");
+  const rename = _fixture.catalogs.rename(
+    { environmentId: PRIMARY, sectionId: "research" },
+    "Renamed",
+  );
   let current = true;
-  const sweep = catalogs.sweepEmpty(PRIMARY, {
+  const sweep = _fixture.catalogs.sweepEmpty(PRIMARY, {
     occupancy: new Map(),
     judge: true,
     afterDays: 1,
@@ -281,3 +359,30 @@ it("cancels a cleanup queued behind another catalog write when its snapshot beco
   expect(await sweep).toEqual([]);
   expect(mocks.update).toHaveBeenCalledTimes(1);
 });
+
+function _createFixture() {
+  let _published_catalogs = undefined! as ReturnType<typeof useThreadSectionCatalogs>;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get catalogs() {
+      return _published_catalogs;
+    },
+    publishCatalogs(next: typeof _published_catalogs) {
+      _published_catalogs = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

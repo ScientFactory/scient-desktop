@@ -25,14 +25,14 @@ import { parse as parseToml } from "smol-toml";
 const CLAUDE_REPORTED_SKILL_PREFIX = "claude://skills/";
 
 /** Write a settings file through a sibling temporary file and one rename. */
-const writeSettingsFileAtomically = (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly directory: string;
-  readonly filePath: string;
-  readonly temporaryPrefix: string;
-  readonly contents: string;
-}) =>
-  Effect.gen(function* () {
+const writeSettingsFileAtomically = Effect.fn("ScientNativeSkills.writeSettingsFileAtomically")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly directory: string;
+    readonly filePath: string;
+    readonly temporaryPrefix: string;
+    readonly contents: string;
+  }) {
     const { fileSystem } = input;
     yield* fileSystem.makeDirectory(input.directory, { recursive: true });
     const temporaryPath = yield* fileSystem.makeTempFile({
@@ -45,7 +45,8 @@ const writeSettingsFileAtomically = (input: {
         Effect.andThen(fileSystem.rename(temporaryPath, input.filePath)),
         Effect.ensuring(fileSystem.remove(temporaryPath).pipe(Effect.ignore)),
       );
-  });
+  },
+);
 
 const GROK_SKILL_SETTINGS_ERROR_TAG = "GrokSkillSettingsError";
 class GrokSkillSettingsError extends Data.TaggedError(GROK_SKILL_SETTINGS_ERROR_TAG)<{
@@ -236,13 +237,15 @@ export const setGrokSkillEnabled = Effect.fn("setGrokSkillEnabled")(function* (i
 /**
  * Whether Scient may switch a discovered Claude skill on or off, or why not.
  * Only a user-scoped skill without an override, or with a plain on/off user
- * override, is writable; project, managed-policy and invocation-mode
+ * override, is writable; plugin, project, managed-policy and invocation-mode
  * overrides stay read-only.
  */
 export function claudeSkillEnabledControl(
   scope: "user" | "project",
   override: { readonly source: "user" | "project" | "managed"; readonly mode: string } | undefined,
+  isPlugin = false,
 ): Pick<ServerProviderSkill, "canSetEnabled" | "enabledReadOnlyReason"> {
+  if (isPlugin) return { enabledReadOnlyReason: "Managed by Claude" };
   return scope === "user" &&
     (override === undefined ||
       (override.source === "user" && (override.mode === "on" || override.mode === "off")))

@@ -98,15 +98,15 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  it.effect(
-    "rejects deferred managed authentication before credentials, installation, or process access",
-    () =>
+  it.effect.each([true, false])(
+    "rejects deferred managed authentication before credentials, installation, or process access (enabled=%s)",
+    (enabled) =>
       Effect.gen(function* () {
         const result = yield* Effect.result(
           CodexDriver.create({
             instanceId: ProviderInstanceId.make("deferred-account"),
             displayName: undefined,
-            enabled: true,
+            enabled,
             environment: [],
             config: { ...CodexDriver.defaultConfig(), setupMode: "managed" },
           }),

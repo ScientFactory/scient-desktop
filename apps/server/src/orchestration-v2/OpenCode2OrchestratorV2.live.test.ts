@@ -190,7 +190,11 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
   ),
 );
 const orchestrationLayer = RuntimeLayer.layer.pipe(
-  Layer.provide(ProviderRegistryLive.pipe(Layer.provide(ModelManifest.layerTest))),
+  Layer.provide(
+    ProviderRegistryLive.pipe(
+      Layer.provide(Layer.merge(ModelManifest.layerTest, ProviderLatestVersions.layer)),
+    ),
+  ),
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(layerMcpRegistry),
   Layer.provide(SqlitePersistence.layerMemory),

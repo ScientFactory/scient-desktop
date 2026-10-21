@@ -1,5 +1,6 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -9,32 +10,34 @@ import {
   type ProviderRuntimePlan,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderSettingsLifecycleAction,
   resolveProviderSettingsPrimaryAction,
 } from "./ProviderSettingsLifecycleAction";
 import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const commands = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn(), toast: vi.fn() }));
 
@@ -114,22 +117,26 @@ function provider(input: {
   };
 }
 
-function render(
+async function render(
+  _fixture: _Fixture,
   value: ServerProvider,
   options: {
     readonly externalUpdateRunning?: boolean;
     readonly onRunExternalUpdate?: () => void;
   } = {},
-): string {
-  return mount(
-    <ProviderSettingsLifecycleAction
-      displayName={value.displayName ?? "Provider"}
-      environmentId={EnvironmentId.make("local")}
-      externalUpdateRunning={options.externalUpdateRunning}
-      onManage={vi.fn()}
-      onRunExternalUpdate={options.onRunExternalUpdate}
-      provider={value}
-    />,
+): Promise<string> {
+  return (
+    await mount(
+      _fixture,
+      <ProviderSettingsLifecycleAction
+        displayName={value.displayName ?? "Provider"}
+        environmentId={EnvironmentId.make("local")}
+        externalUpdateRunning={options.externalUpdateRunning}
+        onManage={vi.fn()}
+        onRunExternalUpdate={options.onRunExternalUpdate}
+        provider={value}
+      />,
+    )
   ).innerHTML;
 }
 
@@ -153,8 +160,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function settingsButton(value: ServerProvider, onManage: () => void) {
-  mount(
+async function settingsButton(_fixture: _Fixture, value: ServerProvider, onManage: () => void) {
+  await mount(
+    _fixture,
     <ProviderSettingsLifecycleAction
       displayName={value.displayName ?? "Provider"}
       environmentId={EnvironmentId.make("local")}
@@ -162,13 +170,13 @@ function settingsButton(value: ServerProvider, onManage: () => void) {
       onManage={onManage}
     />,
   );
-  const button = host.querySelector<HTMLButtonElement>("button");
+  const button = _fixture.host.querySelector<HTMLButtonElement>("button");
   if (!button) throw new Error("Expected a Settings lifecycle action.");
   return button;
 }
-function clickSettings(value: ServerProvider, onManage: () => void) {
-  const button = settingsButton(value, onManage);
-  act(() => button.click());
+async function clickSettings(_fixture: _Fixture, value: ServerProvider, onManage: () => void) {
+  const button = await settingsButton(_fixture, value, onManage);
+  await act(() => button.click());
 }
 async function settle() {
   await act(async () => {
@@ -177,7 +185,7 @@ async function settle() {
 }
 
 describe("ProviderSettingsLifecycleAction", () => {
-  beforeEach(() => {
+  async function _setupFixture2(_fixture: _Fixture) {
     vi.clearAllMocks();
     commands.plan.mockReset().mockImplementation(async (action: ProviderManagedRuntimeAction) => ({
       instanceId: ProviderInstanceId.make("codex"),
@@ -190,10 +198,15 @@ describe("ProviderSettingsLifecycleAction", () => {
       message: "Ready to install.",
     }));
     commands.start.mockReset().mockResolvedValue(provider({ source: "scient_managed" }));
-  });
-  it("uses one shared component for healthy, missing, disabled, and update states", () => {
-    const manage = render(provider({ source: "system" }));
-    const install = render(provider({ source: "missing" }));
+  }
+  it("uses one shared component for healthy, missing, disabled, and update states", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
+    const manage = await render(_fixture, provider({ source: "system" }));
+    const install = await render(_fixture, provider({ source: "missing" }));
 
     expect(manage).toContain(">Manage<");
     expect(manage).toContain("lucide-settings-2");
@@ -203,19 +216,32 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(install).toContain(">Install<");
     expect(install).toContain("lucide-download");
     expect(install).toContain("text-primary");
-    const disabled = render(provider({ source: "system", enabled: false }));
+    const disabled = await render(_fixture, provider({ source: "system", enabled: false }));
     expect(disabled).toContain(">Manage<");
     expect(disabled).toContain("lucide-settings-2");
     expect(
-      render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
+      await render(
+        _fixture,
+        provider({ source: "scient_managed", actions: ["update", "repair", "remove"] }),
+      ),
     ).toContain(">Manage<");
   });
 
-  it("names the provider on its short Install and Manage actions", () => {
+  it("names the provider on its short Install and Manage actions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const name = provider({ source: "missing" }).displayName ?? "Provider";
-    expect(render(provider({ source: "missing" }))).toContain(`aria-label="Install ${name}"`);
+    expect(await render(_fixture, provider({ source: "missing" }))).toContain(
+      `aria-label="Install ${name}"`,
+    );
     expect(
-      render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
+      await render(
+        _fixture,
+        provider({ source: "scient_managed", actions: ["update", "repair", "remove"] }),
+      ),
     ).toContain(`aria-label="Manage ${name}"`);
   });
 
@@ -227,7 +253,12 @@ describe("ProviderSettingsLifecycleAction", () => {
     ["droid", "Droid"],
     ["grok", "Grok"],
     ["opencode", "OpenCode"],
-  ] as const)("routes disabled %s through its management card", (driver, displayName) => {
+  ] as const)("routes disabled %s through its management card", async (driver, displayName) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const value = provider({ driver, source: "missing", enabled: false });
     const presentation = providerSettingsLifecyclePresentation(value, displayName);
 
@@ -238,12 +269,17 @@ describe("ProviderSettingsLifecycleAction", () => {
         canRunExternalUpdate: false,
       }),
     ).toEqual({ kind: "open", runtimeAction: null });
-    expect(render(value)).toContain(">Manage<");
-    expect(render(value)).not.toContain(">Enable<");
+    expect(await render(_fixture, value)).toContain(">Manage<");
+    expect(await render(_fixture, value)).not.toContain(">Enable<");
   });
 
-  it("keeps management available while the enabled provider probe settles", () => {
-    const markup = render({
+  it("keeps management available while the enabled provider probe settles", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
+    const markup = await render(_fixture, {
       ...provider({ source: "system" }),
       installed: false,
       probePending: true,
@@ -260,7 +296,12 @@ describe("ProviderSettingsLifecycleAction", () => {
     ["update", "Updating"],
     ["repair", "Repairing"],
     ["remove", "Removing"],
-  ] as const)("keeps %s progress visible beside icon-only management", (action, label) => {
+  ] as const)("keeps %s progress visible beside icon-only management", async (action, label) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const value = withOperation(provider({ source: "scient_managed" }), {
       operationId: "runtime-1",
       action,
@@ -271,7 +312,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       downloadedBytes: 42,
       totalBytes: 100,
     });
-    const markup = render(value);
+    const markup = await render(_fixture, value);
 
     expect(markup).toContain(`aria-label="${label} Codex"`);
     expect(markup).toContain('aria-label="Manage Codex"');
@@ -283,7 +324,7 @@ describe("ProviderSettingsLifecycleAction", () => {
     else expect(markup).toContain('aria-label="Download progress 42%"');
 
     const onManage = vi.fn();
-    clickSettings(value, onManage);
+    await clickSettings(_fixture, value, onManage);
     expect(onManage).toHaveBeenCalledExactlyOnceWith();
     expect(commands.plan).not.toHaveBeenCalled();
     expect(commands.start).not.toHaveBeenCalled();
@@ -293,31 +334,46 @@ describe("ProviderSettingsLifecycleAction", () => {
     ["verifying", false, "Verifying"],
     ["testing", false, "Verifying"],
     ["activating", true, "Waiting"],
-  ] as const)("shows %s without implying download progress", (status, waitingForIdle, label) => {
-    const markup = render(
-      withOperation(
-        { ...provider({ source: "scient_managed" }), probePending: true },
-        {
-          operationId: "runtime-1",
-          action: "install",
-          status,
-          waitingForIdle,
-          startedAt: "2026-10-08T00:00:00.000Z",
-          finishedAt: null,
-          message: "Working.",
-          downloadedBytes: 100,
-          totalBytes: 100,
-        },
-      ),
-    );
-    expect(markup).toContain(`aria-label="${label} Codex"`);
-    expect(markup).not.toContain("Download progress");
-  });
+  ] as const)(
+    "shows %s without implying download progress",
+    async (status, waitingForIdle, label) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const markup = await render(
+        _fixture,
+        withOperation(
+          { ...provider({ source: "scient_managed" }), probePending: true },
+          {
+            operationId: "runtime-1",
+            action: "install",
+            status,
+            waitingForIdle,
+            startedAt: "2026-10-08T00:00:00.000Z",
+            finishedAt: null,
+            message: "Working.",
+            downloadedBytes: 100,
+            totalBytes: 100,
+          },
+        ),
+      );
+      expect(markup).toContain(`aria-label="${label} Codex"`);
+      expect(markup).not.toContain("Download progress");
+    },
+  );
 
   it.each(["succeeded", "cancelled", "failed"] as const)(
     "clears progress after the runtime operation is %s",
-    (status) => {
-      const markup = render(
+    async (status) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const markup = await render(
+        _fixture,
         withOperation(provider({ source: "scient_managed" }), {
           operationId: "runtime-1",
           action: "install",
@@ -334,9 +390,14 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
-  it("keeps sign-in progress visible while the account is unauthenticated", () => {
+  it("keeps sign-in progress visible while the account is unauthenticated", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const ready = provider({ source: "system", authenticated: false });
-    const markup = render({
+    const markup = await render(_fixture, {
       ...ready,
       connection: {
         ...ready.connection!,
@@ -355,7 +416,12 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain("Download progress");
   });
 
-  it("starts sign-in from the row only for one method that needs nothing else", () => {
+  it("starts sign-in from the row only for one method that needs nothing else", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const withMethods = (
       driver: "codex" | "claudeAgent" | "antigravity" | "cursor" | "droid" | "grok",
       methods: NonNullable<ServerProvider["connection"]>["methods"],
@@ -395,9 +461,14 @@ describe("ProviderSettingsLifecycleAction", () => {
     }
   });
 
-  it("names a slow start on the row while it runs", () => {
+  it("names a slow start on the row while it runs", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const ready = provider({ source: "system", authenticated: false });
-    const markup = render({
+    const markup = await render(_fixture, {
       ...ready,
       connection: {
         ...ready.connection!,
@@ -414,7 +485,12 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).toContain('aria-label="Starting Codex"');
   });
 
-  it("starts managed install/update directly and only runs qualified external updates", () => {
+  it("starts managed install/update directly and only runs qualified external updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const missing = provider({ source: "missing" });
     const external = {
       ...provider({ source: "system" }),
@@ -466,13 +542,18 @@ describe("ProviderSettingsLifecycleAction", () => {
   it.each(["install", "update"] as const)(
     "routes %s through the header without duplicating runtime transactions",
     async (action) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const value = provider({
         source: action === "install" ? "missing" : "scient_managed",
         actions: [action],
       });
       const onManage = vi.fn();
       if (action === "update") {
-        clickSettings(value, onManage);
+        await clickSettings(_fixture, value, onManage);
         expect(onManage).toHaveBeenCalledExactlyOnceWith();
         expect(commands.plan).not.toHaveBeenCalled();
         expect(commands.start).not.toHaveBeenCalled();
@@ -482,17 +563,17 @@ describe("ProviderSettingsLifecycleAction", () => {
       const started = deferred<ServerProvider>();
       commands.plan.mockReturnValue(plan.promise);
       commands.start.mockReturnValue(started.promise);
-      const initialButton = settingsButton(value, onManage);
+      const initialButton = await settingsButton(_fixture, value, onManage);
       expect(commands.plan).not.toHaveBeenCalled();
 
-      act(() => initialButton.click());
+      await act(() => initialButton.click());
       expect(commands.plan).toHaveBeenCalledExactlyOnceWith(action);
       expect(commands.start).not.toHaveBeenCalled();
       expect(onManage).not.toHaveBeenCalled();
 
       // A rapid click and a click after rerender must both avoid a second transaction.
-      act(() => initialButton.click());
-      clickSettings(value, onManage);
+      await act(() => initialButton.click());
+      await clickSettings(_fixture, value, onManage);
       expect(onManage).toHaveBeenCalledTimes(2);
       expect(onManage).toHaveBeenCalledWith();
       expect(commands.plan).toHaveBeenCalledTimes(1);
@@ -510,7 +591,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       plan.resolve(exactPlan);
       await plan.promise;
       expect(commands.start).toHaveBeenCalledExactlyOnceWith(exactPlan);
-      clickSettings(value, onManage);
+      await clickSettings(_fixture, value, onManage);
       expect(commands.start).toHaveBeenCalledTimes(1);
       expect(onManage).toHaveBeenCalledTimes(3);
       started.resolve(value);
@@ -521,11 +602,16 @@ describe("ProviderSettingsLifecycleAction", () => {
   it.each(["plan", "start"] as const)(
     "keeps %s errors in the existing notification, without opening or retrying",
     async (phase) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const value = provider({ source: "missing" });
       const onManage = vi.fn();
       const failure = deferred<never>();
       commands[phase].mockReturnValue(failure.promise);
-      clickSettings(value, onManage);
+      await clickSettings(_fixture, value, onManage);
       if (phase === "start") await commands.plan.mock.results[0]!.value;
       failure.reject(new Error("Catalog unavailable."));
       await settle();
@@ -541,6 +627,11 @@ describe("ProviderSettingsLifecycleAction", () => {
   );
 
   it("starts an install that replaces a newer system runtime without another decision", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     // Offered as a first installation; the plan found a newer system runtime.
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
@@ -557,7 +648,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       olderThanSystem: true,
     } satisfies ProviderRuntimePlan);
 
-    clickSettings(value, onManage);
+    await clickSettings(_fixture, value, onManage);
     await settle();
 
     expect(commands.start).toHaveBeenCalledTimes(1);
@@ -566,6 +657,11 @@ describe("ProviderSettingsLifecycleAction", () => {
   });
 
   it("starts an install over a system runtime of unknown version directly", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.plan.mockResolvedValue({
@@ -581,7 +677,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       olderThanSystem: false,
     } satisfies ProviderRuntimePlan);
 
-    clickSettings(value, onManage);
+    await clickSettings(_fixture, value, onManage);
     await settle();
 
     expect(commands.start).toHaveBeenCalledTimes(1);
@@ -589,6 +685,11 @@ describe("ProviderSettingsLifecycleAction", () => {
   });
 
   it("reports a stale plan after the controller exhausts its bounded retry", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const value = provider({ source: "missing" });
     const onManage = vi.fn();
     commands.start.mockRejectedValue(
@@ -597,7 +698,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       }),
     );
 
-    clickSettings(value, onManage);
+    await clickSettings(_fixture, value, onManage);
     await settle();
 
     expect(commands.start).toHaveBeenCalledTimes(1);
@@ -607,7 +708,12 @@ describe("ProviderSettingsLifecycleAction", () => {
 
   it.each(["install", "update", "repair", "remove"] as const)(
     "opens existing details for active or failed %s without starting/retrying it",
-    (action) => {
+    async (action) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const onManage = vi.fn();
       for (const status of ["preparing", "downloading", "verifying", "failed"] as const) {
         const value = withOperation(provider({ source: "scient_managed", actions: [action] }), {
@@ -618,7 +724,7 @@ describe("ProviderSettingsLifecycleAction", () => {
           finishedAt: status === "failed" ? "2026-09-04T00:01:00.000Z" : null,
           message: status === "failed" ? "Verification failed." : "Working.",
         });
-        clickSettings(value, onManage);
+        await clickSettings(_fixture, value, onManage);
         expect(onManage).toHaveBeenLastCalledWith();
       }
       expect(onManage).toHaveBeenCalledTimes(4);
@@ -627,7 +733,12 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
-  it("keeps management available beside system and Scient-managed updates", () => {
+  it("keeps management available beside system and Scient-managed updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const externalUpdate = {
       ...provider({ source: "system", actions: ["install"] }),
       versionAdvisory: {
@@ -646,8 +757,8 @@ describe("ProviderSettingsLifecycleAction", () => {
     });
 
     for (const markup of [
-      render(externalUpdate, { onRunExternalUpdate: vi.fn() }),
-      render(managedUpdate),
+      await render(_fixture, externalUpdate, { onRunExternalUpdate: vi.fn() }),
+      await render(_fixture, managedUpdate),
     ]) {
       expect(markup).not.toContain(">Update</button>");
       expect(markup).toContain('aria-label="Manage Codex"');
@@ -655,7 +766,7 @@ describe("ProviderSettingsLifecycleAction", () => {
       expect(markup).toContain(">Manage</button>");
     }
 
-    const updatingMarkup = render(externalUpdate, {
+    const updatingMarkup = await render(_fixture, externalUpdate, {
       externalUpdateRunning: true,
       onRunExternalUpdate: vi.fn(),
     });
@@ -671,8 +782,13 @@ describe("ProviderSettingsLifecycleAction", () => {
 
   it.each(["queued", "running"] as const)(
     "reads external update progress from a %s server snapshot after remount",
-    (status) => {
-      const markup = render({
+    async (status) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const markup = await render(_fixture, {
         ...provider({ source: "system" }),
         updateState: {
           status,
@@ -688,3 +804,22 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -16,6 +16,11 @@ import {
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+import {
+  markdownFileCopyPaths,
+  markdownFileEditorTarget,
+  resolveMarkdownFileHostPath,
+} from "./markdownFileHostPath";
 
 describe("isWindowsDrivePathHref", () => {
   it.each([
@@ -281,6 +286,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toMatchObject({
       filePath: "/tmp/report-pack/figure.svg",
       workspaceRelativePath: null,
+      workspaceLookupPath: null,
     });
     expect(
       resolveInlineCodeFileLinkMeta(
@@ -292,6 +298,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toMatchObject({
       filePath: "/tmp/report-pack/data/results.csv",
       workspaceRelativePath: null,
+      workspaceLookupPath: null,
     });
   });
 
@@ -714,4 +721,58 @@ describe("home-relative file links", () => {
       "homeRelativePath",
     );
   });
+});
+
+describe("chat file chip paths", () => {
+  const cwd = String.raw`C:\Users\alice\project`;
+
+  it("opens and copies the indexed file for a bare filename, preserving its line and column", async () => {
+    const meta = resolveMarkdownFileLinkMeta("user.ts:261:7", cwd);
+    if (!meta) throw new Error("Expected a file link");
+    const hostPath = await resolveMarkdownFileHostPath({
+      meta,
+      cwd,
+      findWorkspaceMatch: async () => "src/discord/events/user.ts",
+    });
+
+    expect(markdownFileEditorTarget(meta, hostPath)).toBe(
+      String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+    );
+    expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
+      fullPath: String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
+      relativePath: "src/discord/events/user.ts:261:7",
+    });
+  });
+
+  it("keeps the authored path and position when the workspace index has no match", async () => {
+    const meta = resolveMarkdownFileLinkMeta("missing.ts:12:3", cwd);
+    if (!meta) throw new Error("Expected a file link");
+    const hostPath = await resolveMarkdownFileHostPath({
+      meta,
+      cwd,
+      findWorkspaceMatch: async () => null,
+    });
+
+    expect(markdownFileEditorTarget(meta, hostPath)).toBe(
+      String.raw`C:\Users\alice\project\missing.ts:12:3`,
+    );
+    expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
+      fullPath: String.raw`C:\Users\alice\project\missing.ts:12:3`,
+      relativePath: "missing.ts:12:3",
+    });
+  });
+});
+
+it("looks up inline workspace basenames without guessing a home-relative root", () => {
+  expect(resolveInlineCodeFileLinkMeta("user.ts:12", "/workspace")?.workspaceLookupPath).toBe(
+    "user.ts",
+  );
+  expect(
+    resolveInlineCodeFileLinkMeta("src/user.ts:12", "/workspace", "/workspace/docs")
+      ?.workspaceLookupPath,
+  ).toBe("src/user.ts");
+  expect(
+    resolveInlineCodeFileLinkMeta("~/user.ts:12", "/workspace")?.workspaceLookupPath,
+  ).toBeNull();
+  expect(resolveMarkdownFileLinkMeta("~/user.ts:12", "/workspace")?.workspaceLookupPath).toBeNull();
 });

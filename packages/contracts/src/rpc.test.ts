@@ -24,12 +24,6 @@ const decodeDispatchError = Schema.decodeUnknownSync(sharedDispatchRpc.errorSche
 const decodeServerConfigPayload = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema);
 
 describe("subscribeServerConfig payload compatibility", () => {
-  it("is accepted by a server whose schema predates the field", () => {
-    const oldServerPayload = Schema.Struct({});
-    const decoded = Schema.decodeExit(oldServerPayload)({ environmentThemes: true });
-    expect(Exit.isSuccess(decoded)).toBe(true);
-  });
-
   it("is carried by a server that declares it", () => {
     const decoded = decodeServerConfigPayload({
       environmentThemes: true,

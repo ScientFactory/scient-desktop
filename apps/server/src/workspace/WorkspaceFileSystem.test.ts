@@ -6,11 +6,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -164,6 +166,76 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reads ~/ paths from the server home outside the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+
+        const result = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(result).toEqual({
+          relativePath: "~/.claude/CLAUDE.md",
+          contents: "# Notes\n",
+          readOnly: true,
+          outsideWorkspace: true,
+          revision: expect.stringMatching(/^sha256:/),
+          byteLength: 8,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("keeps absent host files read-only when allowMissing is requested", () =>
+      Effect.gen(function* () {
+        const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        const result = yield* workspace
+          .readFile({
+            cwd,
+            relativePath: "~/missing/file.md",
+            allowMissing: true,
+          })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+        expect(result).toEqual({
+          relativePath: "~/missing/file.md",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+          revision: "missing",
+          readOnly: true,
+          outsideWorkspace: true,
+        });
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "does not mistake a dangling home symlink for an absent allowMissing file",
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const home = yield* makeTempDir;
+          yield* fs.symlink(path.join(home, "absent"), path.join(home, "dangling"));
+          const error = yield* workspace
+            .readFile({
+              cwd,
+              relativePath: "~/dangling/note.md",
+              allowMissing: true,
+            })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.flip);
+          expect(error._tag).toBe("WorkspaceFileSystemOperationError");
+        }),
+    );
+
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
@@ -237,6 +309,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             resolvedPath,
           });
           expect("cause" in error).toBe(false);
+
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, "linked-dir"));
+          const missingChildError = yield* workspaceFileSystem
+            .readFile(
+              Object.assign(
+                { cwd, relativePath: "linked-dir/missing/t3.json" },
+                { allowMissing: true },
+              ),
+            )
+            .pipe(Effect.flip);
+          expect(missingChildError).toBeInstanceOf(
+            WorkspaceFileSystem.WorkspaceFilePathEscapeError,
+          );
         }),
     );
 
@@ -330,18 +415,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         yield* fileSystem.makeDirectory(path.join(cwd, "src"));
 
-        const error = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "src" })
-          .pipe(Effect.flip);
         const resolvedPath = yield* fileSystem.realPath(path.join(cwd, "src"));
+        for (const options of [{}, { allowMissing: true }]) {
+          const error = yield* workspaceFileSystem
+            .readFile(Object.assign({ cwd, relativePath: "src" }, options))
+            .pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
-        expect(error).toMatchObject({
-          workspaceRoot: cwd,
-          relativePath: "src",
-          resolvedPath,
-        });
-        expect("cause" in error).toBe(false);
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+          expect(error).toMatchObject({
+            workspaceRoot: cwd,
+            relativePath: "src",
+            resolvedPath,
+          });
+          expect("cause" in error).toBe(false);
+        }
       }),
     );
 
@@ -411,6 +498,46 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect(error.cause).toBeInstanceOf(Error);
         expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+      }),
+    );
+
+    it.effect("returns an absent optional file without any failed spans", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+
+        const result = yield* workspaceFileSystem
+          .readFile(Object.assign({ cwd, relativePath: "t3.json" }, { allowMissing: true }))
+          .pipe(Effect.withTracer(tracer), Effect.exit);
+
+        expect(spans.length).toBeGreaterThan(0);
+        // Diagnostics counts nested failures even when the outer read recovers.
+        expect
+          .soft(
+            spans
+              .filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))
+              .map((span) => span.name),
+          )
+          .toEqual([]);
+        expect(result).toEqual(
+          Exit.succeed({
+            relativePath: "t3.json",
+            contents: "",
+            byteLength: 0,
+            truncated: false,
+            exists: false,
+            revision: "missing",
+            readOnly: true,
+          }),
+        );
       }),
     );
   });

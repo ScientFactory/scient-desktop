@@ -1,0 +1,78 @@
+import { render as _fixtureRender, act } from "../../../test/render";
+
+import { expect, it, vi } from "vite-plus/test";
+import { LatexContextTools } from "./LatexContextTools";
+
+it("keeps object options open through footer interactions and closes explicitly or outside", async () => {
+  await using _fixture = _createFixture();
+
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
+  try {
+    await act(
+      async () =>
+        await root.rerender(
+          <div className="scient-latex-visual-workspace">
+            <main>Document text</main>
+            <footer className="scient-latex-reader-footer">
+              <LatexContextTools>
+                <div role="toolbar" aria-label="Object options">
+                  <input aria-label="Object title" />
+                </div>
+              </LatexContextTools>
+              <span className="scient-document-footer-count">100 words</span>
+            </footer>
+          </div>,
+        ),
+    );
+    const context = host.querySelector<HTMLElement>(".scient-latex-context-tools")!;
+    const trigger = context.querySelector<HTMLButtonElement>("button")!;
+    const footer = host.querySelector("footer")!;
+    const count = footer.querySelector(".scient-document-footer-count")!;
+    await act(() => trigger.click());
+    expect(context.hasAttribute("data-open")).toBe(true);
+    for (const target of [footer, count]) {
+      await act(() => target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+      await act(() => target.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+      expect(context.hasAttribute("data-open")).toBe(true);
+    }
+    await act(() =>
+      context.querySelector<HTMLButtonElement>('[aria-label="Close object options"]')!.click(),
+    );
+    expect(context.hasAttribute("data-open")).toBe(false);
+    await act(() => trigger.click());
+    await act(() =>
+      trigger.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(context.hasAttribute("data-open")).toBe(false);
+    await act(() => trigger.click());
+    await act(() =>
+      host.querySelector("main")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })),
+    );
+    expect(context.hasAttribute("data-open")).toBe(false);
+  } finally {
+    await act(async () => await root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

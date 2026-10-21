@@ -44,7 +44,7 @@ export function renderWindowsConversationAssociationInclude(
   const clsid = WINDOWS_PREVIEW_CLSIDS[channel];
   const previewKey = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
   return [
-    "!macro customInstall",
+    "!macro scientConversationInstall",
     `  WriteRegNone SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
     `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}" "" "${CONVERSATION_FILE_TYPE.name}"`,
     `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\DefaultIcon" "" '"$appExe",0'`,
@@ -78,6 +78,8 @@ export function renderWindowsConversationAssociationInclude(
       : []),
     `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}"`,
     "!macroend",
+    "",
+    '!include "${BUILD_RESOURCES_DIR}/installer.nsh"',
     "",
   ].join("\n");
 }

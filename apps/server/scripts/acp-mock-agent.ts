@@ -101,6 +101,10 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
+const compactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
@@ -937,70 +941,71 @@ const program = Effect.gen(function* () {
     }),
   );
 
-  const applySessionConfigOption = (request: AcpSchema.SetSessionConfigOptionRequest) =>
-    Effect.gen(function* () {
-      if (exitOnSetConfigOption) {
-        return yield* Effect.sync(() => {
-          process.exit(7);
-        });
+  const applySessionConfigOption = Effect.fn("AcpMockAgent.applySessionConfigOption")(function* (
+    request: AcpSchema.SetSessionConfigOptionRequest,
+  ) {
+    if (exitOnSetConfigOption) {
+      return yield* Effect.sync(() => {
+        process.exit(7);
+      });
+    }
+    if (failSetConfigOption || (failSetModeConfigOption && request.configId === "mode")) {
+      return yield* AcpError.AcpRequestError.invalidParams(
+        "Mock invalid params for session/set_config_option",
+        {
+          method: "session/set_config_option",
+          params: request,
+        },
+      );
+    }
+    if (request.configId === "mode" && typeof request.value === "string") {
+      currentModeId = request.value;
+    }
+    if (
+      request.configId === "autonomy_level" &&
+      currentAutonomy !== undefined &&
+      !droidAutonomyLocked &&
+      typeof request.value === "string"
+    ) {
+      currentAutonomy = request.value;
+    }
+    if (request.configId === "model" && typeof request.value === "string") {
+      currentModelId = request.value;
+      if (currentModelId === "custom:Ox-Alpha-0") {
+        currentReasoning = "none";
       }
-      if (failSetConfigOption || (failSetModeConfigOption && request.configId === "mode")) {
-        return yield* AcpError.AcpRequestError.invalidParams(
-          "Mock invalid params for session/set_config_option",
-          {
-            method: "session/set_config_option",
-            params: request,
-          },
-        );
-      }
-      if (request.configId === "mode" && typeof request.value === "string") {
-        currentModeId = request.value;
-      }
-      if (
-        request.configId === "autonomy_level" &&
-        currentAutonomy !== undefined &&
-        !droidAutonomyLocked &&
-        typeof request.value === "string"
-      ) {
-        currentAutonomy = request.value;
-      }
-      if (request.configId === "model" && typeof request.value === "string") {
-        currentModelId = request.value;
-        if (currentModelId === "custom:Ox-Alpha-0") {
-          currentReasoning = "none";
-        }
-      }
-      if (request.configId === "agent" && typeof request.value === "string") {
-        currentAgent = request.value;
-      }
-      if (
-        (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
-        typeof request.value === "string"
-      ) {
-        currentReasoning =
-          droidEffortReplacement?.[0] === request.value
-            ? (droidEffortReplacement[1] ?? request.value)
-            : request.value;
-      }
-      if (request.configId === "context" && typeof request.value === "string") {
-        currentContext = request.value;
-      }
-      if (request.configId === "fast") {
-        currentFast = request.value === true || request.value === "true";
-      }
-      if (droidAsyncConfigRefresh || configUpdateBeforeEmptyResponse) {
-        const publish = agent.client.sessionUpdate({
-          sessionId: String(request.sessionId ?? sessionId),
-          update: {
-            sessionUpdate: "config_option_update",
-            configOptions: configOptions(),
-          },
-        });
-        yield* configUpdateBeforeEmptyResponse
-          ? publish
-          : publish.pipe(Effect.delay("20 millis"), Effect.forkDetach);
-      }
-    });
+    }
+    if (request.configId === "agent" && typeof request.value === "string") {
+      currentAgent = request.value;
+    }
+    if (
+      (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
+      typeof request.value === "string"
+    ) {
+      currentReasoning =
+        droidEffortReplacement?.[0] === request.value
+          ? (droidEffortReplacement[1] ?? request.value)
+          : request.value;
+    }
+    if (request.configId === "context" && typeof request.value === "string") {
+      currentContext = request.value;
+    }
+    if (request.configId === "fast") {
+      currentFast = request.value === true || request.value === "true";
+    }
+    if (droidAsyncConfigRefresh || configUpdateBeforeEmptyResponse) {
+      const publish = agent.client.sessionUpdate({
+        sessionId: String(request.sessionId ?? sessionId),
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: configOptions(),
+        },
+      });
+      yield* configUpdateBeforeEmptyResponse
+        ? publish
+        : publish.pipe(Effect.delay("20 millis"), Effect.forkDetach);
+    }
+  });
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
@@ -1499,7 +1504,20 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
-      if (failPrompt) {
+      if (compactionPromptOrdinals.has(promptCount)) {
+        for (const status of ["in_progress", "completed"] as const) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "compaction_update",
+              compactionId: `compact-${promptCount}`,
+              status,
+            },
+          });
+        }
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 

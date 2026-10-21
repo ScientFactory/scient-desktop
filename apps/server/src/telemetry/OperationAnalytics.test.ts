@@ -9,6 +9,7 @@ function fixture() {
   let status: AnalyticsStatus = { available: true, consent: "product" };
   let epoch = 0;
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });

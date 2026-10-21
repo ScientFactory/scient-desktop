@@ -146,11 +146,10 @@ export function antigravityAcpRequestDiagnostic(error: unknown): {
   };
 }
 
-export const recordAntigravityAuthFailure = (
-  cause: Cause.Cause<unknown>,
-  beforeAuthorizationUrl: boolean,
-) =>
-  Effect.gen(function* () {
+export const recordAntigravityAuthFailure = Effect.fn(
+  "antigravityAuthDiagnostics.recordAntigravityAuthFailure",
+)(
+  function* (cause: Cause.Cause<unknown>, beforeAuthorizationUrl: boolean) {
     const error = Option.getOrUndefined(Cause.findErrorOption(cause));
     yield* Effect.logWarning("Antigravity sign-in failed.").pipe(
       Effect.annotateLogs({
@@ -158,4 +157,6 @@ export const recordAntigravityAuthFailure = (
         ...antigravityAcpRequestDiagnostic(error),
       }),
     );
-  }).pipe(Effect.ignoreCause({ log: false }));
+  },
+  (effect) => effect.pipe(Effect.ignoreCause({ log: false })),
+);

@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -10,8 +11,8 @@ import {
   ThreadId,
   type ServerConfig,
 } from "@t3tools/contracts";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 const client = vi.hoisted(() => ({
@@ -23,7 +24,10 @@ const client = vi.hoisted(() => ({
 }));
 vi.mock("./client", () => client);
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => async () => {} }));
+vi.mock("@tanstack/react-router", async (_actualRouter) => ({
+  ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => async () => {},
+}));
 vi.mock("../../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: null,
@@ -107,11 +111,9 @@ vi.mock("../../state/environments", async (importOriginal) => {
 const { ConversationImportDialogHost } = await import("./ConversationImportDialog");
 const { requestConversationImport, useConversationImportRequests } = await import("./requests");
 
-let root: Root;
-let host: HTMLDivElement;
 let uploads = 0;
 
-beforeEach(() => {
+async function _setupFixture0(_fixture: _Fixture) {
   useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of Object.values(client)) mock.mockReset();
   uploads = 0;
@@ -158,15 +160,17 @@ beforeEach(() => {
     messageCount: 3,
     attachmentCount: 0,
   }));
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+}
 
-afterEach(() => {
-  root.unmount();
-  host.remove();
-});
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+}
 
 const focusedLabel = () =>
   document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent ?? "";
@@ -194,7 +198,11 @@ async function chooseByKeyboard(option: string, move: "{ArrowDown}" | "{ArrowUp}
 
 describe("ConversationImportDialog keyboard use", () => {
   it("picks a project and imports without a pointer", async () => {
-    root.render(<ConversationImportDialogHost />);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await _fixture.root0.rerender(<ConversationImportDialogHost />);
     requestConversationImport({
       _tag: "browser-file",
       file: new File(["archive"], "field-notes.scic"),
@@ -240,3 +248,22 @@ describe("ConversationImportDialog keyboard use", () => {
     ]);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

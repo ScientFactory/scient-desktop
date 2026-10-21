@@ -1,6 +1,6 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { render as _fixtureRender, type Screen, act } from "../../test/render";
+
+import { expect, it, vi } from "vite-plus/test";
 import type { ServerLifecycleLegacyThreadMigrationPayload } from "@t3tools/contracts";
 
 const state = vi.hoisted(() => ({
@@ -13,28 +13,38 @@ vi.mock("../state/server", () => ({ primaryServerLegacyThreadMigrationAtom: {} }
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.add, close: state.close } }));
 import { LegacyThreadMigrationToast } from "./LegacyThreadMigrationToast";
 
-let renderer: Root | undefined;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   state.migration = null;
   vi.clearAllMocks();
-});
-afterEach(async () => {
-  if (renderer) await act(async () => renderer?.unmount());
-  renderer = undefined;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
-async function render(migration: ServerLifecycleLegacyThreadMigrationPayload) {
+}
+async function render(_fixture: _Fixture, migration: ServerLifecycleLegacyThreadMigrationPayload) {
   state.migration = migration;
   await act(async () => {
-    if (!renderer) renderer = createRoot(document.createElement("div"));
-    renderer.render(<LegacyThreadMigrationToast />);
+    if (!_fixture.root0)
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+    await _fixture.root0.rerender(<LegacyThreadMigrationToast />);
   });
 }
 
 it("replaces a running spinner with a persistent failure and clears it after successful retry", async () => {
-  await render({ status: "running", totalThreadCount: 2 });
-  await render({ status: "running", failed: true, totalThreadCount: 2, pendingThreadCount: 1 });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await render(_fixture, { status: "running", totalThreadCount: 2 });
+  await render(_fixture, {
+    status: "running",
+    failed: true,
+    totalThreadCount: 2,
+    pendingThreadCount: 1,
+  });
   expect(state.close).toHaveBeenCalledWith("migration-toast");
   expect(state.add).toHaveBeenLastCalledWith(
     expect.objectContaining({
@@ -43,15 +53,24 @@ it("replaces a running spinner with a persistent failure and clears it after suc
       description: expect.stringContaining("1 thread still needs restoration"),
     }),
   );
-  await render({ status: "running", failed: true, totalThreadCount: 2, pendingThreadCount: 1 });
+  await render(_fixture, {
+    status: "running",
+    failed: true,
+    totalThreadCount: 2,
+    pendingThreadCount: 1,
+  });
   expect(state.add).toHaveBeenCalledTimes(2);
-  await render({ status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
+  await render(_fixture, { status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
   expect(state.close).toHaveBeenCalledTimes(2);
   expect(state.add).toHaveBeenCalledTimes(2);
 });
 
 it("shows a replayed failure without a preceding spinner or an invented pending count", async () => {
-  await render({ status: "running", failed: true, totalThreadCount: 3 });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await render(_fixture, { status: "running", failed: true, totalThreadCount: 3 });
   expect(state.add).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "error",
@@ -63,10 +82,37 @@ it("shows a replayed failure without a preceding spinner or an invented pending 
 });
 
 it("cleans up on unmount and supports older completion payloads without counts", async () => {
-  await render({ status: "complete", totalThreadCount: 3 });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await render(_fixture, { status: "complete", totalThreadCount: 3 });
   expect(state.add).not.toHaveBeenCalled();
-  await render({ status: "running", failed: true, totalThreadCount: 3, pendingThreadCount: 2 });
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await render(_fixture, {
+    status: "running",
+    failed: true,
+    totalThreadCount: 3,
+    pendingThreadCount: 2,
+  });
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
   expect(state.close).toHaveBeenCalledWith("migration-toast");
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -1,14 +1,17 @@
+import { render as _fixtureRender, type Screen } from "../../test/render";
 import "../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
   useNavigate: () => vi.fn(),
 }));
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useTheme", async (original) => ({
+  ...(await original<typeof import("../hooks/useTheme")>()),
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 // Word wrap off: the code/diff preference must not truncate chat tables.
 vi.mock("../hooks/useSettings", async (original) => {
   const actual = await original<typeof import("../hooks/useSettings")>();
@@ -20,15 +23,12 @@ vi.mock("../hooks/useSettings", async (original) => {
 
 import ChatMarkdown from "./ChatMarkdown";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
@@ -38,16 +38,18 @@ const LONG_NOTE =
 const TABLE = `| Day | Note |\n|---|---|\n| 1 | ${LONG_NOTE} |`;
 
 /** Mounts a chat table in a message-width column that clips horizontal overflow, as the timeline does. */
-async function mountTable() {
-  host = document.createElement("div");
-  host.style.width = "640px";
-  host.className = "overflow-x-clip";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<ChatMarkdown cwd="/workspace" text={TABLE} />);
+async function mountTable(_fixture: _Fixture) {
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.width = "640px";
+  _fixture.host.className = "overflow-x-clip";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<ChatMarkdown cwd="/workspace" text={TABLE} />);
   await nextFrame();
   await nextFrame();
-  const container = host.querySelector<HTMLElement>(".chat-markdown-table-container")!;
+  const container = _fixture.host.querySelector<HTMLElement>(".chat-markdown-table-container")!;
   const viewport = container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
   const cells = [...container.querySelectorAll<HTMLElement>("th, td")];
   return { container, viewport, cells };
@@ -60,7 +62,10 @@ function clippedCells(cells: HTMLElement[]) {
 }
 
 it("opens tables with wrapped cells even when Word wrap is off", async () => {
-  const { container, viewport, cells } = await mountTable();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { container, viewport, cells } = await mountTable(_fixture);
 
   expect(container.dataset.expanded).toBe("true");
   expect(clippedCells(cells)).toEqual([]);
@@ -68,7 +73,10 @@ it("opens tables with wrapped cells even when Word wrap is off", async () => {
 });
 
 it("keeps full single-line cells reachable by horizontal scrolling when collapsed", async () => {
-  const { container, viewport, cells } = await mountTable();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { container, viewport, cells } = await mountTable(_fixture);
   container.querySelector<HTMLButtonElement>('button[aria-label="Collapse table cells"]')!.click();
   await nextFrame();
   await nextFrame();
@@ -81,3 +89,22 @@ it("keeps full single-line cells reachable by horizontal scrolling when collapse
   await nextFrame();
   expect(viewport.scrollLeft).toBe(viewport.scrollWidth - viewport.clientWidth);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

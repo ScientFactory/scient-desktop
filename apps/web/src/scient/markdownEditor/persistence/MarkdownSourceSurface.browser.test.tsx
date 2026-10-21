@@ -1,7 +1,8 @@
+import { render as _fixtureRender } from "../../../../test/render";
 import "../../../index.css";
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { createRoot } from "react-dom/client";
+
 import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
@@ -10,6 +11,8 @@ import { MarkdownPersistenceRegistry } from "./markdownPersistenceRegistry";
 import { createTestCheckpointStore } from "./markdownDraftCheckpointTestkit";
 
 it("types at the end after replacing a multiline source and acknowledging its save", async () => {
+  await using _fixture = _createFixture();
+
   const target = {
     environmentId: EnvironmentId.make("source-caret-browser"),
     cwd: "/source-caret-browser",
@@ -40,9 +43,9 @@ it("types at the end after replacing a multiline source and acknowledging its sa
   const host = document.createElement("div");
   host.style.cssText = "display:flex;width:800px;height:500px";
   document.body.append(host);
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   try {
-    root.render(
+    await root.rerender(
       <MarkdownSourceSurface
         persistence={lease}
         {...target}
@@ -72,8 +75,25 @@ it("types at the end after replacing a multiline source and acknowledging its sa
     expect(await lease.flushNow()).toBe(true);
     expect(disk.source).toBe("x\ny\nz\nw!");
   } finally {
-    root.unmount();
+    await root.unmount();
     host.remove();
     lease.release();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

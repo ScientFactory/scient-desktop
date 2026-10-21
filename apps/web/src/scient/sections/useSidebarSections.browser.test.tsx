@@ -1,7 +1,8 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { EnvironmentId, ThreadId, ThreadSectionId, type ThreadSection } from "@t3tools/contracts";
-import { act, useLayoutEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect, useState } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   configsAtom: { atom: "configs" },
@@ -98,9 +99,7 @@ const section = (id: string, order: number): ThreadSection => ({
   order,
 });
 
-let sections: ReturnType<typeof useSidebarSections>;
-let renderer: Root | undefined;
-function Probe() {
+function Probe({ _fixture }: { _fixture: _Fixture }) {
   const value = useSidebarSections({
     threads: [],
     scopeProjectRefs: mocks.scope,
@@ -111,33 +110,34 @@ function Probe() {
     onBeforeNewThread: () => {},
   });
   useLayoutEffect(() => {
-    sections = value;
+    _fixture.publishSections(value);
   });
   return value.popover;
 }
-function mount() {
-  act(() => {
-    renderer?.unmount();
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+async function mount(_fixture: _Fixture) {
+  await act(async () => {
+    await _fixture.root0?.unmount();
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
   mocks.mode = "sections";
   mocks.collapsed = [];
   mocks.scope = [{ environmentId: "local", projectId: "project-a" }];
   mocks.catalogs = [{ environmentId: "local", sections: [], generalIndex: 0 }];
   mocks.reorder.mockResolvedValue(true);
-  mount();
-});
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+  await mount(_fixture);
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const refs = [
   { environmentId: LOCAL, threadId: ThreadId.make("t1") },
@@ -147,13 +147,17 @@ const refs = [
 it.each(["sections", "status"])(
   "creates and files threads in an anchored popover in %s mode",
   async (mode) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     mocks.mode = mode;
-    mount();
+    await mount(_fixture);
     mocks.create.mockResolvedValue(section("design", 0));
     mocks.moveThreadsToSection.mockResolvedValue(true);
-    expect(sections.sectionsView).toBe(mode === "sections");
+    expect(_fixture.sections.sectionsView).toBe(mode === "sections");
     await act(async () => {
-      await sections.handleSectionMenuAction("section:new", refs, { x: 20, y: 100 });
+      await _fixture.sections.handleSectionMenuAction("section:new", refs, { x: 20, y: 100 });
     });
     expect(mocks.popoverProps).toMatchObject({
       open: true,
@@ -181,8 +185,12 @@ it.each(["sections", "status"])(
 );
 
 it("creates an empty section from the New section row", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   mocks.create.mockResolvedValue(section("design", 0));
-  act(() => sections.viewProps.onStartCreateSection({ x: 20, y: 100 }));
+  await act(() => _fixture.sections.viewProps.onStartCreateSection({ x: 20, y: 100 }));
   expect(mocks.popoverProps).toMatchObject({
     open: true,
     threadCount: 0,
@@ -214,12 +222,20 @@ describe("starting a thread in a section", () => {
     }) as never;
   const laptopContext = { environmentId: LOCAL, projectId: "laptop-project" } as never;
 
-  it("keeps the current project when it is on the section's machine", () => {
+  it("keeps the current project when it is on the section's machine", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const context = { environmentId: "lab", projectId: "current" } as never;
     expect(projectRefForSection(lab, context, [])).toBe(context);
   });
 
-  it("uses a member thread's project on the section's machine, even a settled one", () => {
+  it("uses a member thread's project on the section's machine, even a settled one", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     expect(
       projectRefForSection(lab, laptopContext, [
         // Same section id, other machine: not a member.
@@ -230,7 +246,11 @@ describe("starting a thread in a section", () => {
     ).toEqual({ environmentId: "lab", projectId: "settled" });
   });
 
-  it("falls back to a project the section was created for, else none", () => {
+  it("falls back to a project the section was created for, else none", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const created = {
       ...lab,
       section: { ...lab.section, createdInProjects: [{ environmentId: "lab", projectId: "made" }] },
@@ -245,56 +265,75 @@ describe("starting a thread in a section", () => {
 
 describe("environment-local catalogs", () => {
   // All projects, so every section lists.
-  beforeEach(() => {
+  async function _setupFixture2(_fixture: _Fixture) {
     mocks.scope = null;
-  });
+  }
 
-  it("offers grouping whenever some environment stores sections, primary or not", () => {
+  it("offers grouping whenever some environment stores sections, primary or not", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.catalogs = [];
-    mount();
-    expect(sections.toggle).toBeNull();
-    expect(sections.sectionsView).toBe(false);
+    await mount(_fixture);
+    expect(_fixture.sections.toggle).toBeNull();
+    expect(_fixture.sections.sectionsView).toBe(false);
     mocks.catalogs = [{ environmentId: "remote", sections: [], generalIndex: 0 }];
-    mount();
-    expect(sections.toggle).not.toBeNull();
-    expect(sections.sectionsView).toBe(true);
+    await mount(_fixture);
+    expect(_fixture.sections.toggle).not.toBeNull();
+    expect(_fixture.sections.sectionsView).toBe(true);
   });
 
-  it("writes only the environments whose own order changed", () => {
+  it("writes only the environments whose own order changed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.catalogs = [
       { environmentId: "local", sections: [section("a", 0), section("b", 1)], generalIndex: 2 },
       { environmentId: "remote", sections: [section("c", 0)], generalIndex: 1 },
     ];
-    mount();
+    await mount(_fixture);
     const a = sectionGroupId({ environmentId: "local", sectionId: "a" });
     const b = sectionGroupId({ environmentId: "local", sectionId: "b" });
     const c = sectionGroupId({ environmentId: "remote", sectionId: "c" });
-    expect(sections.viewProps.groups.map((group) => group.id)).toEqual([
+    expect(_fixture.sections.viewProps.groups.map((group) => group.id)).toEqual([
       a,
       b,
       c,
       GENERAL_SECTION_GROUP_ID,
     ]);
     // Only the order between environments changes, and it is not stored.
-    act(() => sections.viewProps.onReorderSections([c, a, b, GENERAL_SECTION_GROUP_ID]));
+    await act(() =>
+      _fixture.sections.viewProps.onReorderSections([c, a, b, GENERAL_SECTION_GROUP_ID]),
+    );
     expect(mocks.reorder).not.toHaveBeenCalled();
     // General moves between B and A on the laptop, and above C on the server.
-    act(() => sections.viewProps.onReorderSections([a, GENERAL_SECTION_GROUP_ID, b, c]));
+    await act(() =>
+      _fixture.sections.viewProps.onReorderSections([a, GENERAL_SECTION_GROUP_ID, b, c]),
+    );
     expect(mocks.reorder).toHaveBeenCalledTimes(2);
     expect(mocks.reorder).toHaveBeenCalledWith("local", ["a", GENERAL_SECTION_GROUP_ID, "b"]);
     expect(mocks.reorder).toHaveBeenCalledWith("remote", [GENERAL_SECTION_GROUP_ID, "c"]);
   });
 
-  it("marks section headers with machines only when several environments' sections show", () => {
+  it("marks section headers with machines only when several environments' sections show", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.catalogs = [{ environmentId: "local", sections: [section("a", 0)], generalIndex: 1 }];
-    mount();
-    expect(sections.viewProps.environmentMachines).toBeNull();
+    await mount(_fixture);
+    expect(_fixture.sections.viewProps.environmentMachines).toBeNull();
     mocks.catalogs = [
       { environmentId: "local", sections: [section("a", 0)], generalIndex: 1 },
       { environmentId: "remote", sections: [section("c", 0)], generalIndex: 1 },
     ];
-    mount();
-    expect(sections.viewProps.environmentMachines).toEqual(
+    await mount(_fixture);
+    expect(_fixture.sections.viewProps.environmentMachines).toEqual(
       new Map([
         ["local", { label: "Laptop", kind: "laptop" }],
         // A machine that has not reported its kind shows the server icon, as thread rows do.
@@ -303,15 +342,47 @@ describe("environment-local catalogs", () => {
     );
   });
 
-  it("keeps sections collapsed by their pre-environment ids, and expands them by group id", () => {
+  it("keeps sections collapsed by their pre-environment ids, and expands them by group id", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.catalogs = [{ environmentId: "local", sections: [section("a", 0)], generalIndex: 1 }];
     mocks.collapsed = ["a"];
-    mount();
+    await mount(_fixture);
     const a = sectionGroupId({ environmentId: "local", sectionId: "a" });
-    expect(sections.viewProps.collapsedGroupIds.has(a)).toBe(true);
-    act(() => sections.viewProps.onToggleGroup(a));
-    expect(sections.viewProps.collapsedGroupIds.has(a)).toBe(false);
-    act(() => sections.viewProps.onToggleGroup(a));
-    expect(sections.viewProps.collapsedGroupIds.has(a)).toBe(true);
+    expect(_fixture.sections.viewProps.collapsedGroupIds.has(a)).toBe(true);
+    await act(() => _fixture.sections.viewProps.onToggleGroup(a));
+    expect(_fixture.sections.viewProps.collapsedGroupIds.has(a)).toBe(false);
+    await act(() => _fixture.sections.viewProps.onToggleGroup(a));
+    expect(_fixture.sections.viewProps.collapsedGroupIds.has(a)).toBe(true);
   });
 });
+
+function _createFixture() {
+  let _published_sections = undefined! as ReturnType<typeof useSidebarSections>;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get sections() {
+      return _published_sections;
+    },
+    publishSections(next: typeof _published_sections) {
+      _published_sections = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

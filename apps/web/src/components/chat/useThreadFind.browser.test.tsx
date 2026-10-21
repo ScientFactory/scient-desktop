@@ -1,6 +1,5 @@
-import { act, useLayoutEffect, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
   RunId,
@@ -8,6 +7,7 @@ import {
   type OrchestrationV2SearchThreadInput,
   type OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
+import { act, fakeTimers, render } from "../../../test/render";
 import { useThreadFind } from "./useThreadFind";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { requestThreadFindOpen } from "./threadFindActionBus";
@@ -39,20 +39,12 @@ vi.mock("~/state/query", () => ({
 
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
-type Rendered = { update: (node: ReactNode) => void; unmount: () => void };
-function render(node: ReactNode): Rendered {
-  const root = createRoot(document.createElement("div"));
-  root.render(node);
-  return { update: (next) => root.render(next), unmount: () => root.unmount() };
-}
-
-let renderer: Rendered | undefined;
-let find: ReturnType<typeof useThreadFind>;
 const a = EnvironmentId.make("environment:a");
 const b = EnvironmentId.make("environment:b");
 const threadId = ThreadId.make("shared-thread");
 const runId = RunId.make("run:plan");
 function Probe({
+  _fixture,
   environmentId,
   enabled = true,
   progressive = false,
@@ -62,7 +54,7 @@ function Probe({
   enabled?: boolean;
   progressive?: boolean;
   content?: Parameters<typeof useThreadFind>[0]["content"];
-}) {
+} & { _fixture: _Fixture }) {
   const state = useThreadFind({
     thread: { environmentId, threadId },
     enabled,
@@ -70,22 +62,15 @@ function Probe({
     content,
   });
   useLayoutEffect(() => {
-    find = state;
+    _fixture.publishFind(state);
   });
   return null;
 }
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-});
-afterEach(async () => {
-  if (renderer) await act(async () => renderer?.unmount());
-  renderer = undefined;
+function setup() {
   queries.results.clear();
   queries.pending = false;
   vi.clearAllMocks();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
+}
 
 describe("V2 find state", () => {
   function messageResult(index: number, snapshotSequence = 9): OrchestrationV2SearchThreadResult {
@@ -98,11 +83,12 @@ describe("V2 find state", () => {
   }
 
   it("reveals an early match and updates its count without requesting another jump", async () => {
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} progressive />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("needle"));
+    await using _fixture = _createFixture();
+
+    setup();
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} progressive />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("needle"));
     const partial: OrchestrationV2SearchThreadResult = {
       complete: false,
       snapshotSequence: 9,
@@ -112,44 +98,45 @@ describe("V2 find state", () => {
     };
     queries.pending = true;
     queries.results.set(a, partial);
-    await act(async () => renderer?.update(<Probe environmentId={a} progressive />));
-    expect(find.barProps.counting).toBe(true);
-    expect(find.barProps.status).toBeNull();
-    expect(find.timelineProps.activeFindMatch).toEqual(partial.match);
-    const match = find.timelineProps.activeFindMatch;
-    const navigationId = find.timelineProps.findNavigationId;
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} progressive />);
+    expect(_fixture.find.barProps.counting).toBe(true);
+    expect(_fixture.find.barProps.status).toBeNull();
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual(partial.match);
+    const match = _fixture.find.timelineProps.activeFindMatch;
+    const navigationId = _fixture.find.timelineProps.findNavigationId;
     const requests = vi.mocked(orchestrationEnvironment.threadFindProgressive).mock.calls.length;
     await act(async () => {
-      find.barProps.onNext();
-      find.barProps.onPrevious();
+      _fixture.find.barProps.onNext();
+      _fixture.find.barProps.onPrevious();
     });
     expect(orchestrationEnvironment.threadFindProgressive).toHaveBeenCalledTimes(requests);
     queries.results.set(a, { ...partial, complete: true, totalMatches: 123, activeIndex: 42 });
-    await act(async () => renderer?.update(<Probe environmentId={a} progressive />));
-    expect(find.barProps.counting).toBe(false);
-    expect(find.barProps.matchCount).toBe(123);
-    expect(find.barProps.activeIndex).toBe(42);
-    expect(find.timelineProps.activeFindMatch).toBe(match);
-    expect(find.timelineProps.findNavigationId).toBe(navigationId);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} progressive />);
+    expect(_fixture.find.barProps.counting).toBe(false);
+    expect(_fixture.find.barProps.matchCount).toBe(123);
+    expect(_fixture.find.barProps.activeIndex).toBe(42);
+    expect(_fixture.find.timelineProps.activeFindMatch).toBe(match);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(navigationId);
     expect(orchestrationEnvironment.threadFind).not.toHaveBeenCalled();
     queries.pending = false;
-    await act(async () => renderer?.update(<Probe environmentId={a} progressive />));
-    await act(async () => find.barProps.onNext());
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} progressive />);
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFindProgressive).toHaveBeenCalledTimes(requests + 1);
   });
 
   it("coalesces incoming pages until the progressive scan finishes", async () => {
-    vi.useFakeTimers();
+    await using _fixture = _createFixture();
+
+    setup();
+    using _timers = fakeTimers();
     queries.pending = true;
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} progressive />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("needle"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} progressive />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("needle"));
     queries.results.set(a, { ...messageResult(0), complete: false, totalMatches: 1 });
     const content = { visibleTurnItems: [], runs: [] };
-    await act(async () =>
-      renderer?.update(<Probe environmentId={a} progressive content={content} />),
+    await screen.rerender(
+      <Probe _fixture={_fixture} environmentId={a} progressive content={content} />,
     );
     const requests = vi.mocked(orchestrationEnvironment.threadFindProgressive).mock.calls.length;
     await act(async () => vi.advanceTimersByTime(300));
@@ -157,8 +144,8 @@ describe("V2 find state", () => {
     expect(queries.refresh).not.toHaveBeenCalled();
     queries.results.set(a, messageResult(0));
     queries.pending = false;
-    await act(async () =>
-      renderer?.update(<Probe environmentId={a} progressive content={content} />),
+    await screen.rerender(
+      <Probe _fixture={_fixture} environmentId={a} progressive content={content} />,
     );
     expect(orchestrationEnvironment.threadFindProgressive).toHaveBeenCalledTimes(requests + 1);
     expect(orchestrationEnvironment.threadFindProgressive).toHaveBeenLastCalledWith({
@@ -170,38 +157,42 @@ describe("V2 find state", () => {
         start: { entryId: "message:2", occurrence: 0 },
       },
     });
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:2");
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:2");
   });
 
   it("requests a fresh jump when the same search wraps to the same match from a new position", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, messageResult(0));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    find.timelineProps.findPositionReaderRef.current = () => ({
+    await using _screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    _fixture.find.timelineProps.findPositionReaderRef.current = () => ({
       entryId: "reading",
       occurrence: 0,
     });
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    const firstNavigationId = find.timelineProps.findNavigationId;
-    const firstMatch = find.timelineProps.activeFindMatch;
-    find.timelineProps.findPositionReaderRef.current = () => ({ entryId: "bottom", occurrence: 0 });
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    expect(find.timelineProps.findNavigationId).toBeGreaterThan(firstNavigationId);
-    expect(find.timelineProps.activeFindMatch).toEqual(firstMatch);
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    const firstNavigationId = _fixture.find.timelineProps.findNavigationId;
+    const firstMatch = _fixture.find.timelineProps.activeFindMatch;
+    _fixture.find.timelineProps.findPositionReaderRef.current = () => ({
+      entryId: "bottom",
+      occurrence: 0,
+    });
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    expect(_fixture.find.timelineProps.findNavigationId).toBeGreaterThan(firstNavigationId);
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual(firstMatch);
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: { threadId, query: "COD4", skills: [], start: { entryId: "bottom", occurrence: 0 } },
     });
-    const repeatedNavigationId = find.timelineProps.findNavigationId;
-    find.timelineProps.findPositionReaderRef.current = () => ({
+    const repeatedNavigationId = _fixture.find.timelineProps.findNavigationId;
+    _fixture.find.timelineProps.findPositionReaderRef.current = () => ({
       entryId: "new-bottom",
       occurrence: 0,
     });
     await act(async () => requestThreadFindOpen());
-    expect(find.timelineProps.findNavigationId).toBeGreaterThan(repeatedNavigationId);
-    expect(find.timelineProps.activeFindMatch).toEqual(firstMatch);
+    expect(_fixture.find.timelineProps.findNavigationId).toBeGreaterThan(repeatedNavigationId);
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual(firstMatch);
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -214,6 +205,9 @@ describe("V2 find state", () => {
   });
 
   it("cycles cached entries immediately, wraps, and accumulates clicks in one event", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     const initial = {
       ...messageResult(0),
       totalMatches: 5,
@@ -224,47 +218,58 @@ describe("V2 find state", () => {
       ],
     };
     queries.results.set(a, initial);
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using _screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     const requests = vi.mocked(orchestrationEnvironment.threadFind).mock.calls.length;
     await act(async () => {
-      find.barProps.onNext();
-      find.barProps.onNext();
+      _fixture.find.barProps.onNext();
+      _fixture.find.barProps.onNext();
     });
-    expect(find.barProps.activeIndex).toBe(2);
-    expect(find.timelineProps.activeFindMatch).toEqual({ entryId: "first", runId, occurrence: 2 });
-    expect(find.timelineProps.findNavigationId).toBe(3);
-    await act(async () => find.barProps.onNext());
-    expect(find.timelineProps.activeFindMatch).toEqual({ entryId: "second", runId, occurrence: 0 });
+    expect(_fixture.find.barProps.activeIndex).toBe(2);
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual({
+      entryId: "first",
+      runId,
+      occurrence: 2,
+    });
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(3);
+    await act(async () => _fixture.find.barProps.onNext());
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual({
+      entryId: "second",
+      runId,
+      occurrence: 0,
+    });
     await act(async () => {
-      find.barProps.onNext();
-      find.barProps.onNext();
+      _fixture.find.barProps.onNext();
+      _fixture.find.barProps.onNext();
     });
-    expect(find.barProps.activeIndex).toBe(0);
-    await act(async () => find.barProps.onPrevious());
-    expect(find.barProps.activeIndex).toBe(4);
-    expect(find.timelineProps.activeFindMatch).toEqual({ entryId: "second", runId, occurrence: 1 });
+    expect(_fixture.find.barProps.activeIndex).toBe(0);
+    await act(async () => _fixture.find.barProps.onPrevious());
+    expect(_fixture.find.barProps.activeIndex).toBe(4);
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual({
+      entryId: "second",
+      runId,
+      occurrence: 1,
+    });
     expect(orchestrationEnvironment.threadFind).toHaveBeenCalledTimes(requests);
     expect(queries.refresh).not.toHaveBeenCalled();
   });
 
   it("does not let an older background response undo a cached step", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     const initial = {
       ...messageResult(0),
       match: { entryId: "first", runId, occurrence: 0 },
       navigation: [{ entryId: "first", runId, startIndex: 0, count: 3 }],
     };
     queries.results.set(a, initial);
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     const requests = vi.mocked(orchestrationEnvironment.threadFind).mock.calls.length;
-    await act(async () => find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onNext());
     queries.results.set(a, {
       ...initial,
       snapshotSequence: 10,
@@ -272,36 +277,41 @@ describe("V2 find state", () => {
       activeIndex: 1,
       navigation: [{ entryId: "first", runId, startIndex: 1, count: 3 }],
     });
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.timelineProps.activeFindMatch).toEqual({ entryId: "first", runId, occurrence: 1 });
-    expect(find.barProps.activeIndex).toBe(2);
-    expect(find.barProps.matchCount).toBe(11);
-    expect(find.timelineProps.findNavigationId).toBe(2);
-    await act(async () => find.barProps.onNext());
-    expect(find.timelineProps.activeFindMatch?.occurrence).toBe(2);
-    expect(find.barProps.activeIndex).toBe(3);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual({
+      entryId: "first",
+      runId,
+      occurrence: 1,
+    });
+    expect(_fixture.find.barProps.activeIndex).toBe(2);
+    expect(_fixture.find.barProps.matchCount).toBe(11);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(2);
+    await act(async () => _fixture.find.barProps.onNext());
+    expect(_fixture.find.timelineProps.activeFindMatch?.occurrence).toBe(2);
+    expect(_fixture.find.barProps.activeIndex).toBe(3);
     expect(orchestrationEnvironment.threadFind).toHaveBeenCalledTimes(requests);
   });
 
   it("fetches the next window from the locally selected match and retains it while pending", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     const initial = {
       ...messageResult(0),
       match: { entryId: "first", runId, occurrence: 0 },
       navigation: [{ entryId: "first", runId, startIndex: 0, count: 2 }],
     };
     queries.results.set(a, initial);
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    await act(async () => find.barProps.onNext());
-    expect(find.timelineProps.activeFindMatch?.occurrence).toBe(1);
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    await act(async () => _fixture.find.barProps.onNext());
+    expect(_fixture.find.timelineProps.activeFindMatch?.occurrence).toBe(1);
     queries.pending = true;
     queries.results.delete(a);
     await act(async () => {
-      find.barProps.onNext();
-      find.barProps.onNext();
+      _fixture.find.barProps.onNext();
+      _fixture.find.barProps.onNext();
     });
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
@@ -313,17 +323,20 @@ describe("V2 find state", () => {
         offset: 2,
       },
     });
-    expect(find.barProps.activeIndex).toBe(1);
-    expect(find.timelineProps.findNavigationId).toBe(2);
+    expect(_fixture.find.barProps.activeIndex).toBe(1);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(2);
     queries.pending = false;
     queries.results.set(a, messageResult(3));
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.barProps.activeIndex).toBe(3);
-    expect(find.timelineProps.findNavigationId).toBe(4);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.barProps.activeIndex).toBe(3);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(4);
   });
 
   it("refreshes around the cached selection when live matches are inserted before it", async () => {
-    vi.useFakeTimers();
+    await using _fixture = _createFixture();
+
+    setup();
+    using _timers = fakeTimers();
     const initial = {
       ...messageResult(0),
       match: { entryId: "first", runId, occurrence: 0 },
@@ -333,15 +346,13 @@ describe("V2 find state", () => {
       ],
     };
     queries.results.set(a, initial);
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    await act(async () => find.barProps.onNext());
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("second");
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    await act(async () => _fixture.find.barProps.onNext());
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("second");
     const content = { runs: [], visibleTurnItems: [] };
-    await act(async () => renderer?.update(<Probe environmentId={a} content={content} />));
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} content={content} />);
     await act(async () => vi.advanceTimersByTime(300));
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
@@ -358,30 +369,31 @@ describe("V2 find state", () => {
         { entryId: "second", runId, startIndex: 2, count: 1 },
       ],
     });
-    await act(async () => renderer?.update(<Probe environmentId={a} content={content} />));
-    expect(find.barProps.matchCount).toBe(11);
-    expect(find.barProps.activeIndex).toBe(2);
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("second");
-    expect(find.timelineProps.findNavigationId).toBe(2);
-    await act(async () => find.barProps.onPrevious());
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("inserted");
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} content={content} />);
+    expect(_fixture.find.barProps.matchCount).toBe(11);
+    expect(_fixture.find.barProps.activeIndex).toBe(2);
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("second");
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(2);
+    await act(async () => _fixture.find.barProps.onPrevious());
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("inserted");
   });
 
   it("asks the server rather than using stale navigation counts during live updates", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     const initial = {
       ...messageResult(0),
       navigation: [{ entryId: "message:2", runId, startIndex: 0, count: 10 }],
     };
     queries.results.set(a, initial);
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    await act(async () =>
-      renderer?.update(<Probe environmentId={a} content={{ runs: [], visibleTurnItems: [] }} />),
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    await screen.rerender(
+      <Probe _fixture={_fixture} environmentId={a} content={{ runs: [], visibleTurnItems: [] }} />,
     );
-    await act(async () => find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -395,16 +407,17 @@ describe("V2 find state", () => {
   });
 
   it("starts from the viewport and steps from the server-selected match", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, messageResult(4));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    find.timelineProps.findPositionReaderRef.current = () => ({
+    await using _screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    _fixture.find.timelineProps.findPositionReaderRef.current = () => ({
       entryId: "message:6",
       occurrence: 1,
     });
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -414,9 +427,9 @@ describe("V2 find state", () => {
         start: { entryId: "message:6", occurrence: 1 },
       },
     });
-    expect(find.barProps.activeIndex).toBe(4);
+    expect(_fixture.find.barProps.activeIndex).toBe(4);
     queries.results.set(a, messageResult(5));
-    await act(async () => find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -427,10 +440,10 @@ describe("V2 find state", () => {
         offset: 1,
       },
     });
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:7");
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:7");
     queries.results.set(a, messageResult(4));
-    await act(async () => find.barProps.onPrevious());
-    expect(find.barProps.activeIndex).toBe(4);
+    await act(async () => _fixture.find.barProps.onPrevious());
+    expect(_fixture.find.barProps.activeIndex).toBe(4);
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -444,16 +457,17 @@ describe("V2 find state", () => {
   });
 
   it("accumulates rapid navigation against the same match until the response arrives", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, messageResult(4));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     queries.pending = true;
     queries.results.delete(a);
-    await act(async () => find.barProps.onNext());
-    await act(async () => find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -464,25 +478,30 @@ describe("V2 find state", () => {
         offset: 2,
       },
     });
-    expect(find.timelineProps.findNavigationId).toBe(1);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(1);
     queries.pending = false;
     queries.results.set(a, messageResult(6));
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.timelineProps.findNavigationId).toBe(3);
-    expect(find.barProps.activeIndex).toBe(6);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(3);
+    expect(_fixture.find.barProps.activeIndex).toBe(6);
   });
 
   it("refreshes continuous updates without shifting the current match or showing Searching", async () => {
-    vi.useFakeTimers();
+    await using _fixture = _createFixture();
+
+    setup();
+    using _timers = fakeTimers();
     queries.results.set(a, messageResult(4));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     for (let i = 0; i < 3; i++) {
-      await act(async () =>
-        renderer?.update(<Probe environmentId={a} content={{ visibleTurnItems: [], runs: [] }} />),
+      await screen.rerender(
+        <Probe
+          _fixture={_fixture}
+          environmentId={a}
+          content={{ visibleTurnItems: [], runs: [] }}
+        />,
       );
       await act(async () => vi.advanceTimersByTime(100));
     }
@@ -497,13 +516,13 @@ describe("V2 find state", () => {
     });
     const updated = { ...messageResult(5, 10), totalMatches: 11, match: messageResult(4).match };
     queries.results.set(a, updated);
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.barProps.matchCount).toBe(11);
-    expect(find.barProps.activeIndex).toBe(5);
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:6");
-    expect(find.timelineProps.findNavigationId).toBe(1);
-    expect(find.barProps.status).toBeNull();
-    await act(async () => find.barProps.onNext());
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.barProps.matchCount).toBe(11);
+    expect(_fixture.find.barProps.activeIndex).toBe(5);
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:6");
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(1);
+    expect(_fixture.find.barProps.status).toBeNull();
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -517,18 +536,19 @@ describe("V2 find state", () => {
   });
 
   it("keeps pending navigation when incoming content triggers a refresh", async () => {
-    vi.useFakeTimers();
+    await using _fixture = _createFixture();
+
+    setup();
+    using _timers = fakeTimers();
     queries.results.set(a, messageResult(4));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     queries.pending = true;
     queries.results.delete(a);
-    await act(async () => find.barProps.onNext());
-    await act(async () =>
-      renderer?.update(<Probe environmentId={a} content={{ visibleTurnItems: [], runs: [] }} />),
+    await act(async () => _fixture.find.barProps.onNext());
+    await screen.rerender(
+      <Probe _fixture={_fixture} environmentId={a} content={{ visibleTurnItems: [], runs: [] }} />,
     );
     await act(async () => vi.advanceTimersByTime(300));
     expect(queries.refresh).toHaveBeenCalledTimes(1);
@@ -544,46 +564,48 @@ describe("V2 find state", () => {
     });
     queries.pending = false;
     queries.results.set(a, { ...messageResult(6, 10), totalMatches: 11 });
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:8");
-    expect(find.timelineProps.findNavigationId).toBe(2);
-    expect(find.barProps.matchCount).toBe(11);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:8");
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(2);
+    expect(_fixture.find.barProps.matchCount).toBe(11);
   });
 
   it("does not navigate the previous result while a new match is loading", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, messageResult(0));
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
     queries.pending = true;
     queries.results.delete(a);
-    await act(async () => find.barProps.onNext());
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:2");
-    expect(find.timelineProps.findNavigationId).toBe(1);
-    expect(find.barProps.status).toBeNull();
-    expect(find.barProps.activeIndex).toBe(0);
-    expect(find.barProps.matchCount).toBe(10);
+    await act(async () => _fixture.find.barProps.onNext());
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:2");
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(1);
+    expect(_fixture.find.barProps.status).toBeNull();
+    expect(_fixture.find.barProps.activeIndex).toBe(0);
+    expect(_fixture.find.barProps.matchCount).toBe(10);
     queries.pending = false;
     queries.results.set(a, messageResult(1));
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.timelineProps.activeFindMatch?.entryId).toBe("message:3");
-    expect(find.timelineProps.findNavigationId).toBe(2);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.timelineProps.activeFindMatch?.entryId).toBe("message:3");
+    expect(_fixture.find.timelineProps.findNavigationId).toBe(2);
   });
 
   it("keeps the reading-position start when Enter is pressed before results arrive", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.pending = true;
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    find.timelineProps.findPositionReaderRef.current = () => ({
+    await using _screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    _fixture.find.timelineProps.findPositionReaderRef.current = () => ({
       entryId: "message:6",
       occurrence: 1,
     });
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    await act(async () => find.barProps.onNext());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    await act(async () => _fixture.find.barProps.onNext());
     expect(orchestrationEnvironment.threadFind).toHaveBeenLastCalledWith({
       environmentId: a,
       input: {
@@ -596,94 +618,99 @@ describe("V2 find state", () => {
   });
 
   it("shows Searching only when the query has no result yet", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.pending = true;
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("COD4"));
-    expect(find.barProps.status).toBe("loading");
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("COD4"));
+    expect(_fixture.find.barProps.status).toBe("loading");
     queries.pending = false;
     queries.results.set(a, messageResult(0));
-    await act(async () => renderer?.update(<Probe environmentId={a} />));
-    expect(find.barProps.status).toBeNull();
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.barProps.status).toBeNull();
     queries.pending = true;
     queries.results.delete(a);
-    await act(async () => find.barProps.onQueryChange("different query"));
-    expect(find.barProps.status).toBe("loading");
-    expect(find.barProps.matchCount).toBe(0);
+    await act(async () => _fixture.find.barProps.onQueryChange("different query"));
+    expect(_fixture.find.barProps.status).toBe("loading");
+    expect(_fixture.find.barProps.matchCount).toBe(0);
 
-    expect(find.timelineProps.findQuery).toBe("");
-    expect(find.timelineProps.findExpanded).toBe(true);
-    await act(async () => find.barProps.onQueryChange(""));
-    expect(find.timelineProps.findExpanded).toBe(false);
+    expect(_fixture.find.timelineProps.findQuery).toBe("");
+    expect(_fixture.find.timelineProps.findExpanded).toBe(true);
+    await act(async () => _fixture.find.barProps.onQueryChange(""));
+    expect(_fixture.find.timelineProps.findExpanded).toBe(false);
   });
 
   it("keeps search unavailable when the server does not support it", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
+    await using _screen = await render(
+      <Probe _fixture={_fixture} environmentId={a} enabled={false} />,
+    );
     await act(async () => {
-      renderer = render(<Probe environmentId={a} enabled={false} />);
-    });
-    await act(async () => {
-      find.open();
+      _fixture.find.open();
       requestThreadFindOpen();
     });
-    expect(find.isOpen).toBe(false);
-    expect(find.timelineProps.activeFindMatch).toBeNull();
+    expect(_fixture.find.isOpen).toBe(false);
+    expect(_fixture.find.timelineProps.activeFindMatch).toBeNull();
     expect(orchestrationEnvironment.threadFind).not.toHaveBeenCalled();
   });
 
   it("closes search when support disappears without restoring stale queries", async () => {
-    await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
-    });
-    await act(async () => find.open());
-    await act(async () => find.barProps.onQueryChange("needle"));
-    expect(find.isOpen).toBe(true);
+    await using _fixture = _createFixture();
+
+    setup();
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
+    await act(async () => _fixture.find.open());
+    await act(async () => _fixture.find.barProps.onQueryChange("needle"));
+    expect(_fixture.find.isOpen).toBe(true);
     vi.mocked(orchestrationEnvironment.threadFind).mockClear();
-    await act(async () => {
-      renderer?.update(<Probe environmentId={a} enabled={false} />);
-    });
-    expect(find.isOpen).toBe(false);
-    expect(find.timelineProps.activeFindMatch).toBeNull();
-    expect(find.timelineProps.findQuery).toBe("");
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} enabled={false} />);
+    expect(_fixture.find.isOpen).toBe(false);
+    expect(_fixture.find.timelineProps.activeFindMatch).toBeNull();
+    expect(_fixture.find.timelineProps.findQuery).toBe("");
     expect(orchestrationEnvironment.threadFind).not.toHaveBeenCalled();
-    await act(async () => {
-      renderer?.update(<Probe environmentId={a} />);
-    });
-    expect(find.isOpen).toBe(false);
-    await act(async () => find.open());
-    expect(find.barProps.query).toBe("");
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.isOpen).toBe(false);
+    await act(async () => _fixture.find.open());
+    expect(_fixture.find.barProps.query).toBe("");
   });
 
   it("preserves plan item ID and run ownership for navigation", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, {
       snapshotSequence: 9,
       totalMatches: 1,
       activeIndex: 0,
       match: { entryId: "plan-item", runId, occurrence: 0 },
     });
+    await using _screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
     await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
+      _fixture.find.open();
     });
     await act(async () => {
-      find.open();
+      _fixture.find.barProps.onQueryChange("needle");
     });
-    await act(async () => {
-      find.barProps.onQueryChange("needle");
-    });
-    expect(find.timelineProps.activeFindMatch).toEqual({
+    expect(_fixture.find.timelineProps.activeFindMatch).toEqual({
       entryId: "plan-item",
       runId,
       occurrence: 0,
     });
     await act(async () => {
-      find.close();
+      _fixture.find.close();
     });
-    expect(find.timelineProps.activeFindMatch).toBeNull();
-    expect(find.timelineProps.findQuery).toBe("");
+    expect(_fixture.find.timelineProps.activeFindMatch).toBeNull();
+    expect(_fixture.find.timelineProps.findQuery).toBe("");
   });
 
   it("drops results on environment changes even when the thread IDs are identical", async () => {
+    await using _fixture = _createFixture();
+
+    setup();
     queries.results.set(a, {
       snapshotSequence: 1,
       totalMatches: 3,
@@ -696,31 +723,44 @@ describe("V2 find state", () => {
       activeIndex: 0,
       match: null,
     });
+    await using screen = await render(<Probe _fixture={_fixture} environmentId={a} />);
     await act(async () => {
-      renderer = render(<Probe environmentId={a} />);
+      _fixture.find.open();
     });
     await act(async () => {
-      find.open();
+      _fixture.find.barProps.onQueryChange("needle");
+    });
+    expect(_fixture.find.barProps.matchCount).toBe(3);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={b} />);
+    expect(_fixture.find.isOpen).toBe(false);
+    expect(_fixture.find.timelineProps.activeFindMatch).toBeNull();
+    await act(async () => {
+      _fixture.find.open();
     });
     await act(async () => {
-      find.barProps.onQueryChange("needle");
+      _fixture.find.barProps.onQueryChange("needle");
     });
-    expect(find.barProps.matchCount).toBe(3);
-    await act(async () => {
-      renderer?.update(<Probe environmentId={b} />);
-    });
-    expect(find.isOpen).toBe(false);
-    expect(find.timelineProps.activeFindMatch).toBeNull();
-    await act(async () => {
-      find.open();
-    });
-    await act(async () => {
-      find.barProps.onQueryChange("needle");
-    });
-    expect(find.barProps.matchCount).toBe(0);
-    await act(async () => {
-      renderer?.update(<Probe environmentId={a} />);
-    });
-    expect(find.isOpen).toBe(false);
+    expect(_fixture.find.barProps.matchCount).toBe(0);
+    await screen.rerender(<Probe _fixture={_fixture} environmentId={a} />);
+    expect(_fixture.find.isOpen).toBe(false);
   });
 });
+
+function _createFixture() {
+  let _published_find = undefined! as ReturnType<typeof useThreadFind>;
+
+  const stack = new AsyncDisposableStack();
+  return {
+    get find() {
+      return _published_find;
+    },
+    publishFind(next: typeof _published_find) {
+      _published_find = next;
+    },
+    stack,
+    async [Symbol.asyncDispose]() {
+      await stack.disposeAsync();
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

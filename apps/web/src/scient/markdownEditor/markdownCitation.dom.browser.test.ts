@@ -1,0 +1,343 @@
+import { stubGlobal as _fixtureStubGlobal, act } from "../../../test/render";
+
+import { describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EditorView as CodeMirrorView } from "@codemirror/view";
+import {
+  captureMarkdownCitation,
+  createMarkdownCitation,
+  markdownCitationDomRange,
+} from "./markdownCitation";
+import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { revealMarkdownCitation } from "./markdownCitationReveal";
+import { openScientRichFenceSource } from "./nodes/codeBlockNodeView";
+
+vi.mock("~/scient/diagrams/mermaidRuntime", async (original) => ({
+  ...(await original<typeof import("~/scient/diagrams/mermaidRuntime")>()),
+  renderMermaidDiagram: vi.fn(async () => ({ svg: "<svg />", diagramType: "flowchart" })),
+}));
+
+const source = {
+  environmentId: EnvironmentId.make("local"),
+  threadId: ThreadId.make("thread"),
+  cwd: "/project",
+  path: "test.md",
+};
+
+async function _setupFixture0(_fixture: _Fixture) {}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(() => _fixture.mounted.splice(0).forEach((controller) => controller.destroy()));
+  _clearOwnedDOM(_fixture);
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+}
+async function mount(_fixture: _Fixture, text: string) {
+  const onUserSourceChange = vi.fn();
+  const controller = new ScientMarkdownEditorView({
+    source: text,
+    revision: "fixture",
+    mode: "write",
+    ariaLabel: "Markdown",
+    onUserSourceChange,
+  });
+  _fixture.mounted.push(controller);
+  const host = document.createElement("div");
+  document.body.append(_ownDOM(_fixture, host));
+  await act(() => {
+    controller.mount(host);
+  });
+  return { controller, view: controller.view!, onUserSourceChange };
+}
+function select(first: Node, firstOffset: number, last: Node, lastOffset: number) {
+  const range = document.createRange();
+  range.setStart(first, firstOffset);
+  range.setEnd(last, lastOffset);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return selection;
+}
+
+describe("Markdown citation in the mounted editor", () => {
+  it("does not substitute a rendered chart's hidden source for a cross-block selection", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view } = await mount(
+      _fixture,
+      "Before.\n\n```text\nHidden source\n```\n\nAfter.\n",
+    );
+    // The node view uses this marker when a rich renderer replaces its source.
+    view.dom
+      .querySelector("[data-scient-markdown-code-block]")!
+      .setAttribute("data-scient-markdown-rich-fence", "mermaid");
+    const paragraphs = view.dom.querySelectorAll("p");
+    const selection = select(paragraphs[0]!.firstChild!, 0, paragraphs[1]!.firstChild!, 6);
+    expect(captureMarkdownCitation(controller, source, selection)).toBeNull();
+    expect(
+      markdownCitationDomRange(controller, { from: 1, to: view.state.doc.content.size - 1 }),
+    ).toBeNull();
+    expect(controller.createSaveIntent()).toBeNull();
+  });
+  it("captures a native selection across inline markup without changing source/history", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view, onUserSourceChange } = await mount(
+      _fixture,
+      "An **important** sentence.\n",
+    );
+    const first = view.dom.querySelector("strong")!.firstChild!;
+    const last = view.dom.querySelector("p")!.lastChild!;
+    const selection = select(first, 0, last, 9);
+    const before = controller.session.session;
+    const doc = view.state.doc;
+    const captured = captureMarkdownCitation(controller, source, selection)!;
+    expect(captured.citation.text).toBe("important sentence");
+    expect(captured.citation.path).toBe("test.md");
+    expect(captured.sourceAnchor.range.toString()).toBe("important sentence");
+    expect(captured.sourceAnchor.resolveRange()?.toString()).toBe("important sentence");
+    expect(view.state.doc).toBe(doc);
+    expect(controller.session.session).toBe(before);
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("captures text in table cells", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view } = await mount(_fixture, "| A | B |\n|---|---|\n| Alpha | Beta |\n");
+    const cells = view.dom.querySelectorAll("td");
+    const captured = captureMarkdownCitation(
+      controller,
+      source,
+      select(cells[0]!.firstChild!, 0, cells[1]!.firstChild!, 4),
+    );
+    expect(captured?.citation.text).toBe("Alpha\nBeta");
+    expect(captured?.citation.endLine).toBe(3);
+  });
+
+  it("reads a partial selection from the real nested CodeMirror, not the whole node", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view, onUserSourceChange } = await mount(
+      _fixture,
+      "```text\nzero\n  one\n  two\nlast\n```\n",
+    );
+    const codeDom = view.dom.querySelector<HTMLElement>(".cm-editor")!;
+    const code = CodeMirrorView.findFromDOM(codeDom)!;
+    expect(code).not.toBeNull();
+    await act(() => {
+      code.dispatch({ selection: { anchor: 5, head: 16 } });
+    });
+    const first = code.domAtPos(5);
+    const last = code.domAtPos(16);
+    const captured = captureMarkdownCitation(
+      controller,
+      source,
+      select(first.node, first.offset, last.node, last.offset),
+    );
+    expect(captured?.citation.text).toBe("  one\n  two");
+    expect(captured?.citation.from).toBe(6);
+    expect(captured?.citation.to).toBe(17);
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("captures selected source from the real editable Mermaid fence", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view, onUserSourceChange } = await mount(
+      _fixture,
+      "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n",
+    );
+    const richFence = await vi.waitFor(() => {
+      const element = view.dom.querySelector<HTMLElement>(
+        "[data-scient-markdown-rich-fence='mermaid']",
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    await act(async () => {
+      expect(openScientRichFenceSource(richFence)).toBe(true);
+      await Promise.resolve();
+    });
+    const codeDom = await vi.waitFor(() => {
+      const element = richFence.querySelector<HTMLElement>(".cm-editor");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const code = CodeMirrorView.findFromDOM(codeDom)!;
+    const from = code.state.doc.toString().indexOf("A[Start]");
+    const to = from + "A[Start]".length;
+    await act(() => code.dispatch({ selection: { anchor: from, head: to } }));
+    const first = code.domAtPos(from);
+    const last = code.domAtPos(to);
+    const captured = captureMarkdownCitation(
+      controller,
+      source,
+      select(first.node, first.offset, last.node, last.offset),
+    );
+
+    expect(captured?.citation.text).toBe("A[Start]");
+    expect(captured?.sourceAnchor.resolveRange()?.toString()).toBe("A[Start]");
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-surface selection or controls", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view } = await mount(_fixture, "Only this document.\n");
+    const outside = document.createTextNode("Other surface");
+    document.body.append(_ownDOM(_fixture, outside));
+    const inside = view.dom.querySelector("p")!.firstChild!;
+    expect(captureMarkdownCitation(controller, source, select(inside, 0, outside, 5))).toBeNull();
+    const button = document.createElement("button");
+    button.textContent = "Control";
+    view.dom.append(button);
+    const range = document.createRange();
+    range.selectNodeContents(button);
+    const selectedControl = {
+      rangeCount: 1,
+      isCollapsed: false,
+      getRangeAt: () => range,
+    } as unknown as Selection;
+    expect(captureMarkdownCitation(controller, source, selectedControl) === null).toBe(true);
+  });
+
+  it("invalidates the live comment anchor when document text changes", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view } = await mount(_fixture, "Original sentence.\n");
+    const node = view.dom.querySelector("p")!.firstChild!;
+    const captured = captureMarkdownCitation(controller, source, select(node, 0, node, 8))!;
+    await act(() => {
+      view.dispatch(view.state.tr.insertText("New ", 1));
+    });
+    expect(captured.sourceAnchor.resolveRange()).toBeNull();
+    expect(captured.citation.text).toBe("Original");
+  });
+
+  it("reveals using a highlight without replacing selection or creating a save", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view, onUserSourceChange } = await mount(_fixture, "Quoted paragraph.\n");
+    const citation = createMarkdownCitation(controller.session, source, 1, 7)!;
+    const selection = view.state.selection;
+    const before = controller.session.session;
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+    const pending: FrameRequestCallback[] = [];
+    _fixture.stack.use(
+      _fixtureStubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      }),
+    );
+    _fixture.stack.use(_fixtureStubGlobal("cancelAnimationFrame", vi.fn()));
+    const stop = revealMarkdownCitation(controller, citation);
+    pending.splice(0).forEach((callback) => callback(0));
+    expect(scroll).toHaveBeenCalled();
+    expect(markdownCitationDomRange(controller, citation)?.toString()).toBe("Quoted");
+    expect(view.state.selection).toBe(selection);
+    expect(controller.session.session).toBe(before);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("opens editable Mermaid source before revealing an exact source citation", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, view, onUserSourceChange } = await mount(
+      _fixture,
+      "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n",
+    );
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-markdown-rich-fence='mermaid']")).not.toBeNull();
+    });
+    expect(view.dom.querySelector(".cm-editor")).toBeNull();
+    const citation = createMarkdownCitation(controller.session, source, 1, 10)!;
+    const registry = new Map<string, Set<Range>>();
+    _fixture.stack.use(_fixtureStubGlobal("CSS", { highlights: registry }));
+    _fixture.stack.use(
+      _fixtureStubGlobal(
+        "Highlight",
+        class extends Set<Range> {
+          constructor(...ranges: Range[]) {
+            super(ranges);
+          }
+        },
+      ),
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+    const pending: FrameRequestCallback[] = [];
+    _fixture.stack.use(
+      _fixtureStubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      }),
+    );
+    _fixture.stack.use(_fixtureStubGlobal("cancelAnimationFrame", vi.fn()));
+
+    let stop = () => {};
+    await act(async () => {
+      stop = revealMarkdownCitation(controller, citation);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(view.dom.querySelector(".cm-editor")).not.toBeNull());
+    await act(() => pending.splice(0).forEach((callback) => callback(0)));
+
+    expect(registry.get("scient-file-citation")?.size).toBe(1);
+    expect([...registry.get("scient-file-citation")!][0]!.toString()).toBe("flowchart");
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    stop();
+  });
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    mounted: [] as ScientMarkdownEditorView[],
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
+}

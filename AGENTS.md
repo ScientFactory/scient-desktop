@@ -28,6 +28,17 @@ Terminology: `docs/internals/glossary.md`.
 ## Shared quality defaults
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
+- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to
+  `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom`
+  for UI availability. Grants are checked at execution against the destination
+  environment; the server remains authoritative. Keep raw RPC clients inside
+  `rpc/`, and extend permission behavior tests when adding a protected method.
+- Reusable Effect functions use `Effect.fn("Service.operation")` with a stable
+  span name, not a function wrapping `Effect.gen`. Keep `Effect.gen` for inline
+  programs and layer construction. Use `Effect.fnUntraced` only for high-frequency
+  paths or an existing tracing boundary; explain the choice nearby. Named
+  `Effect.fn` creates a span; the unnamed form does not. Preserve existing span
+  names and options, passing combinators as additional function-builder arguments.
 - `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
 - Inferred types over annotations. `any` is the enemy.
 - Comments say why: a constraint, an external quirk, or an invariant the code can't show. Don't restate names or signatures, narrate steps, or record history. `t3code/no-low-value-comments` catches the mechanical cases.
@@ -138,6 +149,14 @@ An interim review can precede full qualification; identify remaining checks.
 
 Use orchestration receipts and worker completion signals in asynchronous tests.
 Use controlled clocks when testing time-dependent behavior.
+
+Web component tests are `*.browser.test.tsx` and render through
+`apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
+so disposal restores them even on failure; avoid module-level screens and
+`beforeEach` / `afterEach` cleanup. Reset shared `vi.mock` factory state in a
+`setup()` call at the start of each test. `t3code/require-disposable-render`
+enforces this lifecycle. Test meaningful behavior rather than static markup
+that only repeats props or callback wiring.
 
 Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.

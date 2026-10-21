@@ -42,6 +42,9 @@ thread to **Full access**.
 ACP Registry agents run their own tools in their own mode; Scient answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
+Claude can still ask in **Full access** when its settings disable bypass permissions or require
+approval for an action.
+
 Antigravity uses its own permission policy for each mode. Scient still shows any approval or
 question the official agent sends in **Full access**. A remembered approval is available only
 when the agent offers it for that action. Fixed-choice questions require one of the offered

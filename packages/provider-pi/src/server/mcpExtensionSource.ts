@@ -512,9 +512,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Reconcile declared tools without duplicating the native prompt guidance hook.
+  // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
+    const sections = event.systemPromptOptions?.sections;
+    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
+      // A full prompt override bypasses Pi's later section rendering.
+      // SCIENT-FORK:START — section rendering retains the host's runtime awareness.
+      sections.t3_code_orchestration = runtimeSystemPrompt("");
+      // SCIENT-FORK:END
+      return undefined;
+    }
     return { systemPrompt: runtimeSystemPrompt(event.systemPrompt) };
   });
 }

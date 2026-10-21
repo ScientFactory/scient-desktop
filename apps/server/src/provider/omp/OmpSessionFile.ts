@@ -9,36 +9,37 @@ import type { OmpTarget } from "./OmpTarget.ts";
  * Canonical containment. `realPath` resolves symlinks, then the resolved file
  * must be a readable regular file inside the resolved session root.
  */
-export const assertReadableOmpSessionFile = (input: {
+export const assertReadableOmpSessionFile = Effect.fn(
+  "OmpSessionFile.assertReadableOmpSessionFile",
+)(function* (input: {
   readonly target: OmpTarget;
   readonly sessionRoot: string;
   readonly relativeSessionFile: string;
-}) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const rootReal = yield* fs
-      .realPath(input.sessionRoot)
-      .pipe(Effect.mapError(() => `${input.target.name} session directory is not readable.`));
-    const candidate = path.resolve(rootReal, input.relativeSessionFile);
-    const fileReal = yield* fs
-      .realPath(candidate)
-      .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
-    if (!sessionFileInsideRoot(rootReal, fileReal)) {
-      return yield* Effect.fail(
-        `${input.target.name} resume cursor points outside its session directory.`,
-      );
-    }
-    const info = yield* fs
-      .stat(fileReal)
-      .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
-    if (info.type !== "File") {
-      return yield* Effect.fail(`${input.target.name} session file is not a regular file.`);
-    }
-    yield* fs
-      .access(fileReal, { readable: true })
-      .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
-  });
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const rootReal = yield* fs
+    .realPath(input.sessionRoot)
+    .pipe(Effect.mapError(() => `${input.target.name} session directory is not readable.`));
+  const candidate = path.resolve(rootReal, input.relativeSessionFile);
+  const fileReal = yield* fs
+    .realPath(candidate)
+    .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
+  if (!sessionFileInsideRoot(rootReal, fileReal)) {
+    return yield* Effect.fail(
+      `${input.target.name} resume cursor points outside its session directory.`,
+    );
+  }
+  const info = yield* fs
+    .stat(fileReal)
+    .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
+  if (info.type !== "File") {
+    return yield* Effect.fail(`${input.target.name} session file is not a regular file.`);
+  }
+  yield* fs
+    .access(fileReal, { readable: true })
+    .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
+});
 
 /**
  * Compare the session identity reported by OMP with the cursor's expected
@@ -46,13 +47,13 @@ export const assertReadableOmpSessionFile = (input: {
  * resolver. This matters on macOS, where `/tmp` and `/private/tmp` are two
  * names for the same file.
  */
-export const ompSessionFilesEqual = (input: {
-  readonly target: OmpTarget;
-  readonly sessionRoot: string;
-  readonly expectedRelativeFile: string;
-  readonly reportedFile: string;
-}) =>
-  Effect.gen(function* () {
+export const ompSessionFilesEqual = Effect.fn("OmpSessionFile.ompSessionFilesEqual")(
+  function* (input: {
+    readonly target: OmpTarget;
+    readonly sessionRoot: string;
+    readonly expectedRelativeFile: string;
+    readonly reportedFile: string;
+  }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const rootReal = yield* fs
@@ -68,4 +69,5 @@ export const ompSessionFilesEqual = (input: {
       .realPath(reportedCandidate)
       .pipe(Effect.mapError(() => `${input.target.name} session file is not readable.`));
     return path.normalize(expected) === path.normalize(reported);
-  });
+  },
+);

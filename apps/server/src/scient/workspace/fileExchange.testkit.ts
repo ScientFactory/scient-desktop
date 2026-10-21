@@ -124,6 +124,7 @@ export const fileMutationFixture = Effect.fnUntraced(
       refresh: () => Effect.void,
       browse: () => Effect.die("unused"),
       list: () => Effect.die("unused"),
+      listIgnoredFiles: () => Effect.die("unused"),
       listDirectory: () => Effect.die("unused"),
       search: () => Effect.die("unused"),
       searchContents: () => Effect.die("unused"),

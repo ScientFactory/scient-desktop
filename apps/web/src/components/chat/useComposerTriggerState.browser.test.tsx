@@ -1,129 +1,163 @@
-import { act, StrictMode, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, useLayoutEffect } from "react";
+import { describe, expect, it } from "vite-plus/test";
 
+import { act, render } from "../../../test/render";
 import { detectComposerTrigger } from "../../composer-logic";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 
 const command = "pnpm install -g @openai/codex@latest";
 const initialPrompt = "pnpm install -g @openai";
-let root: Root;
-let composer: ReturnType<typeof useComposerTriggerState>;
 
-function ComposerProbe() {
+function ComposerProbe({ _fixture }: { _fixture: _Fixture }) {
   const state = useComposerTriggerState(() =>
     detectComposerTrigger(initialPrompt, initialPrompt.length),
   );
   useLayoutEffect(() => {
-    composer = state;
+    _fixture.publishComposer(state);
   });
   return null;
 }
 
-async function updatePrompt(text: string, cursor = text.length) {
-  await act(() => composer.setTrigger(detectComposerTrigger(text, cursor)));
+async function updatePrompt(_fixture: _Fixture, text: string, cursor = text.length) {
+  await act(() => _fixture.composer.setTrigger(detectComposerTrigger(text, cursor)));
 }
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(document.createElement("div"));
-  await act(() =>
-    root.render(
-      <StrictMode>
-        <ComposerProbe />
-      </StrictMode>,
-    ),
+const renderComposer = (_fixture: _Fixture) =>
+  render(
+    <StrictMode>
+      <ComposerProbe _fixture={_fixture} />
+    </StrictMode>,
   );
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
 
 describe("composer suggestion dismissal", () => {
   it("closes suggestions and rejects keyboard selection before the next render", async () => {
+    await using _fixture = _createFixture();
+
+    await using _screen = await renderComposer(_fixture);
     const candidate = detectComposerTrigger(initialPrompt, initialPrompt.length);
-    expect(composer.trigger).toEqual(candidate);
+    expect(_fixture.composer.trigger).toEqual(candidate);
 
     await act(() => {
-      composer.dismissTrigger(candidate);
-      expect(composer.resolveTrigger(candidate)).toBeNull();
+      _fixture.composer.dismissTrigger(candidate);
+      expect(_fixture.composer.resolveTrigger(candidate)).toBeNull();
     });
-    expect(composer.trigger).toBeNull();
+    expect(_fixture.composer.trigger).toBeNull();
   });
 
   it("stays dismissed while typing a scoped package, including its second @", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
+    await using _fixture = _createFixture();
+
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
 
     for (let cursor = initialPrompt.length; cursor <= command.length; cursor += 1) {
       const text = command.slice(0, cursor);
-      await updatePrompt(text);
-      expect(composer.trigger).toBeNull();
-      expect(composer.resolveTrigger(detectComposerTrigger(text, cursor))).toBeNull();
+      await updatePrompt(_fixture, text);
+      expect(_fixture.composer.trigger).toBeNull();
+      expect(_fixture.composer.resolveTrigger(detectComposerTrigger(text, cursor))).toBeNull();
     }
   });
 
   it("stays dismissed while deleting characters or moving within the same word", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
+    await using _fixture = _createFixture();
+
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
 
     for (let cursor = initialPrompt.length - 1; cursor > initialPrompt.indexOf("@"); cursor -= 1) {
-      await updatePrompt(initialPrompt, cursor);
-      expect(composer.trigger).toBeNull();
-      await updatePrompt(initialPrompt.slice(0, cursor));
-      expect(composer.trigger).toBeNull();
+      await updatePrompt(_fixture, initialPrompt, cursor);
+      expect(_fixture.composer.trigger).toBeNull();
+      await updatePrompt(_fixture, initialPrompt.slice(0, cursor));
+      expect(_fixture.composer.trigger).toBeNull();
     }
   });
 
   it("opens suggestions for a new @ word after a space", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
-    await updatePrompt(`${command} `);
-    await updatePrompt(`${command} @src`);
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger?.query).toBe("src");
-    expect(composer.trigger?.rangeStart).toBe(command.length + 1);
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    await updatePrompt(_fixture, `${command} `);
+    await updatePrompt(_fixture, `${command} @src`);
+
+    expect(_fixture.composer.trigger?.query).toBe("src");
+    expect(_fixture.composer.trigger?.rangeStart).toBe(command.length + 1);
   });
 
   it("opens a different token when the caret moves directly to it", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
-    await updatePrompt(`${command} @src`);
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger?.query).toBe("src");
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    await updatePrompt(_fixture, `${command} @src`);
+
+    expect(_fixture.composer.trigger?.query).toBe("src");
   });
 
   it("can reopen after the caret leaves the dismissed word", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
-    await updatePrompt(initialPrompt, 0);
-    await updatePrompt(initialPrompt);
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger?.query).toBe("openai");
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    await updatePrompt(_fixture, initialPrompt, 0);
+    await updatePrompt(_fixture, initialPrompt);
+
+    expect(_fixture.composer.trigger?.query).toBe("openai");
   });
 
   it("can reopen at the same position after deleting and retyping @", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
-    const prefix = initialPrompt.slice(0, initialPrompt.indexOf("@"));
-    await updatePrompt(prefix);
-    await updatePrompt(`${prefix}@`);
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger?.query).toBe("");
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    const prefix = initialPrompt.slice(0, initialPrompt.indexOf("@"));
+    await updatePrompt(_fixture, prefix);
+    await updatePrompt(_fixture, `${prefix}@`);
+
+    expect(_fixture.composer.trigger?.query).toBe("");
   });
 
   it("clears dismissal when switching drafts or pending questions", async () => {
-    await act(() => composer.dismissTrigger(composer.trigger));
-    const candidate = detectComposerTrigger(initialPrompt, initialPrompt.length);
-    await act(() => composer.resetTrigger(candidate));
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger).toEqual(candidate);
-    expect(composer.resolveTrigger(candidate)).toEqual(candidate);
+    await using _screen = await renderComposer(_fixture);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    const candidate = detectComposerTrigger(initialPrompt, initialPrompt.length);
+    await act(() => _fixture.composer.resetTrigger(candidate));
+
+    expect(_fixture.composer.trigger).toEqual(candidate);
+    expect(_fixture.composer.resolveTrigger(candidate)).toEqual(candidate);
   });
 
   it.each(["/plan", "$skill", "#123"])("also dismisses %s suggestions", async (text) => {
-    await updatePrompt(text);
-    await act(() => composer.dismissTrigger(composer.trigger));
-    await updatePrompt(`${text}x`);
+    await using _fixture = _createFixture();
 
-    expect(composer.trigger).toBeNull();
-    await updatePrompt("@src");
-    expect(composer.trigger?.kind).toBe("path");
+    await using _screen = await renderComposer(_fixture);
+    await updatePrompt(_fixture, text);
+    await act(() => _fixture.composer.dismissTrigger(_fixture.composer.trigger));
+    await updatePrompt(_fixture, `${text}x`);
+
+    expect(_fixture.composer.trigger).toBeNull();
+    await updatePrompt(_fixture, "@src");
+    expect(_fixture.composer.trigger?.kind).toBe("path");
   });
 });
+
+function _createFixture() {
+  let _published_composer = undefined! as ReturnType<typeof useComposerTriggerState>;
+
+  const stack = new AsyncDisposableStack();
+  return {
+    get composer() {
+      return _published_composer;
+    },
+    publishComposer(next: typeof _published_composer) {
+      _published_composer = next;
+    },
+    stack,
+    async [Symbol.asyncDispose]() {
+      await stack.disposeAsync();
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

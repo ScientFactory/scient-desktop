@@ -25,6 +25,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { layer as ProviderRegistryLive } from "./ProviderRegistry.ts";
 
 const DRIVER = ProviderDriverKind.make("cursor");
@@ -218,6 +219,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
         }),
       ),
       Layer.provideMerge(ModelManifest.layerTest),
+      Layer.provideMerge(ProviderLatestVersions.layer),
       Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
       Layer.provideMerge(NodeServices.layer),
     ),

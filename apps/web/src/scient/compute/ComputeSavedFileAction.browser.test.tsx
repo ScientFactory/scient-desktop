@@ -1,5 +1,6 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import {
   ComputeSessionId,
   ComputeSessionGeneration,
@@ -7,7 +8,7 @@ import {
   type ComputeSessionRecord,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
 import {
   ComputeContextId,
@@ -15,25 +16,27 @@ import {
   useComputeContextStore,
 } from "./computeContextStore";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), submit: vi.fn(), toast: vi.fn() }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => mocks.read }));
@@ -79,31 +82,36 @@ const saved = {
   byteLength: 10,
 };
 
-function pickFile() {
-  mount(<ComputeSavedFileAction {...props} />);
-  const button = host.querySelector<HTMLButtonElement>("button[title]");
+async function pickFile(_fixture: _Fixture) {
+  await mount(_fixture, <ComputeSavedFileAction {...props} />);
+  const button = _fixture.host.querySelector<HTMLButtonElement>("button[title]");
   expect(button).not.toBeNull();
-  act(() => button!.click());
+  await act(() => button!.click());
   const picker = [...document.querySelectorAll("button")].find(
     (button) => button.textContent === "Select run.py",
   );
   expect(picker).toBeDefined();
-  act(() => picker!.click());
+  await act(() => picker!.click());
 }
 
-beforeEach(() => {
+async function _setupFixture2(_fixture: _Fixture) {
   vi.clearAllMocks();
   useComputeContextStore.setState({ bindings: {} });
   ensureComputeContext({ contextId, environmentId, cwd: "/synthetic" });
   useComputeContextStore.getState().reserveSession({ contextId, sessionId, generation });
   useComputeContextStore.getState().bindSession({ contextId, sessionId, generation });
-});
+}
 
 describe("standalone saved-file action", () => {
   it("submits freshly read bytes to this exact session, not another file tab", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.read.mockResolvedValue({ _tag: "Success", value: saved });
     mocks.submit.mockResolvedValue({ _tag: "Success", value: { request: { sessionId } } });
-    pickFile();
+    await pickFile(_fixture);
     await vi.waitFor(() => expect(props.onSubmitted).toHaveBeenCalledOnce());
     expect(mocks.submit).toHaveBeenCalledWith({
       environmentId,
@@ -117,20 +125,30 @@ describe("standalone saved-file action", () => {
     });
   });
   it("does not submit when Stop takes ownership during the file read", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     let resolveRead!: (value: unknown) => void;
     const pendingRead = new Promise<unknown>((resolve) => {
       resolveRead = resolve;
     });
     mocks.read.mockReturnValue(pendingRead);
-    pickFile();
+    await pickFile(_fixture);
     useComputeContextStore.getState().markClosing(contextId);
     resolveRead({ _tag: "Success", value: saved });
     await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledOnce());
     expect(mocks.submit).not.toHaveBeenCalled();
   });
   it("reports a read failure without running or replacing the session", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     mocks.read.mockRejectedValue(new Error("File removed"));
-    pickFile();
+    await pickFile(_fixture);
     await vi.waitFor(() =>
       expect(mocks.toast).toHaveBeenCalledWith(
         expect.objectContaining({ description: "File removed" }),
@@ -140,3 +158,22 @@ describe("standalone saved-file action", () => {
     expect(useComputeContextStore.getState().bindings[contextId]?.sessionId).toBe(sessionId);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

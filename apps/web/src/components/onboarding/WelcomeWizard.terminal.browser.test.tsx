@@ -1,3 +1,4 @@
+import { act, render, type Screen } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
   BearerConnectionTarget,
@@ -23,9 +24,8 @@ import {
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
 
 import "~/index.css";
 
@@ -239,7 +239,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-const roots: Root[] = [];
+
 function pageText() {
   return document.body.textContent ?? "";
 }
@@ -258,27 +258,24 @@ async function click(label: string) {
 function hasViewport() {
   return document.querySelector("[data-terminal-viewport]") !== null;
 }
-async function enterRemoteAgents(resumeEnvironmentId?: EnvironmentId) {
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <WelcomeWizard
-          localAvailable
-          onDone={state.done}
-          {...(resumeEnvironmentId === undefined ? {} : { resumeEnvironmentId })}
-        />
-      </RegistryContext.Provider>,
-    ),
+async function enterRemoteAgents(screen: Screen, resumeEnvironmentId?: EnvironmentId) {
+  await screen.rerender(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomeWizard
+        localAvailable
+        onDone={state.done}
+        {...(resumeEnvironmentId === undefined ? {} : { resumeEnvironmentId })}
+      />
+    </RegistryContext.Provider>,
   );
   if (resumeEnvironmentId === undefined) await click("Continue");
   expect(pageText()).toContain("Paired computer");
 }
 
-beforeEach(() => {
+function setup() {
+  state.sessions.clear();
+  state.providers.clear();
+  state.configs.clear();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
       id,
@@ -319,19 +316,13 @@ beforeEach(() => {
   state.complete.mockReset().mockResolvedValue(undefined);
   state.done.mockReset();
   state.codexModeChange = null;
-});
-
-afterEach(async () => {
-  for (const root of roots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
-  state.sessions.clear();
-  state.providers.clear();
-  state.configs.clear();
-});
+}
 
 describe("welcome agent terminal setup", () => {
   it("requires providers:manage for Codex setup and rechecks a retained mode callback", async () => {
+    setup();
     const configAtom = state.configs.get(remoteId)!;
+    using _config = { [Symbol.dispose]: appAtomRegistry.mount(configAtom) };
     const config = appAtomRegistry.get(configAtom);
     appAtomRegistry.set(configAtom, {
       ...config,
@@ -349,11 +340,12 @@ describe("welcome agent terminal setup", () => {
     expect(
       appAtomRegistry.get(configAtom).settings.providerInstances[signedOutCodex.instanceId]?.config,
     ).toMatchObject({ setupMode: "managed" });
-    await enterRemoteAgents(remoteId);
+    await using screen = await render(null);
+    await enterRemoteAgents(screen, remoteId);
 
-    const setup = document.querySelector("[data-codex-setup]");
-    if (!setup) throw new Error("Codex setup component was not rendered");
-    expect(setup.getAttribute("data-read-only")).toBe("true");
+    const setupElement = document.querySelector("[data-codex-setup]");
+    if (!setupElement) throw new Error("Codex setup component was not rendered");
+    expect(setupElement.getAttribute("data-read-only")).toBe("true");
     const deniedButton = button("Use existing CLI");
     expect(deniedButton.disabled).toBe(true);
     await act(async () => state.codexModeChange?.("existing"));
@@ -378,8 +370,10 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
+    setup();
+    await using screen = await render(null);
     setAccess(remoteId, false);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     expect(button("Install").disabled).toBe(true);
     expect(button("Sign in").disabled).toBe(true);
     expect(pageText()).toContain("This connection cannot control terminals.");
@@ -397,8 +391,10 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("rejects a retained install action after revocation and allows a terminal-only regrant", async () => {
+    setup();
+    await using screen = await render(null);
     setAccess(primaryId, false);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     const install = button("Install");
     // The click reaches the still-enabled button before React re-renders the revocation.
     await act(async () => {
@@ -440,8 +436,10 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("pretypes the selected provider's sign-in command without executing it", async () => {
+    setup();
+    await using screen = await render(null);
     setAccess(primaryId, false);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     await click("Sign in");
     expect(state.open).toHaveBeenCalledExactlyOnceWith({
       environmentId: remoteId,
@@ -464,8 +462,10 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("checks access when a queued retry starts and recovers after regrant", async () => {
+    setup();
+    await using screen = await render(null);
     state.open.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Could not open"))));
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     await click("Install");
     const closing = deferred<CommandResult>();
     state.close.mockReturnValueOnce(closing.promise);
@@ -487,9 +487,11 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("keeps an accepted terminal visible without pretyping when access is revoked during open", async () => {
+    setup();
+    await using screen = await render(null);
     const opening = deferred<CommandResult>();
     state.open.mockReturnValueOnce(opening.promise);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     await click("Install");
     await act(async () => {
       setAccess(remoteId, false);
@@ -511,9 +513,11 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("settles accepted pretyping locally after revocation without closing the PTY", async () => {
+    setup();
+    await using screen = await render(null);
     const writing = deferred<CommandResult>();
     state.write.mockReturnValueOnce(writing.promise);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     await click("Sign in");
     await act(async () => {
       setAccess(remoteId, false);
@@ -532,9 +536,11 @@ describe("welcome agent terminal setup", () => {
   });
 
   it("rechecks the original environment when cleanup runs after pending pretyping", async () => {
+    setup();
+    await using screen = await render(null);
     const writing = deferred<CommandResult>();
     state.write.mockReturnValueOnce(writing.promise);
-    await enterRemoteAgents();
+    await enterRemoteAgents(screen);
     await click("Install");
     await click("Connect, step 1");
     expect(state.close).not.toHaveBeenCalled();

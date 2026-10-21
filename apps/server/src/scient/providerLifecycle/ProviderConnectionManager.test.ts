@@ -167,6 +167,7 @@ function makeHarness(options?: {
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
+      refreshAfterUpdate: () => Ref.get(providersRef),
       refreshInstance: (instanceId) =>
         refreshInstance(instanceId, false).pipe(Effect.catch(() => Ref.get(providersRef))),
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),

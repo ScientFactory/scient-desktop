@@ -317,14 +317,12 @@ describe("CodexAdapterV2 process spawning", () => {
           model: "gpt-5.4",
           config: {
             ...CodexAdapterV2.CODEX_THREAD_CONFIG,
-            mcp_servers: {
-              scient: {
-                url: "http://127.0.0.1:43123/mcp",
-                // Above the one-hour MCP wait cap, so the server's wait timeout ends long calls.
-                tool_timeout_sec: 3_900,
-                http_headers: {
-                  Authorization: "Bearer secret-codex-token",
-                },
+            "mcp_servers.scient": {
+              url: "http://127.0.0.1:43123/mcp",
+              // Above the one-hour MCP wait cap, so the server's wait timeout ends long calls.
+              tool_timeout_sec: 3_900,
+              http_headers: {
+                Authorization: "Bearer secret-codex-token",
               },
             },
           },

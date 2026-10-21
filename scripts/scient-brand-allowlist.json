@@ -206,6 +206,20 @@
   },
   {
     "path": "apps/server/src/server.ts",
+    "line": "\"T3 Connect relay is still unavailable; retrying the desired link in the background\",",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Unchanged upstream diagnostic names the T3-operated relay; this reconciliation path is unreachable without cloud public configuration."
+  },
+  {
+    "path": "apps/server/src/telemetry/Identify.ts",
+    "line": "Effect.logWarning(\"Failed to read the linked T3 Connect account for telemetry\", {",
+    "rules": ["t3-connect"],
+    "kind": "internal",
+    "reason": "Unchanged upstream diagnostic in retained identity helpers, not a Scient production mount. This exemption does not authorize identity collection."
+  },
+  {
+    "path": "apps/server/src/server.ts",
     "line": "Effect.logWarning(\"Failed to reconcile T3 Connect desired link on startup\", {",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
@@ -485,13 +499,6 @@
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "packages/client-runtime/src/errors/network.ts",
-    "line": "\"Your DNS or firewall may be blocking T3 Connect. Try another network, such as a phone hotspot.\";",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
     "path": "packages/client-runtime/src/errors/transport.ts",
     "line": "/Unable to connect to the T3 server WebSocket\\./i,",
     "rules": ["bare-t3"],
@@ -508,13 +515,6 @@
   {
     "path": "packages/provider-acp-registry/src/server/driver.ts",
     "line": "`Set ${advertisedAuthMethod.envVarNames!.join(\", \")} under this instance's environment variables in provider settings. ${input.productName ?? \"T3 Code\"} will detect it on the next provider refresh.`",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
-    "path": "packages/provider-core/src/server/runtimeInstructions.ts",
-    "line": "When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked. When asked to monitor, watch, or babysit a PR and watch_pull_request is available, call it and end your turn: T3 Code wakes you when checks finish, someone else comments, or the branch conflicts, so do not poll or run your own watcher. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "overridden-default",
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."

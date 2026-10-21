@@ -1,19 +1,18 @@
+import { render as _fixtureRender, type Screen } from "../../../../test/render";
 import "../../../index.css";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+
+import { expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { ProjectWriteFileError } from "@t3tools/contracts";
 
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   document.documentElement.classList.remove("dark");
-});
+}
 
 const quiet = {
   attention: null,
@@ -38,22 +37,26 @@ const diskFull = new ProjectWriteFileError({
 });
 
 /** The notice reads only its lease's snapshot; each state is drawn without a coordinator. */
-async function show(name: string, snapshot: Readonly<Record<string, unknown>>) {
+async function show(_fixture: _Fixture, name: string, snapshot: Readonly<Record<string, unknown>>) {
   await page.viewport(1100, 400);
-  host = document.createElement("div");
-  host.style.cssText = "width:1100px";
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1100px";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   const current = { ...quiet, ...snapshot };
   const lease = {
     subscribe: () => () => {},
     getSnapshot: () => current,
     getPendingInput: () => null,
   } as unknown as MarkdownPersistenceLease;
-  root.render(<ScientMarkdownPersistenceNotice persistence={lease} onOpenFile={() => {}} />);
-  await expect.poll(() => host!.querySelector("[role=region]")).toBeTruthy();
+  await _fixture.root0.rerender(
+    <ScientMarkdownPersistenceNotice persistence={lease} onOpenFile={() => {}} />,
+  );
+  await expect.poll(() => _fixture.host!.querySelector("[role=region]")).toBeTruthy();
   const directory = import.meta.env.VITE_SCIENT_SAVE_NOTICE_SCREENSHOTS;
-  const element = host.querySelector<HTMLElement>("[role=region]")!;
+  const element = _fixture.host.querySelector<HTMLElement>("[role=region]")!;
   if (directory) await page.screenshot({ path: `${directory}/${name}.png`, element });
   return element;
 }
@@ -73,7 +76,10 @@ it.each([
   ["conflict", { pending: true, conflict: { externalSource: "Newer", externalRevision: "r2" } }],
   ["missing", { currentMissing: true, pending: true }],
 ] as const)("draws the %s notice as one compact line", async (name, snapshot) => {
-  const region = await show(name, snapshot);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const region = await show(_fixture, name, snapshot);
   // One line of text and buttons, not a block of paragraphs.
   expect(region.getBoundingClientRect().height).toBeLessThanOrEqual(44);
   expect(region.scrollWidth).toBeLessThanOrEqual(region.clientWidth);
@@ -81,8 +87,11 @@ it.each([
 });
 
 it("opens technical details beneath the line and keeps them out of the sentence", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   document.documentElement.classList.add("dark");
-  const region = await show("refused-dark", {
+  const region = await show(_fixture, "refused-dark", {
     attention: "outcome_unknown",
     error: diskFull,
     pending: true,
@@ -98,3 +107,22 @@ it("opens technical details beneath the line and keeps them out of the sentence"
   if (directory)
     await page.screenshot({ path: `${directory}/refused-details-dark.png`, element: region });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

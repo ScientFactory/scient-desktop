@@ -175,18 +175,17 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.ignoreCause());
 
-  const publish = (
+  const publish = Effect.fn("PandocManagedTool.publish")(function* (
     update: (
       current: ScientPandocInstallState,
     ) => Omit<ScientPandocInstallState, "updatedAtEpochMs">,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      return yield* Ref.updateAndGet(stateRef, (current) => ({
-        ...update(current),
-        updatedAtEpochMs: now,
-      }));
-    });
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    return yield* Ref.updateAndGet(stateRef, (current) => ({
+      ...update(current),
+      updatedAtEpochMs: now,
+    }));
+  });
 
   const phase = (next: ScientPandocInstallState["state"]) =>
     publish((current) => ({ ...current, state: next, failureReason: null }));
@@ -198,234 +197,234 @@ export const make = Effect.gen(function* () {
     return installed !== null && installed.executable === unstartable ? null : installed;
   });
 
-  const toolStatus = (install: ScientPandocInstallState) =>
-    Effect.gen(function* () {
-      const installed = yield* currentInstall;
-      const reinstallRequired = installed === null && (yield* Ref.get(unstartableRef)) !== null;
-      return {
-        version: manifest.version,
-        license: manifest.license,
-        sourceUrl: manifest.sourceUrl,
-        installed: installed !== null,
-        canInstall: asset !== null,
-        unavailableReason: lookup.supported ? null : lookup.message,
-        downloadBytes: asset?.sizeBytes ?? null,
-        install,
-        ...(reinstallRequired ? { reinstallRequired: true } : {}),
-      } satisfies ScientPandocToolStatus;
-    });
+  const toolStatus = Effect.fn("PandocManagedTool.toolStatus")(function* (
+    install: ScientPandocInstallState,
+  ) {
+    const installed = yield* currentInstall;
+    const reinstallRequired = installed === null && (yield* Ref.get(unstartableRef)) !== null;
+    return {
+      version: manifest.version,
+      license: manifest.license,
+      sourceUrl: manifest.sourceUrl,
+      installed: installed !== null,
+      canInstall: asset !== null,
+      unavailableReason: lookup.supported ? null : lookup.message,
+      downloadBytes: asset?.sizeBytes ?? null,
+      install,
+      ...(reinstallRequired ? { reinstallRequired: true } : {}),
+    } satisfies ScientPandocToolStatus;
+  });
 
-  const openArtifact = (url: string) =>
-    Effect.gen(function* () {
-      let current = url;
-      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-        const rejection = artifactUrlRejection(current, PANDOC_ALLOWED_HOSTS);
-        if (rejection !== null) return yield* failInstall("download-failed", rejection);
-        const response = yield* Effect.tryPromise({
-          try: (signal) => fetch(current, { redirect: "manual", signal }),
-          catch: (cause) =>
-            new PandocInstallFailure({
-              reason: "download-failed",
-              detail: `Scient could not reach the Pandoc download: ${String(cause)}`,
-            }),
-        });
-        if (response.status < 300 || response.status >= 400) return response;
-        const location = response.headers.get("location");
-        yield* Effect.promise(async () => {
-          await response.body?.cancel().catch(() => undefined);
-        });
-        if (location === null) {
-          return yield* failInstall("download-failed", "The Pandoc download redirected nowhere.");
-        }
-        current = new URL(location, current).href;
-      }
-      return yield* failInstall(
-        "download-failed",
-        "The Pandoc download redirected too many times.",
-      );
-    });
-
-  const download = (input: { readonly asset: PandocAsset; readonly destination: string }) =>
-    Effect.gen(function* () {
-      const response = yield* openArtifact(input.asset.url);
-      const body = response.body;
-      if (!response.ok || body === null) {
-        yield* Effect.promise(async () => {
-          await response.body?.cancel().catch(() => undefined);
-        });
-        return yield* failInstall(
-          "download-failed",
-          `The Pandoc download answered with HTTP ${String(response.status)}.`,
-        );
-      }
-      const declared = Number.parseInt(response.headers.get("content-length") ?? "", 10);
-      if (Number.isSafeInteger(declared) && declared !== input.asset.sizeBytes) {
-        yield* Effect.promise(async () => {
-          await body.cancel().catch(() => undefined);
-        });
-        return yield* failInstall(
-          "download-failed",
-          "The Pandoc download is not the size Scient pinned.",
-        );
-      }
-
-      const receivedRef = yield* Ref.make(0);
-      const publishedRef = yield* Ref.make(0);
-      yield* publish((current) => ({
-        ...current,
-        state: "downloading",
-        bytesReceived: 0,
-        totalBytes: input.asset.sizeBytes,
-        failureReason: null,
-      }));
-
-      yield* Stream.fromReadableStream<Uint8Array, PandocInstallFailure>({
-        evaluate: () => body,
-        onError: (cause) =>
+  const openArtifact = Effect.fn("PandocManagedTool.openArtifact")(function* (url: string) {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const rejection = artifactUrlRejection(current, PANDOC_ALLOWED_HOSTS);
+      if (rejection !== null) return yield* failInstall("download-failed", rejection);
+      const response = yield* Effect.tryPromise({
+        try: (signal) => fetch(current, { redirect: "manual", signal }),
+        catch: (cause) =>
           new PandocInstallFailure({
             reason: "download-failed",
-            detail: `The Pandoc download was interrupted: ${String(cause)}`,
+            detail: `Scient could not reach the Pandoc download: ${String(cause)}`,
           }),
-      }).pipe(
-        Stream.tap((chunk) =>
-          Effect.gen(function* () {
-            const received = yield* Ref.updateAndGet(
-              receivedRef,
-              (total) => total + chunk.byteLength,
-            );
-            if (received > input.asset.sizeBytes) {
-              return yield* failInstall(
-                "download-failed",
-                "The Pandoc download is larger than Scient pinned.",
-              );
-            }
-            const published = yield* Ref.get(publishedRef);
-            if (received - published < PROGRESS_STEP_BYTES && received !== input.asset.sizeBytes) {
-              return;
-            }
-            yield* Ref.set(publishedRef, received);
-            yield* publish((current) => ({ ...current, bytesReceived: received }));
-          }),
-        ),
-        Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            failInstall(
+      });
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.get("location");
+      yield* Effect.promise(async () => {
+        await response.body?.cancel().catch(() => undefined);
+      });
+      if (location === null) {
+        return yield* failInstall("download-failed", "The Pandoc download redirected nowhere.");
+      }
+      current = new URL(location, current).href;
+    }
+    return yield* failInstall("download-failed", "The Pandoc download redirected too many times.");
+  });
+
+  const download = Effect.fn("PandocManagedTool.download")(function* (input: {
+    readonly asset: PandocAsset;
+    readonly destination: string;
+  }) {
+    const response = yield* openArtifact(input.asset.url);
+    const body = response.body;
+    if (!response.ok || body === null) {
+      yield* Effect.promise(async () => {
+        await response.body?.cancel().catch(() => undefined);
+      });
+      return yield* failInstall(
+        "download-failed",
+        `The Pandoc download answered with HTTP ${String(response.status)}.`,
+      );
+    }
+    const declared = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+    if (Number.isSafeInteger(declared) && declared !== input.asset.sizeBytes) {
+      yield* Effect.promise(async () => {
+        await body.cancel().catch(() => undefined);
+      });
+      return yield* failInstall(
+        "download-failed",
+        "The Pandoc download is not the size Scient pinned.",
+      );
+    }
+
+    const receivedRef = yield* Ref.make(0);
+    const publishedRef = yield* Ref.make(0);
+    yield* publish((current) => ({
+      ...current,
+      state: "downloading",
+      bytesReceived: 0,
+      totalBytes: input.asset.sizeBytes,
+      failureReason: null,
+    }));
+
+    yield* Stream.fromReadableStream<Uint8Array, PandocInstallFailure>({
+      evaluate: () => body,
+      onError: (cause) =>
+        new PandocInstallFailure({
+          reason: "download-failed",
+          detail: `The Pandoc download was interrupted: ${String(cause)}`,
+        }),
+    }).pipe(
+      Stream.tap((chunk) =>
+        Effect.gen(function* () {
+          const received = yield* Ref.updateAndGet(
+            receivedRef,
+            (total) => total + chunk.byteLength,
+          );
+          if (received > input.asset.sizeBytes) {
+            return yield* failInstall(
               "download-failed",
-              `Scient could not save the Pandoc download: ${cause.message}`,
-            ),
+              "The Pandoc download is larger than Scient pinned.",
+            );
+          }
+          const published = yield* Ref.get(publishedRef);
+          if (received - published < PROGRESS_STEP_BYTES && received !== input.asset.sizeBytes) {
+            return;
+          }
+          yield* Ref.set(publishedRef, received);
+          yield* publish((current) => ({ ...current, bytesReceived: received }));
         }),
-        Effect.timeoutOption(DOWNLOAD_TIMEOUT),
-        Effect.flatMap((finished) =>
-          Option.isSome(finished)
-            ? Effect.void
-            : failInstall("download-failed", "The Pandoc download took too long and was stopped."),
-        ),
+      ),
+      Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall(
+            "download-failed",
+            `Scient could not save the Pandoc download: ${cause.message}`,
+          ),
+      }),
+      Effect.timeoutOption(DOWNLOAD_TIMEOUT),
+      Effect.flatMap((finished) =>
+        Option.isSome(finished)
+          ? Effect.void
+          : failInstall("download-failed", "The Pandoc download took too long and was stopped."),
+      ),
+    );
+
+    if ((yield* Ref.get(receivedRef)) !== input.asset.sizeBytes) {
+      return yield* failInstall(
+        "download-failed",
+        "The Pandoc download ended early and is incomplete.",
       );
+    }
+  });
 
-      if ((yield* Ref.get(receivedRef)) !== input.asset.sizeBytes) {
-        return yield* failInstall(
-          "download-failed",
-          "The Pandoc download ended early and is incomplete.",
-        );
-      }
-    });
-
-  const verify = (input: { readonly asset: PandocAsset; readonly archivePath: string }) =>
-    Effect.gen(function* () {
-      yield* phase("verifying");
-      const digest = yield* fileSystem.stream(input.archivePath).pipe(
-        Stream.runFold(
-          () => NodeCrypto.createHash("sha256"),
-          (hash, chunk) => hash.update(chunk),
-        ),
-        Effect.map((hash) => hash.digest("hex")),
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            failInstall(
-              "install-failed",
-              `Scient could not read the Pandoc download: ${cause.message}`,
-            ),
-        }),
+  const verify = Effect.fn("PandocManagedTool.verify")(function* (input: {
+    readonly asset: PandocAsset;
+    readonly archivePath: string;
+  }) {
+    yield* phase("verifying");
+    const digest = yield* fileSystem.stream(input.archivePath).pipe(
+      Stream.runFold(
+        () => NodeCrypto.createHash("sha256"),
+        (hash, chunk) => hash.update(chunk),
+      ),
+      Effect.map((hash) => hash.digest("hex")),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall(
+            "install-failed",
+            `Scient could not read the Pandoc download: ${cause.message}`,
+          ),
+      }),
+    );
+    if (digest !== input.asset.sha256.toLowerCase()) {
+      return yield* failInstall(
+        "checksum-mismatch",
+        "The Pandoc download does not match the digest Scient pinned.",
       );
-      if (digest !== input.asset.sha256.toLowerCase()) {
-        return yield* failInstall(
-          "checksum-mismatch",
-          "The Pandoc download does not match the digest Scient pinned.",
-        );
-      }
-    });
+    }
+  });
 
-  const unpackAndValidate = (input: {
+  const unpackAndValidate = Effect.fn("PandocManagedTool.unpackAndValidate")(function* (input: {
     readonly asset: PandocAsset;
     readonly archivePath: string;
     readonly payloadPath: string;
-  }) =>
-    Effect.gen(function* () {
-      yield* phase("unpacking");
-      yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+  }) {
+    yield* phase("unpacking");
+    yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
+      }),
+    );
+    yield* unpacker
+      .unpack({
+        archivePath: input.archivePath,
+        destination: input.payloadPath,
+        archive: input.asset.archive,
+      })
+      .pipe(Effect.catch((cause) => failInstall("unpack-failed", cause.detail)));
+    const executable = path.join(input.payloadPath, input.asset.executableRelativePath);
+    const present = yield* fileSystem.exists(executable).pipe(Effect.orElseSucceed(() => false));
+    if (!present) {
+      return yield* failInstall(
+        "unpack-failed",
+        "The Pandoc download did not contain the program Scient expected.",
+      );
+    }
+    if (platform !== "win32") {
+      yield* fileSystem.chmod(executable, 0o755).pipe(
         Effect.catchTags({
           PlatformError: (cause) =>
-            failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
+            failInstall(
+              "unpack-failed",
+              `Scient could not make Pandoc executable: ${cause.message}`,
+            ),
         }),
       );
-      yield* unpacker
-        .unpack({
-          archivePath: input.archivePath,
-          destination: input.payloadPath,
-          archive: input.asset.archive,
-        })
-        .pipe(Effect.catch((cause) => failInstall("unpack-failed", cause.detail)));
-      const executable = path.join(input.payloadPath, input.asset.executableRelativePath);
-      const present = yield* fileSystem.exists(executable).pipe(Effect.orElseSucceed(() => false));
-      if (!present) {
-        return yield* failInstall(
-          "unpack-failed",
-          "The Pandoc download did not contain the program Scient expected.",
-        );
-      }
-      if (platform !== "win32") {
-        yield* fileSystem.chmod(executable, 0o755).pipe(
-          Effect.catchTags({
-            PlatformError: (cause) =>
-              failInstall(
-                "unpack-failed",
-                `Scient could not make Pandoc executable: ${cause.message}`,
-              ),
-          }),
-        );
-      }
-      // Prove the binary starts, under the same isolation every conversion
-      // uses, and is the pinned release, before the state file can name it.
-      const output = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const scratch = yield* makePandocScratch(paths.scratchRoot);
-          return yield* runPandoc({
-            pandoc: { command: executable, leadingArgs: [] },
-            args: ["--version"],
-            stdin: new Uint8Array(0),
-            scratch,
-            limits: VALIDATION_LIMITS,
-            platform,
-            hostEnvironment,
-          });
-        }),
-      ).pipe(
-        Effect.catch((cause) =>
-          failInstall("unpack-failed", `The unpacked Pandoc did not start: ${cause.message}`),
-        ),
+    }
+    // Prove the binary starts, under the same isolation every conversion
+    // uses, and is the pinned release, before the state file can name it.
+    const output = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const scratch = yield* makePandocScratch(paths.scratchRoot);
+        return yield* runPandoc({
+          pandoc: { command: executable, leadingArgs: [] },
+          args: ["--version"],
+          stdin: new Uint8Array(0),
+          scratch,
+          limits: VALIDATION_LIMITS,
+          platform,
+          hostEnvironment,
+        });
+      }),
+    ).pipe(
+      Effect.catch((cause) =>
+        failInstall("unpack-failed", `The unpacked Pandoc did not start: ${cause.message}`),
+      ),
+    );
+    const banner = new TextDecoder().decode(output.stdout).split(/\r?\n/u)[0]?.trim() ?? "";
+    if (banner !== `pandoc ${manifest.version}`) {
+      return yield* failInstall(
+        "unpack-failed",
+        `The unpacked program reported "${banner.slice(0, 80)}", not Pandoc ${manifest.version}.`,
       );
-      const banner = new TextDecoder().decode(output.stdout).split(/\r?\n/u)[0]?.trim() ?? "";
-      if (banner !== `pandoc ${manifest.version}`) {
-        return yield* failInstall(
-          "unpack-failed",
-          `The unpacked program reported "${banner.slice(0, 80)}", not Pandoc ${manifest.version}.`,
-        );
-      }
-    });
+    }
+  });
 
-  const promote = (payloadPath: string, installable: PandocAsset) =>
-    Effect.gen(function* () {
+  const promote = Effect.fn("PandocManagedTool.promote")(
+    function* (payloadPath: string, installable: PandocAsset) {
       const installRoot = managedPandocInstallRoot({
         managedRoot: paths.managedRoot,
         version: manifest.version,
@@ -442,20 +441,23 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.orDie);
       yield* writeFileStringAtomically({ filePath: paths.statePath, contents, durable: true });
       return installRoot;
-    }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
-      }),
-    );
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
+        }),
+      ),
+  );
 
   /**
    * Best-effort removal of install directories nothing points to any more,
    * run only after the state file names the new tree. A removal that fails (an
    * old `pandoc.exe` still running) is left for the next install.
    */
-  const cleanupSupersededInstalls = (promotedRoot: string) =>
-    Effect.gen(function* () {
+  const cleanupSupersededInstalls = Effect.fn("PandocManagedTool.cleanupSupersededInstalls")(
+    function* (promotedRoot: string) {
       const contents = yield* fileSystem
         .readFileString(paths.statePath)
         .pipe(Effect.orElseSucceed(() => null));
@@ -482,10 +484,12 @@ export const make = Effect.gen(function* () {
         },
         { discard: true },
       );
-    }).pipe(Effect.ignoreCause());
+    },
+    (effect) => effect.pipe(Effect.ignoreCause()),
+  );
 
-  const runInstall = (installable: PandocAsset) =>
-    Effect.gen(function* () {
+  const runInstall = Effect.fn("PandocManagedTool.runInstall")(
+    function* (installable: PandocAsset) {
       // Whatever an interrupted earlier install left in staging is not this
       // run's; the single-flight gate means no install of this process owns it.
       yield* fileSystem
@@ -509,53 +513,56 @@ export const make = Effect.gen(function* () {
           fileSystem.remove(staging, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
         ),
       );
-    }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-      }),
-      Effect.timeoutOption(INSTALL_TIMEOUT),
-      Effect.flatMap((finished) =>
-        Option.isSome(finished)
-          ? Ref.set(unstartableRef, null).pipe(
-              Effect.andThen(
-                publish(() => ({
-                  state: "ready",
-                  bytesReceived: null,
-                  totalBytes: null,
-                  failureReason: null,
-                })),
-              ),
-            )
-          : failInstall("install-failed", "Installing Pandoc took too long and was stopped."),
-      ),
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("scient pandoc managed install failed", {
-            reason: cause.reason,
-            detail: cause.detail,
-          });
-          yield* publish(() => ({
-            state: "failed",
-            bytesReceived: null,
-            totalBytes: null,
-            failureReason: cause.reason,
-          }));
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
         }),
+        Effect.timeoutOption(INSTALL_TIMEOUT),
+        Effect.flatMap((finished) =>
+          Option.isSome(finished)
+            ? Ref.set(unstartableRef, null).pipe(
+                Effect.andThen(
+                  publish(() => ({
+                    state: "ready",
+                    bytesReceived: null,
+                    totalBytes: null,
+                    failureReason: null,
+                  })),
+                ),
+              )
+            : failInstall("install-failed", "Installing Pandoc took too long and was stopped."),
+        ),
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("scient pandoc managed install failed", {
+              reason: cause.reason,
+              detail: cause.detail,
+            });
+            yield* publish(() => ({
+              state: "failed",
+              bytesReceived: null,
+              totalBytes: null,
+              failureReason: cause.reason,
+            }));
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("scient pandoc managed install crashed", { cause });
+            yield* publish(() => ({
+              state: "failed",
+              bytesReceived: null,
+              totalBytes: null,
+              failureReason: "install-failed",
+            }));
+          }),
+        ),
+        Effect.provideContext(installContext),
       ),
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("scient pandoc managed install crashed", { cause });
-          yield* publish(() => ({
-            state: "failed",
-            bytesReceived: null,
-            totalBytes: null,
-            failureReason: "install-failed",
-          }));
-        }),
-      ),
-      Effect.provideContext(installContext),
-    );
+  );
 
   const install = startGate.withPermits(1)(
     Effect.gen(function* () {

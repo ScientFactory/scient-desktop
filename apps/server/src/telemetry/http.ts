@@ -19,6 +19,7 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
       yield* Effect.serviceOption(AnalyticsService.AnalyticsService),
       () =>
         AnalyticsService.AnalyticsService.of({
+          recordOwners: () => Effect.void,
           record: () => Effect.void,
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" }),

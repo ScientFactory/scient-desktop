@@ -1,9 +1,10 @@
 import { EnvironmentId, type DeviceDetail, type DeviceSummary } from "@t3tools/contracts";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
 import * as Cause from "effect/Cause";
-import { act, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 
 type Result = { _tag: "Success"; value: DeviceDetail } | { _tag: "Failure"; cause: unknown };
 const { read, action, subscribe } = vi.hoisted(() => ({
@@ -54,9 +55,12 @@ function deferred() {
   });
   return { promise, resolve };
 }
-let root: Root;
-let controls: DeviceControls;
-function Probe({ visible, access = null }: { visible: boolean; access?: DeviceHubAccess | null }) {
+
+function Probe({
+  _fixture,
+  visible,
+  access = null,
+}: { visible: boolean; access?: DeviceHubAccess | null } & { _fixture: _Fixture }) {
   const next = useDeviceControls({
     environmentId: EnvironmentId.make("environment"),
     device,
@@ -64,148 +68,155 @@ function Probe({ visible, access = null }: { visible: boolean; access?: DeviceHu
     visible,
   });
   useEffect(() => {
-    controls = next;
-  }, [next]);
+    _fixture.publishControls(next);
+  }, [_fixture, next]);
   return null;
 }
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   read.mockReset();
   action.mockReset();
   subscribe.mockReset();
   subscribe.mockReturnValue(() => {});
   read.mockResolvedValue(snapshot("light"));
-  root = createRoot(document.createElement("div"));
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  vi.unstubAllGlobals();
-});
-async function mount() {
-  await act(async () => {
-    root.render(<Probe visible />);
-  });
 }
 
 it("serializes rapid actions and retains confirmed settings while pending or after failure", async () => {
-  await mount();
+  await using _fixture = _createFixture();
+
+  setup();
+  await using _screen = await render(<Probe _fixture={_fixture} visible />);
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
   let pending!: Promise<void>;
   await act(async () => {
-    pending = controls.act({ type: "setAppearance", value: "dark" });
-    await controls.act({ type: "setAppearance", value: "light" });
+    pending = _fixture.controls.act({ type: "setAppearance", value: "dark" });
+    await _fixture.controls.act({ type: "setAppearance", value: "light" });
   });
   expect(action).toHaveBeenCalledOnce();
-  expect(controls.disabled).toBe(true);
-  expect(controls.detail?.settings.appearance).toBe("light");
+  expect(_fixture.controls.disabled).toBe(true);
+  expect(_fixture.controls.detail?.settings.appearance).toBe("light");
   await act(async () => {
     response.resolve(snapshot("dark"));
     await pending;
   });
-  expect(controls.detail?.settings.appearance).toBe("dark");
+  expect(_fixture.controls.detail?.settings.appearance).toBe("dark");
   action.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
-  expect(controls.detail?.settings.appearance).toBe("dark");
-  expect(controls.error).toBe("Device offline");
-  expect(controls.disabled).toBe(false);
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "light" }));
+  expect(_fixture.controls.detail?.settings.appearance).toBe("dark");
+  expect(_fixture.controls.error).toBe("Device offline");
+  expect(_fixture.controls.disabled).toBe(false);
 });
 
 it("serializes host actions across hide/reopen and discards detached results", async () => {
-  await mount();
+  await using _fixture = _createFixture();
+
+  setup();
+  await using screen = await render(<Probe _fixture={_fixture} visible />);
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
   let pending!: Promise<void>;
   await act(async () => {
-    pending = controls.act({ type: "setAppearance", value: "dark" });
+    pending = _fixture.controls.act({ type: "setAppearance", value: "dark" });
   });
-  await act(async () => root.render(<Probe visible={false} />));
-  expect(controls.disabled).toBe(true);
-  await act(async () => root.render(<Probe visible />));
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
+  expect(_fixture.controls.disabled).toBe(true);
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "light" }));
   expect(action).toHaveBeenCalledOnce();
-  expect(controls.disabled).toBe(true);
+  expect(_fixture.controls.disabled).toBe(true);
   const confirmed = deferred();
   read.mockReturnValueOnce(confirmed.promise);
   await act(async () => {
     response.resolve(snapshot("dark"));
     await response.promise;
   });
-  expect(controls.detail?.settings.appearance).toBe("light");
-  expect(controls.disabled).toBe(true);
+  expect(_fixture.controls.detail?.settings.appearance).toBe("light");
+  expect(_fixture.controls.disabled).toBe(true);
   await act(async () => {
     confirmed.resolve(snapshot("dark"));
     await pending;
   });
-  expect(controls.detail?.settings.appearance).toBe("dark");
-  expect(controls.disabled).toBe(false);
+  expect(_fixture.controls.detail?.settings.appearance).toBe("dark");
+  expect(_fixture.controls.disabled).toBe(false);
   action.mockResolvedValueOnce(snapshot("dark"));
-  await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "dark" }));
   expect(action).toHaveBeenCalledTimes(2);
-  expect(controls.detail?.settings.appearance).toBe("dark");
+  expect(_fixture.controls.detail?.settings.appearance).toBe("dark");
 });
 
 it("keeps actions disabled when settings cannot be confirmed after a detached command", async () => {
-  await mount();
+  await using _fixture = _createFixture();
+
+  setup();
+  await using screen = await render(<Probe _fixture={_fixture} visible />);
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
   let pending!: Promise<void>;
   await act(async () => {
-    pending = controls.act({ type: "setAppearance", value: "dark" });
+    pending = _fixture.controls.act({ type: "setAppearance", value: "dark" });
   });
-  await act(async () => root.render(<Probe visible={false} />));
-  await act(async () => root.render(<Probe visible />));
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
   read.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
   await act(async () => {
     response.resolve(snapshot("dark"));
     await pending;
   });
-  expect(controls.detail).toBeNull();
-  expect(controls.disabled).toBe(true);
-  expect(controls.error).toBe("Device offline");
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
+  expect(_fixture.controls.detail).toBeNull();
+  expect(_fixture.controls.disabled).toBe(true);
+  expect(_fixture.controls.error).toBe("Device offline");
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "light" }));
   expect(action).toHaveBeenCalledOnce();
-  await act(async () => root.render(<Probe visible={false} />));
-  await act(async () => root.render(<Probe visible />));
-  expect(controls.disabled).toBe(false);
-  expect(controls.error).toBeNull();
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
+  expect(_fixture.controls.disabled).toBe(false);
+  expect(_fixture.controls.error).toBeNull();
 });
 
 it("disables stale settings after a failed reopen read and recovers on a successful read", async () => {
-  await mount();
-  await act(async () => root.render(<Probe visible={false} />));
+  await using _fixture = _createFixture();
+
+  setup();
+  await using screen = await render(<Probe _fixture={_fixture} visible />);
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
   read.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
-  await act(async () => root.render(<Probe visible />));
-  expect(controls.detail).toBeNull();
-  expect(controls.disabled).toBe(true);
-  expect(controls.error).toBe("Device offline");
-  await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
+  expect(_fixture.controls.detail).toBeNull();
+  expect(_fixture.controls.disabled).toBe(true);
+  expect(_fixture.controls.error).toBe("Device offline");
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "dark" }));
   expect(action).not.toHaveBeenCalled();
-  await act(async () => root.render(<Probe visible={false} />));
-  await act(async () => root.render(<Probe visible />));
-  expect(controls.detail?.settings.appearance).toBe("light");
-  expect(controls.disabled).toBe(false);
-  expect(controls.error).toBeNull();
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
+  expect(_fixture.controls.detail?.settings.appearance).toBe("light");
+  expect(_fixture.controls.disabled).toBe(false);
+  expect(_fixture.controls.error).toBeNull();
 });
 
 it("does not let an older refresh overwrite a newer confirmed action", async () => {
-  await mount();
-  await act(async () => root.render(<Probe visible={false} />));
+  await using _fixture = _createFixture();
+
+  setup();
+  await using screen = await render(<Probe _fixture={_fixture} visible />);
+  await screen.rerender(<Probe _fixture={_fixture} visible={false} />);
   const refresh = deferred();
   read.mockReturnValueOnce(refresh.promise);
-  await act(async () => root.render(<Probe visible />));
+  await screen.rerender(<Probe _fixture={_fixture} visible />);
   action.mockResolvedValueOnce(snapshot("dark"));
-  await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
+  await act(async () => _fixture.controls.act({ type: "setAppearance", value: "dark" }));
   await act(async () => {
     refresh.resolve(snapshot("light"));
     await refresh.promise;
   });
-  expect(controls.detail?.settings.appearance).toBe("dark");
+  expect(_fixture.controls.detail?.settings.appearance).toBe("dark");
 });
 
 it.each(["hidden", "access renewed"] as const)(
   "uses the detail snapshot until a new foreground event after the subscription is %s",
   async (restart) => {
+    await using _fixture = _createFixture();
+
+    setup();
     const access: DeviceHubAccess = {
       httpBase: "https://remote.test/api/device-hub",
       wsBase: "wss://remote.test/api/device-hub",
@@ -218,25 +229,43 @@ it.each(["hidden", "access renewed"] as const)(
       ...detail,
       value: { ...detail.value, foregroundApp: { id: "snapshot.app" } },
     });
-    await act(async () => {
-      root.render(<Probe visible access={access} />);
-    });
+    await using screen = await render(<Probe _fixture={_fixture} visible access={access} />);
     const oldEvent = subscribe.mock.calls[0]![1];
     await act(async () => oldEvent({ id: "previous.live.app" }));
-    expect(controls.foregroundApp?.id).toBe("previous.live.app");
+    expect(_fixture.controls.foregroundApp?.id).toBe("previous.live.app");
     if (restart === "hidden") {
-      await act(async () => root.render(<Probe visible={false} access={access} />));
-      await act(async () => root.render(<Probe visible access={access} />));
+      await screen.rerender(<Probe _fixture={_fixture} visible={false} access={access} />);
+      await screen.rerender(<Probe _fixture={_fixture} visible access={access} />);
     } else {
-      await act(async () =>
-        root.render(<Probe visible access={{ ...access, query: { ticket: "renewed" } }} />),
+      await screen.rerender(
+        <Probe _fixture={_fixture} visible access={{ ...access, query: { ticket: "renewed" } }} />,
       );
     }
-    expect(controls.foregroundApp?.id).toBe("snapshot.app");
+    expect(_fixture.controls.foregroundApp?.id).toBe("snapshot.app");
     await act(async () => oldEvent({ id: "late.previous.app" }));
-    expect(controls.foregroundApp?.id).toBe("snapshot.app");
+    expect(_fixture.controls.foregroundApp?.id).toBe("snapshot.app");
     const newEvent = subscribe.mock.calls[1]![1];
     await act(async () => newEvent({ id: "current.live.app" }));
-    expect(controls.foregroundApp?.id).toBe("current.live.app");
+    expect(_fixture.controls.foregroundApp?.id).toBe("current.live.app");
   },
 );
+
+function _createFixture() {
+  let _published_controls = undefined! as DeviceControls;
+
+  const stack = new AsyncDisposableStack();
+  return {
+    get controls() {
+      return _published_controls;
+    },
+    publishControls(next: typeof _published_controls) {
+      _published_controls = next;
+      return next;
+    },
+    stack,
+    async [Symbol.asyncDispose]() {
+      await stack.disposeAsync();
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

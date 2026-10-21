@@ -5,12 +5,9 @@ import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
 import { resolveInlineCssColor } from "~/scient/markdown/inlineCssColor";
 import { ScientInlineColorCode } from "~/scient/markdown/ScientInlineColorCode";
 // SCIENT-FORK:END
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
-import {
-  buildFileLinkParentSuffixByPath,
-  fileLinkLabel,
-  resolvePathLinkTarget,
-} from "@t3tools/shared/fileLinks";
+import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
@@ -18,7 +15,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 // SCIENT-FORK:START — scientific refinements extend the shared markdown pipeline.
@@ -56,6 +53,7 @@ import {
 // SCIENT-FORK:END
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
+  AssetWorkspaceAssetNotFoundError,
   AuthPreviewOperateScope,
   type AssetResource,
   type EditorId,
@@ -88,6 +86,7 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 // SCIENT-FORK:START ? the Shiki code block (Suspense) moved to scient/presentation.
 import React, {
@@ -176,10 +175,8 @@ import { resolveDiffThemeName } from "../lib/diffRendering";
 // SCIENT-FORK:END
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { useTheme } from "../hooks/useTheme";
-// SCIENT-FORK:START — tables and code blocks here no longer read the word-wrap setting.
+import { useRenderedAppearance } from "../hooks/useTheme";
 import { useClientSettings } from "../hooks/useSettings";
-// SCIENT-FORK:END
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -190,19 +187,27 @@ import {
 import {
   markdownLinkLookupKey,
   resolveInlineCodeFileLinkMeta,
-  markdownFileLinkRelativeCopyPath,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 // SCIENT-FORK:END
+import {
+  markdownFileCopyPaths,
+  markdownFileEditorTarget,
+  resolveMarkdownFileHostPath,
+} from "../markdownFileHostPath";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import {
+  resolveRemoteOpenState,
+  useRemoteOpenResolution,
+  type RemoteOpenMode,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -218,9 +223,12 @@ import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
+import { filesystemEnvironment } from "../state/filesystem";
 import {
   needsWorkspaceBasenameLookup,
+  pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
+  stripRepeatedWorkspacePrefix,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
 import {
@@ -242,11 +250,6 @@ import {
   resolveWorkspaceFileLinkOpenTarget,
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
-import {
-  copyFilePathToClipboard,
-  filePathCopyTitle,
-  type FilePathCopyFormat,
-} from "./files/filePathClipboard";
 import { type ContentDirection, type FixedContentDirection } from "../scient/bidi/contentDirection";
 import { chatCodeBoxDirection } from "../scient/bidi/chatCodeBoxDirection";
 import { useChatContentDirection } from "../scient/bidi/useChatContentDirection";
@@ -286,7 +289,11 @@ import { environmentFileLinkResolution } from "../scient/fileOpening/environment
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
+
 interface ChatMarkdownProps {
+  /** Compact markdown transforms remove blocks before rendering inside a label. */
+  inline?: boolean;
   text: string;
   cwd: string | undefined;
   // SCIENT-FORK:START — file links resolve against the editable workspace root.
@@ -359,6 +366,19 @@ function hasMarkdownFilePrimaryAction(input: {
     input.canOpenInPanel ||
     input.canOpenMedia === true
   );
+}
+
+export function markdownFileCopyMenuItems({
+  workspaceRelativePath,
+}: Pick<MarkdownFileLinkMeta, "workspaceRelativePath">) {
+  const items = [{ id: "copy-full", label: "Copy full path" }];
+  if (workspaceRelativePath !== null) {
+    items.unshift({
+      id: "copy-relative",
+      label: "Copy relative path",
+    });
+  }
+  return items;
 }
 
 // SCIENT-FORK:START — the browser primary action follows the canonical workspace-file policy.
@@ -544,7 +564,11 @@ function extractPreCodeMeta(node: unknown): string | undefined {
   return typeof meta === "string" && meta.trim().length > 0 ? meta.trim() : undefined;
 }
 
-function isClosedCodeFence(node: ReactMarkdownExtraProps["node"], text: string): boolean {
+function isClosedCodeFence(
+  node: ReactMarkdownExtraProps["node"],
+  text: string,
+  code: string,
+): boolean {
   const start = node?.position?.start.offset;
   const end = node?.position?.end.offset;
   if (start === undefined || end === undefined) return false;
@@ -557,7 +581,10 @@ function isClosedCodeFence(node: ReactMarkdownExtraProps["node"], text: string):
     opening !== undefined &&
     closing !== undefined &&
     opening[0] === closing[0] &&
-    closing.length >= opening.length
+    closing.length >= opening.length &&
+    // Only a real closer is omitted from parsed code. A CRLF stream cut after
+    // CR must not count as an extra source line.
+    source.replace(/\r$/, "").split(/\r\n|\r|\n/).length > code.split(/\r\n|\r|\n/).length
   );
 }
 
@@ -664,10 +691,6 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
     return observeResize(table, measureClippedCells);
   }, [measureClippedCells]);
 
-  function toggleExpanded() {
-    setExpanded((value) => !value);
-  }
-
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -736,7 +759,7 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
                   variant={expanded ? "secondary" : "ghost-muted"}
                   size="icon-xs"
                   aria-pressed={expanded}
-                  onClick={toggleExpanded}
+                  onClick={() => setExpanded((value) => !value)}
                   aria-label={expandLabel}
                 />
               }
@@ -836,18 +859,16 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path, not the display path.
-  /** Workspace-relative path with line position; null outside the workspace. */
-  relativeCopyPath: string | null;
-  // SCIENT-FORK:END
+  workspaceRelativePath: string | null;
   panelPath: string | null;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
-  onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
@@ -1554,9 +1575,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path.
-  relativeCopyPath,
-  // SCIENT-FORK:END
+  workspaceRelativePath,
   panelPath,
   line,
   label,
@@ -1570,6 +1589,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenMedia,
   onReveal,
   revealLabel,
+  resolveCopyPaths,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = () => {
     if (!onOpen) {
@@ -1577,7 +1597,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        const result = await onOpen();
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -1703,30 +1723,55 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   };
 
-  // SCIENT-FORK:START — path copies share Scient's file-path clipboard helper.
-  const handleCopy = (value: string, format: FilePathCopyFormat) => {
-    void copyFilePathToClipboard({
-      value,
-      format,
-      onError: (error) => {
+  const handleCopy = (resolveValue: () => Promise<string>, title: string) => {
+    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: "Clipboard API unavailable.",
+        }),
+      );
+      return;
+    }
+
+    const value = resolveValue().then((text) => formatFilePathForClipboard(text, targetPath));
+    // Start the write before workspace lookup finishes so Safari retains the user gesture.
+    const write =
+      typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined"
+        ? navigator.clipboard.write([
+            new ClipboardItem({
+              "text/plain": value.then((text) => new Blob([text], { type: "text/plain" })),
+            }),
+          ])
+        : value.then((text) => navigator.clipboard.writeText(text));
+    void Promise.all([write, value]).then(
+      ([, text]) => {
+        toastManager.add({
+          type: "success",
+          title: `${title} copied`,
+          description: text,
+        });
+      },
+      (error) => {
         reportMarkdownActionFailure(
           {
             operation: "copy-file-path",
             target: targetPath,
-            copyTarget: filePathCopyTitle(format),
+            copyTarget: title,
           },
           error,
         );
       },
-    });
+    );
   };
-  // SCIENT-FORK:END
 
   const showFileContextMenu = async (position: { x: number; y: number }) => {
     const api = readLocalApi();
     if (!api) return;
 
     try {
+      const copyItems = markdownFileCopyMenuItems({ workspaceRelativePath });
       const clicked = await api.contextMenu.show(
         [
           ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
@@ -1735,12 +1780,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-          // SCIENT-FORK:START — no relative path outside the workspace.
-          ...(relativeCopyPath !== null
-            ? ([{ id: "copy-relative", label: "Copy relative path" }] as const)
-            : []),
-          // SCIENT-FORK:END
-          { id: "copy-full", label: "Copy full path" },
+          ...copyItems.map(({ id, label }) => ({ id, label })),
         ] as const,
         position,
       );
@@ -1761,15 +1801,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleRevealInFileManager();
         return;
       }
-      // SCIENT-FORK:START — the relative copy uses the workspace-relative path.
-      if (clicked === "copy-relative" && relativeCopyPath !== null) {
-        handleCopy(relativeCopyPath, "relative");
-        return;
+      if (clicked === "copy-relative" || clicked === "copy-full") {
+        handleCopy(
+          () =>
+            resolveCopyPaths().then((paths) =>
+              clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+            ),
+          clicked === "copy-relative" ? "Relative path" : "Full path",
+        );
       }
-      if (clicked === "copy-full") {
-        handleCopy(targetPath, "full");
-      }
-      // SCIENT-FORK:END
     } catch (cause) {
       reportMarkdownActionFailure(
         { operation: "show-file-context-menu", target: targetPath },
@@ -1879,9 +1919,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
-    // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path.
-    previous.relativeCopyPath === next.relativeCopyPath &&
-    // SCIENT-FORK:END
+    previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
@@ -1894,6 +1932,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
+    previous.resolveCopyPaths === next.resolveCopyPaths &&
     previous.revealLabel === next.revealLabel
   );
 }
@@ -1943,6 +1982,7 @@ function useChatMarkdownState({
   // SCIENT-FORK:START — math normalization keeps the authored text for Find.
   text: textProp,
   // SCIENT-FORK:END
+  inline = false,
   cwd,
   // SCIENT-FORK:START — file links resolve against the editable workspace root.
   fileLinkWorkspaceRoot,
@@ -1988,8 +2028,8 @@ function useChatMarkdownState({
     isStreaming,
   });
   // SCIENT-FORK:END
-  const { resolvedTheme } = useTheme();
-  const markdownRef = useRef<HTMLDivElement>(null);
+  const resolvedTheme = useRenderedAppearance();
+  const markdownRef = useRef<HTMLElement>(null);
   // SCIENT-FORK:START — a streaming answer is revealed line by line (chat/useStreamingBlockEntrance.ts).
   useStreamingBlockEntrance(markdownRef, isStreaming, messageId);
   // SCIENT-FORK:END
@@ -2040,6 +2080,10 @@ function useChatMarkdownState({
     refresh: true,
   });
   // SCIENT-FORK:END
+  const getFilesystemMetadata = useAtomQueryRunner(filesystemEnvironment.getMetadata, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -2085,14 +2129,34 @@ function useChatMarkdownState({
       },
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
+        let description =
+          error instanceof Error
+            ? error.message
+            : "The file could not be loaded. It may have been moved or deleted.";
+        if (
+          isAssetNotFoundError(error) &&
+          error.resource._tag === "media-file" &&
+          environmentId !== null
+        ) {
+          // The connection may resolve while the media lookup is pending.
+          const target = readPreparedConnection(environmentId)?.target ?? null;
+          if (
+            target !== null &&
+            resolveRemoteOpenState({
+              target,
+              sshTarget: null,
+              remoteOpenTargets: undefined,
+              isDesktopRenderer: window.desktopBridge !== undefined,
+            }).mode !== "local-exec"
+          ) {
+            description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;
+          }
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Media unavailable",
-            description:
-              error instanceof Error
-                ? error.message
-                : "The file could not be loaded. It may have been moved or deleted.",
+            description,
           }),
         );
       },
@@ -2188,7 +2252,7 @@ function useChatMarkdownState({
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };
-  const handleCopy = (event: ReactClipboardEvent<HTMLDivElement>) => {
+  const handleCopy = (event: ReactClipboardEvent<HTMLElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
     const payload = chatMarkdownClipboardPayload(selection);
@@ -2261,7 +2325,13 @@ function useChatMarkdownState({
       return result;
     });
   };
-  const openMarkdownFileInPreview = (path: string) => {
+  // SCIENT-FORK:START — the hook's original click intent crosses this existing Browser seam.
+  const openMarkdownFileInPreview = (
+    path: string,
+    _workspaceRelativePath: string,
+    isCurrent?: () => boolean,
+  ) => {
+    // SCIENT-FORK:END
     const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
     if (!threadRef || !cwd || !canOperatePreview || preparedConnection === null) {
       return Promise.resolve(
@@ -2281,6 +2351,9 @@ function useChatMarkdownState({
       httpBaseUrl: preparedConnection.httpBaseUrl,
       createAssetUrl,
       openPreview,
+      // SCIENT-FORK:START — retain intent through capability minting and Browser opening.
+      ...(isCurrent ? { isCurrent } : {}),
+      // SCIENT-FORK:END
     });
   };
   // SCIENT-FORK:START — pages outside the workspace open in the integrated browser
@@ -2291,27 +2364,43 @@ function useChatMarkdownState({
     openPreview,
   });
   // SCIENT-FORK:END
-  const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
+  const findWorkspaceFileMatch = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const workspaceRelativePath = fileLinkMeta.workspaceLookupPath;
     if (
+      !workspaceRelativePath ||
       !cwd ||
       environmentId === null ||
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-      !needsWorkspaceBasenameLookup(workspaceRelativePath)
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
     ) {
       return null;
     }
+    const isBasename = needsWorkspaceBasenameLookup(workspaceRelativePath);
+    const strippedPath = isBasename
+      ? null
+      : stripRepeatedWorkspacePrefix(workspaceRelativePath, cwd);
+    if (!isBasename && strippedPath === null) return null;
     const result = await searchProjectEntries({
       environmentId,
       input: {
         cwd,
-        query: workspaceRelativePath,
+        query: strippedPath ?? workspaceRelativePath,
         limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
         kind: "file",
       },
     });
-    return result._tag === "Success"
-      ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-      : null;
+    if (result._tag !== "Success") return null;
+    if (strippedPath === null) {
+      return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
+    }
+    const match = pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
+    if (match === null) return null;
+    // Search can be truncated or still scanning, so it cannot rule out the
+    // literal path. Check the host before redirecting to the stripped match.
+    const metadata = await getFilesystemMetadata({
+      environmentId,
+      input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+    });
+    return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
   // SCIENT-FORK:START — every file link asks the environment what it means
   const {
@@ -2330,14 +2419,6 @@ function useChatMarkdownState({
     openEnvironmentHtmlInPreview,
   });
   // SCIENT-FORK:END
-  const revealMarkdownFileInFileManager = async (fileLinkMeta: MarkdownFileLinkMeta) => {
-    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-    const match = workspaceRelativePath
-      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-      : null;
-    const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-    return revealFileInFileManager(filePath);
-  };
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
@@ -2346,6 +2427,12 @@ function useChatMarkdownState({
     // SCIENT-FORK:START — HTML opens in the browser by its workspace-relative path.
     const browserRelativePath = fileLinkMeta.workspaceRelativePath;
     // SCIENT-FORK:END
+    const resolveHostPath = () =>
+      resolveMarkdownFileHostPath({
+        meta: fileLinkMeta,
+        cwd,
+        findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),
+      });
     const mediaPath = mediaSource ?? fileLinkMeta.filePath;
     const canPreviewMedia =
       mediaMimeTypeFromExtension(
@@ -2374,9 +2461,7 @@ function useChatMarkdownState({
         href={fileLinkMeta.targetPath}
         targetPath={fileLinkMeta.targetPath}
         iconPath={fileLinkMeta.filePath}
-        // SCIENT-FORK:START — "Copy relative path" copies the workspace-relative path.
-        relativeCopyPath={markdownFileLinkRelativeCopyPath(fileLinkMeta)}
-        // SCIENT-FORK:END
+        workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={panelPath}
         line={fileLinkMeta.line}
         label={fileLinkLabel(
@@ -2390,10 +2475,29 @@ function useChatMarkdownState({
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
-        {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+        onOpen={
+          canUseShellActions
+            ? async () =>
+                openInPreferredEditor(
+                  markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
+                )
+            : undefined
+        }
+        resolveCopyPaths={async () =>
+          markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
+        }
         // SCIENT-FORK:START — every file link asks the environment what it means.
         onOpenInPanel={
-          homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel
+          homeRelativePath !== undefined
+            ? openHomeRelativeLinkInPanel
+            : (path, line) =>
+                openFileInPanel(
+                  path,
+                  line,
+                  fileLinkMeta.workspaceLookupPath
+                    ? () => findWorkspaceFileMatch(fileLinkMeta)
+                    : undefined,
+                )
         }
         onOpenMedia={
           threadRef && canPreviewMedia
@@ -2404,7 +2508,7 @@ function useChatMarkdownState({
         openInEditorMenuLabel={preferredEditorMenuLabel}
         onReveal={
           canUseShellActions && revealInFileManagerLabel !== undefined
-            ? () => revealMarkdownFileInFileManager(fileLinkMeta)
+            ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
@@ -2438,6 +2542,7 @@ function useChatMarkdownState({
     imageBaseDir,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
+    inline,
     isStreaming,
     linkTargetPreference,
     markdownFileLinkMetaByHref,
@@ -2895,6 +3000,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       fileLinkWorkspaceRoot,
       isStreaming,
+      inline,
     } = use(ChatMarkdownRendererContext);
     // SCIENT-FORK:END
     // SCIENT-FORK:START — retain scientific inline math while Find reveals authored source.
@@ -2904,7 +3010,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const tex = nodeToPlainText(children);
       return (
         <ScientMathFindSurface sourceText={authoredMathNodeSource(node, authoredMathText, tex)}>
-          <ScientInlineMath tex={tex} isStreaming={isStreaming} />
+          <ScientInlineMath tex={tex} isStreaming={isStreaming} focusable={!inline} />
         </ScientMathFindSurface>
       );
     }
@@ -3160,6 +3266,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       isStreaming,
       onRunShellCommand,
       resolvedContentDirection,
+      inline,
     } = use(ChatMarkdownRendererContext);
     // SCIENT-FORK:END
     const text = use(ChatMarkdownTextContext);
@@ -3174,7 +3281,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <ScientMathFindSurface
           sourceText={authoredMathNodeSource(node, authoredMathText, codeBlock.code)}
         >
-          <ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />
+          <ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} focusable={!inline} />
         </ScientMathFindSurface>
       );
     }
@@ -3182,12 +3289,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     // SCIENT-FORK:START — the code block is Scient's (scient/presentation/MarkdownCodeBlock.tsx).
-    // Once the message settles, Mermaid, Vega-Lite and Plotly fences render as Scient cards; while
-    // it streams they stay highlighted source on the code path.
+    // Complete Mermaid fences may render during streaming, but unfinished source stays readable.
+    // Other visual grammars still wait for the settled message.
     const fenceMeta = extractPreCodeMeta(node);
     const fenceTitle = extractFenceTitle(fenceMeta);
-    const richFenceKind = !isStreaming ? resolveScientRichFenceKind(language) : null;
-    if (richFenceKind != null) {
+    const richFenceKind = resolveScientRichFenceKind(language);
+    if (
+      richFenceKind != null &&
+      (!isStreaming ||
+        (richFenceKind === "mermaid" && isClosedCodeFence(node, text, codeBlock.code)))
+    ) {
       return (
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, codeBlock.className, diffThemeName, isStreaming]}
@@ -3224,7 +3335,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           onRunShellCommand &&
           /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
           !isStreaming &&
-          isClosedCodeFence(node, text)
+          isClosedCodeFence(node, text, codeBlock.code)
             ? onRunShellCommand
             : undefined
         }
@@ -3248,6 +3359,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
 function ChatMarkdown({
   text,
   className,
+  inline = false,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
@@ -3265,11 +3377,15 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     closeLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text, inline, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  const Root = inline ? "span" : "div";
+  const bindMarkdownRef = (node: HTMLElement | null) => {
+    markdownRef.current = node;
+  };
   const remarkPlugins = (() => [
     ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
     ...extraRemarkPlugins,
@@ -3280,10 +3396,12 @@ function ChatMarkdown({
   // SCIENT-FORK:END
 
   return (
-    <div
-      ref={markdownRef}
+    <Root
+      ref={bindMarkdownRef}
       className={cn(
-        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)] [overflow-wrap:anywhere] [word-break:break-word]",
+        "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
+        !inline &&
+          "text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]",
         className,
       )}
       // SCIENT-FORK:START — the message direction (scient/bidi).
@@ -3330,7 +3448,7 @@ function ChatMarkdown({
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />
       ) : null}
-    </div>
+    </Root>
   );
 }
 

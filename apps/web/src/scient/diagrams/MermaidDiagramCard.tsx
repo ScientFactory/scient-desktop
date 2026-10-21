@@ -346,6 +346,7 @@ export function MermaidDiagramCard({
       aria-label={displayTitle}
       className="scient-mermaid-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
       data-markdown-copy={markdownCopy}
+      data-markdown-mermaid
       data-scient-visual-card
       dir="ltr"
       onContextMenu={handleContextMenu}

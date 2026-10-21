@@ -25,6 +25,14 @@ const ToolbarPositionContext = createContext<{
   readonly reset: () => void;
 } | null>(null);
 
+export function useVisualCardToolbarMenuClose() {
+  const position = useContext(ToolbarPositionContext);
+  return () => {
+    const handle = position?.handle.current;
+    if (handle && !handle.hidden) handle.focus({ preventScroll: true });
+  };
+}
+
 /** Menu closing owns the focus transfer to the temporary movement handle. */
 export function VisualCardMenuPopup(props: ComponentProps<typeof MenuPopup>) {
   const position = useContext(ToolbarPositionContext);

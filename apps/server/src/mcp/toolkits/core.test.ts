@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
@@ -309,6 +310,7 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       McpHttpServer.layerHtmlToolkit.pipe(
         Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
         Layer.provide(NodeServices.layer),
@@ -505,6 +507,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
                   properties: properties ?? {},
                 }).pipe(Effect.asVoid),
               flush: Effect.void,
+              recordOwners: () => Effect.void,
             }),
           ),
         ),

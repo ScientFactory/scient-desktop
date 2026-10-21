@@ -1,3 +1,9 @@
+import {
+  render as _fixtureRender,
+  type Screen,
+  stubGlobal as _fixtureStubGlobal,
+  act,
+} from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
 import {
   EnvironmentId,
@@ -8,13 +14,15 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   canManageProviders: true,
-  buttons: new Map<HTMLButtonElement, ComponentProps<"button">>(),
+  publishButton: (
+    _element: HTMLButtonElement,
+    _props: ComponentProps<"button">,
+  ): (() => void) | undefined => undefined,
   auth: null as ProviderAuthState | null,
   installation: null as ProviderInstallState | null,
   commands: {
@@ -99,22 +107,25 @@ vi.mock("./ChatGptConnectionButton", () => ({
     <button
       {...props}
       ref={(element) => {
-        if (element) state.buttons.set(element, props);
+        if (element) return state.publishButton(element, props);
       }}
     />
   ),
 }));
-vi.mock("../ui/button", async (original) => ({
-  ...(await original<typeof import("../ui/button")>()),
-  Button: (props: ComponentProps<"button">) => (
-    <button
-      {...props}
-      ref={(element) => {
-        if (element) state.buttons.set(element, props);
-      }}
-    />
-  ),
-}));
+vi.mock("../ui/button", async (original) => {
+  const actual = await original<typeof import("../ui/button")>();
+  return {
+    ...actual,
+    Button: (props: ComponentProps<"button">) => (
+      <actual.Button
+        {...props}
+        ref={(element) => {
+          if (element) return state.publishButton(element, props);
+        }}
+      />
+    ),
+  };
+});
 
 import { CodexSetupSection } from "./CodexSetupSection";
 
@@ -135,26 +146,30 @@ const provider: ServerProvider = {
   setup: { canAuthenticate: true, canInstall: true },
 };
 
-let renderer: Root | undefined;
-let container: HTMLDivElement;
-
-function button(label: string) {
-  return [...container.querySelectorAll("button")].find((node) => node.textContent === label)!;
+function button(_fixture: _Fixture, label: string) {
+  return [..._fixture.container.querySelectorAll("button")].find(
+    (node) => node.textContent === label,
+  )!;
 }
-function retainedClick(element: HTMLButtonElement) {
-  const handler = state.buttons.get(element)?.onClick;
+function retainedClick(_fixture: _Fixture, element: HTMLButtonElement) {
+  const handler = _fixture.buttons.get(element)?.onClick;
   expect(handler).toBeTypeOf("function");
   return () => handler!({} as import("react").MouseEvent<HTMLButtonElement>);
 }
 
-function renderSetup(options: {
-  readOnly: boolean;
-  autoStart?: boolean;
-  mode?: "managed" | "existing";
-  onAutoStartConsumed?: () => void;
-}) {
-  renderer = createRoot(container);
-  renderer.render(
+async function renderSetup(
+  _fixture: _Fixture,
+  options: {
+    readOnly: boolean;
+    autoStart?: boolean;
+    mode?: "managed" | "existing";
+    onAutoStartConsumed?: () => void;
+  },
+) {
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
+  await _fixture.root0.rerender(
     <CodexSetupSection
       environmentId={environmentId}
       instanceId={instanceId}
@@ -172,12 +187,21 @@ function renderSetup(options: {
   );
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  vi.stubGlobal("desktopBridge", undefined);
-  state.buttons.clear();
+async function _setupFixture0(_fixture: _Fixture) {
+  _fixture.container = document.createElement("div");
+  document.body.append(_fixture.container);
+  _fixture.stack.use(_fixtureStubGlobal("desktopBridge", undefined));
+  const buttons = _fixture.buttons;
+  state.publishButton = (element, props) => {
+    buttons.set(element, props);
+    return () => {
+      buttons.delete(element);
+    };
+  };
+  _fixture.stack.defer(() => {
+    state.publishButton = () => undefined;
+    buttons.clear();
+  });
   state.canManageProviders = true;
   state.auth = null;
   state.installation = {
@@ -192,19 +216,26 @@ beforeEach(() => {
     message: null,
   };
   for (const command of Object.values(state.commands)) command.mockReset();
-});
+}
 
-afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
-  container.remove();
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
+  _fixture.container.remove();
   vi.unstubAllGlobals();
-});
+}
 
 describe("CodexSetupSection provider-management scope", () => {
   it("does not auto-start installation or consume the request while read-only", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onAutoStartConsumed = vi.fn();
-    await act(async () => renderSetup({ readOnly: true, autoStart: true, onAutoStartConsumed }));
+    await act(
+      async () =>
+        await renderSetup(_fixture, { readOnly: true, autoStart: true, onAutoStartConsumed }),
+    );
 
     expect(state.commands.startProviderInstall).not.toHaveBeenCalled();
     expect(state.commands.startProviderAuth).not.toHaveBeenCalled();
@@ -212,19 +243,27 @@ describe("CodexSetupSection provider-management scope", () => {
   });
 
   it("rejects a retained setup click when the caller marks the component read-only", async () => {
-    await act(async () => renderSetup({ readOnly: true }));
-    const setupButton = button("Continue with ChatGPT");
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await act(async () => await renderSetup(_fixture, { readOnly: true }));
+    const setupButton = button(_fixture, "Continue with ChatGPT");
 
     expect(setupButton.disabled).toBe(true);
-    await act(async () => retainedClick(setupButton)());
+    await act(async () => retainedClick(_fixture, setupButton)());
 
     expect(state.commands.startProviderInstall).not.toHaveBeenCalled();
     expect(state.commands.startProviderAuth).not.toHaveBeenCalled();
   });
 
   it("rejects a retained setup click after providers:manage is revoked", async () => {
-    await act(async () => renderSetup({ readOnly: false }));
-    const setupClick = retainedClick(button("Continue with ChatGPT"));
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await act(async () => await renderSetup(_fixture, { readOnly: false }));
+    const setupClick = retainedClick(_fixture, button(_fixture, "Continue with ChatGPT"));
 
     state.canManageProviders = false;
     await act(async () => setupClick());
@@ -234,6 +273,10 @@ describe("CodexSetupSection provider-management scope", () => {
   });
 
   it("rejects a retained authentication callback after providers:manage is revoked", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     state.auth = {
       instanceId,
       phase: "waiting",
@@ -242,13 +285,13 @@ describe("CodexSetupSection provider-management scope", () => {
       expiresAt: "2026-10-10T00:05:00.000Z",
       message: null,
     };
-    await act(async () => renderSetup({ readOnly: false }));
+    await act(async () => await renderSetup(_fixture, { readOnly: false }));
 
-    const callbackInput = container.querySelector<HTMLInputElement>(
+    const callbackInput = _fixture.container.querySelector<HTMLInputElement>(
       '[aria-label="ChatGPT sign-in redirect URL"]',
     )!;
     await act(async () => userEvent.fill(callbackInput, "http://localhost/callback?code=test"));
-    const form = container.querySelector("form")!;
+    const form = _fixture.container.querySelector("form")!;
     const submit = () =>
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
@@ -259,10 +302,16 @@ describe("CodexSetupSection provider-management scope", () => {
   });
 
   it("disables both mode choices when read-only and guards their callbacks", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onModeChange = vi.fn();
     await act(async () => {
-      renderer = createRoot(container);
-      renderer.render(
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.container, router: false }),
+      );
+      await _fixture.root0.rerender(
         <CodexSetupSection
           environmentId={environmentId}
           instanceId={instanceId}
@@ -276,9 +325,29 @@ describe("CodexSetupSection provider-management scope", () => {
       );
     });
 
-    const useExisting = button("Use existing CLI");
+    const useExisting = button(_fixture, "Use existing CLI");
     expect(useExisting.disabled).toBe(true);
-    await act(async () => retainedClick(useExisting)());
+    await act(async () => retainedClick(_fixture, useExisting)());
     expect(onModeChange).not.toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    buttons: new Map<HTMLButtonElement, ComponentProps<"button">>(),
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
