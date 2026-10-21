@@ -3118,7 +3118,8 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("failed");
         expect(finished.failureSummary).toBe(
-          "No working LaTeX toolchain found. C:\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe did not run: MiKTeX could not find the script engine 'perl'.",
+          // The distribution and file, not the folder: this summary also reaches agents.
+          "No working LaTeX toolchain found. MiKTeX's latexmk.exe did not run: MiKTeX could not find the script engine 'perl'.",
         );
         expect(yield* Ref.get(harness.startCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));

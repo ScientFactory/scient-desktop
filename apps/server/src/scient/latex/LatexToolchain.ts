@@ -10,11 +10,17 @@
  *
  * The first `latexmk` on PATH is not always one that runs: MiKTeX's needs a
  * Perl it does not ship, and a computer with MiKTeX ahead of TeX Live on PATH
- * would otherwise report no LaTeX at all. When the first one fails, every
- * other `latexmk` on PATH is tried, then (on Windows) the folders MiKTeX and
- * TeX Live install into, which also covers a PATH this process inherited
- * before the distribution was installed. One found that way is run with its
- * own folder leading PATH, so it drives its own distribution's engines.
+ * would otherwise report no LaTeX at all. When the bare name fails, every
+ * `latexmk` on PATH is tried by its own path, then (on Windows) the folders
+ * MiKTeX and TeX Live install into, which also covers a PATH this process
+ * inherited before the distribution was installed. One found that way is run
+ * with its own folder leading PATH, so it drives its own distribution's
+ * engines. On Windows only `latexmk.exe` counts: builds start the driver
+ * without a shell, so a `.cmd`/`.bat` launcher could be found but never run.
+ *
+ * Discovery can take several bounded probes, longer than one status request
+ * waits, so it runs once in a fiber of its own: a caller that gives up stops
+ * waiting, not discovering, and the next caller reads the finished answer.
  */
 import {
   ScientLatexCompiler,
@@ -27,12 +33,15 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../../config.ts";
@@ -70,8 +79,6 @@ export class LatexToolchain extends Context.Service<
 >()("t3/scient/latex/LatexToolchain") {}
 
 const PROBE_TIMEOUT_SECONDS = 10;
-/** MiKTeX's first run refreshes its file database, and a scanner may hold a fresh binary. */
-const WINDOWS_DRIVER_PROBE_TIMEOUT_SECONDS = 30;
 const PROBE_MAX_OUTPUT_BYTES = 64 * 1024;
 const PROBE_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -85,6 +92,8 @@ interface ToolchainObservation {
   readonly primary: LatexToolchainProbe;
   readonly additional: LatexToolchainProbe | null;
   readonly report: LatexToolchainProbe;
+  /** When discovery finished; freshness counts from here, not from its first probe. */
+  readonly completedAtEpochMs: number;
 }
 
 const SYSTEM_LATEXMK: ToolchainCandidate = {
@@ -129,6 +138,43 @@ const absent = (
 });
 
 const MAX_UNUSABLE_REASON_LENGTH = 240;
+
+const fileNameOf = (file: string) => file.split(/[\\/]/u).at(-1) ?? file;
+
+/**
+ * A driver named without its folder, which on Windows carries the user's
+ * name: "MiKTeX's latexmk.exe", "TeX Live's latexmk.exe", or the file alone.
+ */
+export function latexDriverLabel(executable: string): string {
+  const folder = executable.toLowerCase();
+  const distribution = folder.includes("miktex")
+    ? "MiKTeX's "
+    : folder.includes("texlive") || folder.includes("tinytex")
+      ? "TeX Live's "
+      : "";
+  return `${distribution}${fileNameOf(executable)}`;
+}
+
+/**
+ * A tool's complaint with the user's home folder written as `~`: the reason
+ * reaches agents and logs, and that folder is named after the person.
+ */
+export function withoutHomeDirectory(text: string, environment: NodeJS.ProcessEnv): string {
+  let redacted = text;
+  for (const name of ["USERPROFILE", "HOME"]) {
+    const home = environmentValue(environment, name)?.replace(/[\\/]+$/u, "");
+    if (home === undefined || home.length < 3) continue;
+    for (const spelling of new Set([
+      home,
+      home.replaceAll("\\", "/"),
+      home.replaceAll("/", "\\"),
+    ])) {
+      const escaped = spelling.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      redacted = redacted.replace(new RegExp(escaped, "giu"), "~");
+    }
+  }
+  return redacted;
+}
 
 /**
  * The line a person would read first in a failed probe's output. Launchers
@@ -224,14 +270,17 @@ export const make = Effect.gen(function* () {
   >();
   const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
   const cacheRef = yield* Ref.make<ToolchainObservation | null>(null);
-  const tectonicCacheRef = yield* Ref.make<LatexToolchainProbe | null>(null);
+  const tectonicCacheRef = yield* Ref.make<{
+    readonly status: LatexToolchainProbe;
+    readonly completedAtEpochMs: number;
+  } | null>(null);
   // Every build and every status poll asks for the toolchain, so a lapsed TTL
-  // would otherwise let a burst of pollers each shell out. One probe runs; the
-  // rest queue here and read the answer it leaves in the cache.
-  const probeGate = yield* Semaphore.make(1);
-
-  const driverProbeTimeoutSeconds =
-    platform === "win32" ? WINDOWS_DRIVER_PROBE_TIMEOUT_SECONDS : PROBE_TIMEOUT_SECONDS;
+  // would otherwise let a burst of pollers each shell out. One discovery runs;
+  // the rest join it and read the answer it leaves in the cache.
+  const inflightRef = yield* Ref.make<Deferred.Deferred<ToolchainObservation> | null>(null);
+  const discoveryScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(discoveryScope, Exit.void));
+  const tectonicGate = yield* Semaphore.make(1);
 
   const runCandidate = (
     candidate: ToolchainCandidate,
@@ -244,7 +293,7 @@ export const make = Effect.gen(function* () {
         command: candidate.executable,
         args: candidate.args,
         env,
-        timeout: Duration.seconds(driverProbeTimeoutSeconds),
+        timeout: Duration.seconds(PROBE_TIMEOUT_SECONDS),
         maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
@@ -265,18 +314,17 @@ export const make = Effect.gen(function* () {
               return {
                 _tag: "unusable",
                 unusable: {
-                  executable:
-                    resolveExecutable(candidate.executable, platform, {
-                      ...hostEnvironment,
-                      ...env,
-                    }) ?? candidate.executable,
-                  reason: latexProbeFailureReason({
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    code: result.code,
-                    timedOut: result.timedOut,
-                    timeoutSeconds: driverProbeTimeoutSeconds,
-                  }),
+                  executable: candidate.executable,
+                  reason: withoutHomeDirectory(
+                    latexProbeFailureReason({
+                      stdout: result.stdout,
+                      stderr: result.stderr,
+                      code: result.code,
+                      timedOut: result.timedOut,
+                      timeoutSeconds: PROBE_TIMEOUT_SECONDS,
+                    }),
+                    hostEnvironment,
+                  ),
                 },
               };
             }
@@ -314,18 +362,21 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Every other `latexmk` this computer has, in the order a person would
-   * expect it to be chosen: the rest of PATH, then the default install
-   * folders. The one the bare name resolves to has already been tried.
+   * Every `latexmk` this computer has, by absolute path, in the order a
+   * person would expect it to be chosen: PATH, then the default install
+   * folders. The bare name's probe cannot say which file it ran (the spawn
+   * resolution is cached), so none is skipped as already tried.
    */
-  const alternativeLatexmks = Effect.gen(function* () {
+  const latexmkCandidates = Effect.gen(function* () {
     const fileName = platform === "win32" ? "latexmk.exe" : "latexmk";
     const pathKey =
       Object.keys(hostEnvironment).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
     const pathFolders = (hostEnvironment[pathKey] ?? "")
       .split(pathDelimiter)
       .map((entry) => entry.trim().replace(/^"(.*)"$/u, "$1"))
-      .filter((entry) => entry.length > 0 && path.isAbsolute(entry));
+      .filter((entry) => entry.length > 0)
+      // A relative entry means what it means to the process spawning by name.
+      .map((entry) => path.resolve(entry));
     let installFolders: ReadonlyArray<string> = [];
     if (platform === "win32") {
       const texliveRoot = windowsTexliveRoot(hostEnvironment, path.join);
@@ -345,8 +396,7 @@ export const make = Effect.gen(function* () {
       });
     }
     const identity = (file: string) => (platform === "win32" ? file.toLowerCase() : file);
-    const alreadyTried = resolveExecutable("latexmk", platform, hostEnvironment);
-    const seen = new Set<string>(alreadyTried === undefined ? [] : [identity(alreadyTried)]);
+    const seen = new Set<string>();
     const found: Array<string> = [];
     for (const folder of [...pathFolders, ...installFolders]) {
       const executable = path.join(folder, fileName);
@@ -361,9 +411,9 @@ export const make = Effect.gen(function* () {
   const findLatexmk = Effect.fnUntraced(function* (probedAtEpochMs: number) {
     const unusable: Array<ScientLatexUnusableToolchain> = [];
     const first = yield* runCandidate(SYSTEM_LATEXMK, probedAtEpochMs);
+    // A working bare name keeps its exact previous result: no path, no PATH change.
     if (first._tag === "found") return { status: first.status, unusable };
-    if (first._tag === "unusable") unusable.push(first.unusable);
-    for (const executable of yield* alternativeLatexmks) {
+    for (const executable of yield* latexmkCandidates) {
       const probed = yield* runCandidate(
         { kind: "latexmk", executable, args: ["-v"] },
         probedAtEpochMs,
@@ -377,6 +427,13 @@ export const make = Effect.gen(function* () {
       );
       if (probed._tag === "found") return { status: probed.status, unusable };
       if (probed._tag === "unusable") unusable.push(probed.unusable);
+    }
+    // Only when no file could be named does the bare name's failure stand for itself.
+    if (first._tag === "unusable" && unusable.length === 0) {
+      unusable.push({
+        ...first.unusable,
+        executable: resolveExecutable("latexmk", platform, hostEnvironment) ?? "latexmk",
+      });
     }
     return { status: null, unusable };
   });
@@ -429,13 +486,24 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
-  const probeAll = Effect.gen(function* (): Effect.fn.Return<ToolchainObservation> {
+  const probeAll = Effect.gen(function* (): Effect.fn.Return<
+    Omit<ToolchainObservation, "completedAtEpochMs">
+  > {
     const probedAtEpochMs = yield* Clock.currentTimeMillis;
     const latexmk = yield* findLatexmk(probedAtEpochMs);
-    const systemStatus =
-      latexmk.status ??
-      (yield* probeCandidate(SYSTEM_TECTONIC, probedAtEpochMs)) ??
-      absent(probedAtEpochMs, latexmk.unusable);
+    let systemStatus: ScientLatexToolchainStatus;
+    if (latexmk.status !== null) {
+      systemStatus = latexmk.status;
+    } else {
+      const tectonic = yield* runCandidate(SYSTEM_TECTONIC, probedAtEpochMs);
+      systemStatus =
+        tectonic._tag === "found"
+          ? tectonic.status
+          : absent(probedAtEpochMs, [
+              ...latexmk.unusable,
+              ...(tectonic._tag === "unusable" ? [tectonic.unusable] : []),
+            ]);
+    }
     const primary = { ...systemStatus, compilers: yield* probeCompilers(systemStatus) };
     if (primary.compilers.every((compiler) => compiler.available)) {
       return { primary, additional: null, report: primary };
@@ -474,11 +542,49 @@ export const make = Effect.gen(function* () {
     return { primary, additional: null, report: primary };
   });
 
-  const isFresh = Effect.fnUntraced(function* (cached: ToolchainObservation | null) {
+  const isFresh = Effect.fnUntraced(function* (
+    cached: { readonly completedAtEpochMs: number } | null,
+  ) {
     if (cached === null) return false;
     const now = yield* Clock.currentTimeMillis;
-    return now - cached.primary.probedAtEpochMs < PROBE_CACHE_TTL_MS;
+    return now - cached.completedAtEpochMs < PROBE_CACHE_TTL_MS;
   });
+
+  /**
+   * Joins the discovery already running, or starts one in the service's own
+   * scope. A refresh that joins one started before it was asked for runs
+   * another afterwards, so an engine installed meanwhile is not missed.
+   */
+  const discover = (refresh: boolean): Effect.Effect<ToolchainObservation> =>
+    Effect.gen(function* () {
+      const next = yield* Deferred.make<ToolchainObservation>();
+      const joined = yield* Ref.modify(inflightRef, (current) =>
+        current === null ? [null, next] : [current, current],
+      );
+      if (joined !== null) {
+        const observation = yield* Deferred.await(joined);
+        return refresh ? yield* discover(false) : observation;
+      }
+      yield* Effect.forkIn(
+        probeAll.pipe(
+          Effect.flatMap((observed) =>
+            Effect.gen(function* () {
+              const observation = {
+                ...observed,
+                completedAtEpochMs: yield* Clock.currentTimeMillis,
+              };
+              yield* Ref.set(cacheRef, observation);
+              return observation;
+            }),
+          ),
+          Effect.ensuring(Ref.set(inflightRef, null)),
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(next, exit)),
+        ),
+        discoveryScope,
+      );
+      return yield* Deferred.await(next);
+    });
 
   const select = (observation: ToolchainObservation, compiler?: ScientLatexCompiler) => {
     if (compiler === undefined) return observation.report;
@@ -500,35 +606,34 @@ export const make = Effect.gen(function* () {
     requiredCompiler?: ScientLatexCompiler | "tectonic",
   ) {
     if (requiredCompiler === "tectonic") {
-      return yield* probeGate.withPermits(1)(
+      return yield* tectonicGate.withPermits(1)(
         Effect.gen(function* () {
-          const primary = (yield* Ref.get(cacheRef))?.primary;
-          const cached = primary?.kind === "tectonic" ? primary : yield* Ref.get(tectonicCacheRef);
+          const primary = yield* Ref.get(cacheRef);
+          const cached =
+            primary?.primary.kind === "tectonic"
+              ? { status: primary.primary, completedAtEpochMs: primary.completedAtEpochMs }
+              : yield* Ref.get(tectonicCacheRef);
+          if (!refresh && cached !== null && (yield* isFresh(cached))) return cached.status;
           const now = yield* Clock.currentTimeMillis;
-          if (!refresh && cached !== null && now - cached.probedAtEpochMs < PROBE_CACHE_TTL_MS)
-            return cached;
-          const found = (yield* probeCandidate(SYSTEM_TECTONIC, now)) ?? absent(now);
+          const probed = yield* runCandidate(SYSTEM_TECTONIC, now);
+          const found =
+            probed._tag === "found"
+              ? probed.status
+              : absent(now, probed._tag === "unusable" ? [probed.unusable] : []);
           const status = { ...found, compilers: yield* probeCompilers(found) };
-          yield* Ref.set(tectonicCacheRef, status);
+          yield* Ref.set(tectonicCacheRef, {
+            status,
+            completedAtEpochMs: yield* Clock.currentTimeMillis,
+          });
           return status;
         }),
       );
     }
     if (refresh) yield* Ref.set(tectonicCacheRef, null);
     const cached = yield* Ref.get(cacheRef);
-    if (!refresh && (yield* isFresh(cached)) && cached !== null)
+    if (!refresh && cached !== null && (yield* isFresh(cached)))
       return select(cached, requiredCompiler);
-    return yield* probeGate.withPermits(1)(
-      Effect.gen(function* () {
-        // Re-read behind the gate: queued pollers reuse the observation.
-        const settled = yield* Ref.get(cacheRef);
-        if (!refresh && (yield* isFresh(settled)) && settled !== null)
-          return select(settled, requiredCompiler);
-        const status = yield* probeAll;
-        yield* Ref.set(cacheRef, status);
-        return select(status, requiredCompiler);
-      }),
-    );
+    return select(yield* discover(refresh), requiredCompiler);
   });
 
   return LatexToolchain.of({ probe });

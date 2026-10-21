@@ -18,10 +18,12 @@ import * as ProcessRunner from "../../processRunner.ts";
 import {
   LatexToolchain,
   latexDriverBinDirectory,
+  latexDriverLabel,
   latexProbeFailureReason,
   make,
   parseLatexToolchainVersion,
   windowsLatexmkFolders,
+  withoutHomeDirectory,
 } from "./LatexToolchain.ts";
 import { encodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
 import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
@@ -931,7 +933,9 @@ describe("latexmk fallback", () => {
       const { layer, calls } = yield* harness(
         (command, input) => {
           seen.push(input);
-          if (command === "latexmk") return Effect.succeed(failed(MIKTEX_NO_PERL));
+          if (command === "latexmk" || command === machine.miktexLatexmk) {
+            return Effect.succeed(failed(MIKTEX_NO_PERL));
+          }
           if (command === machine.texliveLatexmk) return Effect.succeed(output(LATEXMK_BANNER));
           return spawnFailure(command);
         },
@@ -949,8 +953,12 @@ describe("latexmk fallback", () => {
         source: "system",
       });
       expect(status.unusable).toBeUndefined();
-      // MiKTeX's copy is tried once, by name, and never again by path.
-      expect((yield* Ref.get(calls)).slice(0, 2)).toEqual(["latexmk", machine.texliveLatexmk]);
+      // By name first, then every copy by its own path, so the one reported is the one run.
+      expect((yield* Ref.get(calls)).slice(0, 3)).toEqual([
+        "latexmk",
+        machine.miktexLatexmk,
+        machine.texliveLatexmk,
+      ]);
       // TeX Live's latexmk must drive TeX Live's engines, not MiKTeX's.
       const texliveProbe = seen.find((input) => input.command === machine.texliveLatexmk);
       expect(texliveProbe?.env?.Path?.split(";")[0]).toBe(machine.texlive);
@@ -990,9 +998,16 @@ describe("latexmk fallback", () => {
       const machine = yield* twoDistributions;
       const { layer } = yield* harness(
         (command) => {
-          if (command === "latexmk") return Effect.succeed(failed(MIKTEX_NO_PERL));
+          if (command === "latexmk" || command === machine.miktexLatexmk) {
+            return Effect.succeed(failed(MIKTEX_NO_PERL));
+          }
           if (command === machine.texliveLatexmk) {
             return Effect.succeed({ ...failed(""), code: null, timedOut: true });
+          }
+          if (command === "tectonic") {
+            return Effect.succeed(
+              failed("error while loading shared libraries: libgraphite2.so.3"),
+            );
           }
           return spawnFailure(command);
         },
@@ -1011,7 +1026,12 @@ describe("latexmk fallback", () => {
         { executable: machine.miktexLatexmk, reason: MIKTEX_NO_PERL_REASON },
         {
           executable: machine.texliveLatexmk,
-          reason: "It did not answer within 30 seconds.",
+          reason: "It did not answer within 10 seconds.",
+        },
+        // A Tectonic that is there but broken is named too, not called missing.
+        {
+          executable: "tectonic",
+          reason: "error while loading shared libraries: libgraphite2.so.3",
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1102,5 +1122,112 @@ describe("windowsLatexmkFolders", () => {
 
   it("looks for nothing it has no variable for", () => {
     expect(windowsLatexmkFolders({ environment: {}, texliveYears: ["2024"], join })).toEqual([]);
+  });
+});
+
+describe("latexmk discovery lifecycle", () => {
+  it.effect("keeps discovering after the caller that started it gives up", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      const { layer, calls } = yield* harness((command) =>
+        command === "latexmk"
+          ? Deferred.await(release).pipe(Effect.as(output(LATEXMK_BANNER)))
+          : spawnFailure(command),
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const impatient = yield* Effect.forkChild(toolchain.probe(false));
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(impatient);
+        yield* Deferred.succeed(release, undefined);
+
+        // The next caller reads what the abandoned discovery found, without another spawn.
+        const status = yield* toolchain.probe(false);
+        expect(status.kind).toBe("latexmk");
+        expect((yield* Ref.get(calls)).filter((command) => command === "latexmk")).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("counts the cache's age from when a slow discovery finished", () =>
+    Effect.gen(function* () {
+      const { layer, calls } = yield* harness((command) =>
+        command === "latexmk"
+          ? Effect.sleep(Duration.minutes(4)).pipe(Effect.as(output(LATEXMK_BANNER)))
+          : spawnFailure(command),
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const first = yield* Effect.forkChild(toolchain.probe(false));
+        yield* TestClock.adjust(Duration.minutes(4));
+        yield* Fiber.join(first);
+        // Two minutes on: six after discovery began, two after it finished.
+        yield* TestClock.adjust(Duration.minutes(2));
+        yield* toolchain.probe(false);
+        expect((yield* Ref.get(calls)).filter((command) => command === "latexmk")).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("follows a relative PATH entry the way spawning by name would", () =>
+    Effect.gen(function* () {
+      const machine = yield* twoDistributions;
+      const path = yield* Path.Path;
+      const relative = path.relative(process.cwd(), machine.texlive);
+      const { layer } = yield* harness(
+        (command) => {
+          if (command === "latexmk") return Effect.succeed(failed(MIKTEX_NO_PERL));
+          if (command === machine.texliveLatexmk) return Effect.succeed(output(LATEXMK_BANNER));
+          return spawnFailure(command);
+        },
+        { environment: { Path: relative } },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+      expect(status.executable).toBe(machine.texliveLatexmk);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("writes the user's home folder as ~ in what a driver said", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness(
+        (command) =>
+          command === "latexmk"
+            ? Effect.succeed(failed("Cannot open C:\\Users\\Dana Levi\\AppData\\x.log"))
+            : spawnFailure(command),
+        { environment: { Path: "C:\\system", USERPROFILE: "C:\\Users\\Dana Levi" } },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+      expect(status.unusable?.[0]?.reason).toBe("Cannot open ~\\AppData\\x.log");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("latexDriverLabel", () => {
+  it("names the distribution and the file, never the folder", () => {
+    expect(
+      latexDriverLabel(
+        "C:\\Users\\Dana\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe",
+      ),
+    ).toBe("MiKTeX's latexmk.exe");
+    expect(latexDriverLabel("C:\\texlive\\2024\\bin\\windows\\latexmk.exe")).toBe(
+      "TeX Live's latexmk.exe",
+    );
+    expect(latexDriverLabel("/opt/tools/latexmk")).toBe("latexmk");
+  });
+});
+
+describe("withoutHomeDirectory", () => {
+  it("redacts the home folder in either slash style and any case", () => {
+    const environment = { USERPROFILE: "C:\\Users\\Dana Levi" };
+    expect(
+      withoutHomeDirectory("c:/users/dana levi/x and C:\\Users\\Dana Levi\\y", environment),
+    ).toBe("~/x and ~\\y");
+    expect(withoutHomeDirectory("nothing here", {})).toBe("nothing here");
   });
 });
