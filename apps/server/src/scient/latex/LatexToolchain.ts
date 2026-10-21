@@ -599,9 +599,11 @@ export const make = Effect.gen(function* () {
               ),
             ),
           ).pipe(
-            Effect.ensuring(Ref.set(inflightRef, null)),
-            Effect.exit,
-            Effect.flatMap((exit) => Deferred.done(next, exit)),
+            // A finalizer, so it also runs when the service's scope interrupts
+            // the worker: whoever is waiting is released, not left suspended.
+            Effect.onExit((exit) =>
+              Ref.set(inflightRef, null).pipe(Effect.andThen(Deferred.done(next, exit))),
+            ),
           ),
           discoveryScope,
         );
