@@ -315,16 +315,15 @@ export const make = Effect.gen(function* () {
                 _tag: "unusable",
                 unusable: {
                   executable: candidate.executable,
-                  reason: withoutHomeDirectory(
-                    latexProbeFailureReason({
-                      stdout: result.stdout,
-                      stderr: result.stderr,
-                      code: result.code,
-                      timedOut: result.timedOut,
-                      timeoutSeconds: PROBE_TIMEOUT_SECONDS,
-                    }),
-                    hostEnvironment,
-                  ),
+                  // Redacted before the line is chosen and cut, so a cut
+                  // inside the home folder cannot leave half of it behind.
+                  reason: latexProbeFailureReason({
+                    stdout: withoutHomeDirectory(result.stdout, hostEnvironment),
+                    stderr: withoutHomeDirectory(result.stderr, hostEnvironment),
+                    code: result.code,
+                    timedOut: result.timedOut,
+                    timeoutSeconds: PROBE_TIMEOUT_SECONDS,
+                  }),
                 },
               };
             }
@@ -556,35 +555,44 @@ export const make = Effect.gen(function* () {
    * another afterwards, so an engine installed meanwhile is not missed.
    */
   const discover = (refresh: boolean): Effect.Effect<ToolchainObservation> =>
-    Effect.gen(function* () {
-      const next = yield* Deferred.make<ToolchainObservation>();
-      const joined = yield* Ref.modify(inflightRef, (current) =>
-        current === null ? [null, next] : [current, current],
-      );
-      if (joined !== null) {
-        const observation = yield* Deferred.await(joined);
-        return refresh ? yield* discover(false) : observation;
-      }
-      yield* Effect.forkIn(
-        probeAll.pipe(
-          Effect.flatMap((observed) =>
-            Effect.gen(function* () {
-              const observation = {
-                ...observed,
-                completedAtEpochMs: yield* Clock.currentTimeMillis,
-              };
-              yield* Ref.set(cacheRef, observation);
-              return observation;
-            }),
+    // Claiming the slot and starting the worker are one uninterruptible step:
+    // a caller cancelled between them would leave a claim nothing completes,
+    // and every later caller would wait on it forever. Only the waits are
+    // interruptible, and the worker itself stays interruptible by its scope.
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const next = yield* Deferred.make<ToolchainObservation>();
+        const joined = yield* Ref.modify(inflightRef, (current) =>
+          current === null ? [null, next] : [current, current],
+        );
+        if (joined !== null) {
+          const observation = yield* restore(Deferred.await(joined));
+          return refresh ? yield* restore(discover(false)) : observation;
+        }
+        yield* Effect.forkIn(
+          restore(
+            probeAll.pipe(
+              Effect.flatMap((observed) =>
+                Effect.gen(function* () {
+                  const observation = {
+                    ...observed,
+                    completedAtEpochMs: yield* Clock.currentTimeMillis,
+                  };
+                  yield* Ref.set(cacheRef, observation);
+                  return observation;
+                }),
+              ),
+            ),
+          ).pipe(
+            Effect.ensuring(Ref.set(inflightRef, null)),
+            Effect.exit,
+            Effect.flatMap((exit) => Deferred.done(next, exit)),
           ),
-          Effect.ensuring(Ref.set(inflightRef, null)),
-          Effect.exit,
-          Effect.flatMap((exit) => Deferred.done(next, exit)),
-        ),
-        discoveryScope,
-      );
-      return yield* Deferred.await(next);
-    });
+          discoveryScope,
+        );
+        return yield* restore(Deferred.await(next));
+      }),
+    );
 
   const select = (observation: ToolchainObservation, compiler?: ScientLatexCompiler) => {
     if (compiler === undefined) return observation.report;

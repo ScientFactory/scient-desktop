@@ -2826,6 +2826,41 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("says why an installed explicit Tectonic would not run", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        probeToolchain: (_refresh, compiler) =>
+          Effect.succeed({
+            ...LATEXMK,
+            ...(compiler === "tectonic"
+              ? {
+                  kind: null,
+                  executable: null,
+                  unusable: [
+                    {
+                      executable: "tectonic",
+                      reason: "error while loading shared libraries: libgraphite2.so.3",
+                    },
+                  ],
+                }
+              : {}),
+            compilers: [],
+          }),
+        files: { "main.tex": `% !TEX program = tectonic\n${SOURCE}` },
+        compiles: [],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.failureSummary).toBe(
+          "No working LaTeX toolchain found. tectonic did not run: error while loading shared libraries: libgraphite2.so.3",
+        );
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("refuses a LuaLaTeX request when only Tectonic is available", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

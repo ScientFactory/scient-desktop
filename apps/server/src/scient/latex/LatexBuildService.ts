@@ -1717,7 +1717,9 @@ export const make = Effect.gen(function* () {
           generation,
           production,
           summary:
-            selection.driver === "tectonic"
+            // A Tectonic that is installed but broken says why, ahead of
+            // the advice to install it.
+            selection.driver === "tectonic" && toolchain.unusable === undefined
               ? (selection.error ?? NO_TOOLCHAIN_SUMMARY)
               : noToolchainSummary(toolchain),
           diagnostics: [],

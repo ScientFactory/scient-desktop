@@ -1149,6 +1149,35 @@ describe("latexmk discovery lifecycle", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("never strands discovery, wherever a caller is cancelled", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness((command) =>
+        command === "latexmk" ? Effect.succeed(output(LATEXMK_BANNER)) : spawnFailure(command),
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        // Interrupt after every number of scheduler turns up to a whole
+        // discovery: before it claims, while it runs, after it finished.
+        for (let turns = 0; turns < 40; turns += 1) {
+          const caller = yield* Effect.forkChild(toolchain.probe(true));
+          for (let turn = 0; turn < turns; turn += 1) yield* Effect.yieldNow;
+          yield* Fiber.interrupt(caller).pipe(
+            Effect.timeoutOrElse({
+              duration: "5 seconds",
+              orElse: () => Effect.die("interrupt hung"),
+            }),
+          );
+          const status = yield* toolchain
+            .probe(true)
+            .pipe(
+              Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.die("stranded") }),
+            );
+          expect(status.kind).toBe("latexmk");
+        }
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("counts the cache's age from when a slow discovery finished", () =>
     Effect.gen(function* () {
       const { layer, calls } = yield* harness((command) =>
@@ -1187,6 +1216,24 @@ describe("latexmk discovery lifecycle", () => {
         return yield* toolchain.probe(false);
       }).pipe(Effect.provide(layer));
       expect(status.executable).toBe(machine.texliveLatexmk);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("redacts the home folder before cutting a long line", () =>
+    Effect.gen(function* () {
+      const home = "C:\\Users\\Dana Levi";
+      // The 240-character cut would fall inside the home folder.
+      const line = `${"x".repeat(232)} ${home}\\AppData\\x.log`;
+      const { layer } = yield* harness(
+        (command) => (command === "latexmk" ? Effect.succeed(failed(line)) : spawnFailure(command)),
+        { environment: { Path: "C:\\system", USERPROFILE: home } },
+      );
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+      expect(status.unusable?.[0]?.reason).not.toContain("Dana");
+      expect(status.unusable?.[0]?.reason).toContain(" ~\\App");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
