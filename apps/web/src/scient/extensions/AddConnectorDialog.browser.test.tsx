@@ -40,6 +40,7 @@ const connector: ConnectorSummary = {
   source: { type: "url" },
   auth: { type: "oauth", usesOwnClient: false },
   status: "needs-auth",
+  authRevision: 0,
   enabled: true,
   availability: { type: "all-projects" },
   createdAt: "2026-10-21T00:00:00.000Z",

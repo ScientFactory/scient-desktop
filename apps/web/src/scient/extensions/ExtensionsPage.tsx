@@ -9,7 +9,13 @@ import {
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { ChevronLeftIcon, ChevronRightIcon, type LucideIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
 
 import {
@@ -17,7 +23,7 @@ import {
   useSettingsSearchTarget,
 } from "../../components/settings/settingsLayout";
 import { useOptionalSettingsScope } from "../../components/settings/SettingsScopeContext";
-import { Button, InlineButton } from "../../components/ui/button";
+import { Button } from "../../components/ui/button";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "../../state/environments";
@@ -177,9 +183,16 @@ export function ExtensionsSection({
 /** A section heading: "Popular ›". */
 export const SECTION_HEADING_CLASS = "text-lg font-medium tracking-[-0.015em] text-foreground";
 
+/**
+ * A link or trigger drawn like a ghost button: no underline, the shared grey
+ * hover background, ghost-button padding and radius. The negative margin keeps
+ * its text on the content edge.
+ */
+export const GHOST_LINK_CLASS =
+  "-mx-2 -my-0.5 inline-flex items-center gap-1 rounded-[var(--control-radius)] px-2 py-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+
 /** Classes for a section title that opens the full list. */
-export const SECTION_TITLE_LINK_CLASS =
-  "group inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+export const SECTION_TITLE_LINK_CLASS = `group ${GHOST_LINK_CLASS}`;
 
 /** A small muted action beside a section heading: "+ Add by URL". */
 export function SectionAction({
@@ -194,9 +207,52 @@ export function SectionAction({
   readonly children: string;
 }) {
   return (
-    <Button size="xs" variant="ghost-muted" disabled={disabled} onClick={onClick}>
+    <Button
+      size="xs"
+      variant="ghost-muted"
+      // The hover background reaches past the text, which stays on the content edge.
+      className="-me-2"
+      disabled={disabled}
+      onClick={onClick}
+    >
       <Icon aria-hidden />
       {children}
+    </Button>
+  );
+}
+
+/**
+ * "Show all 8 ⌄" / "Show less ⌃" beside a section heading. Collapsing keeps the
+ * heading in view so the reader doesn't lose their place.
+ */
+export function SectionShowAllToggle({
+  total,
+  expanded,
+  onExpandedChange,
+}: {
+  readonly total: number;
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
+}) {
+  const Icon = expanded ? ChevronUpIcon : ChevronDownIcon;
+  return (
+    <Button
+      size="xs"
+      variant="ghost-muted"
+      className="-me-2"
+      aria-expanded={expanded}
+      onClick={(event) => {
+        if (expanded) {
+          event.currentTarget
+            .closest("section")
+            ?.querySelector("h2")
+            ?.scrollIntoView({ block: "nearest" });
+        }
+        onExpandedChange(!expanded);
+      }}
+    >
+      {expanded ? "Show less" : `Show all ${total}`}
+      <Icon aria-hidden />
     </Button>
   );
 }
@@ -218,11 +274,11 @@ export function BackLink({
   readonly children: string;
 }) {
   return (
-    <div className="text-sm">
-      <InlineButton tone="muted" render={<Link to={to} />}>
-        <ChevronLeftIcon aria-hidden className="size-4" />
+    <div>
+      <Button size="sm" variant="ghost-muted" className="-ms-2.5" render={<Link to={to} />}>
+        <ChevronLeftIcon aria-hidden />
         {children}
-      </InlineButton>
+      </Button>
     </div>
   );
 }

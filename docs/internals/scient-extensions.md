@@ -93,6 +93,7 @@ ConnectorRecord {
     | { type: "header"; headerName: string; secretRef: SecretRef; scheme?: "Bearer" };
   status: "connected" | "needs-auth";
   enabled: boolean;               // user-level on/off
+  authRevision: number;           // credential generation; absent in older records = 0
   availability: GrantScope;       // which projects receive it (shared with Secrets)
   createdAt; updatedAt;
 }
@@ -115,9 +116,17 @@ it is written by the next successful mutation; the format 1 file is left as
 it was until then. A Scient that predates format 2 refuses the file rather
 than overwriting it.
 
-```ts
-
-```
+`authRevision` (also on `ConnectorSummary`) is a non-negative integer that only
+increases. It advances whenever the credential behind the connector changes:
+every successful sign-in (even to the same issuer, scopes and client, since it
+may be another account), a sign-in probe that finds the server no longer needs
+auth, and a loss of the grant (a move out of `connected` into needs-auth or
+needs-credential, for example a refresh failure, revocation or an unusable
+stored credential). Token refresh of the same grant, enable/disable, renames,
+availability changes and Test leave it unchanged. Clients key anything derived
+from the credential, such as a Test tool list, on `connectorId + authRevision`
+and drop results captured under an older revision. Adding the field did not
+change the file format: a record without it decodes as 0.
 
 Credential material (OAuth tokens, client registration, PKCE verifier for
 pending flows lives only in memory) is stored through the credential port
@@ -485,7 +494,7 @@ lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
 a short description, categories (`featured`, `research`, `data`, `code`,
 `writing`, `communication`, `design`), a website, the MCP Registry entry when
-the registry publishes that exact remote, and a pinned https icon source. Every
+the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
 an initialize result, or 401 with `WWW-Authenticate`); the verification date
 is recorded in the file. Servers are never invented, and a category with no
@@ -502,44 +511,42 @@ wait on the network:
 - `curated` returns every entry of the complete curated catalog (previews or
   not, registry-listed or not) whose name, tagline and description contain every
   query term, in catalog order; with a `category`, that category's entries in
-  section order. It is answered in memory without touching the registry, has no
-  cursor, and icons follow the usual response budget. An empty query returns the
-  whole catalog (or category).
-- `registry` searches the MCP Registry and drops every result whose curated
-  server the same `curated` query returns, so the two lists never repeat an
-  entry. Cursor paging and failures are the registry's: an unreachable registry
-  fails this query and only this one. `registry` with a `category` is
-  `invalid-input`.
+  section order. It is answered in memory without touching the registry and has
+  no cursor. An empty query returns the whole catalog (or category).
+- `registry` returns every MCP Registry result. A result that is a curated
+  server's alias (by registry name or canonical remote URL) is returned as that
+  curated entry, exactly as `curated` returns it (same `name`, title, tagline,
+  categories, icon and `installedConnectorId`), at most once per page. The two
+  lists can therefore overlap, and clients merging them (global search)
+  deduplicate by `name`. Cursor paging and failures are the registry's: an
+  unreachable registry fails this query and only this one. `registry` with a
+  `category` is `invalid-input`.
 
-A registry result matching a curated server (by registry name or remote URL)
-carries that server's
-tagline, categories and icon. `extensions.discover.entry` (`{ name }`) returns
-one entry: from the complete curated catalog first (with its icon within the
-response budget), otherwise the registry's latest active version of that exact
+`extensions.discover.entry` (`{ name }`) returns
+one entry: from the complete curated catalog first, otherwise the registry's
+latest active version of that exact
 name (`/v0.1/servers/<name>/versions/latest`), otherwise `not-found`. Names
 starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
 
-**Icons.** Clients never load remote images. The server fetches a curated
-server's pinned icon through the connector egress policy (public https only,
-unauthenticated redirects re-checked, 10-second deadline, 64 KiB cap), accepts
-only `image/png`, `image/jpeg`, `image/webp` and `image/svg+xml` whose bytes
-match the declared type, and returns it as a `data:` URI. Media types are
-looked up as own keys only (`constructor`, `__proto__` and other inherited
-names are not types), and only a value that satisfies the shared
-`ExtensionIconDataUri` contract schema (`data:image/(png|jpeg|webp|svg+xml);base64,`
-followed by base64, at most 90,000 characters) is admitted to the cache, so a
-rejected icon can never reach `DiscoverEntry.iconUrl` or
-`ConnectorSummary.iconUrl`. Every curated icon is
-warmed in the background at server start, at most six fetches at a time and
-each fetched once (single flight). A `catalog` or `search` response waits at
-most one second in total for icons that are not cached yet and leaves the rest
-out; `extensions.list` never waits. When icons a response left out become
-ready, the extensions change feed advances so clients refetch. Icons are kept
-24 hours (a stale icon is served while it is refreshed); a failure omits
-`iconUrl` (the client draws a letter tile) and is retried after ten minutes.
-Icons are never scraped at runtime and uncurated registry entries get none.
+**Icons.** Clients never load remote images, and the server never fetches
+icons either. Every curated server ships with a bundled logo:
+`apps/server/src/scient/extensions/discover/curatedIcons.json` maps each
+catalog `id` to the vendor's official logo or app icon (a PNG of at most
+256 px, usually 128 px, or an SVG), inlined as a `data:` URI. It is imported as
+JSON, so the logos are part of the server bundle that the desktop app ships.
+The logos were fetched once from official sources (the vendor's GitHub
+organization avatar, apple-touch-icon or site icon) and checked by eye. A test
+requires every curated entry to have its icon and the map to have no other
+entry. Each icon must satisfy the shared `ExtensionIconDataUri` contract schema
+(`data:image/(png|jpeg|webp|svg+xml);base64,` followed by base64, at most
+90,000 characters), decode to at most 64 KiB, and contain bytes that match
+their media type. Curated entries therefore always carry `iconUrl`, and
+responses never wait on icons. Uncurated registry entries get none (the client
+draws a letter tile). The logos only identify the third-party services they
+belong to (nominative use).
+To add or replace a logo, change `curatedIcons.json` under the same `id`.
 A connector whose canonical URL is a curated server carries that server's icon
 as `ConnectorSummary.iconUrl`, and adding a curated URL (from Discover or typed
 by hand) keeps the curated name and description unless the client sends its

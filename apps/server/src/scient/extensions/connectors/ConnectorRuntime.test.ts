@@ -1565,6 +1565,7 @@ describe("connector token lifecycle", () => {
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         const connectorId = yield* harness.connectSecure();
+        const signedIn = (yield* harness.runtime.list()).connectors[0]!.authRevision;
         vendor.validTokens.clear();
         vendor.refreshMode = "invalid_grant";
 
@@ -1580,13 +1581,59 @@ describe("connector token lifecycle", () => {
 
         const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]?.status).toBe("needs-auth");
+        // The lost grant is a new credential generation.
+        expect(listed.connectors[0]?.authRevision).toBe(signedIn + 1);
         const delivery = yield* harness.runtime.resolveDelivery({ projectId: PROJECT });
         expect(delivery.eligible).toEqual([]);
         expect(delivery.skipped).toMatchObject([{ connectorId, reason: "needs-auth" }]);
 
         const next = yield* harness.proxy(connectorId, toolCall(5));
         expect(yield* readJson(next)).toMatchObject({ id: 5, error: { code: -32001 } });
+        // Further refusals while already needs-auth are not new generations.
+        expect((yield* harness.runtime.list()).connectors[0]?.authRevision).toBe(signedIn + 1);
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("advances the auth revision on every sign-in and only on credential changes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.accessTokenTtlSeconds = 30;
+      const connectorId = yield* harness.connectSecure();
+      const current = Effect.map(harness.runtime.list(), (listed) => listed.connectors[0]!);
+      const first = yield* current;
+      expect(first.authRevision).toBe(1);
+
+      // Re-signing in with the same issuer, scopes and client looks identical
+      // publicly, but may be another account: it is a new revision.
+      const { response } = yield* harness.signIn(connectorId);
+      expect(response.status).toBe(200);
+      const second = yield* current;
+      expect(second.auth).toEqual(first.auth);
+      expect(second.authRevision).toBe(2);
+
+      // Token refresh, Test, toggling, renaming and availability keep the revision.
+      const used = yield* harness.proxy(connectorId, toolCall(1));
+      expect(yield* readJson(used)).toMatchObject({ id: 1, result: {} });
+      expect(vendor.refreshCount).toBeGreaterThan(0);
+      yield* harness.runtime.test({ connectorId });
+      yield* harness.runtime.update({ connectorId, enabled: false });
+      yield* harness.runtime.update({ connectorId, enabled: true, displayName: "Renamed" });
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [PROJECT] },
+      });
+      const settled = yield* current;
+      expect(settled.displayName).toBe("Renamed");
+      expect(settled.authRevision).toBe(2);
+
+      // Persisted: a fresh runtime over the same state reads the same revision.
+      const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir });
+      expect((yield* reloaded.list()).connectors[0]?.authRevision).toBe(2);
+      const written: { connectors: ReadonlyArray<{ authRevision?: number }> } = JSON.parse(
+        yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")),
+      );
+      expect(written.connectors[0]?.authRevision).toBe(2);
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("keeps a rotated token in memory when it cannot be saved", () =>
@@ -1748,6 +1795,8 @@ describe("connector state file", () => {
       });
       const listed = yield* harness.runtime.list();
       expect(listed.connectors.map((connector) => connector.displayName)).toEqual(["Original"]);
+      // Records written before auth revisions existed start at 0.
+      expect(listed.connectors[0]?.authRevision).toBe(0);
       yield* harness.runtime.remove({ connectorId: listed.connectors[0]!.connectorId });
       const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir });
       const after = yield* reloaded.list();

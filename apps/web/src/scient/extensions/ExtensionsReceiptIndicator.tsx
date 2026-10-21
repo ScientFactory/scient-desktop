@@ -75,13 +75,16 @@ export function ExtensionsReceiptIndicator({
               </ul>
             </section>
           ) : null}
-          <Link
-            to="/settings/extensions/installed"
-            search={{ machine: environmentId }}
-            className="justify-self-start text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            className="-ms-2 justify-self-start"
+            render={
+              <Link to="/settings/extensions/installed" search={{ machine: environmentId }} />
+            }
           >
             Manage connected services
-          </Link>
+          </Button>
         </div>
       </PopoverPopup>
     </Popover>

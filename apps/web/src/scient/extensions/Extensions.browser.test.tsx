@@ -403,6 +403,7 @@ function connector(id: string, patch: Partial<ConnectorSummary> = {}): Connector
     source: { type: "url" },
     auth: { type: "oauth", usesOwnClient: false },
     status: "connected",
+    authRevision: 0,
     enabled: true,
     availability: { type: "all-projects" },
     createdAt: "2026-10-21T00:00:00.000Z",
@@ -576,6 +577,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("Discover", () => {
@@ -764,23 +766,38 @@ describe("Discover", () => {
         connector("teamnotes1", { displayName: "Team notes" }),
       ],
     });
+    const curatedKey = JSON.stringify({ scope: "curated", query: "note" });
+    const notion = entry("io.notion/notion", { title: "Notion" });
+    const notes = entry("io.github.x/notes", { title: "Notes server", categories: [] });
     state.discoverPages = {
-      [JSON.stringify({ scope: "curated", query: "note" })]: {
-        fetchedAt: "2026-10-21T00:00:00.000Z",
-        entries: [entry("io.notion/notion", { title: "Notion" })],
-      },
+      [curatedKey]: { fetchedAt: "2026-10-21T00:00:00.000Z", entries: [notion] },
+      // The registry lists catalog servers too, in catalog shape.
       [JSON.stringify({ scope: "registry", query: "note" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
-        // The server leaves catalog servers out of the registry's list.
-        entries: [entry("io.github.x/notes", { title: "Notes server", categories: [] })],
+        entries: [notion, notes],
+        nextCursor: "page-2",
+      },
+      [JSON.stringify({ scope: "registry", query: "note", cursor: "page-2" })]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [
+          notion,
+          notes,
+          entry("io.github.y/notebook", { title: "Notebook", categories: [] }),
+        ],
       },
     };
+    // Until the catalog answers, the registry's rows wait: any could repeat it.
+    state.discoverOutcomes = { [curatedKey]: "pending" };
     await render(<DiscoverPage />);
     await userEvent.type(
       container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
       "note",
     );
     expect(section("Popular")).toBeNull();
+    expect(rowNames(section("Search results"))).toEqual(["Team notes", "Sources"]);
+
+    state.discoverOutcomes = {};
+    await render(<DiscoverPage />);
     expect(rowNames(section("Search results"))).toEqual([
       "Team notes",
       "Sources",
@@ -789,6 +806,16 @@ describe("Discover", () => {
     ]);
     expect(buttonIn(row("Team notes"), "More for Team notes")).not.toBeNull();
     expect(buttonIn(row("Notes server"), "Add Notes server")).not.toBeNull();
+
+    // A later registry page skips what earlier rows already listed.
+    await userEvent.click(buttonIn(section("Search results"), "Load more")!);
+    expect(rowNames(section("Search results"))).toEqual([
+      "Team notes",
+      "Sources",
+      "Notion",
+      "Notes server",
+      "Notebook",
+    ]);
   });
 
   it("shows catalog matches at once while the registry is slow, then on failure", async () => {
@@ -850,6 +877,35 @@ describe("Discover", () => {
     });
   });
 
+  it("lists every registry result on All MCP servers, catalog servers included", async () => {
+    const granola = entry("scient.curated/granola", {
+      title: "Granola",
+      tagline: "Meeting notes",
+      categories: ["writing"],
+    });
+    state.discoverPages = {
+      [JSON.stringify({ scope: "registry" })]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [entry("io.example/alpha", { title: "Alpha", categories: [] }), granola],
+      },
+      [JSON.stringify({ scope: "registry", query: "granola" })]: {
+        fetchedAt: "2026-10-21T00:00:00.000Z",
+        entries: [granola],
+      },
+    };
+    await render(<AllServersPage />);
+    const all = () => section("All MCP servers");
+    expect(rowNames(all())).toEqual(["Alpha", "Granola"]);
+    expect(row("Granola").textContent).toContain("Meeting notes");
+    await userEvent.type(
+      container.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]')!,
+      "granola",
+    );
+    expect(rowNames(all())).toEqual(["Granola"]);
+    // This page never asks the catalog: the registry's list is complete here.
+    expect(JSON.stringify(state.queryTargets)).not.toContain('"scope":"curated"');
+  });
+
   it("forwards an Installed search result to the Installed page", async () => {
     state.hash = "#extensions-connected-services";
     await render(<DiscoverPage />);
@@ -877,7 +933,7 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
-  it("groups connectors, Scient plugins and each agent's own items, six rows before Show all", async () => {
+  it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
     state.inventory = inventory({
       plugins: [
         plugin("sources", { displayName: "Sources" }),
@@ -890,18 +946,47 @@ describe("Installed", () => {
         }),
       ],
     });
+    state.providersByEnvironment = {
+      local: [
+        state.providersByEnvironment.local![0]!,
+        provider(claude, "claudeAgent", {
+          plugins: Array.from({ length: 6 }, (_, index) => ({
+            id: `claude-${index + 1}`,
+            name: `claude-${index + 1}`,
+            source: "local" as const,
+            enabled: true,
+          })),
+        }),
+      ],
+    };
     await render(<InstalledPage />);
     expect(rowNames(section("Connected services"))).toEqual(["Linear"]);
     expect(rowNames(section("Scient plugins"))).toEqual(["Lab kit", "Sources"]);
     expect(row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe("Off");
 
+    // The toggle sits in the section header, beside its heading.
     const fromCodex = section("From Codex");
     expect(rowNames(fromCodex)).toHaveLength(6);
-    await userEvent.click(buttonIn(fromCodex, "Show all 8")!);
+    const toggle = buttonIn(fromCodex, "Show all 8")!;
+    expect(toggle.parentElement?.querySelector("h2")?.textContent).toBe("From Codex");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(toggle);
     expect(rowNames(fromCodex)).toHaveLength(8);
     expect(rowNames(fromCodex).at(-1)).toBe("github");
-    expect(buttonIn(fromCodex, "Show all 8")).toBeNull();
-    expect(rowNames(section("From Claude"))).toEqual(["superpowers"]);
+    expect(toggle.textContent).toBe("Show less");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(toggle);
+    expect(rowNames(fromCodex)).toHaveLength(6);
+    expect(toggle.textContent).toBe("Show all 8");
+
+    // Six or fewer: everything shows and there is nothing to toggle.
+    const fromClaude = section("From Claude");
+    expect(rowNames(fromClaude)).toHaveLength(6);
+    expect(
+      [...fromClaude.querySelectorAll("button")].some((button) =>
+        /^Show (all|less)/.test(button.textContent ?? ""),
+      ),
+    ).toBe(false);
   });
 
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
@@ -1341,8 +1426,9 @@ describe("Detail pages", () => {
     expect(aboutValue("Source")).toBe("Scient catalog");
   });
 
-  it("counts the agents that can use a connector and shows only their tiles in a card above", async () => {
-    state.inventory = inventory({
+  const OPENCODE_REASON = "Only when Scient starts the OpenCode server";
+  const withLimitedOpenCode = () =>
+    inventory({
       providerSupport: [
         ...inventory().providerSupport,
         {
@@ -1350,22 +1436,44 @@ describe("Detail pages", () => {
           driver: ProviderDriverKind.make("opencode"),
           displayName: "OpenCode",
           status: "conditional",
-          reason: "Only when Scient starts the OpenCode server",
+          reason: OPENCODE_REASON,
         },
       ],
     });
+  const agentsCard = () =>
+    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"]');
+  const reasonTooltip = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-slot="tooltip-popup"]')].find((item) =>
+      item.textContent?.includes(OPENCODE_REASON),
+    ) ?? null;
+  const advance = (ms: number) => act(async () => vi.advanceTimersByTime(ms));
+
+  it("counts the agents that can use a connector and opens their tiles above after the hover delay", async () => {
+    state.inventory = withLimitedOpenCode();
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
     expect(aboutValue("Works with")).toBe("3 agents");
+    const trigger = buttonIn(section("About"), "Works with: 3 agents")!;
+    expect(trigger.textContent).toBe("3 agents");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(section("About").querySelector("[data-support]")).toBeNull();
 
-    const card = () => document.querySelector<HTMLElement>('[role="group"][aria-label="Agents"]');
-    await userEvent.hover(buttonIn(section("About"), "3 agents")!);
-    await vi.waitFor(() => expect(card()).not.toBeNull());
-    expect(card()!.closest('[data-slot="preview-card-popup"]')?.getAttribute("data-side")).toBe(
-      "top",
-    );
-    const tiles = [...card()!.querySelectorAll<HTMLElement>("[data-support]")];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await userEvent.hover(trigger);
+    await advance(199);
+    expect(agentsCard()).toBeNull();
+    await advance(1);
+    const card = agentsCard()!;
+    expect(card).not.toBeNull();
+    expect(card.getAttribute("data-side")).toBe("top");
+    // Directly above the count, left edges aligned, never off to one side.
+    const cardBox = card.getBoundingClientRect();
+    const triggerBox = trigger.getBoundingClientRect();
+    expect(Math.abs(cardBox.left - triggerBox.left)).toBeLessThanOrEqual(2);
+    expect(cardBox.bottom).toBeLessThanOrEqual(triggerBox.top);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.getAttribute("aria-controls")).toBe(card.id);
+    const tiles = [...card.querySelectorAll<HTMLElement>("[data-support]")];
     expect(tiles.map((tile) => tile.textContent)).toEqual(["Codex", "Claude", "OpenCode"]);
     expect(
       tiles.map((tile) =>
@@ -1378,37 +1486,105 @@ describe("Detail pages", () => {
       true,
     ]);
     // Tiles only: no limitation or "not available" text in the card.
-    expect(card()!.querySelector("p")).toBeNull();
-    expect(card()!.textContent).toBe("CodexClaudeOpenCode");
+    expect(card.querySelector("p")).toBeNull();
+    expect(card.textContent).toBe("CodexClaudeOpenCode");
 
     // The limited agent's tile explains itself, and the card stays open.
-    const tooltip = () =>
-      [...document.querySelectorAll<HTMLElement>('[data-slot="tooltip-popup"]')].find((item) =>
-        item.textContent?.includes("Only when Scient starts the OpenCode server"),
-      ) ?? null;
-    const limited = buttonIn(card()!, "OpenCode: Only when Scient starts the OpenCode server")!;
+    const limited = buttonIn(card, `OpenCode: ${OPENCODE_REASON}`)!;
     await userEvent.hover(limited);
-    await vi.waitFor(() => expect(tooltip()).not.toBeNull());
-    expect(card()).not.toBeNull();
+    await advance(1000);
+    expect(reasonTooltip()).not.toBeNull();
+    expect(agentsCard()).not.toBeNull();
     await userEvent.unhover(limited);
-    await vi.waitFor(() => expect(tooltip()).toBeNull());
-    // A tap opens it too (touch has no hover).
-    await userEvent.click(limited);
-    await vi.waitFor(() => expect(tooltip()).not.toBeNull());
-    expect(card()).not.toBeNull();
+    await advance(1000);
+    expect(reasonTooltip()).toBeNull();
+    vi.useRealTimers();
+  });
 
-    // Keyboard focus opens the card.
+  it("opens the agents card with a touch tap, and a tap pins the limited agent's reason", async () => {
+    state.inventory = withLimitedOpenCode();
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    // A touch screen has no pointer resting anywhere: park the test's mouse
+    // where no card or tooltip will open under it.
+    await userEvent.hover(container.querySelector("h1")!);
+    const trigger = buttonIn(section("About"), "Works with: 3 agents")!;
+    // A real tap: touch pointer events and a click with `detail: 1` (a click
+    // with `detail: 0` reads as a keyboard press).
+    const tap = async (target: HTMLElement) => {
+      const frame = Promise.withResolvers<number>();
+      await act(async () => {
+        const init = {
+          bubbles: true,
+          cancelable: true,
+          pointerType: "touch",
+          isPrimary: true,
+          detail: 1,
+        };
+        target.dispatchEvent(new PointerEvent("pointerdown", init));
+        target.dispatchEvent(new PointerEvent("pointerup", init));
+        target.dispatchEvent(new PointerEvent("click", init));
+        requestAnimationFrame(frame.resolve);
+        await frame.promise;
+      });
+    };
+    await tap(trigger);
+    expect(agentsCard()).not.toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const limited = buttonIn(agentsCard()!, `OpenCode: ${OPENCODE_REASON}`)!;
+    // A touch open leaves focus where it was, so nothing in the card opens by itself.
+    expect(document.activeElement).not.toBe(limited);
+    expect(limited.hasAttribute("data-popup-open")).toBe(false);
+
+    // A tap on the limited agent shows its reason, and the card stays open;
+    // the next tap hides it.
+    await tap(limited);
+    expect(limited.hasAttribute("data-popup-open")).toBe(true);
+    expect(reasonTooltip()).not.toBeNull();
+    expect(agentsCard()).not.toBeNull();
+    await tap(limited);
+    expect(limited.hasAttribute("data-popup-open")).toBe(false);
+
+    // A tap right after focus showed the reason keeps it showing.
+    await act(async () => limited.focus({ focusVisible: true }));
+    await tap(limited);
+    expect(limited.hasAttribute("data-popup-open")).toBe(true);
+
+    // Tapping the count again closes the card.
+    await tap(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("reaches the agents card and the limited agent's reason with Tab and Enter", async () => {
+    state.inventory = withLimitedOpenCode();
+    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    const trigger = buttonIn(section("About"), "Works with: 3 agents")!;
+    for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
+      await userEvent.tab();
+    }
+    expect(document.activeElement).toBe(trigger);
+    await userEvent.keyboard("{Enter}");
+    const card = agentsCard()!;
+    expect(card).not.toBeNull();
+    expect(trigger.getAttribute("aria-controls")).toBe(card.id);
+    // Focus moves into the card, onto the limited agent, which tells why.
+    expect(document.activeElement).toBe(buttonIn(card, `OpenCode: ${OPENCODE_REASON}`));
+    expect(reasonTooltip()).not.toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.keyboard("{Escape}");
+    expect(agentsCard()).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("shows a plain count when none of the agents can use the connector", async () => {
     state.inventory = inventory({
-      providerSupport: inventory().providerSupport.filter((entry) => entry.status === "supported"),
+      providerSupport: inventory().providerSupport.map((entry) => ({
+        ...entry,
+        status: "unsupported" as const,
+      })),
     });
     await render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(aboutValue("Works with")).toBe("All agents");
-    buttonIn(section("About"), "All agents")!.focus();
-    await vi.waitFor(() =>
-      expect(
-        [...(card()?.querySelectorAll("[data-support]") ?? [])].map((tile) => tile.textContent),
-      ).toEqual(["Codex", "Claude"]),
-    );
+    expect(aboutValue("Works with")).toBe("None of your agents");
+    expect(buttonIn(section("About"), "Works with: None of your agents")).toBeNull();
   });
 
   it("lists tools only after See tools, grouped by kind", async () => {
@@ -1486,40 +1662,44 @@ describe("Detail pages", () => {
     expect(buttonIn(section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
-  it("drops cached tools when the connector signs in again or its sign-in changes", async () => {
-    vi.stubGlobal(
-      "open",
-      vi.fn(() => ({ opener: {}, location: { href: "" }, close: vi.fn(), closed: false })),
-    );
+  it("deletes cached tools whenever the connector's sign-in changes, wherever it changed", async () => {
+    const linearAt = (authRevision: number, patch: Partial<ConnectorSummary> = {}) => {
+      state.inventory = inventory({
+        connectors: [connector("linear0001", { displayName: "Linear", authRevision, ...patch })],
+      });
+      return render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    };
     state.commands.test.mockResolvedValue(
       toolResult(LINEAR, [{ name: "list_issues", readOnly: true }]),
     );
-    state.commands.startSignIn.mockResolvedValueOnce({
-      _tag: "Success",
-      value: {
-        authorizationUrl: "https://linear.app/oauth",
-        expiresAt: "2026-10-21T00:10:00.000Z",
-      },
-    });
-    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await linearAt(0);
     await userEvent.click(buttonIn(section("Tools"), "See tools")!);
     expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
-    await userEvent.click(buttonIn(section("Connection"), "Reconnect")!);
+
+    // Another client signed in again, to the same issuer and scopes: only the
+    // revision says so.
+    await linearAt(1);
     expect(groupTrigger(section("Tools"), "Read")).toBeNull();
     expect(buttonIn(section("Tools"), "See tools")).not.toBeNull();
 
+    // connected → needs sign-in → connected never brings the old tools back.
     await userEvent.click(buttonIn(section("Tools"), "See tools")!);
     expect(groupTrigger(section("Tools"), "Read")).not.toBeNull();
-    state.inventory = inventory({
-      connectors: [
-        connector("linear0001", {
-          displayName: "Linear",
-          auth: { type: "oauth", usesOwnClient: true },
-        }),
-      ],
-    });
-    await render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await linearAt(2, { status: "needs-auth" });
+    await linearAt(3);
     expect(groupTrigger(section("Tools"), "Read")).toBeNull();
+    expect(state.commands.test).toHaveBeenCalledTimes(2);
+
+    // An answer that lands after the sign-in changed is dropped.
+    const late = Promise.withResolvers<unknown>();
+    state.commands.test.mockReturnValueOnce(late.promise);
+    await userEvent.click(buttonIn(section("Tools"), "See tools")!);
+    await linearAt(4);
+    await act(async () =>
+      late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
+    );
+    expect(section("Tools").textContent).not.toContain("Read");
+    expect(buttonIn(section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
   it("draws built-in plugins with a glyph and bundles with a letter tile", async () => {

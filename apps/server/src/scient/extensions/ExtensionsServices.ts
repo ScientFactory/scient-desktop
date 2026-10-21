@@ -192,15 +192,12 @@ export interface ExtensionsDiscoverShape {
    */
   readonly entry: (input: DiscoverEntryInput) => Effect.Effect<DiscoverEntry, ExtensionsError>;
   /**
-   * Curated icons (`data:` URIs) for connector URLs that match a curated
-   * server, keyed by the given URL. Never waits: icons still loading are left
-   * out and announced on `changes` once they arrive.
+   * Bundled curated icons (`data:` URIs) for connector URLs that match a
+   * curated server, keyed by the given URL.
    */
   readonly connectorIcons: (
     urls: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyMap<string, string>>;
-  /** Emits when icons that earlier responses left out have become available. */
-  readonly changes: Stream.Stream<void>;
 }
 
 export class ExtensionsDiscover extends Context.Service<

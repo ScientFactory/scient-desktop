@@ -27,15 +27,11 @@ import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import {
-  PreviewCard,
-  PreviewCardPopup,
-  PreviewCardTrigger,
-} from "../../components/ui/preview-card";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { AddConnectorDialog } from "./AddConnectorDialog";
@@ -51,6 +47,7 @@ import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
 import {
   BackLink,
   ExtensionsPage,
+  GHOST_LINK_CLASS,
   MutedLine,
   SECTION_HEADING_CLASS,
   useExtensionsEnvironment,
@@ -258,7 +255,7 @@ function ExternalLink({ href }: { readonly href: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-foreground underline-offset-2 hover:underline"
+      className={cn(GHOST_LINK_CLASS, "text-foreground")}
     >
       {urlHost(href) ?? href}
     </a>
@@ -323,9 +320,16 @@ function AgentTileContent({
 
 const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
 
+/** How long the pointer rests on "Works with" before its card opens. */
+const WORKS_WITH_OPEN_DELAY_MS = 200;
+
 /**
  * A limited agent's tile tells why on hover, keyboard focus, or a tap. The
  * tooltip opens from inside the card, so the card stays open with it.
+ *
+ * A press pins the reason open and the next press unpins it. Hover or focus
+ * only shows it, so a tap that lands just after focus (or a hover) opened it
+ * pins it rather than closing it again.
  */
 function LimitedAgentTile({
   entry,
@@ -334,14 +338,16 @@ function LimitedAgentTile({
   readonly entry: ConnectorProviderSupport;
   readonly iconUrl: string | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState<"closed" | "shown" | "pinned">("closed");
   const reason = entry.reason ?? "Works with limits";
   return (
     <Tooltip
-      open={open}
+      open={shown !== "closed"}
       onOpenChange={(next, details) => {
-        // A press toggles below, so touch can open it with a tap.
-        if (details.reason !== "trigger-press") setOpen(next);
+        // Presses are handled below; everything else shows or hides it.
+        if (details.reason === "trigger-press") return;
+        if (!next) setShown("closed");
+        else setShown((current) => (current === "pinned" ? "pinned" : "shown"));
       }}
     >
       <TooltipTrigger
@@ -349,7 +355,7 @@ function LimitedAgentTile({
           <button
             type="button"
             aria-label={`${entry.displayName}: ${reason}`}
-            onClick={() => setOpen((current) => !current)}
+            onClick={() => setShown((current) => (current === "pinned" ? "closed" : "pinned"))}
             className={cn(
               AGENT_TILE_CLASS,
               "cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -365,9 +371,11 @@ function LimitedAgentTile({
 }
 
 /**
- * How many agents can use this service; hovering or focusing it opens a card
- * of their logos above it, scrolling sideways when they don't fit. Agents
- * that can't use it are left out of the card; the count already says so.
+ * How many agents can use this service. Hovering it, or pressing it (click,
+ * tap, Enter), opens a card of their logos above it, scrolling sideways when
+ * they don't fit. Opened from the keyboard, focus moves into the card so Tab
+ * reaches a limited agent's reason. Agents that can't use it are left out of
+ * the card; the count already says so.
  */
 function WorksWithValue() {
   const { inventory, providers } = useExtensionsEnvironment();
@@ -376,46 +384,63 @@ function WorksWithValue() {
     return <span className="text-muted-foreground">No agents reported</span>;
   }
   const usable = support.filter((entry) => entry.status !== "unsupported");
+  const count = worksWithCount(support);
+  if (usable.length === 0) return <span>{count}</span>;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
   return (
-    <PreviewCard>
-      <PreviewCardTrigger
-        delay={200}
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={WORKS_WITH_OPEN_DELAY_MS}
         closeDelay={120}
         render={
           <button
             type="button"
-            className="cursor-default rounded-sm text-foreground underline decoration-muted-foreground/60 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-label={`Works with: ${count}`}
+            className={cn(GHOST_LINK_CLASS, "text-foreground")}
           />
         }
       >
-        {worksWithCount(support)}
-      </PreviewCardTrigger>
-      {usable.length > 0 ? (
-        <PreviewCardPopup side="top" className="w-max max-w-[min(420px,var(--available-width))]">
-          <div role="group" aria-label="Agents" className="p-3">
-            <ScrollArea scrollFade hideScrollbars className="h-auto">
-              <ul className="flex w-max gap-1">
-                {usable.map((entry) => (
-                  <li
-                    key={entry.providerInstanceId}
-                    data-support={entry.status}
-                    className={entry.status === "conditional" ? undefined : AGENT_TILE_CLASS}
-                  >
-                    {entry.status === "conditional" ? (
-                      <LimitedAgentTile entry={entry} iconUrl={iconUrlOf(entry)} />
-                    ) : (
-                      <AgentTileContent entry={entry} iconUrl={iconUrlOf(entry)} />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </ScrollArea>
-          </div>
-        </PreviewCardPopup>
-      ) : null}
-    </PreviewCard>
+        {count}
+      </PopoverTrigger>
+      {/* Above the count, left edges aligned; below only when there is no room
+          above, and shifted sideways only as far as the viewport needs. */}
+      <PopoverPopup
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+        padding="comfortable"
+        aria-label="Agents"
+        initialFocus={(openType) => openType === "keyboard"}
+        className="w-max"
+      >
+        {/* The width limit sits on the content, independent of the positioner's
+            measurements, so the card is measured, and placed, at that width. */}
+        <ScrollArea
+          scrollFade
+          hideScrollbars
+          className="h-auto max-w-[min(396px,calc(100vw-3rem))]"
+        >
+          <ul className="flex w-max gap-1">
+            {usable.map((entry) => (
+              <li
+                key={entry.providerInstanceId}
+                data-support={entry.status}
+                className={entry.status === "conditional" ? undefined : AGENT_TILE_CLASS}
+              >
+                {entry.status === "conditional" ? (
+                  <LimitedAgentTile entry={entry} iconUrl={iconUrlOf(entry)} />
+                ) : (
+                  <AgentTileContent entry={entry} iconUrl={iconUrlOf(entry)} />
+                )}
+              </li>
+            ))}
+          </ul>
+        </ScrollArea>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -1029,10 +1054,7 @@ function componentGroups(
         key: `${component.type}:${component.name}`,
         name:
           component.type === "skill" ? (
-            <Link
-              to="/settings/skills"
-              className="text-foreground underline-offset-2 hover:underline"
-            >
+            <Link to="/settings/skills" className={cn(GHOST_LINK_CLASS, "text-foreground")}>
               {component.name}
             </Link>
           ) : component.type === "mcp-tools" ? (
@@ -1101,10 +1123,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           fact(
             "Settings",
             settingsPath ? (
-              <Link
-                to={settingsPath}
-                className="text-foreground underline-offset-2 hover:underline"
-              >
+              <Link to={settingsPath} className={cn(GHOST_LINK_CLASS, "text-foreground")}>
                 Open settings
               </Link>
             ) : null,

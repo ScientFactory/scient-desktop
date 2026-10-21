@@ -202,6 +202,7 @@ const toSummary = (record: ConnectorRecord): ConnectorSummary => ({
   auth: authSummary(record.auth),
   status: record.status,
   enabled: record.enabled,
+  authRevision: record.authRevision,
   availability: record.availability,
   createdAt: record.createdAt,
   updatedAt: record.updatedAt,
@@ -510,7 +511,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     return { type: "projects", projectIds } satisfies GrantScope;
   });
 
-  /** Status changes discovered while forwarding never fail the request. */
+  /**
+   * Status changes discovered while forwarding never fail the request. Losing
+   * the credential (a move out of `connected` or between needs-* states) starts
+   * a new auth revision; repeating the current status does not.
+   */
   const markStatus = (
     record: ConnectorRecord,
     status: ConnectorRecord["status"],
@@ -521,6 +526,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           ...current,
           status,
           lastError,
+          ...(status !== current.status && status !== "connected"
+            ? { authRevision: current.authRevision + 1 }
+            : {}),
           updatedAt,
         })).pipe(
           Effect.catch((error) =>
@@ -1033,6 +1041,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       auth,
       status,
       enabled: true,
+      authRevision: 0,
       availability: { type: "all-projects" },
       createdAt,
       updatedAt: createdAt,
@@ -1127,6 +1136,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       yield* updateRecord(record.connectorId, (current, updatedAt) => ({
         ...current,
         auth: { type: "none" },
+        authRevision: current.authRevision + 1,
         status: "connected",
         lastError: undefined,
         updatedAt,
@@ -1266,6 +1276,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             issuer: session.issuer,
             ...(scopes === undefined || scopes.length === 0 ? {} : { scopes }),
           },
+          // Every sign-in is a new credential generation, even for the same
+          // issuer and scopes (it may be another account).
+          authRevision: latest.authRevision + 1,
           status: "connected",
           lastError: undefined,
           updatedAt,
@@ -1614,6 +1627,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         auth: { type: "oauth", usesOwnClient: false },
         status: "needs-auth",
         enabled: true,
+        authRevision: 0,
         availability: { type: "all-projects" },
         createdAt,
         updatedAt: createdAt,

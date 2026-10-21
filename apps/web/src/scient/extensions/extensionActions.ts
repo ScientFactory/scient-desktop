@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { AtomRegistry } from "effect/reactivity";
-import { useContext, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { ensureLocalApi } from "../../localApi";
@@ -171,19 +171,20 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
   const remove = useAtomCommand(removeConnector, { reportFailure: true });
   const test = useAtomCommand(testConnector, { reportFailure: true });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
-  // A test result belongs to one environment, connector and sign-in state; a
-  // late answer for anything else, or one from before a status or sign-in
-  // change, is never shown.
-  const toolsIdentity = JSON.stringify([
-    environmentId,
-    connectorId,
-    connector.status,
-    connector.auth,
-  ]);
+  // A test result belongs to one environment, connector and sign-in
+  // (`authRevision` moves on every sign-in, sign-out and credential change).
+  // A result from an older sign-in is deleted, not hidden, and an answer that
+  // arrives after the sign-in changed is dropped.
+  const toolsIdentity = JSON.stringify([environmentId, connectorId, connector.authRevision]);
   const [tested, setTested] = useState<{
     readonly identity: string;
     readonly result: ConnectorTestResult;
   } | null>(null);
+  if (tested !== null && tested.identity !== toolsIdentity) setTested(null);
+  const liveToolsIdentity = useRef(toolsIdentity);
+  useEffect(() => {
+    liveToolsIdentity.current = toolsIdentity;
+  }, [toolsIdentity]);
   const testResult = tested?.identity === toolsIdentity ? tested.result : null;
 
   return {
@@ -196,8 +197,6 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     canSignIn: !lock.locked && callbackOrigin !== null,
     signIn: async () => {
       if (callbackOrigin === null) return;
-      // Signing in again may change what the service offers.
-      setTested(null);
       await lock.signIn(
         "sign-in",
         async () => {
@@ -214,6 +213,7 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     test: async () => {
       const identity = toolsIdentity;
       const result = await lock.run("test", () => test({ environmentId, input: { connectorId } }));
+      if (identity !== liveToolsIdentity.current) return;
       setTested(
         result?._tag === "Success" && result.value.connectorId === connectorId
           ? { identity, result: result.value }

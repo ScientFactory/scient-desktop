@@ -8,7 +8,7 @@ import {
   useSettingsSearchTargetId,
 } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
-import { InlineButton } from "../../components/ui/button";
+import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -63,22 +63,30 @@ export function SearchField({
   );
 }
 
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+/**
+ * One Discover page, then the pages after it. Each page skips names an earlier
+ * page (or `seen`) already listed, so an entry appears once.
+ */
 function DiscoverResultsPage({
   input,
-  cursor,
-  isLast,
+  cursors,
+  seen,
   hide,
   pendingLabel,
   onMore,
 }: {
   readonly input: Omit<DiscoverSearchInput, "cursor">;
-  readonly cursor: string | undefined;
-  readonly isLast: boolean;
+  /** This page's cursor first (undefined for the first page), then the later pages'. */
+  readonly cursors: readonly [string | undefined, ...ReadonlyArray<string>];
+  readonly seen: ReadonlySet<string>;
   readonly hide: ((entry: DiscoverEntry) => boolean) | undefined;
   readonly pendingLabel: string;
   readonly onMore: (cursor: string) => void;
 }) {
   const { environmentId } = useExtensionsEnvironment();
+  const [cursor, ...later] = cursors;
   const page = useEnvironmentQuery(
     extensionsDiscoverPage({ environmentId, input: { ...input, ...(cursor ? { cursor } : {}) } }),
   );
@@ -96,19 +104,40 @@ function DiscoverResultsPage({
       </li>
     );
   }
+  const listed = new Set(seen);
+  const shown: DiscoverEntry[] = [];
+  for (const entry of page.data.entries) {
+    if (listed.has(entry.name)) continue;
+    listed.add(entry.name);
+    if (hide?.(entry) !== true) shown.push(entry);
+  }
   const nextCursor = page.data.nextCursor;
+  const [nextPage, ...afterNext] = later;
   return (
     <>
-      {page.data.entries
-        .filter((entry) => hide?.(entry) !== true)
-        .map((entry) => (
-          <EntryItem key={`${entry.name}@${entry.version}`} entry={entry} />
-        ))}
-      {isLast && nextCursor ? (
-        <li className="col-span-full px-2 pt-2 text-sm">
-          <InlineButton tone="muted" onClick={() => onMore(nextCursor)}>
+      {shown.map((entry) => (
+        <EntryItem key={entry.name} entry={entry} />
+      ))}
+      {nextPage !== undefined ? (
+        <DiscoverResultsPage
+          key={nextPage}
+          input={input}
+          cursors={[nextPage, ...afterNext]}
+          seen={listed}
+          hide={hide}
+          pendingLabel={pendingLabel}
+          onMore={onMore}
+        />
+      ) : nextCursor ? (
+        <li className="col-span-full px-2 pt-2">
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            className="-ms-2"
+            onClick={() => onMore(nextCursor)}
+          >
             Load more
-          </InlineButton>
+          </Button>
         </li>
       ) : null}
     </>
@@ -117,33 +146,36 @@ function DiscoverResultsPage({
 
 /**
  * Discover pages, one query per cursor, appended in order. Renders list items
- * so callers can put them in the same grid as their own rows.
+ * so callers can put them in the same grid as their own rows. Names in `seen`
+ * are listed elsewhere and skipped.
  */
 function DiscoverPager({
   input,
+  seen = NO_NAMES,
   hide,
   pendingLabel = "Loading…",
 }: {
   readonly input: Omit<DiscoverSearchInput, "cursor">;
+  readonly seen?: ReadonlySet<string>;
   readonly hide?: (entry: DiscoverEntry) => boolean;
   readonly pendingLabel?: string;
 }) {
   const inputKey = JSON.stringify(input);
   const [pages, setPages] = useState<{
     readonly inputKey: string;
-    readonly cursors: ReadonlyArray<string | undefined>;
-  }>({ inputKey, cursors: [undefined] });
+    readonly cursors: ReadonlyArray<string>;
+  }>({ inputKey, cursors: [] });
   let cursors = pages.cursors;
   if (pages.inputKey !== inputKey) {
-    cursors = [undefined];
+    cursors = [];
     setPages({ inputKey, cursors });
   }
-  return cursors.map((cursor, index) => (
+  return (
     <DiscoverResultsPage
-      key={cursor ?? "first"}
+      key={inputKey}
       input={input}
-      cursor={cursor}
-      isLast={index === cursors.length - 1}
+      cursors={[undefined, ...cursors]}
+      seen={seen}
       hide={hide}
       pendingLabel={pendingLabel}
       onMore={(next) =>
@@ -154,7 +186,7 @@ function DiscoverPager({
         )
       }
     />
-  ));
+  );
 }
 
 function DiscoverHome() {
@@ -214,10 +246,14 @@ function DiscoverHome() {
 /**
  * Installed, built-in and catalog matches at once; the registry's, which can
  * be slow or unreachable, follow when they arrive and never move the others.
- * The server leaves catalog servers out of the registry's list.
+ * The registry also lists catalog servers (in catalog shape, same name); the
+ * catalog's rows win.
  */
 function DiscoverSearchResults({ query }: { readonly query: string }) {
-  const { catalog, inventory } = useExtensionsEnvironment();
+  const { environmentId, catalog, inventory } = useExtensionsEnvironment();
+  const curated = useEnvironmentQuery(
+    extensionsDiscoverPage({ environmentId, input: { scope: "curated", query } }),
+  );
   const connectors = (inventory?.connectors ?? []).filter((connector) =>
     matchesQuery(query, [
       connector.displayName,
@@ -232,6 +268,9 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
   const shownConnectorIds = new Set(connectors.map((connector) => connector.connectorId));
   const installedHere = (entry: DiscoverEntry) =>
     entry.installedConnectorId !== undefined && shownConnectorIds.has(entry.installedConnectorId);
+  // Until the catalog answers, which registry rows repeat it is unknown.
+  const curatedPending = curated.data === null && !curated.error;
+  const curatedNames = new Set(curated.data?.entries.map((entry) => entry.name));
   return (
     <ExtensionGrid label="Search results">
       {connectors.map((connector) => (
@@ -249,7 +288,8 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
       <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
       <DiscoverPager
         input={{ scope: "registry", query }}
-        hide={installedHere}
+        seen={curatedNames}
+        hide={curatedPending ? () => true : installedHere}
         pendingLabel="Searching the MCP Registry…"
       />
     </ExtensionGrid>

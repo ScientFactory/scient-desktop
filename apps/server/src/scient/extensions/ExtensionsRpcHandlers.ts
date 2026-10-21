@@ -29,7 +29,6 @@ import {
   type ConnectorRuntimeShape,
   ExtensionDeliveryReceipts,
   type ExtensionDeliveryReceiptsShape,
-  ExtensionsDiscover,
   type ExtensionsDiscoverShape,
   type ProviderPluginManagementShape,
   ScientPluginRegistry,
@@ -78,7 +77,6 @@ export const changeFeedLayer = Layer.effect(
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
     const providers = yield* ProviderRegistry;
-    const discover = yield* ExtensionsDiscover;
     const revision = yield* Ref.make(0);
     const events = yield* PubSub.unbounded<ExtensionsChangedEvent>();
     const supportChanges = Stream.map(
@@ -91,8 +89,6 @@ export const changeFeedLayer = Layer.effect(
         plugins.changes,
         Stream.map(receipts.changes, () => undefined),
         supportChanges,
-        // Curated icons that earlier responses left out are now ready.
-        discover.changes,
       ],
       { concurrency: "unbounded" },
     ).pipe(

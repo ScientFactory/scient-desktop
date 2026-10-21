@@ -1,10 +1,9 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import { ChevronRightIcon, FolderOpenIcon, PlusIcon } from "lucide-react";
+import { FolderOpenIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
-import { InlineButton } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/select";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import {
@@ -18,6 +17,7 @@ import {
   ExtensionsSection,
   ExtensionsTopBar,
   SectionAction,
+  SectionShowAllToggle,
   MutedLine,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
@@ -57,18 +57,21 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
   ];
   const title = `From ${group.label}`;
   return (
-    <ExtensionsSection title={title}>
+    <ExtensionsSection
+      title={title}
+      action={
+        rows.length > PROVIDER_PREVIEW_ROWS ? (
+          <SectionShowAllToggle
+            total={rows.length}
+            expanded={expanded}
+            onExpandedChange={setExpanded}
+          />
+        ) : undefined
+      }
+    >
       <ExtensionGrid label={title}>
         {expanded ? rows : rows.slice(0, PROVIDER_PREVIEW_ROWS)}
       </ExtensionGrid>
-      {!expanded && rows.length > PROVIDER_PREVIEW_ROWS ? (
-        <div className="text-sm">
-          <InlineButton tone="muted" onClick={() => setExpanded(true)}>
-            Show all {rows.length}
-            <ChevronRightIcon aria-hidden className="size-4" />
-          </InlineButton>
-        </div>
-      ) : null}
     </ExtensionsSection>
   );
 }

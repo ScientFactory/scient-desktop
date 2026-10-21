@@ -356,9 +356,11 @@ export function AddConnectorDialog({
                 </div>
                 {draft.authMode === "automatic" ? (
                   <div className="grid gap-3">
-                    <button
+                    <Button
                       type="button"
-                      className="justify-self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      size="xs"
+                      variant="ghost-muted"
+                      className="-ms-2 justify-self-start"
                       aria-expanded={draft.showAdvanced}
                       onClick={() =>
                         patch(
@@ -369,7 +371,7 @@ export function AddConnectorDialog({
                       }
                     >
                       Advanced
-                    </button>
+                    </Button>
                     {draft.showAdvanced ? (
                       <>
                         <p className="text-xs text-muted-foreground">

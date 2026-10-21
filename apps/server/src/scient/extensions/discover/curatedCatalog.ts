@@ -7,12 +7,18 @@
  * `WWW-Authenticate` challenge ("sign-in"); candidates that failed (403, 404,
  * DNS, expired TLS, 401 without a challenge) were dropped. `registry` was
  * cross-checked against registry.modelcontextprotocol.io v0.1 search by remote
- * URL; entries without it are not listed there. Every `iconSource` resolved to
- * an allowed image under 64 KiB through Scient's own icon fetch (connector
- * egress policy); entries without one get a letter tile. Re-verify before
- * changing an entry.
+ * URL; entries without it are not listed there. Re-verify before changing an
+ * entry.
+ *
+ * Icons are bundled, never fetched at runtime: `curatedIcons.json` maps each
+ * entry `id` to the vendor's official logo or app icon (PNG at most 256 px, or
+ * SVG), inlined as a `data:` URI. The JSON import ships the logos inside the
+ * server bundle. The logos only identify the third-party services they belong
+ * to (nominative use); Scient claims no affiliation or endorsement.
  */
 import type { DiscoverEntry, ExtensionCategory } from "@t3tools/contracts";
+
+import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 
 export const CATALOG_VERIFIED_ON = "2026-10-21";
 
@@ -63,8 +69,8 @@ export interface CuratedServer {
   /** First category is the primary one; `featured` may be added to any entry. */
   readonly categories: ReadonlyArray<ExtensionCategory>;
   readonly websiteUrl: string;
-  /** Pinned https icon (PNG, JPEG, WebP or SVG, at most 64 KiB). */
-  readonly iconSource?: string;
+  /** Bundled logo: a `data:` URI that passes `isExtensionIconDataUri`. */
+  readonly icon: string;
 }
 
 export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
@@ -79,7 +85,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://api.semanticscholar.org/mcp",
     categories: ["featured", "research"],
     websiteUrl: "https://www.semanticscholar.org",
-    iconSource: "https://cdn.semanticscholar.org/96374d262d7c8584/img/apple-touch-icon-57x57.png",
+    icon: CURATED_ICONS["semantic-scholar"],
   },
   {
     // sign-in: 401 OAuth (free OpenAlex account)
@@ -92,7 +98,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "org.openalex/openalex", version: "0.5.0" },
     categories: ["featured", "research"],
     websiteUrl: "https://openalex.org",
-    iconSource: "https://openalex.org/tricon-outlined.png",
+    icon: CURATED_ICONS["openalex"],
   },
   {
     // sign-in: 401 OAuth
@@ -104,7 +110,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://connector.scholargateway.ai/mcp",
     categories: ["research"],
     websiteUrl: "https://scholargateway.ai",
-    iconSource: "https://scholargateway.ai/images/favicon-96x96.png?v=2",
+    icon: CURATED_ICONS["scholar-gateway"],
   },
   {
     // sign-in: 401 OAuth (scope "search")
@@ -116,7 +122,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.consensus.app/mcp",
     categories: ["research"],
     websiteUrl: "https://consensus.app",
-    iconSource: "https://consensus.app/favicon.svg",
+    icon: CURATED_ICONS["consensus"],
   },
   {
     // sign-in: 401 OAuth
@@ -129,7 +135,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "ai.scite/mcp", version: "1.0.0" },
     categories: ["research"],
     websiteUrl: "https://scite.ai",
-    iconSource: "https://cdn.scite.ai/assets/images/logo.svg",
+    icon: CURATED_ICONS["scite"],
   },
   {
     // open: 200 Open Targets Platform 2026.7.1
@@ -141,7 +147,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.platform.opentargets.org/mcp",
     categories: ["research"],
     websiteUrl: "https://platform.opentargets.org",
-    iconSource: "https://platform.opentargets.org/favicon.png",
+    icon: CURATED_ICONS["open-targets"],
   },
   {
     // sign-in: 401 OAuth
@@ -153,7 +159,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.synapse.org/mcp",
     categories: ["research", "data"],
     websiteUrl: "https://www.synapse.org",
-    iconSource: "https://www.synapse.org/favicon.png?v=4",
+    icon: CURATED_ICONS["synapse"],
   },
   {
     // open: 200 "huggingface.co/mcp" 0.4.31
@@ -166,7 +172,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "co.huggingface/hf-mcp-server", version: "0.2.33" },
     categories: ["featured", "research", "data"],
     websiteUrl: "https://huggingface.co",
-    iconSource: "https://huggingface.co/front/assets/huggingface_logo-noborder.svg",
+    icon: CURATED_ICONS["hugging-face"],
   },
   {
     // open: 200 "Kaggle.Web" 1.0.0.0
@@ -178,7 +184,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://www.kaggle.com/mcp",
     categories: ["data", "research"],
     websiteUrl: "https://www.kaggle.com",
-    iconSource: "https://www.kaggle.com/static/images/logos/kaggle-logo-transparent-300.png",
+    icon: CURATED_ICONS["kaggle"],
   },
 
   // ── Data ────────────────────────────────────────────────────────────────
@@ -192,7 +198,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://app.hex.tech/mcp",
     categories: ["data"],
     websiteUrl: "https://hex.tech",
-    iconSource: "https://hex.tech/favicon.svg",
+    icon: CURATED_ICONS["hex"],
   },
   {
     // sign-in: 401 OAuth
@@ -204,7 +210,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://api.motherduck.com/mcp",
     categories: ["data"],
     websiteUrl: "https://motherduck.com",
-    iconSource: "https://motherduck.com/apple-touch-icon.png",
+    icon: CURATED_ICONS["motherduck"],
   },
   {
     // sign-in: 401 OAuth
@@ -217,6 +223,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.supabase/mcp", version: "0.14.0" },
     categories: ["data"],
     websiteUrl: "https://supabase.com",
+    icon: CURATED_ICONS["supabase"],
   },
   {
     // sign-in: 401 OAuth
@@ -229,7 +236,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.neon/mcp", version: "1.0.0" },
     categories: ["data"],
     websiteUrl: "https://neon.com",
-    iconSource: "https://neon.com/favicon/favicon.svg",
+    icon: CURATED_ICONS["neon"],
   },
   {
     // sign-in: 401 OAuth
@@ -242,7 +249,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.airtable/mcp", version: "0.1.0" },
     categories: ["data"],
     websiteUrl: "https://www.airtable.com",
-    iconSource: "https://www.airtable.com/images/favicon/baymax/apple-touch-icon.png",
+    icon: CURATED_ICONS["airtable"],
   },
 
   // ── Code ────────────────────────────────────────────────────────────────
@@ -257,7 +264,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "io.github.github/github-mcp-server", version: "2.0.2" },
     categories: ["featured", "code"],
     websiteUrl: "https://github.com",
-    iconSource: "https://github.com/fluidicon.png",
+    icon: CURATED_ICONS["github"],
   },
   {
     // open: 200 "DeepWiki" 2.14.3
@@ -269,6 +276,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.deepwiki.com/mcp",
     categories: ["featured", "code"],
     websiteUrl: "https://deepwiki.com",
+    icon: CURATED_ICONS["deepwiki"],
   },
   {
     // sign-in: 401 OAuth
@@ -281,7 +289,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.gitlab/mcp", version: "0.0.1" },
     categories: ["code"],
     websiteUrl: "https://gitlab.com",
-    iconSource: "https://about.gitlab.com/images/ico/favicon-32x32.png",
+    icon: CURATED_ICONS["gitlab"],
   },
   {
     // open: 200 "Context7" 4.4.3
@@ -294,7 +302,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
     categories: ["code"],
     websiteUrl: "https://context7.com",
-    iconSource: "https://raw.githubusercontent.com/upstash/context7/master/public/icon.png",
+    icon: CURATED_ICONS["context7"],
   },
   {
     // sign-in: 401 Bearer
@@ -307,7 +315,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.stackoverflow.mcp/mcp", version: "1.1.3" },
     categories: ["code"],
     websiteUrl: "https://stackoverflow.com",
-    iconSource: "https://cdn.sstatic.net/Sites/stackoverflow/Img/apple-touch-icon.png",
+    icon: CURATED_ICONS["stack-overflow"],
   },
   {
     // sign-in: 401 OAuth
@@ -320,7 +328,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "io.github.getsentry/sentry-mcp", version: "0.42.0" },
     categories: ["code"],
     websiteUrl: "https://sentry.io",
-    iconSource: "https://sentry-brand.storage.googleapis.com/sentry-glyph-black.png",
+    icon: CURATED_ICONS["sentry"],
   },
   {
     // sign-in: 401 OAuth
@@ -333,8 +341,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.vercel/vercel-mcp", version: "0.0.3" },
     categories: ["code"],
     websiteUrl: "https://vercel.com",
-    iconSource:
-      "https://assets.vercel.com/image/upload/q_auto/front/favicon/vercel/apple-touch-icon-57x57.png",
+    icon: CURATED_ICONS["vercel"],
   },
   {
     // open: 200 "docs-ai-search" 0.4.14
@@ -347,7 +354,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.cloudflare.mcp/mcp", version: "1.0.0" },
     categories: ["code"],
     websiteUrl: "https://developers.cloudflare.com",
-    iconSource: "https://developers.cloudflare.com/favicon.png",
+    icon: CURATED_ICONS["cloudflare-docs"],
   },
   {
     // open: 200 "Microsoft Learn MCP Server" 1.0.0
@@ -360,7 +367,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.microsoft/microsoft-learn-mcp", version: "1.0.0" },
     categories: ["code"],
     websiteUrl: "https://learn.microsoft.com",
-    iconSource: "https://learn.microsoft.com/apple-touch-icon.png",
+    icon: CURATED_ICONS["microsoft-learn"],
   },
 
   // ── Writing ─────────────────────────────────────────────────────────────
@@ -375,7 +382,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.notion/mcp", version: "1.0.1" },
     categories: ["featured", "writing"],
     websiteUrl: "https://www.notion.com",
-    iconSource: "https://www.notion.com/front-static/logo-ios.png",
+    icon: CURATED_ICONS["notion"],
   },
   {
     // sign-in: 401 OAuth
@@ -387,7 +394,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.atlassian.com/v1/mcp",
     categories: ["writing", "communication"],
     websiteUrl: "https://www.atlassian.com",
-    iconSource: "https://www.atlassian.com/apple-touch-icon.png",
+    icon: CURATED_ICONS["atlassian"],
   },
   {
     // sign-in: 401 OAuth
@@ -399,7 +406,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://coda.io/apis/mcp",
     categories: ["writing"],
     websiteUrl: "https://coda.io",
-    iconSource: "https://cdn.coda.io/icons/png/color/coda-32.png",
+    icon: CURATED_ICONS["coda"],
   },
   {
     // sign-in: 401 OAuth
@@ -411,6 +418,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.box.com",
     categories: ["writing"],
     websiteUrl: "https://www.box.com",
+    icon: CURATED_ICONS["box"],
   },
   {
     // sign-in: 401 OAuth
@@ -422,8 +430,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.dropbox.com/mcp",
     categories: ["writing"],
     websiteUrl: "https://www.dropbox.com",
-    iconSource:
-      "https://cfl.dropboxstatic.com/static/metaserver/static/images/logo_catalog/dropbox_webclip_152_m1.png",
+    icon: CURATED_ICONS["dropbox"],
   },
 
   // ── Communication ───────────────────────────────────────────────────────
@@ -438,7 +445,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "app.linear/linear", version: "1.0.1" },
     categories: ["featured", "communication"],
     websiteUrl: "https://linear.app",
-    iconSource: "https://linear.app/static/favicon.svg?v=2",
+    icon: CURATED_ICONS["linear"],
   },
   {
     // sign-in: 401 OAuth
@@ -450,7 +457,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.slack.com/mcp",
     categories: ["communication"],
     websiteUrl: "https://slack.com",
-    iconSource: "https://a.slack-edge.com/9cc0056/img/icons/favicon-32.png",
+    icon: CURATED_ICONS["slack"],
   },
   {
     // sign-in: 401 OAuth
@@ -462,6 +469,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.asana.com/v2/mcp",
     categories: ["communication"],
     websiteUrl: "https://asana.com",
+    icon: CURATED_ICONS["asana"],
   },
   {
     // sign-in: 401 OAuth
@@ -474,8 +482,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.monday/monday.com", version: "0.0.1" },
     categories: ["communication"],
     websiteUrl: "https://monday.com",
-    iconSource:
-      "https://cdn.prod.website-files.com/656da6fea306219773d04208/65af6bd29fc8bb3d3d4ea39a_6464d702c3ac5c56000c2438_favicon-monday5-32.png",
+    icon: CURATED_ICONS["monday"],
   },
   {
     // sign-in: 401 OAuth
@@ -487,7 +494,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.clickup.com/mcp",
     categories: ["communication"],
     websiteUrl: "https://clickup.com",
-    iconSource: "https://clickup.com/favicons/apple-touch-icon.png",
+    icon: CURATED_ICONS["clickup"],
   },
   {
     // sign-in: 401 OAuth
@@ -500,7 +507,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "ai.fireflies/fireflies", version: "1.1.0" },
     categories: ["communication"],
     websiteUrl: "https://fireflies.ai",
-    iconSource: "https://fireflies.ai/apple-icon.png?81a7679a0c7e6094",
+    icon: CURATED_ICONS["fireflies"],
   },
   {
     // sign-in: 401 OAuth
@@ -512,7 +519,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.granola.ai/mcp",
     categories: ["communication"],
     websiteUrl: "https://www.granola.ai",
-    iconSource: "https://www.granola.ai/favicon/favicon-96x96.png",
+    icon: CURATED_ICONS["granola"],
   },
   {
     // sign-in: 401 OAuth
@@ -525,7 +532,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "net.todoist/mcp", version: "1.0.0" },
     categories: ["communication"],
     websiteUrl: "https://www.todoist.com",
-    iconSource: "https://www.todoist.com/static/favicon-32x32.png",
+    icon: CURATED_ICONS["todoist"],
   },
 
   // ── Design ──────────────────────────────────────────────────────────────
@@ -539,8 +546,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.services.biorender.com/mcp",
     categories: ["design"],
     websiteUrl: "https://www.biorender.com",
-    iconSource:
-      "https://cdn.prod.website-files.com/621e6f1effebfe03881da9bd/62337779d8e7196d1d9d02ac_biorender_logo_lighter%20blue_square-03.png",
+    icon: CURATED_ICONS["biorender"],
   },
   {
     // sign-in: 401 OAuth
@@ -553,7 +559,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.figma.mcp/mcp", version: "1.0.3" },
     categories: ["design"],
     websiteUrl: "https://www.figma.com",
-    iconSource: "https://static.figma.com/app/icon/2/icon-128.png",
+    icon: CURATED_ICONS["figma"],
   },
   {
     // sign-in: 401 OAuth
@@ -566,7 +572,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.canva.mcp/mcp", version: "1.0.0" },
     categories: ["design"],
     websiteUrl: "https://www.canva.com",
-    iconSource: "https://static.canva.com/domain-assets/canva/static/images/android-192x192-2.png",
+    icon: CURATED_ICONS["canva"],
   },
   {
     // sign-in: 401 OAuth
@@ -579,7 +585,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "io.github.miroapp/mcp-server", version: "1.0.2" },
     categories: ["design"],
     websiteUrl: "https://miro.com",
-    iconSource: "https://framerusercontent.com/images/6FBG66PBxjV2QFaDfIdUi5mi9A.png",
+    icon: CURATED_ICONS["miro"],
   },
   {
     // open: 200 "Excalidraw" 1.0.0
@@ -591,7 +597,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.excalidraw.com/mcp",
     categories: ["design"],
     websiteUrl: "https://excalidraw.com",
-    iconSource: "https://excalidraw.com/apple-touch-icon.png",
+    icon: CURATED_ICONS["excalidraw"],
   },
   {
     // sign-in: 401 OAuth
@@ -604,7 +610,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     registry: { name: "com.mermaidchart/mermaid-mcp", version: "1.0.0" },
     categories: ["design"],
     websiteUrl: "https://www.mermaidchart.com",
-    iconSource: "https://mermaid.ai/favicon.png",
+    icon: CURATED_ICONS["mermaid-chart"],
   },
   {
     // sign-in: 401 OAuth
@@ -616,6 +622,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     url: "https://mcp.gamma.app/mcp",
     categories: ["design"],
     websiteUrl: "https://gamma.app",
+    icon: CURATED_ICONS["gamma"],
   },
 ];
 
@@ -637,10 +644,10 @@ export const curatedServerForUrl = (
   return servers.find((server) => canonicalConnectorUrl(server.url) === canonical);
 };
 
-/** The Discover entry for a curated server, before icon and installation state. */
+/** The Discover entry for a curated server, before installation state. */
 export const curatedDiscoverEntry = (
   server: CuratedServer,
-): Omit<DiscoverEntry, "iconUrl" | "installedConnectorId"> => ({
+): Omit<DiscoverEntry, "installedConnectorId"> => ({
   name: server.registry?.name ?? `${CURATED_NAME_PREFIX}${server.id}`,
   version: server.registry?.version ?? CATALOG_VERIFIED_ON,
   title: server.displayName,
@@ -648,6 +655,7 @@ export const curatedDiscoverEntry = (
   tagline: server.tagline,
   categories: [...server.categories],
   websiteUrl: server.websiteUrl,
+  iconUrl: server.icon,
   remotes: [{ type: "streamable-http", url: server.url, requiresInput: false }],
   installable: true,
 });

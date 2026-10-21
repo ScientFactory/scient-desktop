@@ -4,7 +4,7 @@
  * normalized into `DiscoverEntry`, where only a Streamable HTTP remote over
  * https that needs no user-supplied headers or URL variables is one-click
  * installable as a connector. Curated entries carry a tagline, categories and
- * an icon, inlined as a `data:` URI. See docs/internals/scient-extensions.md.
+ * a bundled icon, inlined as a `data:` URI. See docs/internals/scient-extensions.md.
  */
 import {
   ExtensionsError,
@@ -43,17 +43,11 @@ import {
   curatedServerForUrl,
   type CuratedServer,
 } from "./curatedCatalog.ts";
-import { fetchIconDataUri, iconFetch, makeIconStore } from "./DiscoverIcons.ts";
 
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
 export const DISCOVER_CACHE_TTL = Duration.minutes(10);
 export const CATALOG_PREVIEW_ENTRIES = 6;
-/** How long one response waits for icons that are not cached yet. */
-export const ICON_RESPONSE_BUDGET = Duration.seconds(1);
-
-const curatedIconSources = (list: ReadonlyArray<CuratedServer>): ReadonlyArray<string> =>
-  list.flatMap((server) => (server.iconSource === undefined ? [] : [server.iconSource]));
 const MAX_CACHED_PAGES = 64;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const ATTEMPT_TIMEOUT = Duration.seconds(10);
@@ -250,8 +244,6 @@ interface CachedPage {
 export interface DiscoverOptions {
   /** Curated servers; the shipped catalog by default. */
   readonly servers?: ReadonlyArray<CuratedServer>;
-  /** Resolves a pinned icon to a `data:` URI, or `undefined` when it cannot be used. */
-  readonly fetchIcon?: (url: string, signal: AbortSignal) => Promise<string | undefined>;
 }
 
 /** How a curated entry is matched against connectors and registry results. */
@@ -280,13 +272,8 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const httpClient = yield* HttpClient.HttpClient;
   const connectorRuntime = yield* Effect.serviceOption(ConnectorRuntime);
   const servers = options.servers ?? CURATED_SERVERS;
-  const fetchIcon =
-    options.fetchIcon ?? ((url, signal) => fetchIconDataUri(iconFetch, url, signal));
   // Keyed by query, cursor and limit; Map insertion order drives eviction.
   const cache = new Map<string, CachedPage>();
-  const icons = yield* makeIconStore(fetchIcon, yield* Effect.scope);
-  // Warm every curated icon at start so the first Discover page has logos.
-  yield* icons.warm(curatedIconSources(servers));
 
   const fetchOnce = (url: string) =>
     Effect.gen(function* () {
@@ -372,24 +359,11 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       .map((url) => installed.byUrl.get(canonicalConnectorUrl(url)))
       .find((id) => id !== undefined);
 
-  /** Curated icon `data:` URIs by icon source, ready within the response budget. */
-  const iconsFor = (list: ReadonlyArray<CuratedServer>) =>
-    icons.resolveWithin(curatedIconSources(list), ICON_RESPONSE_BUDGET);
-
-  /** A curated entry with its icon (when ready) and live installation state. */
-  const curatedEntry = (
-    server: CuratedServer,
-    installed: Installed,
-    ready: ReadonlyMap<string, string>,
-  ): DiscoverEntry => {
+  /** A curated entry with its bundled icon and live installation state. */
+  const curatedEntry = (server: CuratedServer, installed: Installed): DiscoverEntry => {
     const entry = curatedDiscoverEntry(server);
-    const iconUrl = server.iconSource === undefined ? undefined : ready.get(server.iconSource);
     const installedConnectorId = installedFor(installed, entry.name, [server.url]);
-    return {
-      ...entry,
-      ...(iconUrl === undefined ? {} : { iconUrl }),
-      ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
-    };
+    return installedConnectorId === undefined ? entry : { ...entry, installedConnectorId };
   };
 
   const nowIso = Clock.currentTimeMillis.pipe(
@@ -405,13 +379,11 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
           ? []
           : [{ category, members, preview: members.slice(0, CATALOG_PREVIEW_ENTRIES) }];
       });
-      // One budget for the whole page: icons not ready yet follow on `changes`.
-      const ready = yield* iconsFor(previews.flatMap(({ preview }) => preview));
       const sections = previews.map(({ category, members, preview }): DiscoverCatalogSection => ({
         category,
         title: CATALOG_SECTIONS[category].title,
         description: CATALOG_SECTIONS[category].description,
-        entries: preview.map((server) => curatedEntry(server, installed, ready)),
+        entries: preview.map((server) => curatedEntry(server, installed)),
         total: members.length,
       }));
       return { sections, fetchedAt: yield* nowIso } satisfies DiscoverCatalog;
@@ -476,31 +448,38 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
     return page;
   });
 
-  /** A registry entry with the curated presentation when Scient curates that server. */
+  /**
+   * A registry result as clients see it. A curated server's alias (same
+   * registry name or canonical remote URL) is the curated entry itself, exactly
+   * as the curated scope returns it, so both scopes share its `name`.
+   */
   const registryEntry = (
     entry: Omit<DiscoverEntry, "installedConnectorId">,
     installed: Installed,
-    ready: ReadonlyMap<string, string>,
   ): DiscoverEntry => {
     const curated = curatedFor(entry);
-    const iconUrl = curated?.iconSource === undefined ? undefined : ready.get(curated.iconSource);
+    if (curated !== undefined) return curatedEntry(curated, installed);
     const installedConnectorId = installedFor(
       installed,
       entry.name,
       entry.remotes.map((remote) => remote.url),
     );
-    return {
-      ...entry,
-      ...(curated === undefined
-        ? {}
-        : { tagline: curated.tagline, categories: [...curated.categories] }),
-      ...(iconUrl === undefined ? {} : { iconUrl }),
-      ...(installedConnectorId === undefined ? {} : { installedConnectorId }),
-    };
+    return installedConnectorId === undefined ? entry : { ...entry, installedConnectorId };
   };
 
-  const curatedOf = (entries: ReadonlyArray<Omit<DiscoverEntry, "installedConnectorId">>) =>
-    entries.flatMap((entry) => curatedFor(entry) ?? []);
+  /** Registry results with curated aliases folded in, each curated server once. */
+  const registryEntries = (
+    entries: ReadonlyArray<Omit<DiscoverEntry, "installedConnectorId">>,
+    installed: Installed,
+  ): ReadonlyArray<DiscoverEntry> => {
+    const seen = new Set<string>();
+    return entries.flatMap((entry) => {
+      const shown = registryEntry(entry, installed);
+      if (seen.has(shown.name)) return [];
+      seen.add(shown.name);
+      return [shown];
+    });
+  };
 
   const search: ExtensionsDiscoverShape["search"] = Effect.fn("ExtensionsDiscover.search")(
     function* (input) {
@@ -509,17 +488,14 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         .toLowerCase()
         .split(/\s+/u)
         .filter((term) => term !== "");
-      // What a `curated` search with this query returns; never touches the network.
-      const curatedMatches = (
-        input.category === undefined ? servers : serversIn(servers, input.category)
-      ).filter((server) => matchesQuery(server, terms));
-
       if (input.scope === "curated") {
         // Small and complete: filtered in memory, never paged.
+        const curatedMatches = (
+          input.category === undefined ? servers : serversIn(servers, input.category)
+        ).filter((server) => matchesQuery(server, terms));
         const installed = yield* installedConnectors;
-        const ready = yield* iconsFor(curatedMatches);
         return {
-          entries: curatedMatches.map((server) => curatedEntry(server, installed, ready)),
+          entries: curatedMatches.map((server) => curatedEntry(server, installed)),
           fetchedAt: yield* nowIso,
         } satisfies DiscoverPage;
       }
@@ -542,16 +518,10 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       if (cursor !== undefined && cursor !== "") url.searchParams.set("cursor", cursor);
       url.searchParams.set("version", "latest");
       const page = yield* readRegistry(url.href, parseRegistryPage, false);
-      // The curated query already lists these servers; never list them twice.
-      const registryEntries = page.entries.filter((entry) => {
-        const curated = curatedFor(entry);
-        return curated === undefined || !curatedMatches.includes(curated);
-      });
       // Installation state is live, never cached with the registry page.
       const installed = yield* installedConnectors;
-      const ready = yield* iconsFor(curatedOf(registryEntries));
       return {
-        entries: registryEntries.map((entry) => registryEntry(entry, installed, ready)),
+        entries: registryEntries(page.entries, installed),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         fetchedAt: page.fetchedAt,
       } satisfies DiscoverPage;
@@ -563,8 +533,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       // The complete curated catalog first, not only the home-page previews.
       const curated = servers.find((server) => curatedDiscoverEntry(server).name === input.name);
       if (curated !== undefined) {
-        const installed = yield* installedConnectors;
-        return curatedEntry(curated, installed, yield* iconsFor([curated]));
+        return curatedEntry(curated, yield* installedConnectors);
       }
       if (input.name.startsWith(CURATED_NAME_PREFIX)) {
         return yield* new ExtensionsError({
@@ -578,9 +547,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         true,
       );
       const matches = page.entries.filter((candidate) => candidate.name === input.name);
-      const installed = yield* installedConnectors;
-      const ready = yield* iconsFor(curatedOf(matches));
-      const found = matches.map((candidate) => registryEntry(candidate, installed, ready))[0];
+      const found = registryEntries(matches, yield* installedConnectors)[0];
       if (found === undefined) {
         return yield* new ExtensionsError({
           reason: "not-found",
@@ -592,29 +559,17 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   );
 
   const connectorIcons: ExtensionsDiscoverShape["connectorIcons"] = (urls) =>
-    Effect.gen(function* () {
-      const sources = new Map<string, string>();
-      for (const url of urls) {
-        const source = curatedServerForUrl(url, servers)?.iconSource;
-        if (source !== undefined) sources.set(url, source);
-      }
-      if (sources.size === 0) return new Map<string, string>();
-      const ready = yield* icons.resolveWithin([...sources.values()], Duration.zero);
-      return new Map(
-        [...sources].flatMap(([url, source]) => {
-          const iconUrl = ready.get(source);
-          return iconUrl === undefined ? [] : [[url, iconUrl] as const];
-        }),
-      );
-    });
+    Effect.sync(
+      () =>
+        new Map(
+          urls.flatMap((url) => {
+            const curated = curatedServerForUrl(url, servers);
+            return curated === undefined ? [] : [[url, curated.icon] as const];
+          }),
+        ),
+    );
 
-  return ExtensionsDiscover.of({
-    search,
-    catalog,
-    entry,
-    connectorIcons,
-    changes: icons.changes,
-  });
+  return ExtensionsDiscover.of({ search, catalog, entry, connectorIcons });
 });
 
 export const layer = Layer.effect(ExtensionsDiscover, makeWith());

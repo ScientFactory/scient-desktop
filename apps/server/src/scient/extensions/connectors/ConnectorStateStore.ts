@@ -23,6 +23,7 @@ import {
   type ExtensionsDiagnostic,
   GrantScope,
   IsoDateTime,
+  NonNegativeInt,
   ProjectId,
   TrimmedNonEmptyString,
   VaultSecretRef,
@@ -67,6 +68,8 @@ export const ConnectorRecord = Schema.Struct({
   auth: ConnectorAuthRecord,
   status: ConnectorStatus,
   enabled: Schema.Boolean,
+  /** Credential generation (see `ConnectorSummary.authRevision`); absent in older records. */
+  authRevision: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Projects whose sessions receive this connector; an empty list means none. */
   availability: GrantScope,
   createdAt: IsoDateTime,

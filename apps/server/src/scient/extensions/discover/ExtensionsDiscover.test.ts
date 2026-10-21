@@ -4,6 +4,7 @@ import {
   DiscoverCatalog,
   DiscoverEntry,
   DiscoverPage,
+  isExtensionIconDataUri,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
@@ -11,7 +12,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -27,7 +27,10 @@ import {
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
+import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 import recordedPage from "./fixtures/registry-servers-page.json" with { type: "json" };
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const connector = (
   overrides: Pick<ConnectorSummary, "connectorId" | "url" | "source">,
@@ -37,6 +40,7 @@ const connector = (
   auth: { type: "none" },
   status: "connected",
   enabled: true,
+  authRevision: 0,
   availability: { type: "all-projects" },
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
@@ -74,10 +78,11 @@ const listOnlyConnectorRuntime = (
     forward: () => unused,
   }) as unknown as ConnectorRuntimeShape;
 
-/** Icons resolve from this table; anything else fails like an unusable icon. */
-const ICON_URIS: Readonly<Record<string, string>> = {
-  "https://icons.example/semantic.png": "data:image/png;base64,c2Vt",
-  "https://icons.example/hf.svg": "data:image/svg+xml;base64,aGY=",
+/** Stand-in bundled icons for test catalogs. */
+const ICON_URIS = {
+  semantic: "data:image/png;base64,c2Vt",
+  hub: "data:image/svg+xml;base64,aGY=",
+  other: "data:image/png;base64,b3RoZXI=",
 };
 
 const harness = (
@@ -85,7 +90,6 @@ const harness = (
   servers?: ReadonlyArray<CuratedServer>,
 ) => {
   const requests: URL[] = [];
-  const iconRequests: string[] = [];
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
@@ -95,17 +99,10 @@ const harness = (
   );
   return {
     requests,
-    iconRequests,
     layer: (installed?: () => ReadonlyArray<ConnectorSummary>) =>
       Layer.effect(
         ExtensionsDiscover,
-        Discover.makeWith({
-          ...(servers === undefined ? {} : { servers }),
-          fetchIcon: async (url) => {
-            iconRequests.push(url);
-            return ICON_URIS[url];
-          },
-        }),
+        Discover.makeWith(servers === undefined ? {} : { servers }),
       ).pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
         Layer.provide(
@@ -360,6 +357,7 @@ const curated = (
   url: `https://${id}.example/mcp`,
   categories,
   websiteUrl: `https://${id}.example`,
+  icon: ICON_URIS.other,
   ...extra,
 });
 
@@ -368,16 +366,16 @@ const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
   curated("figure", ["design"]),
   curated("semantic", ["featured", "research"], {
     tagline: "Search papers and citations",
-    iconSource: "https://icons.example/semantic.png",
+    icon: ICON_URIS.semantic,
   }),
   curated("kaggle", ["data", "research"]),
   ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["research"])),
   curated("hub", ["featured", "data"], {
     url: "https://hub.example/mcp/",
     registry: { name: "ac.inference.sh/mcp", version: "2.0.1" },
-    iconSource: "https://icons.example/hf.svg",
+    icon: ICON_URIS.hub,
   }),
-  curated("broken-icon", ["data"], { iconSource: "https://icons.example/missing.ico" }),
+  curated("lab", ["data"]),
 ];
 
 describe("curated Discover catalog", () => {
@@ -413,7 +411,7 @@ describe("curated Discover catalog", () => {
       expect(catalog.sections[2]!.entries.map((entry) => entry.title)).toEqual([
         "kaggle",
         "hub",
-        "broken-icon",
+        "lab",
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
       expect(semantic).toEqual({
@@ -436,8 +434,6 @@ describe("curated Discover catalog", () => {
         version: "2.0.1",
         iconUrl: "data:image/svg+xml;base64,aGY=",
       });
-      // An icon that cannot be used is omitted; the client draws a letter tile.
-      expect(catalog.sections[2]!.entries[2]).not.toHaveProperty("iconUrl");
     }).pipe(Effect.provide(http.layer()));
   });
 
@@ -513,15 +509,17 @@ describe("curated Discover catalog", () => {
     }).pipe(Effect.provide(http.layer()));
   });
 
-  it.effect("decorates registry results that match a curated server", () => {
+  it.effect("returns registry results that alias a curated server in curated shape", () => {
     const http = harness(() => Response.json(recordedPage), CURATED_FIXTURE);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      // No curated server matches "inference", so none is dropped as a duplicate.
-      const page = yield* discover.search({ scope: "registry", query: "inference" });
+      // An empty-query browse keeps the alias: nothing is filtered out server-side.
+      const page = yield* discover.search({ scope: "registry" });
       const byName = Object.fromEntries(page.entries.map((entry) => [entry.name, entry]));
+      const curated = (yield* discover.search({ scope: "curated", query: "hub" })).entries[0];
+      expect(byName["ac.inference.sh/mcp"]).toEqual(curated);
       expect(byName["ac.inference.sh/mcp"]).toMatchObject({
-        title: "inference.sh",
+        title: "hub",
         tagline: "hub tagline",
         categories: ["featured", "data"],
         iconUrl: "data:image/svg+xml;base64,aGY=",
@@ -532,25 +530,6 @@ describe("curated Discover catalog", () => {
     }).pipe(Effect.provide(http.layer()));
   });
 
-  it.effect("caches icons for a day and retries failures after ten minutes", () => {
-    const http = harness(() => Response.json(recordedPage), CURATED_FIXTURE);
-    return Effect.gen(function* () {
-      const discover = yield* ExtensionsDiscover;
-      const count = (url: string) => http.iconRequests.filter((request) => request === url).length;
-      yield* discover.catalog();
-      yield* discover.catalog();
-      expect(count("https://icons.example/semantic.png")).toBe(1);
-      expect(count("https://icons.example/missing.ico")).toBe(1);
-      yield* TestClock.adjust(Duration.minutes(11));
-      yield* discover.catalog();
-      expect(count("https://icons.example/semantic.png")).toBe(1);
-      expect(count("https://icons.example/missing.ico")).toBe(2);
-      yield* TestClock.adjust(Duration.hours(24));
-      yield* discover.catalog();
-      expect(count("https://icons.example/semantic.png")).toBe(2);
-    }).pipe(Effect.provide(http.layer()));
-  });
-
   it("ships a catalog that satisfies its own rules", () => {
     const ids = new Set(CURATED_SERVERS.map((server) => server.id));
     expect(ids.size).toBe(CURATED_SERVERS.length);
@@ -558,9 +537,6 @@ describe("curated Discover catalog", () => {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
       expect(new URL(server.url).protocol, server.id).toBe("https:");
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
-      if (server.iconSource !== undefined) {
-        expect(new URL(server.iconSource).protocol, server.id).toBe("https:");
-      }
       expect(
         server.categories.filter((category) => category !== "featured").length,
       ).toBeGreaterThan(0);
@@ -571,100 +547,51 @@ describe("curated Discover catalog", () => {
       expect(size, category).toBeGreaterThanOrEqual(4);
     }
   });
+
+  it("bundles a valid logo for every curated server, and nothing else", () => {
+    for (const server of CURATED_SERVERS) {
+      expect(server.icon, server.id).toBe(CURATED_ICONS[server.id as keyof typeof CURATED_ICONS]);
+      expect(isExtensionIconDataUri(server.icon), server.id).toBe(true);
+      const [header, payload] = server.icon.split(",") as [string, string];
+      const bytes = Buffer.from(payload, "base64");
+      expect(bytes.byteLength, server.id).toBeLessThanOrEqual(64 * 1024);
+      // The bytes are what the MIME type says: a PNG signature or SVG markup.
+      const looksRight =
+        header === "data:image/png;base64"
+          ? bytes.subarray(0, 8).equals(PNG_SIGNATURE)
+          : header === "data:image/svg+xml;base64" && bytes.toString("utf8").includes("<svg");
+      expect(looksRight, server.id).toBe(true);
+    }
+    expect(Object.keys(CURATED_ICONS).toSorted()).toEqual(
+      CURATED_SERVERS.map((server) => server.id).toSorted(),
+    );
+  });
 });
 
-describe("curated icons on a cold start", () => {
-  /** Icon loads that stay pending until the test releases them. */
-  const slowIcons = () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested: string[] = [];
-    const layer = (installed: () => ReadonlyArray<ConnectorSummary> = () => []) =>
-      Layer.effect(
-        ExtensionsDiscover,
-        Discover.makeWith({
-          servers: CURATED_FIXTURE,
-          fetchIcon: async (url) => {
-            requested.push(url);
-            await gate;
-            return ICON_URIS[url];
-          },
-        }),
-      ).pipe(
-        Layer.provide(
-          Layer.succeed(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(recordedPage))),
-            ),
-          ),
-        ),
-        Layer.provide(Layer.succeed(ConnectorRuntime, listOnlyConnectorRuntime(installed))),
-      );
-    return { release: () => release(), requested, layer };
-  };
-
-  it.effect("answers within the budget without icons, then announces and serves them", () => {
-    const icons = slowIcons();
+describe("bundled curated icons", () => {
+  it.effect("reach every shipped entry and connector immediately, without the network", () => {
+    const http = harness(() => Response.json(recordedPage));
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      // Warm-up started every curated icon at layer start, at most six at a time.
-      yield* Effect.yieldNow;
-      expect(icons.requested.length).toBeGreaterThan(0);
-      expect(icons.requested.length).toBeLessThanOrEqual(6);
-
-      const announced = yield* discover.changes.pipe(
-        Stream.take(1),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true }),
-      );
-      const cold = yield* Effect.forkChild(discover.catalog());
-      yield* TestClock.adjust(Discover.ICON_RESPONSE_BUDGET);
-      const page = yield* Fiber.join(cold);
-      const entries = page.sections.flatMap((section) => section.entries);
-      expect(entries.length).toBeGreaterThan(0);
-      expect(entries.some((entry) => entry.iconUrl !== undefined)).toBe(false);
-      // A connector list never waits for icons either.
-      expect(yield* discover.connectorIcons(["https://semantic.example/mcp/"])).toEqual(new Map());
-
-      icons.release();
-      expect(Array.from(yield* Fiber.join(announced))).toHaveLength(1);
-      const warm = yield* discover.catalog();
-      expect(warm.sections[0]!.entries.map((entry) => entry.iconUrl)).toEqual([
-        "data:image/png;base64,c2Vt",
-        "data:image/svg+xml;base64,aGY=",
-      ]);
-      expect(yield* discover.connectorIcons(["https://semantic.example/mcp/"])).toEqual(
-        new Map([["https://semantic.example/mcp/", "data:image/png;base64,c2Vt"]]),
-      );
-      // Each icon was fetched once although several calls wanted it.
-      expect(new Set(icons.requested).size).toBe(icons.requested.length);
-    }).pipe(Effect.provide(icons.layer()));
-  });
-
-  it.effect("does not announce when no new icon became available", () => {
-    const http = harness(
-      () => Response.json(recordedPage),
-      [
-        curated("broken", ["research"], { iconSource: "https://icons.example/missing.ico" }),
-        curated("other", ["research"]),
-        curated("third", ["research"]),
-        curated("fourth", ["research"]),
-      ],
-    );
-    return Effect.gen(function* () {
-      const discover = yield* ExtensionsDiscover;
-      const announced = yield* discover.changes.pipe(
-        Stream.take(1),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* discover.catalog();
-      yield* TestClock.adjust(Duration.seconds(5));
-      expect(announced.pollUnsafe()).toBeUndefined();
-      yield* Fiber.interrupt(announced);
+      const catalog = yield* discover.catalog();
+      expect(isDiscoverCatalog(catalog)).toBe(true);
+      const all = yield* discover.search({ scope: "curated" });
+      expect(all.entries).toHaveLength(CURATED_SERVERS.length);
+      expect(all.entries.filter((entry) => entry.iconUrl === undefined)).toEqual([]);
+      const deepwiki = yield* discover.entry({ name: "scient.curated/deepwiki" });
+      expect(isDiscoverEntry(deepwiki)).toBe(true);
+      // The inventory decorates connectors from this map, keyed by the given URL.
+      const url = "https://MCP.deepwiki.com/mcp/";
+      const icons = yield* discover.connectorIcons([url, "https://unknown.example/mcp"]);
+      expect([...icons.keys()]).toEqual([url]);
+      const summary = connector({
+        connectorId: ConnectorId.make("con_deepwiki0001"),
+        url,
+        source: { type: "url" },
+      });
+      expect(isConnectorSummary({ ...summary, iconUrl: icons.get(url) })).toBe(true);
+      expect(icons.get(url)).toBe(deepwiki.iconUrl);
+      expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(http.layer()));
   });
 });
@@ -760,10 +687,7 @@ describe("split Discover search", () => {
     const requests: URL[] = [];
     const layer = Layer.effect(
       ExtensionsDiscover,
-      Discover.makeWith({
-        servers: CURATED_FIXTURE,
-        fetchIcon: async (url) => ICON_URIS[url],
-      }),
+      Discover.makeWith({ servers: CURATED_FIXTURE }),
     ).pipe(
       Layer.provide(
         Layer.succeed(
@@ -810,31 +734,34 @@ describe("split Discover search", () => {
     }).pipe(Effect.provide(registry.layer));
   });
 
-  it.effect("drops registry results the same curated query already returns", () => {
-    const http = harness(registryRoutes, CURATED_FIXTURE);
+  it.effect("names a curated, registry-listed service identically in both scopes", () => {
+    const http = harness(registryRoutes, [
+      ...CURATED_FIXTURE,
+      // Not in the registry by name, but publishing a registry server's remote URL.
+      curated("voice", ["communication"], { url: "https://easyvoice.ae/api/mcp" }),
+    ]);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
-      // "hub" is curated and on the registry page: only the curated query lists it.
-      const curated = yield* discover.search({ scope: "curated", query: "hub" });
-      expect(curated.entries.map((entry) => entry.name)).toEqual(["ac.inference.sh/mcp"]);
-      const registry = yield* discover.search({ scope: "registry", query: "hub" });
-      expect(registry.entries.some((entry) => entry.name === "ac.inference.sh/mcp")).toBe(false);
-      expect(registry.entries.every((entry) => !entry.name.startsWith("scient.curated/"))).toBe(
-        true,
-      );
-      // A curated server the query does not match stays, with curated presentation.
-      const other = yield* discover.search({ scope: "registry", query: "inference" });
-      expect(other.entries.find((entry) => entry.name === "ac.inference.sh/mcp")).toMatchObject({
-        tagline: "hub tagline",
-      });
-      // Paging is the registry's.
-      expect(registry.nextCursor).toBe("io.github.0Xflacko/justclip:0.3.0");
+      const curatedHub = yield* discover.search({ scope: "curated", query: "hub" });
+      const registryHub = yield* discover.search({ scope: "registry", query: "hub" });
+      const fromCurated = curatedHub.entries.find((entry) => entry.title === "hub");
+      const fromRegistry = registryHub.entries.find((entry) => entry.title === "hub");
+      expect(fromCurated?.name).toBe("ac.inference.sh/mcp");
+      expect(fromRegistry).toEqual(fromCurated);
+      // A URL alias takes the curated name, so clients can dedup by `name`.
+      const voice = registryHub.entries.find((entry) => entry.title === "voice");
+      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["communication"] });
+      expect(registryHub.entries.some((entry) => entry.name === "ae.easyvoice/tts")).toBe(false);
+      const names = registryHub.entries.map((entry) => entry.name);
+      expect(new Set(names).size).toBe(names.length);
+      // Paging is the registry's, and later pages may carry curated-shaped entries too.
+      expect(registryHub.nextCursor).toBe("io.github.0Xflacko/justclip:0.3.0");
       const next = yield* discover.search({
         scope: "registry",
         query: "hub",
-        cursor: registry.nextCursor!,
+        cursor: registryHub.nextCursor!,
       });
-      expect(next.entries.some((entry) => entry.name === "ac.inference.sh/mcp")).toBe(false);
+      expect(next.entries.find((entry) => entry.title === "hub")).toEqual(fromCurated);
       expect(http.requests.at(-1)?.searchParams.get("cursor")).toBe(
         "io.github.0Xflacko/justclip:0.3.0",
       );
@@ -864,62 +791,5 @@ describe("split Discover search", () => {
       ).toBe("invalid-input");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(http.layer()));
-  });
-});
-
-describe("rejected icons", () => {
-  it.effect("never reach Discover entries or connector summaries", () => {
-    const poisoned = [
-      "data:constructor;base64,bm90IGFuIGltYWdl",
-      "data:image/png;base64,not base64!",
-      "data:text/html;base64,PGh0bWw+",
-      `data:image/png;base64,${"A".repeat(100_000)}`,
-    ];
-    let index = 0;
-    const layer = Layer.effect(
-      ExtensionsDiscover,
-      Discover.makeWith({
-        servers: CURATED_FIXTURE,
-        // Stands in for a fetch whose result would bypass the MIME allowlist.
-        fetchIcon: async () => poisoned[index++ % poisoned.length],
-      }),
-    ).pipe(
-      Layer.provide(
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make((request) =>
-            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(recordedPage))),
-          ),
-        ),
-      ),
-      Layer.provide(
-        Layer.succeed(
-          ConnectorRuntime,
-          listOnlyConnectorRuntime(() => []),
-        ),
-      ),
-    );
-    return Effect.gen(function* () {
-      const discover = yield* ExtensionsDiscover;
-      const catalog = yield* discover.catalog();
-      expect(isDiscoverCatalog(catalog)).toBe(true);
-      expect(
-        catalog.sections.flatMap((section) => section.entries).some((entry) => entry.iconUrl),
-      ).toBe(false);
-      const entry = yield* discover.entry({ name: "scient.curated/semantic" });
-      expect(isDiscoverEntry(entry)).toBe(true);
-      // The inventory decorates connectors from this map; nothing invalid can enter it.
-      const icons = yield* discover.connectorIcons(["https://semantic.example/mcp"]);
-      expect(icons).toEqual(new Map());
-      const summary = connector({
-        connectorId: ConnectorId.make("con_semantic0001"),
-        url: "https://semantic.example/mcp",
-        source: { type: "url" },
-      });
-      const iconUrl = icons.get(summary.url);
-      expect(isConnectorSummary(iconUrl === undefined ? summary : { ...summary, iconUrl })).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(layer));
   });
 });
