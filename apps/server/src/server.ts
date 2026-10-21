@@ -811,7 +811,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
-    // SCIENT-FORK:START — connector proxy (session-token authority) and sign-in callback (state authority).
+    // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
     ConnectorProxyRoute.layer,
     ConnectorCallbackRoute.layer,
     // SCIENT-FORK:END

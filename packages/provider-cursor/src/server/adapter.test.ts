@@ -113,7 +113,9 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           capabilities: new Set(["preview"]),
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         });
         let sentWithMcpOverride = true;
         const modelSelection = { instanceId, model: "composer-2.5" };
@@ -1231,7 +1233,9 @@ describe("CursorAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer synthetic-cursor-open",
         capabilities: new Set(["preview"] as const),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       };
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* Effect.acquireRelease(
@@ -1426,7 +1430,9 @@ describe("CursorAdapterV2", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-cursor-mcp-token",
       capabilities: new Set(["preview"] as const),
+      // SCIENT-FORK:START — Scient Extensions connectors.
       connectors: [],
+      // SCIENT-FORK:END
     };
 
     assert.deepEqual(cursorMcpServers(mcpSession), {
@@ -1460,6 +1466,7 @@ describe("CursorAdapterV2", () => {
     assert.notInclude(logged, "secret-cursor-mcp-token");
   });
 
+  // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
   it("adds one http server per delivered connector without logging the bearer", () => {
     const threadId = ThreadId.make("thread-cursor-connectors");
     const mcpSession = {
@@ -1504,6 +1511,7 @@ describe("CursorAdapterV2", () => {
       "secret-cursor-mcp-token",
     );
   });
+  // SCIENT-FORK:END
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
     assert.isTrue(CursorAgentSdk.isCursorCancellationError({ name: "AbortError" }));

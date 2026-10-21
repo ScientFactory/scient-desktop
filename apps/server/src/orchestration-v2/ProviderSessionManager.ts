@@ -720,9 +720,9 @@ export const layerWithOptions = (
               capabilities.add("skills:read");
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
+            // SCIENT-FORK:START Scient Extensions connector delivery
             // Capability grants owned by other Scient features (Secrets: secrets:list,
             // secrets:use) are appended here, before connector delivery is planned.
-            // SCIENT-FORK:START Scient Extensions connector delivery
             const connectorPlan = yield* planConnectors(true);
             // SCIENT-FORK:END
             const existing = yield* mcpSessions.read(threadId);
@@ -747,8 +747,8 @@ export const layerWithOptions = (
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
-                [...capabilities].every((capability) => resolved.capabilities.has(capability)) &&
                 // SCIENT-FORK:START Scient Extensions: a changed connector set re-issues.
+                [...capabilities].every((capability) => resolved.capabilities.has(capability)) &&
                 ConnectorSessionDelivery.sameDeliveredConnectors(
                   existing.connectors,
                   resolved.connectorIds,
@@ -795,11 +795,12 @@ export const layerWithOptions = (
                     },
                   }
                 : {}),
+              // SCIENT-FORK:START Scient Extensions connector delivery
               connectors: connectorPlan.delivered,
             });
+            // Adapters amend this runtime's receipts.
             yield* mcpSessions.set({
               ...credential.config,
-              // SCIENT-FORK:START Scient Extensions: adapters amend this runtime's receipts.
               ...(credential.config.connectors.length === 0
                 ? {}
                 : {
@@ -808,8 +809,8 @@ export const layerWithOptions = (
                       providerSessionId: credential.config.providerSessionId,
                     }),
                   }),
-              // SCIENT-FORK:END
             });
+            // SCIENT-FORK:END
             // SCIENT-FORK:START Scient Extensions delivery receipt, recorded before the
             // reservation: a failed or interrupted write revokes the unowned new credential.
             yield* connectorDelivery
@@ -1724,7 +1725,9 @@ export const layerWithOptions = (
                 input.threadId,
                 input.providerInstanceId,
                 attachedEntry.exposedRuntime,
+                // SCIENT-FORK:START Scient Extensions connector delivery
                 input.providerSessionId,
+                // SCIENT-FORK:END
               );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
@@ -2768,7 +2771,9 @@ export const layerWithOptions = (
                     input.threadId,
                     input.modelSelection.instanceId,
                     adapter,
+                    // SCIENT-FORK:START Scient Extensions connector delivery
                     input.providerSessionId,
+                    // SCIENT-FORK:END
                   );
                   const mcpCredentialId = prepared.mcpCredentialId;
                   // The reservation from prepare protects the credential (which

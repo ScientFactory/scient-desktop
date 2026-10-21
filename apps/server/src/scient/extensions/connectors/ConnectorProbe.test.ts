@@ -66,4 +66,39 @@ describe("probeConnector over SSE", () => {
     expect(await probe([`data: ${REPLY}\r`], true)).toEqual(notMcp);
     expect(await probe(["data: <html>\r\r"])).toEqual(notMcp);
   });
+
+  it("skips a server request that reuses the probe's id, at every split", async () => {
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+    // Same id, but neither a request nor a result/error: not an answer either.
+    const bare = JSON.stringify({ jsonrpc: "2.0", id: 1 });
+    const answer = `data: ${ping}\n\ndata: ${bare}\n\nevent: message\ndata: ${REPLY}\n\n`;
+    // The stream stays open after the reply: it must be recognized in place.
+    expect(await probe([answer])).toEqual(OPEN);
+    for (let split = 1; split < answer.length; split += 1) {
+      expect(await probe([answer.slice(0, split), answer.slice(split)])).toEqual(OPEN);
+    }
+  });
+});
+
+describe("probeConnector over JSON", () => {
+  const jsonProbe = (body: string) =>
+    probeConnector({
+      url: "https://mcp.example.com/mcp",
+      fetch: async () => new Response(body, { headers: { "content-type": "application/json" } }),
+    });
+  const notMcp = {
+    type: "not-an-mcp-server",
+    message: "The address did not answer like an MCP server.",
+  };
+
+  it("accepts only the response envelope for its own id", async () => {
+    expect(await jsonProbe(REPLY)).toEqual(OPEN);
+    const result = JSON.parse(REPLY).result;
+    // A server request carrying our id and an initialize-shaped payload is not the answer.
+    expect(
+      await jsonProbe(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", result })),
+    ).toEqual(notMcp);
+    expect(await jsonProbe(JSON.stringify({ jsonrpc: "2.0", id: 2, result }))).toEqual(notMcp);
+    expect(await jsonProbe("not json")).toEqual(notMcp);
+  });
 });

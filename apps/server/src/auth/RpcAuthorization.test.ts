@@ -233,6 +233,7 @@ describe("RPC authorization scopes", () => {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
   });
+  // SCIENT-FORK:START — Scient Extensions RPC scopes.
   it("lets readers observe extensions while every extensions change needs settings write", () => {
     for (const method of [
       WS_METHODS.extensionsList,
@@ -258,6 +259,7 @@ describe("RPC authorization scopes", () => {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
     }
   });
+  // SCIENT-FORK:END
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

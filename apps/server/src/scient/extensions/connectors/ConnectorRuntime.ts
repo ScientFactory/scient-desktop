@@ -466,25 +466,31 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ),
     );
 
-  /** Applies a change to one record and publishes it. */
+  /**
+   * Applies a change to one record and publishes it. A change that returns the
+   * record it was given leaves the state (and the change feed) untouched.
+   */
   const updateRecord = (
     connectorId: string,
     change: (record: ConnectorRecord, updatedAt: string) => ConnectorRecord,
   ) =>
     Effect.gen(function* () {
       const updatedAt = yield* isoNow;
-      yield* store.update((current) => {
+      const changed = yield* store.update((current) => {
         const index = current.connectors.findIndex((record) => record.connectorId === connectorId);
         if (index === -1 || !isLive(connectorId)) {
           return Effect.fail(
             extensionsError("not-found", "That connected service no longer exists."),
           );
         }
+        const previous = current.connectors[index]!;
+        const next = change(previous, updatedAt);
+        if (next === previous) return Effect.succeed([false, current] as const);
         const connectors = [...current.connectors];
-        connectors[index] = change(connectors[index]!, updatedAt);
-        return Effect.succeed([undefined, { ...current, connectors }] as const);
+        connectors[index] = next;
+        return Effect.succeed([true, { ...current, connectors }] as const);
       });
-      yield* publishChange;
+      if (changed) yield* publishChange;
     });
 
   /** Deduplicated (first occurrence kept); every project must exist and not be deleted. */
@@ -512,9 +518,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   });
 
   /**
-   * Status changes discovered while forwarding never fail the request. Losing
-   * the credential (a move out of `connected` or between needs-* states) starts
-   * a new auth revision; repeating the current status does not.
+   * Status changes discovered while using a credential never fail the request.
+   * They belong to the credential generation of `record` (the snapshot the
+   * failing operation used): once a newer generation owns the connector (a
+   * sign-in committed meanwhile), a late failure of the old one is dropped.
+   * Losing the credential (a move out of `connected` or between needs-*
+   * states) starts a new auth revision; repeating the current status does not.
    */
   const markStatus = (
     record: ConnectorRecord,
@@ -522,15 +531,19 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     lastError: string,
   ) =>
     isLive(record.connectorId)
-      ? updateRecord(record.connectorId, (current, updatedAt) => ({
-          ...current,
-          status,
-          lastError,
-          ...(status !== current.status && status !== "connected"
-            ? { authRevision: current.authRevision + 1 }
-            : {}),
-          updatedAt,
-        })).pipe(
+      ? updateRecord(record.connectorId, (current, updatedAt) =>
+          current.authRevision !== record.authRevision
+            ? current
+            : {
+                ...current,
+                status,
+                lastError,
+                ...(status !== current.status && status !== "connected"
+                  ? { authRevision: current.authRevision + 1 }
+                  : {}),
+                updatedAt,
+              },
+        ).pipe(
           Effect.catch((error) =>
             Effect.logWarning("connector status could not be saved", {
               connectorId: record.connectorId,
@@ -539,6 +552,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           ),
         )
       : Effect.void;
+
+  /**
+   * An OAuth grant was refused outside the lifecycle lock. Under the lock (so
+   * no sign-in can commit in between), the loss is published only if that
+   * grant still owns the connector.
+   */
+  const markGrantLost = (connectorId: string, grantId: string, lastError: string) =>
+    lifecycle(connectorId).withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* findRecord(connectorId);
+        if (current === undefined) return;
+        const entry = yield* loadOAuth(current).pipe(Effect.orElseSucceed(() => undefined));
+        if (entry?.material.session?.grantId !== grantId) return;
+        yield* markStatus(current, "needs-auth", lastError);
+      }),
+    );
 
   const readStoredOAuth = (record: ConnectorRecord) =>
     Effect.gen(function* () {
@@ -745,7 +774,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }
         const held = oauthSecrets(entry?.material);
         if (!held.every((secret) => secret === undefined || isProtectableCredential(secret))) {
-          yield* markStatus(record, "needs-auth", UNPROTECTABLE_GRANT);
+          yield* markGrantLost(record.connectorId, session.grantId, UNPROTECTABLE_GRANT);
           return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
         }
         if (
@@ -844,7 +873,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }
     if (replay.value.status === 401) {
       yield* cancelBody(replay.value);
-      yield* markStatus(record, "needs-auth", "The service no longer accepts this sign-in.");
+      // Only if the refused grant still owns the connector: a sign-in may have
+      // committed while this replay was in flight.
+      yield* markGrantLost(
+        record.connectorId,
+        refreshed.session.grantId,
+        "The service no longer accepts this sign-in.",
+      );
       return gone;
     }
     return {

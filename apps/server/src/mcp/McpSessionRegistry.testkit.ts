@@ -7,7 +7,9 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
+    // SCIENT-FORK:START — Scient Extensions connectors.
     issue: ({ threadId, providerInstanceId, capabilities, browserToolsAvailable, connectors }) =>
+      // SCIENT-FORK:END
       Effect.succeed({
         config: {
           environmentId: EnvironmentId.make("environment:mcp-test"),
@@ -17,6 +19,7 @@ export const layer = Layer.succeed(
           endpoint: "http://127.0.0.1/mcp",
           authorizationHeader: `Bearer mcp-test:${threadId}`,
           capabilities: capabilities ?? new Set(browserToolsAvailable === false ? [] : ["preview"]),
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: (connectors ?? []).map((connector) => ({
             ...connector,
             url: McpSessionRegistry.connectorProxyUrl(
@@ -24,6 +27,7 @@ export const layer = Layer.succeed(
               connector.connectorId,
             ),
           })),
+          // SCIENT-FORK:END
         },
       }),
     resolve: () => Effect.succeed(undefined),

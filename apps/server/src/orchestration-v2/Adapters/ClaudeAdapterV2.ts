@@ -111,7 +111,9 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
+  // SCIENT-FORK:START Scient Extensions connectors
   type ExtensionDeliverySkipReason,
+  // SCIENT-FORK:END
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -954,11 +956,13 @@ export const layerQueryRunner: Layer.Layer<
                     // SCIENT-FORK:END
                     // Error texts and the CLI's mcp_status response can echo the headers, so
                     // only server names are logged.
+                    // SCIENT-FORK:START Scient Extensions connectors
                     const failed = yield* Effect.tryPromise(() =>
                       queryRuntime.setMcpServers(registered),
                     ).pipe(
                       Effect.map((result) => Object.keys(result.errors)),
                       Effect.orElseSucceed(() => Object.keys(registered)),
+                      // SCIENT-FORK:END
                       Effect.timeoutOrElse({
                         duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
                         orElse: () =>
@@ -1418,24 +1422,25 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
-  const scientServer = {
-    type: "http" as const,
-    url: session.endpoint,
-    headers: {
-      Authorization: session.authorizationHeader,
-    },
-    timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
-  };
   return {
     scientAwareness: buildScientAwareness(
       toMcpCapabilities(session.capabilities),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     ),
+    // SCIENT-FORK:START Scient Extensions connectors
     // Only Scient's own tools are pre-approved; connector tools go through
     // Claude's normal per-server permission flow.
+    // SCIENT-FORK:END
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      scient: scientServer,
+      scient: {
+        type: "http",
+        url: session.endpoint,
+        headers: {
+          Authorization: session.authorizationHeader,
+        },
+        timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+      },
       // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
       ...Object.fromEntries(
         session.connectors.map((connector) => [
@@ -8973,10 +8978,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
+          // SCIENT-FORK:START Scient Extensions connectors
           const mcpSession =
             input.configureMcp === false ? undefined : yield* mcpSessions.read(turnInput.threadId);
+          // SCIENT-FORK:END
           const mcpOverrides = claudeMcpQueryOverrides({
+            // SCIENT-FORK:START Scient Extensions connectors
             mcpSession,
+            // SCIENT-FORK:END
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined
@@ -10589,14 +10598,12 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
+    // SCIENT-FORK:START Scient Extensions native inventory
     hooks: Pick<
       ClaudeAdapterV2Options,
-      | "scopedLimitNames"
-      | "onUsageLimits"
-      // SCIENT-FORK:START Scient Extensions native inventory
-      | "onNativeInventory"
-      // SCIENT-FORK:END
+      "scopedLimitNames" | "onUsageLimits" | "onNativeInventory"
     > = {},
+    // SCIENT-FORK:END
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

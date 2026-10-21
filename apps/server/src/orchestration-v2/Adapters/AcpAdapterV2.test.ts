@@ -800,7 +800,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer self-contained-mcp-bridge-token",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
 
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
@@ -864,7 +866,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer instruction-transition-token",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -2444,7 +2448,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer source-thread-token",
         capabilities: new Set(["preview"] as const),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
@@ -2454,7 +2460,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
         capabilities: new Set(["preview"] as const),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -2600,6 +2608,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // SCIENT-FORK:START — Scient Extensions connectors.
   it.effect.each(
     [
       { acpMcp: false, httpMcp: false },
@@ -2711,6 +2720,7 @@ describe("AcpAdapterV2", () => {
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+  // SCIENT-FORK:END
 
   it.effect.each(
     [false, true].map((acpMcp) => ({
@@ -2803,7 +2813,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer source-thread-token",
         capabilities: new Set(["preview"] as const),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
@@ -2813,7 +2825,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
         capabilities: new Set(["preview"] as const),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       yield* Effect.addFinalizer(() =>
         Effect.all([mcpSessions.clear(sourceThreadId), mcpSessions.clear(targetThreadId)]),
@@ -3286,7 +3300,9 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43124/mcp",
         authorizationHeader: "Bearer rollback-target-token",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
       const makeRuntime = makeMockRuntime({

@@ -214,9 +214,11 @@ function makeRegistry(
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
       // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
       getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+      // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
       // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
       getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
       recordProviderNativeInventory: () => Ref.get(providersRef),
+      // SCIENT-FORK:END
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

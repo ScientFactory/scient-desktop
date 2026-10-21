@@ -289,6 +289,7 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
     );
   });
 
+  // SCIENT-FORK:START — Scient Extensions connectors.
   it("withholds Scient's MCP approval grant once connectors share the session", () => {
     const tagged = {
       sessionId: "session-1",
@@ -339,6 +340,7 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
       ),
     );
   });
+  // SCIENT-FORK:END
 });
 
 describe("client terminal disposition", () => {

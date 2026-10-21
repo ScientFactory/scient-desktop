@@ -22,8 +22,10 @@ export const makeProviderRegistryMock = (
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
   getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
   getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+  // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
   getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
   recordProviderNativeInventory: () => Effect.succeed(providers),
+  // SCIENT-FORK:END
   getVoiceTranscriptCorrectionForInstance: () =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
     Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

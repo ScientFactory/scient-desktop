@@ -1,10 +1,15 @@
+// SCIENT-FORK:START — Scient Extensions connectors: `node:crypto` must be the `NodeCrypto`
+// namespace, so the platform crypto layer is imported as `PlatformNodeCrypto`.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Expected connector names are computed synchronously, independent of the adapter's own hashing.
 import * as NodeCrypto from "node:crypto";
 import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
+// SCIENT-FORK:END
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
+  // SCIENT-FORK:START — Scient Extensions connectors.
   ConnectorId,
+  // SCIENT-FORK:END
   EnvironmentId,
   MessageId,
   NodeId,
@@ -39,16 +44,20 @@ import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import * as ExtensionDeliveryReceipts from "../../scient/extensions/ExtensionDeliveryReceipts.ts";
 import * as ConnectorSessionDelivery from "../../scient/extensions/ConnectorSessionDelivery.ts";
 import { ExtensionDeliveryReceipts as ExtensionDeliveryReceiptsTag } from "../../scient/extensions/ExtensionsServices.ts";
+// SCIENT-FORK:END
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import type {
   McpConnectorRegistrationReporter,
   McpProviderSessionConnector,
 } from "@t3tools/provider-core/server/mcpSession";
+// SCIENT-FORK:END
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -166,8 +175,10 @@ const withInstructions = (
         "skill.list",
       ].includes(String(entry.frame.type)),
   );
+  // SCIENT-FORK:START — Scient Extensions connectors.
   // T3's instructions follow every MCP server the turn adds: its own, then its connectors.
   const after = entries.findLastIndex(
+    // SCIENT-FORK:END
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
@@ -671,7 +682,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           endpoint: "http://127.0.0.1:3773/mcp",
           authorizationHeader: "Bearer thread-credential",
           capabilities,
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const server = "t3-code-thread_opencode2-adapter";
@@ -3626,7 +3639,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           endpoint: "http://127.0.0.1:3773/mcp",
           authorizationHeader: "Bearer thread-credential",
           capabilities: new Set(),
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const server = "t3-code-thread_opencode2-adapter";
@@ -3666,7 +3681,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         endpoint: "http://127.0.0.1:3773/mcp",
         authorizationHeader: "Bearer thread-credential",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
       const server = "t3-code-thread_opencode2-adapter";
@@ -3716,6 +3733,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // SCIENT-FORK:START — Scient Extensions connectors.
   describe("Scient connectors", () => {
     const server = "t3-code-thread_opencode2-adapter";
     // The thread's connector key: the first 16 hex digits of its id's SHA-256.
@@ -3976,6 +3994,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
     );
   });
+  // SCIENT-FORK:END
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
@@ -3992,7 +4011,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         endpoint: "http://127.0.0.1:3773/mcp",
         authorizationHeader: "Bearer thread-credential",
         capabilities: new Set<McpCapability>(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(child));
       const runtime = yield* openCode2ReplayRuntimeWithInstructions([
@@ -4039,6 +4060,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // SCIENT-FORK:START — Scient Extensions connectors: only the platform crypto layer's import
+  // name changes in this upstream test.
   it.effect("names each thread's MCP server within OpenCode's limits, one name per thread", () =>
     Effect.gen(function* () {
       const project = "thread:project:ce04e4e2-6c29-4ff0-a1d7-b089dd63e258";
@@ -4056,6 +4079,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(yield* t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
     }).pipe(Effect.provide(PlatformNodeCrypto.layer)),
   );
+  // SCIENT-FORK:END
 
   it.effect("reads user and assistant text from the session's message list", () =>
     Effect.gen(function* () {

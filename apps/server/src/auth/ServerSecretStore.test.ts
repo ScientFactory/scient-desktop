@@ -195,7 +195,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
           return {
             ...fileSystem,
-            // SCIENT-FORK:START — the real directory exists so replace can open and sync
+            // SCIENT-FORK:START — Scient Extensions: the real directory exists so replace can open and sync
             // its temporary file; only permission changes and the rename are recorded.
             // SCIENT-FORK:END
             rename: () => Effect.void,
@@ -207,7 +207,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
         }),
       ).pipe(Layer.provide(NodeServices.layer));
 
-      // SCIENT-FORK:START — use the store while its temporary config directory exists.
+      // SCIENT-FORK:START — Scient Extensions: use the store while its temporary config directory exists.
       yield* Effect.gen(function* () {
         const secretStore = yield* ServerSecretStore.ServerSecretStore;
         yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
@@ -228,7 +228,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // SCIENT-FORK:START — durable replace and directory-entry sync.
+  // SCIENT-FORK:START — Scient Extensions: durable replace and directory-entry sync.
   const syncFailure = (code: string, method: string) =>
     PlatformError.systemError({
       _tag: "Unknown",

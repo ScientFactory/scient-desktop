@@ -1011,7 +1011,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               },
             }),
           );
-          // SCIENT-FORK:START — connectors are best effort beside Scient's own server:
+          // SCIENT-FORK:START — Scient Extensions: connectors are best effort beside Scient's own server:
           // one unreachable connector must not stop the session. They take the
           // mode's permission rules like any other MCP server, never Scient's.
           // The credential's tracker starts before the first add and hears which

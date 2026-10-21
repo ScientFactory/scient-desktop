@@ -33,6 +33,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/scripts/acp-mock-agent.ts",
+      "anchor": "T3_ACP_MCP_HTTP",
+      "purpose": "Let the ACP mock agent advertise HTTP MCP support so the connector delivery tests can exercise ACP agents (AcpAdapterV2.test.ts)."
+    },
+    {
       "path": "apps/server/src/auth/RpcAuthorization.ts",
       "anchor": "WS_METHODS.extensionsList",
       "purpose": "Authorize extensions reads under the read scope and every extensions change under settings write (RpcAuthorization.test.ts)."
@@ -108,6 +113,11 @@
       "purpose": "Show the thread's extensions delivery receipt in the maintained chat header."
     },
     {
+      "path": "apps/web/src/components/settings/SettingsBreadcrumb.tsx",
+      "anchor": "/settings/extensions/installed",
+      "purpose": "Label the Extensions subpages in the maintained Settings breadcrumb; category and item pages fall back to the Extensions section."
+    },
+    {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "/settings/extensions",
       "purpose": "Link Settings → Extensions from the maintained Settings shell."
@@ -120,7 +130,7 @@
     {
       "path": "apps/web/src/routeTree.gen.ts",
       "anchor": "SettingsExtensionsRouteImport",
-      "purpose": "Generated registration for the fork-owned Settings → Extensions route."
+      "purpose": "Generated registration for the fork-owned Settings → Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",

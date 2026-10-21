@@ -150,6 +150,7 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+// SCIENT-FORK:START — Scient Extensions native inventory.
 /** A plugin installed in a provider instance's own plugin system. Provider-owned; Scient only reports it. */
 export const ServerProviderPlugin = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -188,6 +189,7 @@ export const ServerProviderMcpServer = Schema.Struct({
   canStartSignIn: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderMcpServer = typeof ServerProviderMcpServer.Type;
+// SCIENT-FORK:END
 
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -195,7 +197,9 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  // SCIENT-FORK:START — Scient Extensions native inventory.
   plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
+  // SCIENT-FORK:END
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -339,10 +343,12 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // SCIENT-FORK:START — Scient Extensions native inventory.
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
   plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   /** Provider-native MCP servers as last reported by the provider. */
   mcpServers: Schema.optionalKey(Schema.Array(ServerProviderMcpServer)),
+  // SCIENT-FORK:END
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),

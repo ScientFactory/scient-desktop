@@ -36,8 +36,8 @@ interface JsonRpcInitializeResponse {
   readonly error?: unknown;
 }
 
-/** A reply candidate, or `undefined` when the data is not JSON. */
-const parseReply = (data: string): JsonRpcInitializeResponse | undefined => {
+/** A JSON object, or `undefined` when the data is not one. */
+const parseObject = (data: string): object | undefined => {
   try {
     const parsed: unknown = JSON.parse(data);
     return typeof parsed === "object" && parsed !== null ? parsed : undefined;
@@ -45,6 +45,16 @@ const parseReply = (data: string): JsonRpcInitializeResponse | undefined => {
     return undefined;
   }
 };
+
+/**
+ * The response to `PROBE_REQUEST_ID`: a server request may reuse that id, so
+ * only a message without `method` that carries `result` or `error` answers it.
+ */
+const isProbeResponse = (message: object): message is JsonRpcInitializeResponse =>
+  "id" in message &&
+  message.id === PROBE_REQUEST_ID &&
+  !("method" in message) &&
+  ("result" in message || "error" in message);
 
 /**
  * The first SSE event whose data is the reply to `PROBE_REQUEST_ID`, parsed by
@@ -61,9 +71,10 @@ const readEventStreamReply = async (
     onEvent: (event) => {
       const data = event.data?.join("\n") ?? "";
       if (data.length === 0) return true;
-      const message = parseReply(data);
+      const message = parseObject(data);
       if (message === undefined) return false;
-      if (message.id !== PROBE_REQUEST_ID) return true;
+      // Server requests and notifications (even with our id) are skipped.
+      if (!isProbeResponse(message)) return true;
       reply = message;
       return false;
     },
@@ -125,11 +136,12 @@ export const probeConnector = async (input: {
   const contentType = response.headers.get("content-type") ?? "";
   let reply: JsonRpcInitializeResponse | undefined;
   try {
-    reply = contentType.includes("text/event-stream")
-      ? response.body
-        ? await readEventStreamReply(response.body)
-        : undefined
-      : ((await response.json()) as JsonRpcInitializeResponse);
+    if (contentType.includes("text/event-stream")) {
+      reply = response.body ? await readEventStreamReply(response.body) : undefined;
+    } else {
+      const message = parseObject(await response.text());
+      reply = message !== undefined && isProbeResponse(message) ? message : undefined;
+    }
   } catch (error) {
     reply = undefined;
     if (error instanceof Error && error.name === "TimeoutError") {

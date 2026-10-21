@@ -40,7 +40,9 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import type { McpConnectorRegistrationReporter } from "@t3tools/provider-core/server/mcpSession";
+// SCIENT-FORK:END
 
 import {
   advanceOpenCodePromptAdmission,
@@ -618,7 +620,9 @@ describe("OpenCodeAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-opencode",
           capabilities,
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         let guidanceCapabilities: ReadonlySet<string> | undefined;
@@ -687,6 +691,7 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  // SCIENT-FORK:START — Scient Extensions connectors.
   it.effect(
     "adds each connector beside Scient's server and reports the ones OpenCode did not connect",
     () =>
@@ -820,6 +825,7 @@ describe("OpenCodeAdapterV2", () => {
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
       ),
   );
+  // SCIENT-FORK:END
 
   it.effect.each(
     (["completed", "failed", "unresolved", "unavailable", "reconnect"] as const).map((ending) => ({

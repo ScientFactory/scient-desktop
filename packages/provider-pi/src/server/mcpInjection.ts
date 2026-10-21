@@ -9,7 +9,7 @@ import {
   // SCIENT-FORK:START — generate the extension with optional host-owned orchestration copy.
   makePiMcpExtensionSource,
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient connectors ride the session's MCP credential.
+  // SCIENT-FORK:START — Scient Extensions: connectors ride the session's MCP credential.
   T3_MCP_CONNECTORS_ENV,
   // SCIENT-FORK:END
   T3_MCP_BEARER_ENV,
@@ -300,7 +300,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
-  // SCIENT-FORK:START — the connector list belongs to the current session too.
+  // SCIENT-FORK:START — Scient Extensions: the connector list belongs to the current session too.
   delete environment[T3_MCP_CONNECTORS_ENV];
   // SCIENT-FORK:END
 

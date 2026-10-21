@@ -90,8 +90,10 @@ export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scientSkills.ts";
+// SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
 export * from "./scient/extensions.ts";
+// SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";

@@ -73,8 +73,10 @@ import * as Data from "effect/Data";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
+  // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
   ProviderNativeInventory,
   ProviderPluginActions,
+  // SCIENT-FORK:END
   ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
 } from "./ScientProviderInstanceSeams.ts";
@@ -170,7 +172,7 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderSkillActions | undefined>;
 
-  // SCIENT-FORK:START — provider-native plugins and MCP servers.
+  // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
   /**
    * Resolve the provider-owned native plugin and MCP server seam of the
    * instance's current generation, as the instance registry knows it.
@@ -283,7 +285,7 @@ export function upsertProviderWorkspaceSnapshot(
   cwd: string,
   scopedSnapshot: ProviderWorkspaceSnapshot,
 ): ServerProvider {
-  // SCIENT-FORK:START — a failed plugin listing keeps the workspace's last inventory.
+  // SCIENT-FORK:START — Scient Extensions: a failed plugin listing keeps the workspace's last inventory.
   const plugins =
     scopedSnapshot.plugins ??
     provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.plugins;
@@ -297,7 +299,7 @@ export function upsertProviderWorkspaceSnapshot(
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
-    // SCIENT-FORK:START — provider-native plugins listed for this workspace.
+    // SCIENT-FORK:START — Scient Extensions: provider-native plugins listed for this workspace.
     ...(plugins !== undefined ? { plugins } : {}),
     // SCIENT-FORK:END
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
@@ -643,15 +645,15 @@ export const layer = Layer.effect(
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
         const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
-        // SCIENT-FORK:START — provider-native inventory is live state, never cached.
+        // SCIENT-FORK:START — Scient Extensions: provider-native inventory is live state, never cached.
         const cachedProvider = withoutProviderNativeInventory(machineProvider);
-        // SCIENT-FORK:END
         yield* writeProviderStatusCache({ filePath, provider: cachedProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.tapError(Effect.logError),
           Effect.ignore,
         );
+        // SCIENT-FORK:END
       });
 
     const applyProviderTransientState = Effect.fn("applyProviderTransientState")(function* (
@@ -1012,7 +1014,7 @@ export const layer = Layer.effect(
             carriedOver.set(instanceId, previousInstance);
           }
         }
-        // SCIENT-FORK:START — a generation that is not carried over is retired,
+        // SCIENT-FORK:START — Scient Extensions: a generation that is not carried over is retired,
         // whether it was rebuilt, removed, or became unavailable: its reports go.
         yield* nativeInventory.forget(
           (instanceId) => !previousSubs.has(instanceId) || carriedOver.has(instanceId),
@@ -1039,7 +1041,7 @@ export const layer = Layer.effect(
               const providers = previousProviders.map((provider) => {
                 if (!rebuiltInstanceIds.has(provider.instanceId)) return provider;
                 const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
-                // SCIENT-FORK:START — a rebuilt configuration reports its own inventory.
+                // SCIENT-FORK:START — Scient Extensions: a rebuilt configuration reports its own inventory.
                 return withoutProviderNativeInventory(machineSnapshot);
                 // SCIENT-FORK:END
               });
@@ -1060,7 +1062,7 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
-          // SCIENT-FORK:START — publish inventory reported by the instance's live sessions.
+          // SCIENT-FORK:START — Scient Extensions: publish inventory reported by the instance's live sessions.
           const nativeInventoryChanges = instance.nativeInventoryChanges;
           if (nativeInventoryChanges) {
             yield* Stream.runForEach(nativeInventoryChanges, (inventory) =>
@@ -1190,7 +1192,7 @@ export const layer = Layer.effect(
         ),
         Effect.map(([, nextProviders]) => nextProviders),
       );
-    // SCIENT-FORK:START — a workspace plugin listing stops once its snapshot is
+    // SCIENT-FORK:START — Scient Extensions: a workspace plugin listing stops once its snapshot is
     // evicted or dropped. Each instance compares its listings with the
     // snapshots published at that moment, so concurrent scans cannot miss one.
     const publishedWorkspaces = (instanceId: ProviderInstanceId) =>
@@ -1221,6 +1223,7 @@ export const layer = Layer.effect(
       readonly fresh?: boolean;
     }) {
       if (input.fresh) {
+        // SCIENT-FORK:START — Scient Extensions: the snapshots this drops stop their plugin listings.
         const afterDrop = yield* updateProviders((providers) =>
           providers.map((candidate) =>
             candidate.instanceId === input.instanceId
@@ -1228,7 +1231,6 @@ export const layer = Layer.effect(
               : dropProviderWorkspaceSnapshot(candidate, input.cwd),
           ),
         );
-        // SCIENT-FORK:START — the snapshots this drops stop their plugin listings.
         yield* retainWorkspaceListings(
           afterDrop
             .map((candidate) => candidate.instanceId)
@@ -1257,10 +1259,10 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
-      // SCIENT-FORK:START — kept narrowed for the claim-guarded scan below.
+      // SCIENT-FORK:START — Scient Extensions: kept narrowed for the claim-guarded scan below.
       const snapshotForCwd = instance.snapshotForCwd;
       // SCIENT-FORK:END
-      // SCIENT-FORK:START — the claim is released after every step that follows
+      // SCIENT-FORK:START — Scient Extensions: the claim is released after every step that follows
       // admission, including listing cleanup that a cancelled caller abandons.
       const releaseClaim = Ref.update(workspaceRefreshesRef, (refreshes) => {
         const next = new Map(refreshes);
@@ -1288,7 +1290,6 @@ export const layer = Layer.effect(
                 yield* instance.workspaceInventory.cancel(input.cwd);
               }
               const scanSequence = yield* nextInventoryReadSequence;
-              // SCIENT-FORK:END
               const refreshMachineSnapshot = input.fresh
                 ? (instance.invalidateCaches ?? Effect.void).pipe(
                     Effect.andThen(refreshInstance(input.instanceId)),
@@ -1319,7 +1320,7 @@ export const layer = Layer.effect(
                             : candidate,
                         ),
                       ).pipe(
-                        // SCIENT-FORK:START — list the workspace's plugins once its scan is
+                        // List the workspace's plugins once its scan is
                         // published, if the update kept it; evicted snapshots stop theirs.
                         Effect.tap((afterScan) =>
                           Effect.gen(function* () {
@@ -1338,13 +1339,12 @@ export const layer = Layer.effect(
                             yield* retainWorkspaceListings([input.instanceId]);
                           }),
                         ),
-                        // SCIENT-FORK:END
                       );
                     }),
                   ),
                 ),
               );
-              // SCIENT-FORK:START — release the claim (see above).
+              // Release the claim (see above).
             }),
           ).pipe(Effect.ensuring(claimed ? releaseClaim : Effect.void));
         }),
@@ -1369,7 +1369,7 @@ export const layer = Layer.effect(
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
       getProviderSkillActionsForInstance,
-      // SCIENT-FORK:START — provider-native plugins and MCP servers.
+      // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
       getProviderPluginActionsForInstance,
       recordProviderNativeInventory,
       // SCIENT-FORK:END

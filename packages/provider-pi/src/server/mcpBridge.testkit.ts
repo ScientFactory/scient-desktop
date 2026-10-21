@@ -1,11 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
+// SCIENT-FORK:START — Scient Extensions connectors: hashed connector tool aliases.
 import * as NodeCrypto from "node:crypto";
+// SCIENT-FORK:END
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
+// SCIENT-FORK:START — Scient Extensions connectors: tests type connector tool registrations.
 export interface RegisteredTool {
+  // SCIENT-FORK:END
   readonly name: string;
   readonly description: string;
   readonly parameters: unknown;
@@ -37,6 +41,7 @@ type AgentStartHook = (
   },
 ) => Promise<{ systemPrompt: string }>;
 
+// SCIENT-FORK:START — Scient Extensions connectors: proxied MCP server fixtures.
 export interface FixtureConnector {
   readonly serverName: string;
   readonly url: string;
@@ -50,6 +55,7 @@ export interface FixtureConnector {
   /** Fail every request, as an unreachable or misconfigured connector would. */
   readonly fail?: boolean;
 }
+// SCIENT-FORK:END
 
 export async function loadMcpBridge(
   options: {
@@ -60,12 +66,14 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
+    // SCIENT-FORK:START — Scient Extensions connectors: fixture servers and response encoding.
     readonly connectors?: ReadonlyArray<FixtureConnector>;
     /** Encodes a JSON-RPC response; undefined keeps the plain `application/json` reply. */
     readonly respond?: (
       message: { readonly jsonrpc: "2.0"; readonly id: number; readonly result: unknown },
       request: { readonly url: string; readonly method: string },
     ) => Response | undefined;
+    // SCIENT-FORK:END
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -112,6 +120,7 @@ export async function loadMcpBridge(
         ...(options.toolNameMap === undefined
           ? {}
           : { PI_TOOL_NAME_MAP: JSON.stringify(options.toolNameMap) }),
+        // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
         ...(options.connectors === undefined
           ? {}
           : {
@@ -119,13 +128,16 @@ export async function loadMcpBridge(
                 options.connectors.map(({ serverName, url }) => ({ serverName, url })),
               ),
             }),
+        // SCIENT-FORK:END
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
     },
     AbortSignal,
+    // SCIENT-FORK:START — Scient Extensions connectors: streamed responses and hashed aliases.
     TextDecoder,
     NodeCrypto,
+    // SCIENT-FORK:END
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -144,6 +156,7 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
+      // SCIENT-FORK:START — Scient Extensions connectors: fixture servers answer their own requests.
       const connector = options.connectors?.find((candidate) => candidate.url === url);
       if (connector?.fail === true) {
         return new Response("connector unavailable", { status: 502 });
@@ -178,6 +191,7 @@ export async function loadMcpBridge(
           headers: { "content-type": "application/json" },
         })
       );
+      // SCIENT-FORK:END
     },
     pi: {
       registerCommand: () => undefined,

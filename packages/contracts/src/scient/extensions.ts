@@ -195,20 +195,25 @@ export const ConnectorOAuthClientInput = Schema.Struct({
 });
 export type ConnectorOAuthClientInput = typeof ConnectorOAuthClientInput.Type;
 
+/** User- and registry-supplied text is bounded: it is persisted for every connector. */
+const ConnectorNameInput = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+const ConnectorDescriptionInput = TrimmedNonEmptyString.check(Schema.isMaxLength(1_000));
+const ConnectorUrlInput = TrimmedNonEmptyString.check(Schema.isMaxLength(2_048));
+
 export const ConnectorAddInput = Schema.Struct({
   target: Schema.Union([
     Schema.Struct({
       type: Schema.Literal("registry"),
-      name: TrimmedNonEmptyString,
-      version: TrimmedNonEmptyString,
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
       /** Which `streamable-http` remote of the registry entry to use. */
-      url: TrimmedNonEmptyString,
+      url: ConnectorUrlInput,
     }),
-    Schema.Struct({ type: Schema.Literal("url"), url: TrimmedNonEmptyString }),
+    Schema.Struct({ type: Schema.Literal("url"), url: ConnectorUrlInput }),
   ]),
-  displayName: Schema.optional(TrimmedNonEmptyString),
+  displayName: Schema.optional(ConnectorNameInput),
   /** Shown in Installed; from the Discover entry the connector was added from. */
-  description: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1_000))),
+  description: Schema.optional(ConnectorDescriptionInput),
   oauthClient: Schema.optional(ConnectorOAuthClientInput),
   /** API-key style servers. */
   credential: Schema.optional(
@@ -258,7 +263,7 @@ export type ConnectorStartSignInResult = typeof ConnectorStartSignInResult.Type;
 
 export const ConnectorUpdateInput = Schema.Struct({
   connectorId: ConnectorId,
-  displayName: Schema.optional(TrimmedNonEmptyString),
+  displayName: Schema.optional(ConnectorNameInput),
   enabled: Schema.optional(Schema.Boolean),
   availability: Schema.optional(GrantScope),
 });

@@ -650,7 +650,9 @@ describe("CodexAdapterV2 process spawning", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-codex-token",
       capabilities: new Set(["preview"]),
+      // SCIENT-FORK:START — Scient Extensions connectors.
       connectors: [],
+      // SCIENT-FORK:END
     };
 
     assert.deepEqual(
@@ -684,6 +686,7 @@ describe("CodexAdapterV2 process spawning", () => {
     );
   });
 
+  // SCIENT-FORK:START — Scient Extensions connectors.
   it("adds one mcp_servers entry per delivered connector with the session bearer", () => {
     const threadId = ThreadId.make("thread-codex-connectors");
     const params = CodexAdapterV2.codexThreadRuntimeParams({
@@ -728,6 +731,7 @@ describe("CodexAdapterV2 process spawning", () => {
       },
     });
   });
+  // SCIENT-FORK:END
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
@@ -3082,7 +3086,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
           capabilities: new Set(["preview"]),
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         });
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({

@@ -95,7 +95,9 @@ const layerMcpRegistry = Layer.succeed(
           endpoint: MCP_URL,
           authorizationHeader: `Bearer mcp-live:${threadId}`,
           capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+          // SCIENT-FORK:START — Scient Extensions connectors.
           connectors: [],
+          // SCIENT-FORK:END
         },
       }),
     resolve: () => Effect.succeed(undefined),

@@ -6,28 +6,38 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import { ConnectorId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
+  // SCIENT-FORK:START — Scient Extensions connectors.
   CLAUDE_NATIVE_MCP_DISCOVERY_TIMEOUT,
+  // SCIENT-FORK:END
   ClaudeAgentSdkQueryRunner,
   layerQueryRunner,
 } from "./ClaudeAdapterV2.ts";
+// SCIENT-FORK:START — Scient Extensions connectors.
 import * as ExtensionDeliveryReceipts from "../../scient/extensions/ExtensionDeliveryReceipts.ts";
 import * as ConnectorSessionDelivery from "../../scient/extensions/ConnectorSessionDelivery.ts";
 import { ExtensionDeliveryReceipts as ExtensionDeliveryReceiptsTag } from "../../scient/extensions/ExtensionsServices.ts";
 import type { McpConnectorRegistrationReporter } from "@t3tools/provider-core/server/mcpSession";
+// SCIENT-FORK:END
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -104,6 +114,7 @@ const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+// SCIENT-FORK:START — Scient Extensions connectors.
 describe("Scient connectors and provider-native MCP servers", () => {
   const http = (url: string) => ({
     type: "http" as const,
@@ -375,6 +386,7 @@ describe("Scient connectors and provider-native MCP servers", () => {
       }),
   );
 });
+// SCIENT-FORK:END
 
 function fakeClaudeCli(script: string): string {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-cli-"));

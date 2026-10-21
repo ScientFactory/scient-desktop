@@ -241,6 +241,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
+// SCIENT-FORK:START — Scient Extensions connectors.
 it.effect("binds the delivered connector set and derives proxy URLs from the bound host", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer("::1"));
@@ -289,6 +290,7 @@ it("places connector proxy URLs beside the MCP endpoint and escapes the id", () 
     "http://127.0.0.1:43123/mcp/connectors/con_a%2Fb%3Fc",
   );
 });
+// SCIENT-FORK:END
 
 it.effect("expires credentials once their session stops showing signs of life", () =>
   Effect.gen(function* () {

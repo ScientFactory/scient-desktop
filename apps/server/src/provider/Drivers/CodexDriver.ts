@@ -26,7 +26,7 @@ import {
   setCodexSkillEnabled,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
-// SCIENT-FORK:START — provider-native plugin and MCP server management.
+// SCIENT-FORK:START — Scient Extensions: provider-native plugin and MCP server management.
 import { makeCodexNativeInventory } from "../CodexPluginInventory.ts";
 // SCIENT-FORK:END
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -257,7 +257,7 @@ export const CodexDriver: ScientProviderDriver<CodexSettings, CodexDriverEnv, Pa
             })),
           ),
       };
-      // SCIENT-FORK:START — provider-native plugins and MCP servers: bounded
+      // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers: bounded
       // enrichment and generation-bound actions, owned by this instance.
       const nativeInventory = yield* makeCodexNativeInventory((cwd) =>
         withCodexAppServerClient({
@@ -324,7 +324,7 @@ export const CodexDriver: ScientProviderDriver<CodexSettings, CodexDriverEnv, Pa
             (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           ),
         checkProvider,
-        // SCIENT-FORK:START — beside the version advisory, the machine inventory is
+        // SCIENT-FORK:START — Scient Extensions: beside the version advisory, the machine inventory is
         // listed after each healthy probe, off its path; a failed probe keeps the
         // last inventory without another spawn.
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
@@ -473,7 +473,7 @@ export const CodexDriver: ScientProviderDriver<CodexSettings, CodexDriverEnv, Pa
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
         skillActions,
-        // SCIENT-FORK:START — provider-native plugins and MCP servers.
+        // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
         pluginActions: nativeInventory.actions,
         nativeInventoryChanges: nativeInventory.reports,
         workspaceInventory: nativeInventory.workspace,

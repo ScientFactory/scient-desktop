@@ -753,15 +753,11 @@ function acpMcpContext(
       },
       // SCIENT-FORK:START — Scient Extensions connectors (remote MCP servers proxied by Scient).
       ...connectorBridges,
-      // SCIENT-FORK:END
     ],
     acpServers: [
       { type: "acp", name: SCIENT_ACP_MCP_NAME, serverId: "t3-code" },
-      // SCIENT-FORK:START — Scient Extensions connectors (remote MCP servers proxied by Scient).
       ...connectorBridges,
-      // SCIENT-FORK:END
     ],
-    // SCIENT-FORK:START — Scient Extensions connectors (remote MCP servers proxied by Scient).
     connectorsDelivered: connectorBridges.length > 0,
     // SCIENT-FORK:END
     capabilities: session.capabilities,
@@ -1529,16 +1525,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const readMcpContext = (threadId: ThreadId | null) =>
           threadId === null || input.configureMcp === false
             ? Effect.succeed(acpMcpContext(undefined, self))
-            : mcpSessions.read(threadId).pipe(
+            : // SCIENT-FORK:START — Scient Extensions connectors (see `sessionHasConnectors`).
+              mcpSessions.read(threadId).pipe(
                 Effect.map((session) => acpMcpContext(session, self)),
-                // SCIENT-FORK:START — Scient Extensions connectors (see `sessionHasConnectors`).
                 Effect.tap((context) =>
                   Effect.sync(() => {
                     if (context.connectorsDelivered === true) sessionHasConnectors = true;
                   }),
                 ),
-                // SCIENT-FORK:END
               );
+        // SCIENT-FORK:END
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);

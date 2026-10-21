@@ -13,7 +13,9 @@ import * as Schema from "effect/Schema";
 import { piContextExtension } from "./contextExtension.ts";
 import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
+// SCIENT-FORK:START — Scient Extensions connectors: connector tool registrations.
 import { loadMcpBridge, type RegisteredTool } from "./mcpBridge.testkit.ts";
+// SCIENT-FORK:END
 
 const decodeBudget = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -501,6 +503,7 @@ describe("Pi tool discovery permissions", () => {
   });
 });
 
+// SCIENT-FORK:START — Scient Extensions connectors: proxied MCP servers and event-stream responses.
 describe("Pi Scient connectors", () => {
   const linear = {
     serverName: "linear",
@@ -1010,6 +1013,7 @@ describe("Pi MCP event-stream responses", () => {
     assert.equal(output.content[0]?.text, "browser snapshot");
   });
 });
+// SCIENT-FORK:END
 
 async function loadRequestHook(): Promise<RequestHook> {
   const h = await loadContextGuard(PI_T3_MCP_EXTENSION_SOURCE, 0);

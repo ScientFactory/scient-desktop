@@ -4,7 +4,9 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
+  // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
   T3_MCP_CONNECTORS_ENV,
+  // SCIENT-FORK:END
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
@@ -25,7 +27,9 @@ const mcpSession = {
   endpoint: "http://127.0.0.1:43123/mcp",
   authorizationHeader: "Bearer secret-pi-token",
   capabilities: new Set(["preview"] as const),
+  // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
   connectors: [],
+  // SCIENT-FORK:END
 };
 
 describe("pi T3 MCP injection", () => {
@@ -106,6 +110,7 @@ describe("pi T3 MCP injection", () => {
     assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
   });
 
+  // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
   it("passes delivered connectors as a JSON list authenticated by the session bearer", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: [],
@@ -178,6 +183,7 @@ describe("pi T3 MCP injection", () => {
       assert.notProperty(launch.env, T3_MCP_CONNECTORS_ENV);
     }
   });
+  // SCIENT-FORK:END
 
   it("forces tools and user extensions off for unattended text generation", () => {
     const launch = buildPiRpcLaunch({

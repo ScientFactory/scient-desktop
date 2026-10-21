@@ -508,7 +508,9 @@ it.effect(
             endpoint: "http://127.0.0.1/mcp",
             authorizationHeader: "Bearer skill-steer-fixture",
             capabilities: new Set(["skills:read"]),
+            // SCIENT-FORK:START — Scient Extensions connectors.
             connectors: [],
+            // SCIENT-FORK:END
           });
           return previous;
         }),

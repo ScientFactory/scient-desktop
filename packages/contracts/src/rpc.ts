@@ -2360,5 +2360,7 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
+  // SCIENT-FORK:START — Scient extensions group.
   WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 ).middleware(RpcScopeAuthorization);

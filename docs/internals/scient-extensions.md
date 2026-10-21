@@ -109,7 +109,12 @@ vendor MCP endpoint (https)
 
 `<stateDir>/scient-extensions.json` (versioned schema, currently format 2;
 atomic write; unreadable entries preserved and written back; a failed load
-never overwrites the file):
+never overwrites the file). The reader refuses a file over 4 MiB, so every
+write is checked first: a change whose complete encoded file (preserved
+entries included) would exceed 4 MiB fails with `limit-reached` and nothing
+changes, and a format-1 migration that would exceed it is kept in memory
+without rewriting the file. Inputs are bounded too: names 200 characters,
+descriptions 1000, URLs 2048.
 
 ```ts
 ConnectorRecord {
@@ -171,6 +176,8 @@ backed by the credential port, following MCP authorization 2025-11-25:
 1. Unauthenticated `initialize` probe. 2xx with a valid result → `auth: none`.
    401 → parse `WWW-Authenticate` (`resource_metadata`, `scope`). An SSE answer
    is read with the proxy's own SSE parser (same line endings and event bound).
+   Only a response envelope answers the probe (its id, no `method`, and a
+   `result` or `error`); a server request that reuses the id is skipped.
 2. RFC 9728 protected-resource metadata → RFC 8414/OIDC AS discovery.
 3. Client registration priority: pre-registered client (user-supplied client id,
    optional secret bound from Secrets) → DCR. CIMD is supported by the SDK and
@@ -267,7 +274,11 @@ environment auth (the MCP session token is the authority, as for `/mcp`).
   status with server-owned bodies; every other upstream status or content type
   becomes a server-owned error, so vendor error text never reaches the agent.
 - On upstream 401 with OAuth: one forced refresh, then the buffered request is
-  replayed once.
+  replayed once. A refused replay marks the connector needs-auth only if the
+  refused grant still owns it (checked under the lifecycle lock), and every
+  credential-loss status change applies only to the auth revision it was
+  observed under, so a late failure of an old grant never touches a newer
+  sign-in.
 - Each `tools/call` is recorded as a use of the connector's credential (thread,
   provider session, tool name, outcome at response headers).
 - Refusals: a missing or unknown bearer gets 401 without `resource_metadata`

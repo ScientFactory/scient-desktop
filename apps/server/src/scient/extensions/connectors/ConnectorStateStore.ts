@@ -36,7 +36,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 export const CONNECTOR_STATE_FILE = "scient-extensions.json";
-const MAX_STATE_BYTES = 4 * 1024 * 1024;
+/** The reader refuses a larger file, so no write may produce one. */
+export const MAX_STATE_BYTES = 4 * 1024 * 1024;
 
 export const ConnectorAuthRecord = Schema.Union([
   Schema.Struct({ type: Schema.Literal("none") }),
@@ -156,7 +157,8 @@ export interface ConnectorStateStore {
   readonly read: Effect.Effect<ConnectorStateSnapshot>;
   /**
    * Serialized read-modify-write. The transform returns its result and the next
-   * data; the data is persisted before the in-memory state changes.
+   * data; the data is persisted before the in-memory state changes. Returning
+   * the given data unchanged (the same object) saves nothing.
    */
   readonly update: <A, E>(
     transform: (current: ConnectorStateData) => Effect.Effect<readonly [A, ConnectorStateData], E>,
@@ -251,8 +253,9 @@ const preservedConnectorId = (entry: unknown): unknown =>
 
 /** Durably replaces the file: data and directory entry are synced before success. */
 
-const writeState = async (statePath: string, state: LoadedState, platform: NodeJS.Platform) => {
-  const text = `${JSON.stringify(
+/** The complete file text for `state`, preserved entries included. */
+const encodeState = (state: LoadedState): string =>
+  `${JSON.stringify(
     {
       formatVersion: STATE_FORMAT_VERSION,
       connectors: [
@@ -263,6 +266,10 @@ const writeState = async (statePath: string, state: LoadedState, platform: NodeJ
     null,
     2,
   )}\n`;
+
+const fitsStateLimit = (text: string) => Buffer.byteLength(text, "utf8") <= MAX_STATE_BYTES;
+
+const writeState = async (statePath: string, text: string, platform: NodeJS.Platform) => {
   await NodeFSP.mkdir(NodePath.dirname(statePath), { recursive: true });
   const temporaryPath = `${statePath}.${NodeCrypto.randomUUID()}.tmp`;
   try {
@@ -317,17 +324,25 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
     });
   }
   // A migrated file is saved in the current format at once, so the old
-  // selection records are gone. If that fails, the next change saves it.
-  const initial = loaded.migrated
-    ? yield* Effect.tryPromise(() => writeState(statePath, loaded, platform)).pipe(
-        Effect.as({ ...loaded, migrated: false }),
-        Effect.catch(() =>
-          Effect.logWarning("migrated connected services could not be saved yet", {
-            path: statePath,
-          }).pipe(Effect.as(loaded)),
-        ),
-      )
-    : loaded;
+  // selection records are gone. If that fails, or the rewrite would exceed
+  // the size limit, the old file stays and the next change saves it.
+  const migratedText = loaded.migrated ? encodeState(loaded) : undefined;
+  const initial =
+    migratedText === undefined
+      ? loaded
+      : !fitsStateLimit(migratedText)
+        ? yield* Effect.logWarning(
+            "migrated connected services exceed the state size limit; the file was left unchanged",
+            { path: statePath },
+          ).pipe(Effect.as(loaded))
+        : yield* Effect.tryPromise(() => writeState(statePath, migratedText, platform)).pipe(
+            Effect.as({ ...loaded, migrated: false }),
+            Effect.catch(() =>
+              Effect.logWarning("migrated connected services could not be saved yet", {
+                path: statePath,
+              }).pipe(Effect.as(loaded)),
+            ),
+          );
   const state = yield* Ref.make(initial);
   const writePermit = yield* Semaphore.make(1);
 
@@ -344,6 +359,8 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             });
           }
           const [result, next] = yield* transform(current);
+          // The transform handed back the current state: nothing to save.
+          if (next === current) return result;
           // A removed id takes its preserved duplicates with it, so none of
           // them can become live after a restart.
           const remaining = new Set(next.connectors.map((record) => record.connectorId));
@@ -360,8 +377,16 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             ),
             migrated: false,
           });
+          // Checked before anything changes, so the previous state survives.
+          const text = encodeState(nextState);
+          if (!fitsStateLimit(text)) {
+            return yield* new ExtensionsError({
+              reason: "limit-reached",
+              message: `Connected services would exceed ${MAX_STATE_BYTES / (1024 * 1024)} MiB of saved state. Shorten names or descriptions, or remove a service.`,
+            });
+          }
           yield* Effect.tryPromise({
-            try: () => writeState(statePath, nextState, platform),
+            try: () => writeState(statePath, text, platform),
             catch: () =>
               new ExtensionsError({
                 reason: "state-unavailable",

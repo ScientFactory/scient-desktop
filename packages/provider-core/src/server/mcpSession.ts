@@ -1,3 +1,4 @@
+// SCIENT-FORK:START Scient Extensions connectors
 import type {
   EnvironmentId,
   ExtensionDeliverySkipReason,
@@ -6,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
-// SCIENT-FORK:START Scient Extensions connectors
 /**
  * A Scient connector delivered to one provider session. `url` is the Scient
  * connector proxy endpoint for this connector; the agent authenticates to it

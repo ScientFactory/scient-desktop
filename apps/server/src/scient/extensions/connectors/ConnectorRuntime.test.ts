@@ -68,6 +68,9 @@ interface FakeVendor {
   refreshMode: "ok" | "invalid_grant";
   refresh: Gate;
   exchange: Gate;
+  /** Tokens the MCP endpoint refuses (even if valid); each refusal passes `refusing` first. */
+  refusedTokens: Set<string>;
+  refusing: Gate;
   refreshCount: number;
   registrations: Array<Record<string, unknown>>;
   tokenRequests: Array<Record<string, string>>;
@@ -151,7 +154,9 @@ const handleMcp = async (
   const authorization = request.headers.authorization ?? "";
   const session = request.headers["mcp-session-id"] as string | undefined;
   if (challenge !== undefined) {
-    if (!vendor.validTokens.has(authorization.replace(/^Bearer /, ""))) {
+    const token = authorization.replace(/^Bearer /, "");
+    if (vendor.refusedTokens.has(token)) await passGate(vendor.refusing);
+    if (vendor.refusedTokens.has(token) || !vendor.validTokens.has(token)) {
       response.writeHead(401, { "www-authenticate": challenge });
       response.end();
       return;
@@ -389,6 +394,8 @@ const resetVendor = (base: string): FakeVendor => ({
   refreshMode: "ok",
   refresh: { gate: undefined, arrived: undefined },
   exchange: { gate: undefined, arrived: undefined },
+  refusedTokens: new Set(),
+  refusing: { gate: undefined, arrived: undefined },
   refreshCount: 0,
   registrations: [],
   tokenRequests: [],
@@ -1485,6 +1492,47 @@ describe("connector token lifecycle", () => {
         "Bearer vendor-access-token-2",
       ]);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "ignores a refused replay of an older grant once a newer sign-in owns the connector",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const connectorId = yield* harness.connectSecure();
+        const current = Effect.map(harness.runtime.list(), (listed) => listed.connectors[0]!);
+        expect((yield* current).authRevision).toBe(1);
+        // The next call gets 401, refreshes, and its replay is refused, but held.
+        const refuseNextReplay = () => {
+          vendor.validTokens.clear();
+          vendor.refusedTokens.add(`vendor-access-token-${vendor.tokenSerial + 1}`);
+        };
+        refuseNextReplay();
+        const refusing = gateOf(vendor.refusing);
+        const stale = yield* harness.proxy(connectorId, toolCall(1)).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => refusing.arrived);
+
+        // Account B signs in while the old grant's replay is in flight.
+        const { response } = yield* harness.signIn(connectorId);
+        expect(response.status).toBe(200);
+        expect(yield* current).toMatchObject({ status: "connected", authRevision: 2 });
+        refusing.release();
+        expect(yield* readJson(yield* Fiber.join(stale))).toMatchObject({
+          id: 1,
+          error: { code: -32001 },
+        });
+
+        // The newer sign-in is untouched and keeps working.
+        expect(yield* current).toMatchObject({ status: "connected", authRevision: 2 });
+        const fresh = yield* harness.proxy(connectorId, toolCall(2));
+        expect(yield* readJson(fresh)).toMatchObject({ id: 2, result: {} });
+
+        // The same refusal of the grant that owns the connector still counts.
+        refuseNextReplay();
+        const refused = yield* harness.proxy(connectorId, toolCall(3));
+        expect(yield* readJson(refused)).toMatchObject({ id: 3, error: { code: -32001 } });
+        expect(yield* current).toMatchObject({ status: "needs-auth", authRevision: 3 });
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("keeps a newer sign-in when a refresh of the previous grant finishes around it", () =>

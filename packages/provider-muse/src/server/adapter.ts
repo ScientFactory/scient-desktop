@@ -1795,7 +1795,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     headers: { Authorization: mcpSession.authorizationHeader },
                   },
                   // SCIENT-FORK:END
-                  // SCIENT-FORK:START — connectors reach Muse through Scient's proxy with
+                  // SCIENT-FORK:START — Scient Extensions: connectors reach Muse through Scient's proxy with
                   // the thread's credential, each optional like Scient's own server.
                   ...Object.fromEntries(
                     mcpSession.connectors.map((connector) => [

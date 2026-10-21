@@ -15,25 +15,29 @@ export class McpProviderSessions extends Context.Service<
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
 
+// SCIENT-FORK:START Scient Extensions connectors
 /** Callers hold `ReadonlySet`/`ReadonlyArray` views only at compile time; never share the backing objects. */
 const copyConfig = (config: McpProviderSessionConfig): McpProviderSessionConfig => ({
   ...config,
   capabilities: new Set(config.capabilities),
-  // SCIENT-FORK:START Scient Extensions connectors
   connectors: config.connectors.map((connector) => ({ ...connector })),
-  // SCIENT-FORK:END
 });
+// SCIENT-FORK:END
 
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   return McpProviderSessions.of({
     set: (config) =>
+      // SCIENT-FORK:START Scient Extensions connectors
       Ref.update(sessions, (current) => new Map(current).set(config.threadId, copyConfig(config))),
+    // SCIENT-FORK:END
     read: (threadId) =>
       Ref.get(sessions).pipe(
         Effect.map((current) => {
           const config = current.get(threadId);
+          // SCIENT-FORK:START Scient Extensions connectors
           return config ? copyConfig(config) : undefined;
+          // SCIENT-FORK:END
         }),
       ),
     clear: (threadId) =>

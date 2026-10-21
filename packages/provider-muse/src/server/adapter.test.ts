@@ -387,7 +387,9 @@ describe("MuseAdapterV2", () => {
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(["preview"]),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
@@ -424,6 +426,7 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
   it.effect("connects each connector beside Scient's server with the thread's credential", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -472,6 +475,7 @@ describe("MuseAdapterV2", () => {
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+  // SCIENT-FORK:END
 
   it.effect("uses optional host-owned runtime copy without changing the package default", () =>
     Effect.gen(function* () {
@@ -513,7 +517,9 @@ describe("MuseAdapterV2", () => {
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(["skills:read"]),
         agentDeviceEnvironment: { PATH: "/fake/device-shim", SCIENT_DEVICE_MARKER: "enabled" },
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
@@ -576,7 +582,9 @@ describe("MuseAdapterV2", () => {
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
         connectors: [],
+        // SCIENT-FORK:END
       });
       const fake = yield* makeFakeMuse();
       const outcome = yield* makeHarness(fake).pipe(Effect.result);
