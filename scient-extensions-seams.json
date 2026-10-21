@@ -137,7 +137,7 @@
     {
       "path": "packages/provider-acp/src/server/adapter.ts",
       "anchor": "acpConnectorBridges",
-      "purpose": "Deliver connectors to ACP agents as HTTP MCP servers, or stdio bridges where HTTP is not advertised."
+      "purpose": "Deliver every connector to ACP agents as its own stdio acp-mcp-bridge to the connector's Scient proxy endpoint, even when the agent advertises HTTP MCP."
     },
     {
       "path": "packages/provider-acp/src/server/clientPolicy.ts",

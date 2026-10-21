@@ -8,6 +8,8 @@ import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/a
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 
 import { type ConnectorFetch, describeEgressFailure } from "./ConnectorOutbound.ts";
+import { MAX_SSE_EVENT_BYTES } from "./ConnectorRedaction.ts";
+import { makeSseParser, type SseSink } from "./ConnectorSse.ts";
 
 export type ConnectorProbeResult =
   | {
@@ -34,36 +36,44 @@ interface JsonRpcInitializeResponse {
   readonly error?: unknown;
 }
 
-/** The first SSE `message` event whose data is the reply to `PROBE_REQUEST_ID`. */
+/** A reply candidate, or `undefined` when the data is not JSON. */
+const parseReply = (data: string): JsonRpcInitializeResponse | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * The first SSE event whose data is the reply to `PROBE_REQUEST_ID`, parsed by
+ * the same parser (line endings, event size bound) as the proxy. Data that is
+ * not JSON, an oversized event or the end of the stream yields `undefined`.
+ */
 const readEventStreamReply = async (
   body: ReadableStream<Uint8Array>,
 ): Promise<JsonRpcInitializeResponse | undefined> => {
-  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
+  const reader = body.getReader();
+  const parser = makeSseParser(MAX_SSE_EVENT_BYTES);
+  let reply: JsonRpcInitializeResponse | undefined;
+  const sink: SseSink = {
+    onEvent: (event) => {
+      const data = event.data?.join("\n") ?? "";
+      if (data.length === 0) return true;
+      const message = parseReply(data);
+      if (message === undefined) return false;
+      if (message.id !== PROBE_REQUEST_ID) return true;
+      reply = message;
+      return false;
+    },
+    onComment: () => undefined,
+  };
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) return undefined;
-      buffer += value;
-      let boundary = /\r?\n\r?\n/.exec(buffer);
-      while (boundary) {
-        const event = buffer.slice(0, boundary.index);
-        buffer = buffer.slice(boundary.index + boundary[0].length);
-        const data = event
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).replace(/^ /, ""))
-          .join("\n");
-        if (data.length > 0) {
-          try {
-            const message = JSON.parse(data) as JsonRpcInitializeResponse;
-            if (message.id === PROBE_REQUEST_ID) return message;
-          } catch {
-            return undefined;
-          }
-        }
-        boundary = /\r?\n\r?\n/.exec(buffer);
-      }
+      const feed = done ? parser.end(sink) : parser.push(value, sink);
+      if (done || feed !== "continue") return reply;
     }
   } finally {
     await reader.cancel().catch(() => undefined);

@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
-interface RegisteredTool {
+export interface RegisteredTool {
   readonly name: string;
   readonly description: string;
   readonly parameters: unknown;
@@ -61,6 +61,11 @@ export async function loadMcpBridge(
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
     readonly connectors?: ReadonlyArray<FixtureConnector>;
+    /** Encodes a JSON-RPC response; undefined keeps the plain `application/json` reply. */
+    readonly respond?: (
+      message: { readonly jsonrpc: "2.0"; readonly id: number; readonly result: unknown },
+      request: { readonly url: string; readonly method: string },
+    ) => Response | undefined;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -119,6 +124,7 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
+    TextDecoder,
     NodeCrypto,
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
@@ -165,9 +171,13 @@ export async function loadMcpBridge(
               ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
               : { content: [{ type: "text", text: `${connector.serverName}:${calledTool}` }] }
             : {};
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
-      });
+      const message = { jsonrpc: "2.0" as const, id: request.id, result };
+      return (
+        options.respond?.(message, { url, method: request.method }) ??
+        new Response(JSON.stringify(message), {
+          headers: { "content-type": "application/json" },
+        })
+      );
     },
     pi: {
       registerCommand: () => undefined,

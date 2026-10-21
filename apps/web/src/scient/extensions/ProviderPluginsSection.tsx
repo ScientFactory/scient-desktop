@@ -105,20 +105,16 @@ export function ProviderPluginsSection({
                         if (!confirmed || locked) return;
                         setBusyKey(key);
                         setFeedback(null);
-                        try {
-                          const result = await act({
-                            environmentId,
-                            input: {
-                              instanceId: provider.instanceId,
-                              action: { type: "uninstall", pluginId: plugin.id },
-                              ...(cwd ? { cwd } : {}),
-                            },
-                          });
-                          const error = commandFailureMessage(result);
-                          if (error !== null) setFeedback({ key, error, blockedUrl: null });
-                        } finally {
-                          setBusyKey(null);
-                        }
+                        const result = await act({
+                          environmentId,
+                          input: {
+                            instanceId: provider.instanceId,
+                            action: { type: "uninstall", pluginId: plugin.id },
+                            ...(cwd ? { cwd } : {}),
+                          },
+                        }).finally(() => setBusyKey(null));
+                        const error = commandFailureMessage(result);
+                        if (error !== null) setFeedback({ key, error, blockedUrl: null });
                       }}
                     >
                       Uninstall
@@ -166,32 +162,27 @@ export function ProviderPluginsSection({
                         if (locked) return;
                         setBusyKey(key);
                         setFeedback(null);
-                        let error: string | null = null;
-                        try {
-                          const opening = await openAuthorizationPage(async () => {
-                            const result = await act({
-                              environmentId,
-                              input: {
-                                instanceId: provider.instanceId,
-                                action: { type: "mcp-sign-in", serverName: server.name },
-                              },
-                            });
-                            error = commandFailureMessage(result);
-                            if (result._tag !== "Success") return null;
-                            if (!result.value.authorizationUrl) {
-                              toastManager.add({
-                                type: "info",
-                                title: `${label} started sign-in for ${server.name}`,
-                              });
-                            }
-                            return result.value.authorizationUrl ?? null;
+                        const opening = await openAuthorizationPage(async () => {
+                          const result = await act({
+                            environmentId,
+                            input: {
+                              instanceId: provider.instanceId,
+                              action: { type: "mcp-sign-in", serverName: server.name },
+                            },
                           });
-                          const blockedUrl = opening.outcome === "blocked" ? opening.url : null;
-                          if (error !== null || blockedUrl !== null) {
-                            setFeedback({ key, error, blockedUrl });
+                          const error = commandFailureMessage(result);
+                          if (error !== null) setFeedback({ key, error, blockedUrl: null });
+                          if (result._tag !== "Success") return null;
+                          if (!result.value.authorizationUrl) {
+                            toastManager.add({
+                              type: "info",
+                              title: `${label} started sign-in for ${server.name}`,
+                            });
                           }
-                        } finally {
-                          setBusyKey(null);
+                          return result.value.authorizationUrl ?? null;
+                        }).finally(() => setBusyKey(null));
+                        if (opening.outcome === "blocked") {
+                          setFeedback({ key, error: null, blockedUrl: opening.url });
                         }
                       }}
                     >

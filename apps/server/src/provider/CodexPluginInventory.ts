@@ -110,7 +110,11 @@ export function parseCodexInstalledPlugins(
             ...(marketplaceName && { marketplace: marketplaceName }),
             source: CODEX_PLUGIN_SOURCE[plugin.source.type],
             enabled: plugin.enabled,
-            canUninstall: CODEX_UNINSTALLABLE_PLUGIN_SOURCES[plugin.source.type] === true,
+            // Default-installed and admin-disabled plugins are managed outside the user's choice.
+            canUninstall:
+              CODEX_UNINSTALLABLE_PLUGIN_SOURCES[plugin.source.type] === true &&
+              plugin.installPolicy === "AVAILABLE" &&
+              plugin.availability !== "DISABLED_BY_ADMIN",
           },
         ];
       });

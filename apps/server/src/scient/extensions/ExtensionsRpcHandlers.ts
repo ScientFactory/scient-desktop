@@ -10,6 +10,7 @@ import {
   type ExtensionsChangedEvent,
   type ExtensionsInventory,
   type ProjectId,
+  type ServerProviders,
   WS_METHODS,
   WsExtensionsRpcGroup,
 } from "@t3tools/contracts";
@@ -21,7 +22,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
+import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
@@ -37,8 +38,10 @@ import {
 
 /**
  * One monotonically increasing revision across every extensions owner:
- * connector and selection changes, Scient plugin changes and newly recorded
- * delivery receipts.
+ * connector and selection changes, Scient plugin changes, newly recorded
+ * delivery receipts, and provider changes that alter connector compatibility
+ * (instances added or removed, a driver or display name replaced; health and
+ * status refreshes are not news).
  */
 export interface ExtensionsChangeFeedShape {
   readonly current: Effect.Effect<number>;
@@ -50,19 +53,43 @@ export class ExtensionsChangeFeed extends Context.Service<
   ExtensionsChangeFeedShape
 >()("t3/scient/extensions/ExtensionsRpcHandlers/ExtensionsChangeFeed") {}
 
+/** The compatibility projection of a provider snapshot, as compared between snapshots. */
+const providerSupportKey = (providers: ServerProviders): string =>
+  JSON.stringify(connectorProviderSupport(providers));
+
+/**
+ * One element per provider snapshot whose connector compatibility differs from
+ * the one before it (starting from `initial`).
+ */
+export const providerSupportChanges = (
+  initial: ServerProviders,
+  snapshots: Stream.Stream<ServerProviders>,
+): Stream.Stream<string> =>
+  Stream.concat(Stream.succeed(initial), snapshots).pipe(
+    Stream.map(providerSupportKey),
+    Stream.changes,
+    Stream.drop(1),
+  );
+
 export const changeFeedLayer = Layer.effect(
   ExtensionsChangeFeed,
   Effect.gen(function* () {
     const connectors = yield* ConnectorRuntime;
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
+    const providers = yield* ProviderRegistry;
     const revision = yield* Ref.make(0);
     const events = yield* PubSub.unbounded<ExtensionsChangedEvent>();
+    const supportChanges = Stream.map(
+      providerSupportChanges(yield* providers.getProviders, providers.streamChanges),
+      () => undefined,
+    );
     yield* Stream.mergeAll(
       [
         Stream.map(connectors.changes, () => undefined),
         plugins.changes,
         Stream.map(receipts.changes, () => undefined),
+        supportChanges,
       ],
       { concurrency: "unbounded" },
     ).pipe(

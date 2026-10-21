@@ -95,20 +95,84 @@ function toolInputSummary(input: unknown): string {
   }
 }
 
-function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
-  if (contentType.includes("text/event-stream")) {
-    for (const line of body.split("\\n")) {
-      const trimmed = line.startsWith("data:") ? line.slice(5).trim() : "";
-      if (trimmed.length === 0) continue;
-      const parsed = JSON.parse(trimmed) as JsonRpcResponse;
-      if (parsed.id !== undefined || parsed.result !== undefined || parsed.error !== undefined) {
-        return parsed;
+// SCIENT-FORK:START — incremental, request-correlated response reader. Remote Streamable
+// HTTP servers (Scient connectors) split one JSON message across several data lines and
+// may keep the event stream open after answering, so read events as they complete and
+// stop at the message answering this request.
+async function readJsonRpcResponse(
+  response: Response,
+  id: number,
+  method: string,
+): Promise<JsonRpcResponse | undefined> {
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const body = await response.text();
+    return body.length === 0 ? undefined : (JSON.parse(body) as JsonRpcResponse);
+  }
+  const ended = \`MCP \${method} event stream ended without its response.\`;
+  if (response.body === null) throw new Error(ended);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const lineBreak = /\\r\\n|\\r|\\n/g;
+  let buffer = "";
+  // A CR ends its line at once; an LF arriving next completes the same CRLF.
+  let skipLf = false;
+  let data: string[] = [];
+  const dispatch = (): JsonRpcResponse | undefined => {
+    const payload = data.join("\\n");
+    data = [];
+    // An event without data carries no message.
+    if (payload === "") return undefined;
+    let message: unknown;
+    try {
+      message = JSON.parse(payload);
+    } catch {
+      throw new Error(\`MCP \${method} event stream sent a message that is not JSON.\`);
+    }
+    // Notifications, server requests and other requests' responses are not this answer.
+    return typeof message === "object" && message !== null && (message as JsonRpcResponse).id === id
+      ? (message as JsonRpcResponse)
+      : undefined;
+  };
+  // A blank line completes an event; only data fields carry the message.
+  const consume = (line: string): JsonRpcResponse | undefined => {
+    if (line.length === 0) return dispatch();
+    const colon = line.indexOf(":");
+    if ((colon === -1 ? line : line.slice(0, colon)) !== "data") return undefined;
+    const value = colon === -1 ? "" : line.slice(colon + 1);
+    data.push(value.startsWith(" ") ? value.slice(1) : value);
+    return undefined;
+  };
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      let text = decoder.decode(chunk.value, { stream: !chunk.done });
+      if (skipLf && text.length > 0) {
+        skipLf = false;
+        if (text.startsWith("\\n")) text = text.slice(1);
+      }
+      buffer += text;
+      let start = 0;
+      lineBreak.lastIndex = 0;
+      for (let match = lineBreak.exec(buffer); match !== null; match = lineBreak.exec(buffer)) {
+        const matched = consume(buffer.slice(start, match.index));
+        start = lineBreak.lastIndex;
+        if (matched !== undefined) return matched;
+      }
+      if (start > 0 && start === buffer.length && buffer.endsWith("\\r")) skipLf = true;
+      buffer = buffer.slice(start);
+      if (chunk.done) {
+        // Accept a final event whose closing blank line never arrived.
+        const matched = consume(buffer) ?? dispatch();
+        if (matched !== undefined) return matched;
+        throw new Error(ended);
       }
     }
-    throw new Error("MCP SSE response had no JSON-RPC payload.");
+  } finally {
+    // Best effort: an answered stream may stay open, and nothing else will drain it.
+    reader.cancel().catch(() => undefined);
   }
-  return JSON.parse(body) as JsonRpcResponse;
 }
+// SCIENT-FORK:END
 
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
@@ -215,12 +279,14 @@ function createMcpClient(endpoint: string, token: string) {
     });
     const nextSession = response.headers.get("mcp-session-id");
     if (nextSession) sessionId = nextSession;
-    const body = await response.text();
+    // SCIENT-FORK:START — read only until this request's response; streams may stay open.
     if (!response.ok) {
+      const body = await response.text();
       throw new Error(\`MCP \${method} failed (\${response.status}): \${body.slice(0, 400)}\`);
     }
-    if (body.length === 0) return undefined;
-    const parsed = parseSseOrJson(body, response.headers.get("content-type") ?? "");
+    const parsed = await readJsonRpcResponse(response, id, method);
+    if (parsed === undefined) return undefined;
+    // SCIENT-FORK:END
     if (parsed.error) {
       throw new Error(parsed.error.message ?? \`MCP \${method} returned an error\`);
     }

@@ -152,6 +152,34 @@ describe("parseCodexInstalledPlugins", () => {
     ]);
   });
 
+  it("keeps default-installed and admin-disabled plugins read-only", () => {
+    const plugins = parseCodexInstalledPlugins({
+      marketplaces: [
+        {
+          name: "openai-bundled",
+          plugins: [
+            summary({
+              id: "browser@bundled",
+              name: "browser",
+              installPolicy: "INSTALLED_BY_DEFAULT",
+            }),
+            summary({ id: "locked@bundled", name: "locked", availability: "DISABLED_BY_ADMIN" }),
+            summary({ id: "chosen@bundled", name: "chosen" }),
+          ],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      plugins.map((plugin) => [plugin.id, plugin.canUninstall]),
+      [
+        ["browser@bundled", false],
+        ["locked@bundled", false],
+        ["chosen@bundled", true],
+      ],
+    );
+  });
+
   it.effect("treats a marketplace that failed to load as an incomplete listing", () =>
     Effect.gen(function* () {
       const { client, requests } = scriptedClient({

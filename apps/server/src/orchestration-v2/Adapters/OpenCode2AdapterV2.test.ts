@@ -4,6 +4,7 @@ import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
+  ConnectorId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -38,10 +39,16 @@ import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
+import * as ExtensionDeliveryReceipts from "../../scient/extensions/ExtensionDeliveryReceipts.ts";
+import * as ConnectorSessionDelivery from "../../scient/extensions/ConnectorSessionDelivery.ts";
+import { ExtensionDeliveryReceipts as ExtensionDeliveryReceiptsTag } from "../../scient/extensions/ExtensionsServices.ts";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { McpProviderSessionConnector } from "@t3tools/provider-core/server/mcpSession";
+import type {
+  McpConnectorRegistrationReporter,
+  McpProviderSessionConnector,
+} from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -3722,7 +3729,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       displayName,
       url: `http://127.0.0.1:3773/mcp/connectors/connector-${serverName}`,
     });
-    const setConnectors = (connectors: ReadonlyArray<McpProviderSessionConnector>) =>
+    const setConnectors = (
+      connectors: ReadonlyArray<McpProviderSessionConnector>,
+      beginConnectorRegistration?: Effect.Effect<McpConnectorRegistrationReporter>,
+    ) =>
       Effect.gen(function* () {
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         yield* mcpSessions.set({
@@ -3734,8 +3744,54 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           authorizationHeader: "Bearer thread-credential",
           capabilities: new Set(),
           connectors,
+          ...(beginConnectorRegistration === undefined ? {} : { beginConnectorRegistration }),
         });
       });
+    /**
+     * The production receipt store and the per-credential tracker the session
+     * manager puts on the MCP config, for a credential that delivered both.
+     */
+    const makeReceipt = Effect.gen(function* () {
+      const receipts = yield* ExtensionDeliveryReceipts.make;
+      const delivery = yield* ConnectorSessionDelivery.make.pipe(
+        Effect.provideService(ExtensionDeliveryReceiptsTag, receipts),
+      );
+      const entry = (serverName: string) => ({
+        kind: "connector" as const,
+        connectorId: ConnectorId.make(`con_${serverName}0001`),
+        serverName,
+        displayName: serverName,
+      });
+      yield* receipts.record({
+        threadId,
+        providerInstanceId: instanceId,
+        providerSessionId: "mcp:opencode2-adapter",
+        issuedAt: "2026-10-21T00:00:00.000Z",
+        delivered: [entry("github"), entry("linear")],
+        skipped: [],
+      });
+      return {
+        begin: delivery.registrationTrackerFor({
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+        }),
+        current: Effect.map(receipts.get(threadId), (receipt) => {
+          const value = Option.getOrUndefined(receipt);
+          return {
+            delivered: value?.delivered.map((delivered) => delivered.serverName),
+            skipped: value?.skipped.map(({ entry: skipped, reason }) => [
+              skipped.serverName,
+              reason,
+            ]),
+          };
+        }),
+      };
+    });
+    const allowed = (name: string) => ({
+      action: `${name}_*`,
+      resource: "*",
+      effect: "allow",
+    });
     const add = (name: string, url: string) =>
       out("mcp.add", {
         server: name,
@@ -3760,11 +3816,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           yield* setConnectors([connector("github", "GitHub"), connector("linear", "Linear")]);
           yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-          const allowed = (name: string) => ({
-            action: `${name}_*`,
-            resource: "*",
-            effect: "allow",
-          });
           const { runtime, thread } = yield* resumed([
             // Full access treats the thread's connectors as it treats any tool; every
             // other thread's stay denied with their T3 servers.
@@ -3806,6 +3857,93 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           assert.equal((yield* Fiber.join(next))?.status, "completed");
           yield* runtime.unloadThread!({ providerThread: thread });
         }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "withholds a connector OpenCode rejected from the receipt until a later turn adds it",
+      () =>
+        Effect.gen(function* () {
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          const receipt = yield* makeReceipt;
+          yield* setConnectors(
+            [connector("github", "GitHub"), connector("linear", "Linear")],
+            receipt.begin,
+          );
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+          const registration = [
+            add(server, "http://127.0.0.1:3773/mcp"),
+            reply("mcp.add", null),
+            add(github, "http://127.0.0.1:3773/mcp/connectors/connector-github"),
+          ];
+          const { runtime, thread } = yield* resumed([
+            out("session.update", {
+              sessionID: SESSION,
+              permissions: [...t3Rules, allowed(github), allowed(linear)],
+            }),
+            reply("session.update", null),
+            ...registration,
+            reply("mcp.add", { status: 500, body: { message: "connector unreachable" } }),
+            add(linear, "http://127.0.0.1:3773/mcp/connectors/connector-linear"),
+            reply("mcp.add", null),
+            ...turn,
+            // Every turn adds each connector again, so the rejected one gets another try.
+            ...registration,
+            reply("mcp.add", null),
+            add(linear, "http://127.0.0.1:3773/mcp/connectors/connector-linear"),
+            reply("mcp.add", null),
+            ...turn,
+            out("mcp.remove", { server, "location[directory]": WORK }),
+            reply("mcp.remove", null),
+            out("mcp.remove", { server: linear, "location[directory]": WORK }),
+            reply("mcp.remove", null),
+            out("mcp.remove", { server: github, "location[directory]": WORK }),
+            reply("mcp.remove", null),
+          ]);
+          const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          yield* runtime.startTurn(turnInput(thread));
+          // The turn goes on without the connector OpenCode would not take.
+          assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+          assert.deepEqual(yield* receipt.current, {
+            delivered: ["linear"],
+            skipped: [["github", "registration-failed"]],
+          });
+
+          const next = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          yield* runtime.startTurn(turnInput(thread));
+          assert.equal((yield* Fiber.join(next))?.status, "completed");
+          assert.deepEqual(yield* receipt.current, {
+            delivered: ["github", "linear"],
+            skipped: [],
+          });
+          yield* runtime.unloadThread!({ providerThread: thread });
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect("starts no registration tracking for a turn without connectors", () =>
+      Effect.gen(function* () {
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        let begins = 0;
+        yield* setConnectors(
+          [],
+          Effect.sync((): McpConnectorRegistrationReporter => {
+            begins++;
+            return () => Effect.void;
+          }),
+        );
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const { runtime, thread } = yield* resumed([
+          add(server, "http://127.0.0.1:3773/mcp"),
+          reply("mcp.add", null),
+          ...turn,
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+        yield* runtime.unloadThread!({ providerThread: thread });
+        assert.equal(begins, 0);
+      }).pipe(Effect.scoped),
     );
 
     it.effect("asks before a supervised thread's connector tools run", () =>

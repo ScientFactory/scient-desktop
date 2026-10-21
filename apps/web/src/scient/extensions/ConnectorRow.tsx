@@ -115,13 +115,11 @@ export function ConnectorRow({
     if (locked) return null;
     setBusy(action);
     setActionError(null);
-    try {
-      const result = await execute();
-      setActionError(commandFailureMessage(result));
-      return result;
-    } finally {
-      setBusy(null);
-    }
+    // `Promise#finally` rather than a `finally` block: React Compiler cannot
+    // compile `try`/`finally`, and the row must unlock even on a defect.
+    const result = await execute().finally(() => setBusy(null));
+    setActionError(commandFailureMessage(result));
+    return result;
   };
 
   const signIn = async () => {
@@ -129,21 +127,17 @@ export function ConnectorRow({
     setBusy("sign-in");
     setActionError(null);
     setBlockedSignInUrl(null);
-    try {
-      const opening = await openAuthorizationPage(async () => {
-        const result = await startSignIn({
-          environmentId,
-          input: { connectorId, callbackOrigin },
-        });
-        setActionError(commandFailureMessage(result));
-        return result._tag === "Success" ? result.value.authorizationUrl : null;
+    const opening = await openAuthorizationPage(async () => {
+      const result = await startSignIn({
+        environmentId,
+        input: { connectorId, callbackOrigin },
       });
-      if (opening.outcome === "not-started") return;
-      setSignInStartedAt(connector.updatedAt);
-      if (opening.outcome === "blocked") setBlockedSignInUrl(opening.url);
-    } finally {
-      setBusy(null);
-    }
+      setActionError(commandFailureMessage(result));
+      return result._tag === "Success" ? result.value.authorizationUrl : null;
+    }).finally(() => setBusy(null));
+    if (opening.outcome === "not-started") return;
+    setSignInStartedAt(connector.updatedAt);
+    if (opening.outcome === "blocked") setBlockedSignInUrl(opening.url);
   };
 
   const confirmRemove = async () => {

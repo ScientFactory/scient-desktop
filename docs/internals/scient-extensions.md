@@ -29,6 +29,9 @@ reused.
   plugin bundles. Installing a remote server creates a connector.
 - **Filters** — kind, owner, and **Works with** (provider instance). "Works with
   Codex" is a filter over each entry's per-instance compatibility, not a separate page.
+  The extensions change feed also advances when provider instances are added,
+  removed or change driver or name (not on health refreshes), so the
+  compatibility in the inventory follows the live provider list.
 - **Entry detail** — what it adds (tools, skills, panels), who manages it,
   compatibility per provider instance with a reason, health, project selection,
   and the owner's actions.
@@ -105,7 +108,8 @@ Implemented with `@modelcontextprotocol/sdk` `auth()` and an `OAuthClientProvide
 backed by the credential port, following MCP authorization 2025-11-25:
 
 1. Unauthenticated `initialize` probe. 2xx with a valid result → `auth: none`.
-   401 → parse `WWW-Authenticate` (`resource_metadata`, `scope`).
+   401 → parse `WWW-Authenticate` (`resource_metadata`, `scope`). An SSE answer
+   is read with the proxy's own SSE parser (same line endings and event bound).
 2. RFC 9728 protected-resource metadata → RFC 8414/OIDC AS discovery.
 3. Client registration priority: pre-registered client (user-supplied client id,
    optional secret bound from Secrets) → DCR. CIMD is supported by the SDK and

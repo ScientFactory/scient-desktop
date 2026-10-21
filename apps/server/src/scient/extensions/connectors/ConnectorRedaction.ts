@@ -4,17 +4,18 @@
  *
  * MCP results are JSON. A token-level rewriter walks the JSON text without
  * building objects: every token is copied through byte for byte, except a
- * string (value or key) or number whose decoded content carries a credential
- * Scient applied, which becomes the string `"[redacted by Scient]"`. Strings
+ * string (value or key) whose decoded content carries a credential Scient
+ * applied, which becomes the string `"[redacted by Scient]"`. A tainted number,
+ * or a tainted message id the agent did not send, refuses the document. Strings
  * are checked after JSON unescaping, tolerant percent and form decoding, and
  * base64/base64url decoding at every alignment. Untainted JSON is returned
  * unchanged (numbers keep their exact lexeme), output is always valid JSON,
  * and malformed, too deeply nested or otherwise unverifiable input is refused.
  *
- * SSE streams are parsed line by line per the specification (CRLF, CR, LF, or
- * mixed, across chunk boundaries) and re-rendered event by event; each event's
- * size is bounded by its own bytes.
+ * SSE streams are parsed by the shared `ConnectorSse` parser and re-rendered
+ * event by event; each event's size is bounded by its own raw bytes.
  */
+import { makeSseParser, type SseEvent, type SseSink } from "./ConnectorSse.ts";
 
 export const REDACTED = "[redacted by Scient]";
 const REDACTED_TOKEN = JSON.stringify(REDACTED);
@@ -462,27 +463,13 @@ const KEEPALIVE_BYTES = new TextEncoder().encode(SSE_KEEPALIVE);
 /** At most one keepalive per window, and none when other output went out in it. */
 export const SSE_KEEPALIVE_INTERVAL_MS = 1_000;
 
-interface PendingEvent {
-  data: string[] | undefined;
-  event: string | undefined;
-  id: string | undefined;
-  retry: string | undefined;
-}
-
-const emptyEvent = (): PendingEvent => ({
-  data: undefined,
-  event: undefined,
-  id: undefined,
-  retry: undefined,
-});
-
 /**
  * Re-renders one dispatched event. Data must be JSON (or empty, as in a
  * resumption priming event) and is redacted; a tainted event name or id is
  * dropped; `retry` passes only as an integer within `MAX_SSE_RETRY_MS`.
  * Returns `undefined` when non-empty data is not verifiable JSON.
  */
-const renderEvent = (event: PendingEvent, context: RedactionContext): string | undefined => {
+const renderEvent = (event: SseEvent, context: RedactionContext): string | undefined => {
   const { credentials } = context;
   const lines: string[] = [];
   if (event.event !== undefined && !isTainted(event.event, credentials)) {
@@ -519,146 +506,39 @@ export const redactEventStream = (
   context: RedactionContext,
   now: () => number = () => performance.now(),
 ): ReadableStream<Uint8Array> => {
-  const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const refusalEvent = encoder.encode(`event: message\ndata: ${context.refusal}\n\n`);
-  let line = "";
-  let eventBytes = 0;
-  let event = emptyEvent();
-  let ended = false;
+  const parser = makeSseParser(MAX_SSE_EVENT_BYTES);
   let lastOutputAt = Number.NEGATIVE_INFINITY;
-  /**
-   * A chunk ended on CR. A following LF belongs to the same line ending, so it
-   * is charged to the event that owns the CR (and is never charged to the next).
-   */
-  let pendingCarriageReturn = false;
-  /** The pending CR ended a dispatch line whose event had room for its LF. */
-  let lineFeedOwnedByDispatched = false;
-  /**
-   * The pending CR ended a dispatch line exactly at the cap: the event is held
-   * until we know whether an LF (making it one byte too large) follows.
-   */
-  let dispatchDeferred = false;
 
-  const emit = (controller: TransformStreamDefaultController<Uint8Array>, bytes: Uint8Array) => {
-    lastOutputAt = now();
-    controller.enqueue(bytes);
-  };
-
-  const handleLine = (
-    complete: string,
-    controller: TransformStreamDefaultController<Uint8Array>,
-  ): boolean => {
-    if (complete.length === 0) {
-      const rendered = renderEvent(event, context);
-      event = emptyEvent();
-      eventBytes = 0;
-      if (rendered === undefined) return false;
-      if (rendered.length > 0) emit(controller, encoder.encode(rendered));
-      return true;
-    }
-    if (complete.startsWith(":")) {
-      if (now() - lastOutputAt >= SSE_KEEPALIVE_INTERVAL_MS) emit(controller, KEEPALIVE_BYTES);
-      return true;
-    }
-    const colon = complete.indexOf(":");
-    const name = colon === -1 ? complete : complete.slice(0, colon);
-    const value = colon === -1 ? "" : complete.slice(colon + 1).replace(/^ /, "");
-    switch (name) {
-      case "data":
-        (event.data ??= []).push(value);
-        break;
-      case "event":
-        event.event = value;
-        break;
-      case "id":
-        if (!value.includes("\u0000")) event.id = value;
-        break;
-      case "retry":
-        event.retry = value;
-        break;
-      default:
-        break;
-    }
-    return true;
-  };
-
-  const refuse = (controller: TransformStreamDefaultController<Uint8Array>) => {
-    ended = true;
-    controller.enqueue(refusalEvent);
-    controller.terminate();
+  const sinkFor = (controller: TransformStreamDefaultController<Uint8Array>): SseSink => {
+    const emit = (bytes: Uint8Array) => {
+      lastOutputAt = now();
+      controller.enqueue(bytes);
+    };
+    return {
+      onEvent: (event) => {
+        const rendered = renderEvent(event, context);
+        if (rendered === undefined) return false;
+        if (rendered.length > 0) emit(encoder.encode(rendered));
+        return true;
+      },
+      onComment: () => {
+        if (now() - lastOutputAt >= SSE_KEEPALIVE_INTERVAL_MS) emit(KEEPALIVE_BYTES);
+      },
+    };
   };
 
   return body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
-        if (ended) return;
-        const text = decoder.decode(chunk, { stream: true });
-        if (text.length === 0) return;
-        let index = 0;
-        if (pendingCarriageReturn) {
-          pendingCarriageReturn = false;
-          const lineFeed = text.charCodeAt(0) === 10;
-          if (lineFeed) index = 1;
-          if (dispatchDeferred) {
-            dispatchDeferred = false;
-            // The LF completes a CRLF that takes the held event past the cap.
-            if (lineFeed || !handleLine("", controller)) {
-              refuse(controller);
-              return;
-            }
-          } else if (lineFeed && !lineFeedOwnedByDispatched) {
-            // The LF of a CRLF split across chunks, charged to its own event.
-            eventBytes += 1;
-            if (eventBytes > MAX_SSE_EVENT_BYTES) {
-              refuse(controller);
-              return;
-            }
-          }
-          lineFeedOwnedByDispatched = false;
-        }
-        let nextCr = text.indexOf("\r", index);
-        let nextLf = text.indexOf("\n", index);
-        while (index < text.length) {
-          if (nextCr !== -1 && nextCr < index) nextCr = text.indexOf("\r", index);
-          if (nextLf !== -1 && nextLf < index) nextLf = text.indexOf("\n", index);
-          const end = nextCr === -1 ? nextLf : nextLf === -1 ? nextCr : Math.min(nextCr, nextLf);
-          const piece = text.slice(index, end === -1 ? text.length : end);
-          const crlf = end !== -1 && text.charCodeAt(end) === 13 && text.charCodeAt(end + 1) === 10;
-          eventBytes += Buffer.byteLength(piece, "utf8") + (end === -1 ? 0 : crlf ? 2 : 1);
-          if (eventBytes > MAX_SSE_EVENT_BYTES) {
-            refuse(controller);
-            return;
-          }
-          line += piece;
-          if (end === -1) break;
-          const chunkEndingCr = !crlf && text.charCodeAt(end) === 13 && end + 1 === text.length;
-          index = crlf ? end + 2 : end + 1;
-          const complete = line;
-          line = "";
-          if (chunkEndingCr) {
-            pendingCarriageReturn = true;
-            if (complete.length === 0) {
-              if (eventBytes + 1 > MAX_SSE_EVENT_BYTES) {
-                dispatchDeferred = true;
-                break;
-              }
-              lineFeedOwnedByDispatched = true;
-            }
-          }
-          if (!handleLine(complete, controller)) {
-            refuse(controller);
-            return;
-          }
+        if (parser.push(chunk, sinkFor(controller)) !== "continue") {
+          controller.enqueue(refusalEvent);
+          controller.terminate();
         }
       },
       flush(controller) {
-        // A held event whose CR was the stream's last byte ended with that CR.
-        if (!ended && dispatchDeferred && !handleLine("", controller)) {
-          controller.enqueue(refusalEvent);
-        }
-        // Any other event without its terminating blank line is incomplete
-        // and, per the SSE specification, discarded at end of stream.
+        if (parser.end(sinkFor(controller)) !== "continue") controller.enqueue(refusalEvent);
       },
     }),
   );

@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import { piContextExtension } from "./contextExtension.ts";
 import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
-import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+import { loadMcpBridge, type RegisteredTool } from "./mcpBridge.testkit.ts";
 
 const decodeBudget = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -799,6 +799,192 @@ describe("Pi Scient connectors", () => {
       .find((tool) => tool.name === "preview_snapshot")!
       .execute("scient-call", {});
     assert.equal(scientOutput.content[0]?.text, "browser snapshot");
+  });
+});
+
+/** An event-stream response delivered in `chunkSize`-byte pieces, optionally left open. */
+function sseResponse(
+  text: string,
+  options: {
+    readonly chunkSize?: number;
+    readonly open?: boolean;
+    readonly onCancel?: () => void;
+  } = {},
+) {
+  const bytes = new TextEncoder().encode(text);
+  const chunkSize = options.chunkSize ?? bytes.length;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          controller.enqueue(bytes.slice(offset, offset + chunkSize));
+        }
+        if (options.open !== true) controller.close();
+      },
+      cancel() {
+        options.onCancel?.();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+}
+
+const dataLines = (value: unknown, eol = "\n") =>
+  JSON.stringify(value, null, 2)
+    .split("\n")
+    .map((line) => `data: ${line}`)
+    .join(eol);
+
+describe("Pi MCP event-stream responses", () => {
+  const connector = {
+    serverName: "remote",
+    url: "http://fixture.invalid/mcp/connectors/remote",
+    tools: [{ name: "lookup" }],
+  };
+  const callRemote = (bridge: { readonly tools: ReadonlyArray<RegisteredTool> }) =>
+    bridge.tools.find((tool) => tool.name === "remote__lookup")!.execute("connector-call", {});
+
+  it("joins a pretty-printed message split across data lines and chunks", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url }) =>
+        url === connector.url
+          ? sseResponse(`event: message\n${dataLines(message)}\n\n`, { chunkSize: 7 })
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
+  it("decodes UTF-8 split across chunks inside a multi-line message", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              `${dataLines({ ...message, result: { content: [{ type: "text", text: "Zürich ✓" }] } })}\n\n`,
+              { chunkSize: 1 },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "Zürich ✓");
+  });
+
+  it("resolves on the matching response while the stream stays open, then cancels it", async () => {
+    const cancelled: string[] = [];
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url
+          ? sseResponse(`data: ${JSON.stringify(message)}\n\n`, {
+              open: true,
+              onCancel: () => cancelled.push(method),
+            })
+          : undefined,
+    });
+    // Bootstrap (initialize, tools/list) completed over open streams too.
+    assert.deepEqual(cancelled, ["initialize", "tools/list"]);
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+    assert.deepEqual(cancelled, ["initialize", "tools/list", "tools/call"]);
+  });
+
+  it("skips comments, notifications and other requests' responses before the matching one", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              [
+                ": keep-alive",
+                "",
+                "event: message",
+                "id: 1",
+                "retry: 1000",
+                `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1 } })}`,
+                "",
+                dataLines({
+                  jsonrpc: "2.0",
+                  id: message.id + 100,
+                  result: { content: [{ type: "text", text: "wrong" }] },
+                }),
+                "",
+                dataLines({ jsonrpc: "2.0", id: 7, method: "sampling/createMessage", params: {} }),
+                "",
+                dataLines(message),
+                "",
+                "",
+              ].join("\n"),
+              { open: true },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
+  it.each([
+    ["CRLF", "\r\n"],
+    ["CR", "\r"],
+  ])(
+    "parses %s-delimited events, including terminators split across chunks",
+    async (_name, eol) => {
+      const bridge = await loadMcpBridge({
+        modern: true,
+        connectors: [connector],
+        respond: (message, { url }) =>
+          url === connector.url
+            ? sseResponse(
+                `: ping${eol}${eol}${dataLines({ jsonrpc: "2.0", method: "notifications/message", params: {} }, eol)}${eol}${eol}${dataLines(message, eol)}${eol}${eol}`,
+                { chunkSize: 1, open: true },
+              )
+            : undefined,
+      });
+      const output = await callRemote(bridge);
+      assert.equal(output.content[0]?.text, "remote:lookup");
+    },
+  );
+
+  it("reports a JSON-RPC error carried by the matching event", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              `${dataLines({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "upstream refused" } })}\n\n`,
+              { open: true },
+            )
+          : undefined,
+    });
+    await expect(callRemote(bridge)).rejects.toThrow("upstream refused");
+  });
+
+  it("fails clearly when the stream ends without the matching response", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(`${dataLines({ ...message, id: message.id + 1 })}\n\n`)
+          : undefined,
+    });
+    await expect(callRemote(bridge)).rejects.toThrow(
+      "MCP tools/call event stream ended without its response.",
+    );
+  });
+
+  it("keeps Scient's own server working over an event stream", async () => {
+    const bridge = await loadMcpBridge({
+      respond: (message) => sseResponse(`data: ${JSON.stringify(message)}\n\n`, { open: true }),
+    });
+    const output = await bridge.tools[0]!.execute("scient-call", {});
+    assert.equal(output.content[0]?.text, "browser snapshot");
   });
 });
 

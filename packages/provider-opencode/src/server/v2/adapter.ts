@@ -3078,15 +3078,48 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           "Could not add Scient's MCP server to OpenCode.",
         );
         if (mcpAvailable) hold(wanted);
-        // SCIENT-FORK:START — each connector is best effort, like T3's own server.
-        for (const connector of wanted.connectors) {
-          const added = yield* addMcp(
-            connector,
-            connector.url,
-            `Could not add the ${connector.displayName} connector to OpenCode.`,
-          );
-          if (added) hold(connector);
-        }
+        // SCIENT-FORK:START — each connector is best effort, like T3's own server, and
+        // the credential's tracker hears which ones OpenCode took. It starts before
+        // the first connector add, so the registration that started last owns the receipt.
+        const report =
+          wanted.connectors.length === 0
+            ? undefined
+            : yield* mcpSession?.beginConnectorRegistration ?? Effect.undefined;
+        const registered = new Set<string>();
+        /** Every connector OpenCode has not confirmed is withheld from the receipt. */
+        const settle = Effect.suspend(() =>
+          report === undefined
+            ? Effect.void
+            : report({
+                withheld: wanted.connectors.flatMap((connector) =>
+                  registered.has(connector.name)
+                    ? []
+                    : [
+                        {
+                          serverName: connector.serverName,
+                          reason: "registration-failed" as const,
+                        },
+                      ],
+                ),
+              }),
+        );
+        yield* Effect.forEach(
+          wanted.connectors,
+          (connector) =>
+            addMcp(
+              connector,
+              connector.url,
+              `Could not add the ${connector.displayName} connector to OpenCode.`,
+            ).pipe(
+              Effect.map((added) => {
+                if (!added) return;
+                hold(connector);
+                registered.add(connector.name);
+              }),
+            ),
+          { discard: true },
+        ).pipe(Effect.onError(() => settle));
+        yield* settle;
         // SCIENT-FORK:END
       }
       const instructions = [

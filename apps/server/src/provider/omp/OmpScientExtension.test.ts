@@ -608,6 +608,85 @@ describe("Scient's Oh My Pi extension", () => {
       ).toEqual({ isError: true });
     });
   });
+
+  describe("event-stream responses", () => {
+    /** Scient's endpoint answering every request as one event stream, framed by `frame`. */
+    const stubEventStream = (
+      frame: (message: string) => string,
+      options: { readonly chunkSize?: number; readonly open?: boolean } = {},
+    ) => {
+      const cancelled: Array<string> = [];
+      vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as McpRequest;
+        if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+        const result =
+          body.method === "initialize"
+            ? { protocolVersion: "2025-06-18" }
+            : body.method === "tools/list"
+              ? { tools: [{ name: "scient_fixture", inputSchema: { type: "object" } }] }
+              : { content: [{ type: "text", text: "streamed" }] };
+        const bytes = new TextEncoder().encode(
+          frame(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }, null, 2)),
+        );
+        const chunkSize = options.chunkSize ?? bytes.length;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                controller.enqueue(bytes.slice(offset, offset + chunkSize));
+              }
+              if (options.open !== true) controller.close();
+            },
+            cancel() {
+              cancelled.push(body.method);
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      });
+      return cancelled;
+    };
+    const dataLines = (message: string, eol: string) =>
+      message
+        .split("\n")
+        .map((line) => `data: ${line}`)
+        .join(eol);
+    const callFixture = async () => {
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        SESSION,
+      );
+      const host = makeApi();
+      await (
+        await extension.importFresh()
+      )(host.api);
+      return host.tools.get("scient_fixture")!.execute("call-1", {});
+    };
+
+    it("parses CR-only events on an open stream fed byte by byte", async () => {
+      const cancelled = stubEventStream(
+        (message) =>
+          `: ping\r\r${dataLines(JSON.stringify({ jsonrpc: "2.0", method: "notifications/message" }), "\r")}\r\r${dataLines(message, "\r")}\r\r`,
+        { chunkSize: 1, open: true },
+      );
+      const result = await callFixture();
+      expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+      expect(cancelled).toEqual(["initialize", "tools/list", "tools/call"]);
+    });
+
+    it.each([
+      ["no line break", ""],
+      ["one LF", "\n"],
+      ["one CRLF", "\r\n"],
+    ])(
+      "accepts a final event the stream ends without a blank line after (%s)",
+      async (_name, end) => {
+        stubEventStream((message) => `${dataLines(message, "\n")}${end}`, { chunkSize: 5 });
+        const result = await callFixture();
+        expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+      },
+    );
+  });
 });
 
 /** A synthetic custom-model endpoint whose long-poll holds until aborted. */

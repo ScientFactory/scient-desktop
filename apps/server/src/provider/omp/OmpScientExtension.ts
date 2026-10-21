@@ -90,36 +90,58 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const sse = response.headers.get("content-type")?.includes("text/event-stream") === true;
+    const lineBreak = /\\r\\n|\\r|\\n/gu;
     let buffer = "";
     let bytes = 0;
+    // A CR ends its line at once; an LF arriving next completes the same CRLF.
+    let skipLf = false;
+    let data = [];
     const result = (json) => {
       const envelope = scientRecord(JSON.parse(json));
       if (envelope?.id !== id) return undefined;
       if (envelope.error) throw new Error(label + " rejected the tool request.");
       return { value: envelope.result };
     };
+    // A blank line completes an event; only data fields carry the message.
+    const consume = (line) => {
+      if (line.length === 0) {
+        const json = data.join("\\n");
+        data = [];
+        return json ? result(json) : undefined;
+      }
+      const colon = line.indexOf(":");
+      if ((colon === -1 ? line : line.slice(0, colon)) !== "data") return undefined;
+      const value = colon === -1 ? "" : line.slice(colon + 1);
+      data.push(value.startsWith(" ") ? value.slice(1) : value);
+      return undefined;
+    };
     try {
       while (true) {
         const chunk = await reader.read();
         bytes += chunk.value?.byteLength ?? 0;
         if (bytes > 16 * 1024 * 1024) throw new Error(label + " tool response exceeded its size limit.");
-        buffer += decoder.decode(chunk.value, { stream: !chunk.done });
+        let text = decoder.decode(chunk.value, { stream: !chunk.done });
         if (sse) {
-          let boundary;
-          while ((boundary = /\\r?\\n\\r?\\n/u.exec(buffer)) !== null) {
-            const frame = buffer.slice(0, boundary.index);
-            buffer = buffer.slice(boundary.index + boundary[0].length);
-            const data = frame
-              .split(/\\r?\\n/u)
-              .filter((line) => line.startsWith("data:"))
-              .map((line) => line.slice(5).replace(/^ /u, ""))
-              .join("\\n");
-            if (data) {
-              const parsed = result(data);
-              if (parsed) return parsed.value;
-            }
+          if (skipLf && text.length > 0) {
+            skipLf = false;
+            if (text.startsWith("\\n")) text = text.slice(1);
           }
-        }
+          buffer += text;
+          let start = 0;
+          lineBreak.lastIndex = 0;
+          for (let match = lineBreak.exec(buffer); match !== null; match = lineBreak.exec(buffer)) {
+            const parsed = consume(buffer.slice(start, match.index));
+            start = lineBreak.lastIndex;
+            if (parsed) return parsed.value;
+          }
+          if (start > 0 && start === buffer.length && buffer.endsWith("\\r")) skipLf = true;
+          buffer = buffer.slice(start);
+          if (chunk.done) {
+            // Accept a final event whose closing blank line never arrived.
+            const parsed = consume(buffer) ?? consume("");
+            if (parsed) return parsed.value;
+          }
+        } else buffer += text;
         if (chunk.done) break;
       }
       if (!sse) {

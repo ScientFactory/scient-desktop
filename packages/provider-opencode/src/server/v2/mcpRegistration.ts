@@ -13,6 +13,8 @@ export interface OpenCode2McpEntry {
 // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
 /** A connector's server: Scient's proxy for it, behind the thread's credential. */
 export interface OpenCode2McpConnectorEntry extends OpenCode2McpEntry {
+  /** The connector's own server name, as Scient delivered and reports it. */
+  readonly serverName: string;
   readonly url: string;
   readonly displayName: string;
 }
@@ -79,6 +81,7 @@ export const mcpRegistrationForOpenCode2Turn = (input: {
       name: openCode2ConnectorServerName(input.connectorKey, connector.serverName),
       directory: input.directory,
       credential: session.authorizationHeader,
+      serverName: connector.serverName,
       url: connector.url,
       displayName: connector.displayName,
     })),

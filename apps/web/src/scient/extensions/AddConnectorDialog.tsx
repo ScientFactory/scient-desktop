@@ -234,20 +234,16 @@ export function AddConnectorDialog({
     setSigningIn(true);
     setSignInError(null);
     setBlockedSignInUrl(null);
-    try {
-      const opening = await openAuthorizationPage(async () => {
-        const result = await startSignIn({
-          environmentId,
-          input: { connectorId: connector.connectorId, callbackOrigin },
-        });
-        setSignInError(commandFailureMessage(result));
-        return result._tag === "Success" ? result.value.authorizationUrl : null;
+    const opening = await openAuthorizationPage(async () => {
+      const result = await startSignIn({
+        environmentId,
+        input: { connectorId: connector.connectorId, callbackOrigin },
       });
-      if (opening.outcome === "opened") close();
-      else if (opening.outcome === "blocked") setBlockedSignInUrl(opening.url);
-    } finally {
-      setSigningIn(false);
-    }
+      setSignInError(commandFailureMessage(result));
+      return result._tag === "Success" ? result.value.authorizationUrl : null;
+    }).finally(() => setSigningIn(false));
+    if (opening.outcome === "opened") close();
+    else if (opening.outcome === "blocked") setBlockedSignInUrl(opening.url);
   };
 
   return (

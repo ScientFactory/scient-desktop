@@ -129,6 +129,7 @@ it.effect("registers every connector under the thread's key with the thread's cr
         name: "t3-code-0123456789abcdef-github",
         directory: "/workspace",
         credential: "Bearer valid-thread-credential",
+        serverName: "github",
         url: "http://127.0.0.1:3773/mcp/connectors/connector-github",
         displayName: "GitHub",
       },
@@ -136,6 +137,7 @@ it.effect("registers every connector under the thread's key with the thread's cr
         name: "t3-code-0123456789abcdef-linear",
         directory: "/workspace",
         credential: "Bearer valid-thread-credential",
+        serverName: "linear",
         url: "http://127.0.0.1:3773/mcp/connectors/connector-linear",
         displayName: "Linear",
       },
@@ -161,6 +163,7 @@ it("forgets connectors that are dropped and every server once the credential rot
     name,
     directory: "/workspace",
     credential,
+    serverName: name,
     url: `http://127.0.0.1:3773/mcp/connectors/${name}`,
     displayName: name,
   });

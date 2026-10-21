@@ -75,12 +75,8 @@ export function ScientPluginsSection({
     if (locked) return;
     setBusyPluginId(pluginId);
     setPluginError(null);
-    try {
-      const message = commandFailureMessage(await execute());
-      if (message !== null) setPluginError({ pluginId, message });
-    } finally {
-      setBusyPluginId(null);
-    }
+    const message = commandFailureMessage(await execute().finally(() => setBusyPluginId(null)));
+    if (message !== null) setPluginError({ pluginId, message });
   };
 
   const submitInstall = async () => {

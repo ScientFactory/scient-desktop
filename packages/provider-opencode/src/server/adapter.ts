@@ -1014,26 +1014,51 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           // SCIENT-FORK:START — connectors are best effort beside Scient's own server:
           // one unreachable connector must not stop the session. They take the
           // mode's permission rules like any other MCP server, never Scient's.
-          for (const connector of mcpSession.connectors) {
-            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
-              client.mcp.add({
-                name: connector.serverName,
-                config: {
-                  type: "remote",
-                  url: connector.url,
-                  headers: { Authorization: mcpSession.authorizationHeader },
-                  oauth: false,
-                },
-              }),
-            ).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning(
-                  `Could not add the ${connector.displayName} connector to OpenCode.`,
-                  error,
+          // The credential's tracker starts before the first add and hears which
+          // connectors OpenCode rejected, so the receipt never claims them.
+          const report =
+            mcpSession.connectors.length === 0
+              ? undefined
+              : yield* mcpSession.beginConnectorRegistration ?? Effect.undefined;
+          const registered = new Set<string>();
+          const settle = Effect.suspend(() =>
+            report === undefined
+              ? Effect.void
+              : report({
+                  withheld: mcpSession.connectors.flatMap(({ serverName }) =>
+                    registered.has(serverName)
+                      ? []
+                      : [{ serverName, reason: "registration-failed" as const }],
+                  ),
+                }),
+          );
+          yield* Effect.forEach(
+            mcpSession.connectors,
+            (connector) =>
+              OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                client.mcp.add({
+                  name: connector.serverName,
+                  config: {
+                    type: "remote",
+                    url: connector.url,
+                    headers: { Authorization: mcpSession.authorizationHeader },
+                    oauth: false,
+                  },
+                }),
+              ).pipe(
+                Effect.map(() => {
+                  registered.add(connector.serverName);
+                }),
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    `Could not add the ${connector.displayName} connector to OpenCode.`,
+                    error,
+                  ),
                 ),
               ),
-            );
-          }
+            { discard: true },
+          ).pipe(Effect.onError(() => settle));
+          yield* settle;
           // SCIENT-FORK:END
         }
 
