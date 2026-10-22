@@ -523,6 +523,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
+  // SCIENT-FORK:START — the unread-answer app icon badge.
+  {
+    id: "app-icon-badge",
+    title: "App icon badge",
+    to: "/settings/general",
+    desktopOnly: true,
+    searchTerms: ["unread answers count dock taskbar badge notification"],
+  },
+  // SCIENT-FORK:END
   {
     id: "time-format",
     title: "Time format",
