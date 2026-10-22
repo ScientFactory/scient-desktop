@@ -503,6 +503,7 @@ function EnvironmentFileBody(props: {
           <ScientPdfReader
             refreshKey={props.refreshToken}
             readerScope={props.threadRef.threadId}
+            citeThread={props.threadRef}
             source={environmentPdfSource({
               environmentId: props.environmentId,
               canonicalPath: props.file.canonicalPath,

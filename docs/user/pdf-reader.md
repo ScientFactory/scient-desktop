@@ -38,6 +38,25 @@ The reader supports:
   opens a native Save dialog and confirms when the copy has been written;
   cancelling the dialog leaves the PDF unchanged.
 
+## Ask in chat about a passage
+
+Select text in a PDF and choose **Ask in chat**, as in code and Markdown files.
+The quote becomes a chip in the message you are writing, with an optional
+comment. The agent receives the PDF's path or name, the page, the quoted text
+and a little text around it.
+
+- A selection can span up to four consecutive pages. When a selection can't be
+  quoted (diagonal text, a page still loading, more than four pages, or a quote
+  too long for one message), the button says why instead.
+- Click a quote chip, in your message or a sent one, to reopen the PDF at the
+  quote with it highlighted. If the PDF has changed since, Scient looks for the
+  quoted text and tells you whether it found it, found it more than once, or
+  couldn't find it; then it opens the page where the quote was.
+- PDFs in the Files panel, LaTeX output, generated PDFs, Sources papers, files
+  outside the project and sent chat attachments can be quoted. An attachment
+  you are still composing can't be quoted yet; ask about it in words, or quote
+  it once the message is sent.
+
 The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
 text layer can be read visually, but text selection and search may be limited.
 

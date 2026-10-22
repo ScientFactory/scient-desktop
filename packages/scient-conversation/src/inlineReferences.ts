@@ -8,7 +8,10 @@
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
   isFileCitation,
+  isPdfCitation,
+  pdfCitationText,
   type ComposerContextRecord,
+  type PdfCitation,
   type ConversationAttachment,
   type ConversationInlineReference,
 } from "@t3tools/contracts";
@@ -53,6 +56,19 @@ export function projectRelativePath(path: string, roots: ReadonlyArray<string>):
     }
   }
   return basename(normalized);
+}
+
+/** A project-relative path where there is one, else the PDF's own name: never a local absolute path. */
+function pdfExcerptDocument(citation: PdfCitation, roots: ReadonlyArray<string>): string {
+  const { document } = citation.target;
+  const locator = document.locator;
+  if (locator._tag === "workspace" || locator._tag === "source") {
+    return projectRelativePath(`${locator.workspaceRoot}/${locator.relativePath}`, [
+      locator.workspaceRoot,
+      ...roots,
+    ]);
+  }
+  return document.fileName;
 }
 
 export interface InlineReferenceProjection {
@@ -175,6 +191,23 @@ export function projectInlineReferences(input: {
       end: match.end,
       render: (id) => {
         const citation = match.citation;
+        if (isPdfCitation(citation)) {
+          const pages = citation.target.selector.pages;
+          return {
+            label: "PDF quote",
+            image: false,
+            reference: {
+              _tag: "pdf-excerpt",
+              id,
+              label: "PDF quote",
+              document: pdfExcerptDocument(citation, input.roots),
+              firstPage: pages[0]!.page,
+              lastPage: pages.at(-1)!.page,
+              text: pdfCitationText(citation),
+              comment: citation.comment ?? null,
+            },
+          };
+        }
         if (isFileCitation(citation)) {
           return {
             label: "File quote",

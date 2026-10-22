@@ -55,6 +55,7 @@ describe("attachment PDFs open in Scient's reader", () => {
       _tag: "sent",
       threadId: "thread-1",
       attachmentId: "attachment-1",
+      sizeBytes: 10,
     });
     expect(container.querySelector("embed, iframe")).toBeNull();
   });

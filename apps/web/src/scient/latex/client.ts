@@ -1,4 +1,5 @@
 import {
+  getEnvironmentCurrentDocument,
   getEnvironmentLatexBuild,
   getEnvironmentLatexCancel,
   getEnvironmentLatexForwardSync,
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/scient-latex";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type {
+  ScientCurrentDocumentRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
   ScientLatexPageAnchorsRequest,
@@ -30,6 +32,19 @@ function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The selected environment is not connected.");
   return connection;
+}
+
+/** The current revision of a generated document, or null when this environment has none. */
+export function readCurrentGeneratedDocument(
+  environmentId: EnvironmentId,
+  logicalDocumentKey: ScientCurrentDocumentRequest["logicalDocumentKey"],
+) {
+  return runtime.runPromise(
+    getEnvironmentCurrentDocument({
+      prepared: prepared(environmentId),
+      request: { logicalDocumentKey },
+    }),
+  );
 }
 
 export function requestLatexBuild(environmentId: EnvironmentId, input: ScientLatexDocumentRef) {

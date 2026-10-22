@@ -8,6 +8,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
  */
 export function attachmentPdfMount(input: {
   readonly asset?: { readonly environmentId: EnvironmentId; readonly attachmentId: string };
+  readonly sizeBytes?: number;
   readonly threadRef?: ScopedThreadRef;
   readonly file?: Blob | null;
   /** A draft attachment: its composer's thread and its file context id. */
@@ -33,6 +34,9 @@ export function attachmentPdfMount(input: {
       _tag: "sent",
       threadId: input.threadRef.threadId,
       attachmentId: input.asset.attachmentId,
+      ...(input.sizeBytes !== undefined && input.sizeBytes >= 1
+        ? { sizeBytes: input.sizeBytes }
+        : {}),
     },
   };
 }

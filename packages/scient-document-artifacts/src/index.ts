@@ -35,3 +35,20 @@ export {
   type BindingTransition,
   type ProductionIdentity,
 } from "./binding.ts";
+export {
+  PDF_TARGET_LIMITS,
+  PDF_TEXT_PROFILE,
+  PdfDocumentIdentity,
+  PdfDocumentLocator,
+  PdfMaterial,
+  PdfRect,
+  PdfTarget,
+  PdfTextPageSelector,
+  relocatePdfText,
+  verifyPdfTarget,
+  type PdfCurrentPage,
+  type PdfMaterialMatch,
+  type PdfRelocation,
+  type PdfTargetVerification,
+  type PdfTextRange,
+} from "./pdfTarget.ts";
