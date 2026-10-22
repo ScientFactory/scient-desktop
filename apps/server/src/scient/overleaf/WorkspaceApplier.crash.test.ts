@@ -85,6 +85,7 @@ async function crashAt(
   killAt: MutationPoint,
   scenario: Scenario = edit,
   occurrence = 1,
+  killIn?: CrashJob["killIn"],
 ) {
   await put(h.cwd, scenario.captured);
   const job: CrashJob = {
@@ -95,6 +96,7 @@ async function crashAt(
     id: "crash",
     killAt,
     occurrence,
+    ...(killIn ? { killIn } : {}),
     plan: {
       base: revisions(scenario.base ?? scenario.captured),
       remote: revisions(scenario.target),
@@ -462,6 +464,29 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
         });
         expect(await read(h.cwd, "b.tex")).toBe("remote B");
       }),
+  );
+
+  // Between hooks: dying as a step's first journal is renamed into place, or while its
+  // copy is being staged. Neither published anything; the step is tried again.
+  it.live.each(
+    (["rename", "open"] as const).flatMap((operation) =>
+      [0, 1].map((step) => ({ operation, step })),
+    ),
+  )("finishes a unit after a crash in step $step's $operation", ({ operation, step }) =>
+    fixture(async (h) => {
+      await crashAt(h, "done", both, 99, {
+        operation,
+        suffix: `/step-${step}/${operation === "rename" ? "record.json" : "slot"}`,
+      });
+      await h.restart();
+      expect(await h.apply("crash")).toMatchObject({
+        outcome: "complete",
+        matchesTarget: true,
+        interrupted: [],
+      });
+      expect(await read(h.cwd, "a.tex")).toBe("remote A");
+      expect(await read(h.cwd, "b.tex")).toBe("remote B");
+    }),
   );
 
   // The later step is tried again, and still refuses a file changed since the review.

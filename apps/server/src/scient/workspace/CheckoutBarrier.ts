@@ -6,12 +6,17 @@
  * application section, and a bulk mutation of the checkout (checkpoint restore,
  * pull, switching branch, removing the worktree). A bulk request closes new
  * application admission at once, waits for running ones to settle, then runs.
- * Bulk sections do not exclude one another; their own locks order them. Every
- * bulk section advances the checkout's epoch as it starts and again as it ends,
- * even when it fails, so a plan made against an earlier epoch is stale.
+ * Bulk sections of one checkout run one at a time; a bulk change made inside
+ * another of the same checkout (a provider checkout calling the Git driver)
+ * joins it. Every bulk section advances the checkout's epoch as it starts and
+ * again as it ends, even when it fails, so a plan made against an earlier epoch
+ * is stale.
  *
- * A checkout is its Git working tree's top folder, found by its physical
- * identity: two paths to one folder are one checkout. Arbitrary shell writers,
+ * A checkout is a Git working tree's top folder, found by its physical
+ * identity: two paths to one folder are one checkout. A checkout inside another
+ * (a submodule, a nested repository) belongs to both: a bulk change of the
+ * outer one also waits for and suspends applications inside the inner one,
+ * because a recursive checkout or pull rewrites it too. Arbitrary shell writers,
  * external Git commands and other server profiles are outside the barrier.
  */
 import * as NodeFSP from "node:fs/promises";
@@ -21,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 /** An application was refused because the checkout is being changed in bulk. */
 export class CheckoutSuspendedError extends Schema.TaggedError<CheckoutSuspendedError>()(
@@ -42,13 +48,25 @@ export class CheckoutRecoveryRequiredError extends Schema.TaggedError<CheckoutRe
   }
 }
 
+/** The folder could not be examined to find its checkout (for example, no permission). */
+export class CheckoutLookupError extends Schema.TaggedError<CheckoutLookupError>()(
+  "CheckoutLookupError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Scient could not examine this project's folder to check for other operations on it.";
+  }
+}
+
 /** A held section of one checkout; a bulk section passes it to work it runs inside. */
 export interface CheckoutSection {
   /** Physical identity of the checkout's top folder. */
   readonly key: string;
+  /** This checkout's key, then those of every checkout enclosing it, innermost first. */
+  readonly keys: ReadonlyArray<string>;
   /** The checkout's top folder, as found when the section began. */
   readonly root: string;
-  /** The checkout's epoch when the section was admitted. */
+  /** The checkout's epoch (with every enclosing checkout's) when the section was admitted. */
   readonly epoch: number;
 }
 
@@ -70,36 +88,54 @@ export interface CheckoutBarrierShape {
     path: string,
     effect: Effect.Effect<A, E, R>,
     options?: { readonly missing?: "nearest" | "skip" },
-  ) => Effect.Effect<A, E | CheckoutRecoveryRequiredError, R>;
+  ) => Effect.Effect<A, E | CheckoutRecoveryRequiredError | CheckoutLookupError, R>;
   /**
    * Runs `body` as an application section of the checkout containing `path`.
-   * Refused, not queued, while a bulk section is waiting or running, unless
-   * `within` is that bulk section's own handle.
+   * Refused, not queued, while a bulk section of it or of an enclosing checkout
+   * is waiting or running, unless `within` is that bulk section's own handle.
    */
   readonly application: <A, E, R>(
     path: string,
     body: (section: CheckoutSection) => Effect.Effect<A, E, R>,
     options?: { readonly within?: CheckoutSection },
-  ) => Effect.Effect<A, E | CheckoutSuspendedError, R>;
+  ) => Effect.Effect<A, E | CheckoutSuspendedError | CheckoutLookupError, R>;
   /** The checkout containing `path` and its current epoch, for binding a plan. */
-  readonly current: (path: string) => Effect.Effect<CheckoutSection>;
+  readonly current: (path: string) => Effect.Effect<CheckoutSection, CheckoutLookupError>;
   /** Adds a settler for the life of the current scope. */
   readonly settleBeforeBulk: (settler: CheckoutSettler) => Effect.Effect<void, never, Scope.Scope>;
 }
 
 interface Entry {
   epoch: number;
+  /** Applications of this checkout or of one inside it. */
   applications: number;
+  /** Bulk sections waiting or running; while positive, admission is closed. */
   bulks: number;
+  readonly turn: Semaphore.Semaphore;
   drained: Deferred.Deferred<void> | null;
   readonly held: Set<CheckoutSection>;
 }
 
+interface Located {
+  readonly root: string;
+  readonly keys: ReadonlyArray<string>;
+}
+
+/** Checkouts the current fiber already holds a bulk section of. */
+class HeldCheckouts extends Context.Reference<ReadonlySet<string>>(
+  "t3/scient/workspace/CheckoutBarrier/HeldCheckouts",
+  { defaultValue: () => new Set() },
+) {}
+
 const missing = (error: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "");
 
-/** The checkout's top folder and physical identity, or null when nothing at or above `path` exists. */
-async function locate(path: string, skipMissing: boolean) {
+/**
+ * The checkout holding `path` (the nearest folder with a `.git` entry, or the
+ * folder itself) and the keys of every enclosing checkout, or null when
+ * nothing at or above `path` exists and `skipMissing` is set.
+ */
+async function locate(path: string, skipMissing: boolean): Promise<Located | null> {
   let current = NodePath.resolve(path);
   for (;;) {
     try {
@@ -113,7 +149,7 @@ async function locate(path: string, skipMissing: boolean) {
       current = parent;
     }
   }
-  let root = current;
+  const roots: string[] = [];
   for (let folder = current; ;) {
     const marked = await NodeFSP.lstat(NodePath.join(folder, ".git")).then(
       () => true,
@@ -122,16 +158,18 @@ async function locate(path: string, skipMissing: boolean) {
         throw error;
       },
     );
-    if (marked) {
-      root = folder;
-      break;
-    }
+    if (marked) roots.push(folder);
     const parent = NodePath.dirname(folder);
     if (parent === folder) break;
     folder = parent;
   }
-  const stat = await NodeFSP.stat(root, { bigint: true });
-  return { root, key: `${stat.dev}:${stat.ino}` };
+  if (roots.length === 0) roots.push(current);
+  const keys: string[] = [];
+  for (const root of roots) {
+    const stat = await NodeFSP.stat(root, { bigint: true });
+    keys.push(`${stat.dev}:${stat.ino}`);
+  }
+  return { root: roots[0]!, keys };
 }
 
 export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
@@ -140,38 +178,70 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
   const entry = (key: string) => {
     let found = entries.get(key);
     if (found === undefined) {
-      found = { epoch: 0, applications: 0, bulks: 0, drained: null, held: new Set() };
+      found = {
+        epoch: 0,
+        applications: 0,
+        bulks: 0,
+        turn: Semaphore.makeUnsafe(1),
+        drained: null,
+        held: new Set(),
+      };
       entries.set(key, found);
     }
     return found;
   };
-  const locateEffect = (path: string, skipMissing: boolean) =>
-    Effect.promise(() => locate(path, skipMissing));
+  const lookup = (path: string, skipMissing: boolean) =>
+    Effect.tryPromise({
+      try: () => locate(path, skipMissing),
+      catch: (cause) => new CheckoutLookupError({ path, cause }),
+    });
+  const located = (path: string) =>
+    Effect.map(
+      lookup(path, false),
+      (found) =>
+        found ?? { root: NodePath.resolve(path), keys: [`missing:${NodePath.resolve(path)}`] },
+    );
+  const epochOf = (keys: ReadonlyArray<string>) =>
+    keys.reduce((sum, key) => sum + entry(key).epoch, 0);
 
   const bulk: CheckoutBarrierShape["bulk"] = (path, effect, options) =>
-    Effect.flatMap(locateEffect(path, options?.missing === "skip"), (located) => {
-      if (located === null) return effect;
-      return Effect.acquireUseRelease(
+    Effect.gen(function* () {
+      const found = yield* lookup(path, options?.missing === "skip");
+      if (found === null) return yield* effect;
+      const key = found.keys[0]!;
+      const already = yield* HeldCheckouts;
+      // A bulk change inside one of the same checkout joins it.
+      if (already.has(key)) return yield* effect;
+      const held = entry(key);
+      return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
-          const held = entry(located.key);
           held.bulks++;
           held.epoch++;
-          return held;
         }),
-        (held) =>
-          Effect.gen(function* () {
-            while (held.applications > 0) {
-              held.drained ??= Deferred.makeUnsafe<void>();
-              yield* Deferred.await(held.drained);
-            }
-            const section: CheckoutSection = { ...located, epoch: held.epoch };
-            held.held.add(section);
-            return yield* Effect.gen(function* () {
-              for (const settle of settlers) yield* settle(section);
-              return yield* effect;
-            }).pipe(Effect.ensuring(Effect.sync(() => held.held.delete(section))));
-          }),
-        (held) =>
+        () =>
+          held.turn.withPermit(
+            Effect.gen(function* () {
+              while (held.applications > 0) {
+                held.drained ??= Deferred.makeUnsafe<void>();
+                yield* Deferred.await(held.drained);
+              }
+              const section: CheckoutSection = {
+                key,
+                keys: [key],
+                root: found.root,
+                epoch: held.epoch,
+              };
+              held.held.add(section);
+              return yield* Effect.gen(function* () {
+                for (const settle of settlers) yield* settle(section);
+                return yield* effect;
+              }).pipe(
+                Effect.provideService(HeldCheckouts, new Set([...already, key])),
+                Effect.ensuring(Effect.sync(() => held.held.delete(section))),
+              );
+            }),
+          ),
+        () =>
           Effect.sync(() => {
             held.bulks--;
             held.epoch++;
@@ -180,39 +250,50 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
     });
 
   const application: CheckoutBarrierShape["application"] = (path, body, options) =>
-    Effect.flatMap(locateEffect(path, false), (located) => {
-      const key = located?.key ?? `missing:${NodePath.resolve(path)}`;
-      const root = located?.root ?? NodePath.resolve(path);
-      return Effect.acquireUseRelease(
+    Effect.flatMap(located(path), (found) =>
+      Effect.acquireUseRelease(
         Effect.suspend(() => {
-          const held = entry(key);
           const within = options?.within;
-          if (held.bulks > 0 && !(within !== undefined && held.held.has(within)))
-            return Effect.fail(new CheckoutSuspendedError({ checkout: root }));
-          held.applications++;
-          return Effect.succeed(held);
+          for (const key of found.keys) {
+            const held = entry(key);
+            // Inside its own held bulk section, later bulk changes wait their turn behind it.
+            const admitted = within?.key === key ? held.held.has(within) : held.bulks === 0;
+            if (!admitted) return Effect.fail(new CheckoutSuspendedError({ checkout: found.root }));
+          }
+          for (const key of found.keys) entry(key).applications++;
+          return Effect.succeed(found);
         }),
-        (held) => body({ key, root, epoch: held.epoch }),
-        (held) =>
-          Effect.suspend(() => {
-            held.applications--;
-            const drained = held.drained;
-            if (held.applications > 0 || drained === null) return Effect.void;
-            held.drained = null;
-            return Deferred.succeed(drained, undefined);
+        () =>
+          body({
+            key: found.keys[0]!,
+            keys: found.keys,
+            root: found.root,
+            epoch: epochOf(found.keys),
           }),
-      );
-    });
+        () =>
+          Effect.forEach(
+            found.keys,
+            (key) =>
+              Effect.suspend(() => {
+                const held = entry(key);
+                held.applications--;
+                const drained = held.drained;
+                if (held.applications > 0 || drained === null) return Effect.void;
+                held.drained = null;
+                return Deferred.succeed(drained, undefined);
+              }),
+            { discard: true },
+          ),
+      ),
+    );
 
   const current: CheckoutBarrierShape["current"] = (path) =>
-    Effect.map(locateEffect(path, false), (located) => {
-      const key = located?.key ?? `missing:${NodePath.resolve(path)}`;
-      return {
-        key,
-        root: located?.root ?? NodePath.resolve(path),
-        epoch: entry(key).epoch,
-      };
-    });
+    Effect.map(located(path), (found) => ({
+      key: found.keys[0]!,
+      keys: found.keys,
+      root: found.root,
+      epoch: epochOf(found.keys),
+    }));
 
   const settleBeforeBulk: CheckoutBarrierShape["settleBeforeBulk"] = (settler) =>
     Effect.acquireRelease(

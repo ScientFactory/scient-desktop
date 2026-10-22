@@ -2704,6 +2704,15 @@ export const make = Effect.gen(function* () {
                     detail: error.message,
                   }),
                 ),
+              CheckoutLookupError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "GitManager.preparePullRequestThread",
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+                ),
             }),
           );
         // SCIENT-FORK:END overleaf-checkout-barrier

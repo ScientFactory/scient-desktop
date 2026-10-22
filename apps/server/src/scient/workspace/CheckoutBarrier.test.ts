@@ -168,18 +168,36 @@ describe("CheckoutBarrier", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("runs bulk changes of one checkout side by side, nested ones included", () =>
+  it.effect("runs bulk changes of one checkout one at a time, joining nested ones", () =>
     Effect.gen(function* () {
       const { repo, paper } = yield* folders;
       const barrier = makeCheckoutBarrier();
-      const release = yield* Deferred.make<void>();
-      const outer = yield* holdBulk(barrier, repo, release);
-      assert.equal(
-        yield* barrier.bulk(paper, barrier.bulk(repo, Effect.succeed("nested"))),
-        "nested",
+      const seen: string[] = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* barrier.settleBeforeBulk(() => Effect.sync(() => seen.push("settled")));
+          const release = yield* Deferred.make<void>();
+          const outer = yield* holdBulk(barrier, repo, release);
+          // A nested change of the same checkout, from inside, joins the held section.
+          const second = yield* barrier
+            .bulk(
+              paper,
+              Effect.sync(() => seen.push("second")),
+            )
+            .pipe(Effect.forkChild);
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          // The second waits its turn: not even its settler runs while the first holds.
+          assert.deepEqual(seen, ["settled"]);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(outer);
+          yield* Fiber.join(second);
+          assert.deepEqual(seen, ["settled", "settled", "second"]);
+          assert.equal(
+            yield* barrier.bulk(repo, barrier.bulk(paper, Effect.succeed("nested"))),
+            "nested",
+          );
+        }),
       );
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(outer);
     }).pipe(Effect.scoped),
   );
 
@@ -190,11 +208,71 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
       const bulk = yield* barrier.bulk(repo, Effect.void).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+      // Interrupt only once the bulk change has closed admission and is waiting.
+      while ((yield* barrier.current(repo)).epoch === 0) yield* Effect.yieldNow;
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(barrier.application(repo, () => Effect.void))),
+      );
       yield* Fiber.interrupt(bulk);
+      assert.equal((yield* barrier.current(repo)).epoch, 2);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);
       yield* barrier.application(repo, () => Effect.void);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("makes a bulk change of an enclosing checkout wait for and suspend inner ones", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const submodule = NodePath.join(repo, "vendor/sub");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(submodule, ".git"), { recursive: true }),
+      );
+      const barrier = makeCheckoutBarrier();
+      const inner = yield* barrier.current(submodule);
+      assert.notEqual(inner.key, (yield* barrier.current(repo)).key);
+      assert.equal(inner.keys[1], (yield* barrier.current(repo)).key);
+      const release = yield* Deferred.make<void>();
+      const application = yield* holdApplication(barrier, submodule, release);
+      let mutated = false;
+      const bulk = yield* barrier
+        .bulk(
+          repo,
+          Effect.sync(() => {
+            mutated = true;
+          }),
+        )
+        .pipe(Effect.forkChild);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.isFalse(mutated);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(barrier.application(submodule, () => Effect.void))),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(application);
+      yield* Fiber.join(bulk);
+      assert.isTrue(mutated);
+      // The outer change makes plans of the inner checkout stale too.
+      assert.equal((yield* barrier.current(submodule)).epoch, inner.epoch + 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports a folder it cannot examine as a typed failure", () =>
+    Effect.gen(function* () {
+      const { root } = yield* folders;
+      const locked = NodePath.join(root, "locked");
+      yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.join(locked, "inside"), { recursive: true });
+          await NodeFSP.chmod(locked, 0o000);
+        }),
+        () => Effect.promise(() => NodeFSP.chmod(locked, 0o700)),
+      );
+      const barrier = makeCheckoutBarrier();
+      const failure = yield* Effect.flip(
+        barrier.bulk(NodePath.join(locked, "inside"), Effect.void),
+      );
+      assert.equal(failure._tag, "CheckoutLookupError");
     }).pipe(Effect.scoped),
   );
 
@@ -322,6 +400,34 @@ describe("CheckoutBarrier consumers", () => {
       assert.include(String(refused), "GitCommandError");
       assert.include(String(refused), "Overleaf sync");
       assert.equal(git(root, "branch", "--show-current"), "main");
+    }).pipe(Effect.scoped, Effect.provide(driverWith(barrier)));
+  });
+
+  it.live("a worktree removal by relative path waits for an application inside it", () => {
+    const barrier = makeCheckoutBarrier();
+    return Effect.gen(function* () {
+      const root = yield* repository;
+      git(root, "worktree", "add", "-q", "-b", "side", "target");
+      const target = NodePath.join(root, "target");
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const release = yield* Deferred.make<void>();
+      const application = yield* holdApplication(barrier, target, release);
+      const removing = yield* driver
+        .removeWorktree({ cwd: root, path: "./target", force: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.sleep("200 millis");
+      assert.isTrue(yield* Effect.promise(() => NodeFSP.access(target).then(() => true)));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(application);
+      yield* Fiber.join(removing);
+      assert.isFalse(
+        yield* Effect.promise(() =>
+          NodeFSP.access(target).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      );
     }).pipe(Effect.scoped, Effect.provide(driverWith(barrier)));
   });
 
