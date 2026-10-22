@@ -153,6 +153,64 @@ describe("latexSetupCardModel", () => {
     ).toBe("The installation could not be finished.");
   });
 
+  it("says which unpack step failed and carries the tool's line as a detail", () => {
+    const failedAt = (failureStep?: "extract" | "engine-missing" | "engine-failed") =>
+      latexSetupCardModel(
+        card({
+          install: install({
+            state: "failed",
+            failureReason: "unpack-failed",
+            ...(failureStep === undefined ? {} : { failureStep }),
+            failureDetail: "tar.exe: Error opening archive: Unrecognized archive format",
+          }),
+        }),
+      );
+
+    expect(failedAt("extract").body).toBe("The download arrived but could not be unpacked.");
+    expect(failedAt("engine-missing").body).toBe(
+      "The download was unpacked, but the LaTeX engine was not in it.",
+    );
+    expect(failedAt("engine-failed").body).toBe(
+      "The download was unpacked, but its LaTeX engine would not start.",
+    );
+    // An older server names no step; the original copy still reads right.
+    expect(failedAt().body).toBe("The download arrived but could not be unpacked.");
+    expect(failedAt("extract").detail).toBe(
+      "Details: tar.exe: Error opening archive: Unrecognized archive format",
+    );
+    expect(
+      latexSetupCardModel(
+        card({ install: install({ state: "failed", failureReason: "download-failed" }) }),
+      ).detail,
+    ).toBeNull();
+  });
+
+  it("names a latexmk that exists but did not run beside the offer and the instructions", () => {
+    const unusableToolchain = {
+      executable: "C:\\Users\\me\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe",
+      reason:
+        "MiKTeX could not find the script engine 'perl' which is required to execute 'latexmk'.",
+    };
+    const expected = `Scient found ${unusableToolchain.executable}, but it did not run: ${unusableToolchain.reason}`;
+
+    expect(latexSetupCardModel(card({ unusableToolchain })).detail).toBe(expected);
+    expect(latexSetupCardModel(card({ unusableToolchain, canInstallManaged: false })).detail).toBe(
+      expected,
+    );
+    // Not while installing, and not once something runs.
+    expect(
+      latexSetupCardModel(card({ unusableToolchain, install: install({ state: "downloading" }) }))
+        .detail,
+    ).toBeNull();
+    expect(
+      latexSetupCardModel(card({ unusableToolchain, toolchainMissing: false })).detail,
+    ).toBeNull();
+    expect(
+      latexSetupCardModel(card({ unusableToolchain, install: install({ state: "ready" }) })).detail,
+    ).toBeNull();
+    expect(latexSetupCardModel(card()).detail).toBeNull();
+  });
+
   it("shows a retry as progress again once the request is in flight", () => {
     const model = latexSetupCardModel(
       card({

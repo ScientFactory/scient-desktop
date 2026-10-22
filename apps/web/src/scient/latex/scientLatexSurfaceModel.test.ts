@@ -34,6 +34,7 @@ import {
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
   nudgeLatexSplitFraction,
+  toolchainsEqual,
   type LatexBuildStatus,
 } from "./scientLatexSurfaceModel";
 
@@ -593,5 +594,22 @@ describe("latexStatusStripModel", () => {
     );
     expect(model.busy).toBe(true);
     expect(model.label).toBe("Building…");
+  });
+});
+
+describe("toolchainsEqual", () => {
+  const absent = { kind: null, executable: null, version: null, probedAtEpochMs: 1 } as const;
+
+  it("tells a broken latexmk apart from none, and from a different reason", () => {
+    const broken = { ...absent, unusable: [{ executable: "latexmk.exe", reason: "no perl" }] };
+    expect(toolchainsEqual(absent, { ...absent })).toBe(true);
+    expect(toolchainsEqual(broken, { ...broken, unusable: [...broken.unusable] })).toBe(true);
+    expect(toolchainsEqual(absent, broken)).toBe(false);
+    expect(
+      toolchainsEqual(broken, {
+        ...absent,
+        unusable: [{ executable: "latexmk.exe", reason: "timed out" }],
+      }),
+    ).toBe(false);
   });
 });

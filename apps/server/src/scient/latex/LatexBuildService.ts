@@ -69,7 +69,7 @@ import {
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { resolveLatexDocument } from "./LatexProjectIndex.ts";
-import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexToolchain, latexDriverBinDirectory, latexDriverLabel } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { parseLatexRecorderManifest, parseTectonicMakefileRules } from "./flsManifest.ts";
 import {
@@ -219,6 +219,20 @@ const TEX_OUTPUT_ENVIRONMENT: Readonly<Record<string, string>> = {
 
 const NO_TOOLCHAIN_SUMMARY =
   "No LaTeX toolchain found. Install latexmk (TeX Live or MiKTeX) or tectonic, then try again.";
+
+/**
+ * A driver that exists but would not run is a different problem from none at
+ * all, and the engine's own complaint is usually the whole answer (MiKTeX's
+ * `latexmk` without Perl), so it is named instead of the install advice. The
+ * summary also reaches agents, so it names the distribution and the file, not
+ * the folder (which carries the user's name); the setup card shows the path.
+ */
+function noToolchainSummary(toolchain: Pick<ScientLatexToolchainStatus, "unusable">): string {
+  const unusable = toolchain.unusable?.[0];
+  return unusable === undefined
+    ? NO_TOOLCHAIN_SUMMARY
+    : `No working LaTeX toolchain found. ${latexDriverLabel(unusable.executable)} did not run: ${unusable.reason}`;
+}
 const TIMEOUT_SUMMARY = "Build timed out.";
 const CANCELLED_SUMMARY = "Build cancelled.";
 const MISSING_PDF_SUMMARY = "The LaTeX engine reported success but produced no PDF.";
@@ -1625,8 +1639,8 @@ export const make = Effect.gen(function* () {
         yield* finishBuild(key, generation, (current) => ({
           ...current,
           state: "failed",
-          failureSummary: NO_TOOLCHAIN_SUMMARY,
-          diagnostics: withFailureReason([], NO_TOOLCHAIN_SUMMARY),
+          failureSummary: noToolchainSummary(defaultToolchain),
+          diagnostics: withFailureReason([], noToolchainSummary(defaultToolchain)),
         }));
         return;
       }
@@ -1703,9 +1717,11 @@ export const make = Effect.gen(function* () {
           generation,
           production,
           summary:
-            selection.driver === "tectonic"
+            // A Tectonic that is installed but broken says why, ahead of
+            // the advice to install it.
+            selection.driver === "tectonic" && toolchain.unusable === undefined
               ? (selection.error ?? NO_TOOLCHAIN_SUMMARY)
-              : NO_TOOLCHAIN_SUMMARY,
+              : noToolchainSummary(toolchain),
           diagnostics: [],
         });
         return;
@@ -1765,10 +1781,13 @@ export const make = Effect.gen(function* () {
         yield* packageInstaller.unresolvedFiles({ binDirectory: managedBinDirectory, files: [] });
         if (yield* isSuperseded(key, generation)) return;
       }
+      // Any driver found by absolute path leads its own engines, not only the
+      // managed one: a TeX Live `latexmk` behind MiKTeX on PATH must not run
+      // MiKTeX's `pdflatex`.
       const environment = latexEngineEnvironment({
         base: TEX_OUTPUT_ENVIRONMENT,
         hostEnvironment,
-        binDirectory: managedBinDirectory,
+        binDirectory: latexDriverBinDirectory(toolchain, path),
         pathDelimiter,
       });
       // Every package this build has already asked for, so one no repository

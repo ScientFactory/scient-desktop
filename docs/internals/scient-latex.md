@@ -573,11 +573,43 @@ nowhere fails with `ENOENT` and the probe reads that as absent. The Windows
 other case — a shim that does resolve but cannot find what it wraps — so that
 its diagnostic is not misread as "found."
 
+The first `latexmk` on `PATH` is not always one that runs. MiKTeX's
+`latexmk.exe` needs a Perl it does not ship, so a computer with MiKTeX ahead of
+TeX Live on `PATH` used to report no LaTeX at all. When the bare `latexmk`
+fails, the probe tries every `latexmk` on `PATH` by its own absolute path
+(relative entries resolved against the server's directory), then, on Windows,
+the default install folders: `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64`,
+`%ProgramFiles%\MiKTeX\miktex\bin\x64`, and `%SystemDrive%\texlive\<year>\bin\{windows,win64,win32}`
+(newest year first). Nothing is skipped as "already tried": the bare spawn's
+resolution is cached and cannot say which file it ran, so the copy reported is
+always the copy probed. On Windows only `latexmk.exe` counts, because builds
+start the driver without a shell and could never run a `.cmd`/`.bat`
+launcher. The default folders also cover a `PATH` that this process inherited
+before the distribution was installed. A driver found by absolute path leads
+its own child's `PATH` (`latexDriverBinDirectory`), so TeX Live's `latexmk`
+drives TeX Live's `pdflatex`, not MiKTeX's. Only Scient's own distribution is
+ever extended by package installs; a system driver found this way is not.
+
+A driver that exists but does not answer (non-zero exit or a 10-second
+timeout) is recorded in the status's `unusable` list with the first line of
+its complaint, the user's home folder written as `~`, but only when no driver
+was found; a broken Tectonic is recorded the same way. The setup card shows
+the full path; the build's failure summary names only the distribution and
+file ("MiKTeX's latexmk.exe did not run: …") because it also reaches agents,
+whose copy of the status carries file names only. A driver that fails to
+spawn, or a Windows shim that exits 9009, stays "absent".
+
+Discovery may take several bounded probes, longer than one status request
+waits. It therefore runs once, in a fiber owned by the service: callers join
+it, a caller that gives up stops waiting rather than stopping discovery, and
+the cache's five-minute freshness counts from when discovery finished. A
+refresh that joins a discovery started before it was asked for runs another
+afterwards.
+
 The probe result is cached for `PROBE_CACHE_TTL_MS = 5 minutes` per server
-process. Every build and every status poll asks for the toolchain, so the
-cache is filled behind a single-permit `Semaphore`: one fiber runs the actual
-subprocess probe, and every fiber that arrives while it is in flight reads the
-answer that fiber leaves behind instead of shelling out again.
+process. Every build and every status poll asks for the toolchain, so one
+discovery runs at a time, and every caller that arrives while it is in flight
+joins it and reads the answer it leaves behind instead of shelling out again.
 
 The same cached observation independently probes `pdflatex`, `xelatex`, and
 `lualatex` with bounded `--version` processes when the active driver is latexmk.

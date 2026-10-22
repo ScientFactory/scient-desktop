@@ -3522,6 +3522,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   opacity: 0.75;
 }
 
+/* Names a Windows path or a tool's own words, which may have no break points. */
+.scient-latex-placeholder-detail {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .scient-latex-progress {
   overflow: hidden;
   width: 14rem;

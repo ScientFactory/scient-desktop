@@ -100,6 +100,15 @@ const providerVisibleToolchain = (
           toolchain.executable === null
             ? null
             : (toolchain.executable.split(/[\\/]/u).at(-1) ?? null),
+        ...(toolchain.unusable === undefined
+          ? {}
+          : {
+              // The reason already has the home folder redacted at its source.
+              unusable: toolchain.unusable.map((entry) => ({
+                ...entry,
+                executable: entry.executable.split(/[\\/]/u).at(-1) ?? entry.executable,
+              })),
+            }),
       };
 
 const isBuildActive = (snapshot: ScientLatexBuildSnapshot): boolean =>

@@ -11,6 +11,7 @@ on:
       - "apps/server/src/scient/latex/LatexManagedToolchain.ts"
       - "apps/server/src/scient/latex/LatexPackageInstaller.ts"
       - "apps/server/src/scient/latex/LatexSyncTex.ts"
+      - "apps/server/src/scient/latex/LatexToolchain.ts"
       - "apps/server/src/scient/latex/SyncTexRuntime.ts"
       - "apps/server/src/scient/latex/latexCommand.ts"
       - "apps/server/src/scient/latex/managedLatexInstall.ts"

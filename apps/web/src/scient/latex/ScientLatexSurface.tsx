@@ -2116,6 +2116,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           toolchainMissing={status.toolchainMissing}
           requiredCompiler={compilerUnavailable ? selectedCompiler : null}
           downloadBytes={compilerState.report?.downloadBytes ?? null}
+          unusableToolchain={
+            build.toolchain?.unusable?.[0] ?? compilerState.report?.unusable?.[0] ?? null
+          }
           disabled={
             status.offline || status.busy || compilerEditBlocked || renaming || target === null
           }
