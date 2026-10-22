@@ -33,6 +33,8 @@ import {
 import type { ResolveLatexSourceOwner } from "./latexVisualSelection";
 import { projectVisualNavigation, type LatexSourceNavigation } from "./latexSourceNavigation";
 import { toastManager } from "~/components/ui/toast";
+import { beginScientUiOperation } from "~/scient/analytics/client";
+import { createVisualEditAnalytics } from "./visualEditAnalytics";
 
 interface FileState {
   data: VisualProjectFile | null;
@@ -352,6 +354,18 @@ function ProjectFileSession(props: {
 
 /** One editor for the compiled root, with revision-checked sessions for its source files. */
 export function LatexProjectVisualEditor(props: Props) {
+  const analytics = useRef<ReturnType<typeof createVisualEditAnalytics> | null>(null);
+  const environmentId = props.environmentId;
+  useEffect(() => {
+    const observer = createVisualEditAnalytics(() =>
+      beginScientUiOperation(environmentId, "latex-visual-edit"),
+    );
+    analytics.current = observer;
+    return () => {
+      analytics.current = null;
+      observer.dispose();
+    };
+  }, [environmentId]);
   const [states, setStates] = useState(new Map<string, FileState>());
   const registerSaveProject = props.registerSaveProject;
   useEffect(() => {
@@ -572,6 +586,7 @@ export function LatexProjectVisualEditor(props: Props) {
   };
   const onEdit: LatexVisualEditorProps["onEdit"] = (request) => {
     const refuse = (reason: string): LatexVisualEditOutcome => {
+      analytics.current?.refused();
       setEditError(reason);
       return { accepted: false, reason };
     };
@@ -620,6 +635,11 @@ export function LatexProjectVisualEditor(props: Props) {
         const outcome = state.applyEdit(edit);
         if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
       }
+      const lease =
+        path === props.relativePath
+          ? props.documentPersistence?.find((item) => item.target.relativePath === path)
+          : state.persistence;
+      if (lease) analytics.current?.accepted(lease, edit.basedOnVersion);
       const live = state.live();
       if (!live) throw new Error("An accepted LaTeX source owner became unavailable.");
       nextFiles.set(path, live);
