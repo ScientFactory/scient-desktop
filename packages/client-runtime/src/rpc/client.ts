@@ -72,6 +72,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeAnalysisRuns
   | typeof WS_METHODS.subscribeComputeSessions
   | typeof WS_METHODS.subscribeDocumentBindingChanges
+  // SCIENT-FORK:START — Scient Extensions change stream.
+  | typeof WS_METHODS.extensionsSubscribeChanges
+  // SCIENT-FORK:END
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes

@@ -357,6 +357,47 @@ describe("scient_document_export", () => {
     }),
   );
 
+  it.effect.each([false, true])(
+    "publishes an observed output and retains the immutable revision when a competing output changes, changed=%s",
+    (changedDuringExport) =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(setup);
+        yield* Effect.promise(() => writeFixtureFile(root, "out/report.pdf", "previous"));
+        const { effect, store } = run(
+          { sourcePath: "notes/report.md", outputPath: "out/report.pdf" },
+          { root },
+        );
+        if (!changedDuringExport) {
+          expect(yield* effect).toMatchObject({
+            source: publishedSource,
+            outputPath: "out/report.pdf",
+          });
+          expect(
+            yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(root, "out/report.pdf"))),
+          ).toEqual(Buffer.from(minimalPdf("document-page")));
+          return;
+        }
+        store.publishPdf.mockImplementation(() =>
+          Effect.promise(async () => {
+            await NodeFSP.writeFile(NodePath.join(root, "out/report.pdf"), "outside D");
+            return publishedSource;
+          }),
+        );
+        const error = yield* Effect.flip(effect);
+        expect(error).toMatchObject({
+          code: "partial-publication",
+          publishedSource,
+          outputPath: "out/report.pdf",
+          publicationOutcome: "unchanged",
+        });
+        expect(error.mutationId).toContain("markdown-pdf-output:");
+        const bytes = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(root, "out/report.pdf")),
+        );
+        expect(bytes.toString()).toBe("outside D");
+      }),
+  );
+
   it.effect("keeps a published revision when the workspace changes before the write", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(setup);

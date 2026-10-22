@@ -26,6 +26,14 @@ import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileError,
+  ProjectRenameFileError,
+  ProjectListFileVersionsResult,
+  ProjectResolveFileMutationInput,
+  ProjectResolveFileMutationResult,
+  ProjectReadFileResult,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
@@ -37,6 +45,221 @@ const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContents
 const decodeFileWatchEvent = Schema.decodeUnknownSync(ProjectFileWatchEvent);
 const decodeListDirectoryInput = Schema.decodeUnknownSync(ProjectListDirectoryInput);
 const decodeListDirectoryResult = Schema.decodeUnknownSync(ProjectListDirectoryResult);
+
+describe("retained file mutation contracts", () => {
+  it("rejects empty mutation identities while allowing callers without an identity", () => {
+    const common = { cwd: "/workspace", relativePath: "notes.md" };
+    const write = Schema.decodeUnknownSync(ProjectWriteFileInput);
+    const rename = Schema.decodeUnknownSync(ProjectRenameFileInput);
+    const remove = Schema.decodeUnknownSync(ProjectDeleteFileInput);
+    const writeInput = { ...common, contents: "saved" };
+    const renameInput = { ...common, destinationRelativePath: "renamed.md" };
+    const deleteInput = { ...common, expectedRevision: "revision-1" };
+    expect(write(writeInput)).toEqual(writeInput);
+    expect(rename(renameInput)).toEqual(renameInput);
+    expect(remove(deleteInput)).toEqual(deleteInput);
+    expect(() => write({ ...writeInput, mutationId: " " })).toThrow();
+    expect(() => rename({ ...renameInput, mutationId: " " })).toThrow();
+    expect(() => remove({ ...deleteInput, mutationId: " " })).toThrow();
+  });
+
+  it("round trips recovery viewer paths through mutation errors", () => {
+    const context = {
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure: "recovery_required" as const,
+      mutationId: "mutation-1",
+      publicationOutcome: "retained-attention" as const,
+      recoveryId: "recovery-1",
+      retainedPaths: ["/workspace/.scient/retained/one", "/workspace/.scient/retained/two"],
+    };
+    expect(
+      Schema.decodeUnknownSync(ProjectReadFileError)(
+        Schema.encodeSync(ProjectReadFileError)(new ProjectReadFileError(context)),
+      ),
+    ).toMatchObject(context);
+    expect(
+      Schema.decodeUnknownSync(ProjectWriteFileError)(
+        Schema.encodeSync(ProjectWriteFileError)(new ProjectWriteFileError(context)),
+      ),
+    ).toMatchObject(context);
+    expect(
+      Schema.decodeUnknownSync(ProjectDeleteFileError)(
+        Schema.encodeSync(ProjectDeleteFileError)(new ProjectDeleteFileError(context)),
+      ),
+    ).toMatchObject(context);
+    const rename = new ProjectRenameFileError({
+      ...context,
+      destinationRelativePath: "renamed.md",
+    });
+    expect(
+      Schema.decodeUnknownSync(ProjectRenameFileError)(
+        Schema.encodeSync(ProjectRenameFileError)(rename),
+      ),
+    ).toMatchObject(context);
+  });
+
+  it.each([
+    "target_changed",
+    "recovery_required",
+    "mutation_unavailable",
+    "mutation_intent_conflict",
+  ] as const)("does not invent publication authority while decoding %s", (failure) => {
+    const decode = Schema.decodeUnknownSync(ProjectWriteFileError);
+    const legacy = decode({
+      _tag: "ProjectWriteFileError",
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure,
+      message: "Publication refused.",
+    });
+    expect(legacy.publicationOutcome).toBeUndefined();
+    for (const publicationOutcome of ["unchanged", "retained-attention"] as const) {
+      const encoded = Schema.encodeSync(ProjectWriteFileError)(
+        new ProjectWriteFileError({
+          cwd: "/workspace",
+          relativePath: "notes.md",
+          failure,
+          mutationId: "owned-intent",
+          publicationOutcome,
+        }),
+      );
+      expect(decode(encoded)).toMatchObject({
+        failure,
+        mutationId: "owned-intent",
+        publicationOutcome,
+      });
+    }
+    expect(() =>
+      decode({
+        ...legacy,
+        publicationOutcome: "probably-unchanged",
+      }),
+    ).toThrow();
+  });
+
+  it("preserves retained revisions and an unlimited quota without inventing a limit", () => {
+    const result = {
+      versions: [
+        {
+          versionId: "version-1",
+          mutationId: "mutation-1",
+          retainedPath: "/workspace/.scient/retained/one",
+          revision: null,
+          byteLength: 7,
+          retainedAt: 123,
+        },
+      ],
+      retainedBytes: 7,
+      limitBytes: null,
+      attention: null,
+    };
+    expect(Schema.decodeUnknownSync(ProjectListFileVersionsResult)(result)).toEqual(result);
+  });
+
+  it("carries durable attention on both authoritative reads and version inventory", () => {
+    const attention = {
+      recoveryId: "recovery-1",
+      mutationId: "mutation-1",
+      retainedPaths: ["/workspace/.scient/retained/one"],
+      message: "Review the retained publication.",
+    };
+    expect(
+      Schema.decodeUnknownSync(ProjectReadFileResult)({
+        relativePath: "notes.md",
+        contents: "current",
+        byteLength: 7,
+        truncated: false,
+        revision: "revision-1",
+        publicationAttention: attention,
+      }).publicationAttention,
+    ).toEqual(attention);
+    expect(
+      Schema.decodeUnknownSync(ProjectListFileVersionsResult)({
+        versions: [],
+        retainedBytes: 0,
+        limitBytes: null,
+        attention,
+      }).attention,
+    ).toEqual(attention);
+  });
+
+  it.each(["revision-1", null])(
+    "requires an explicit reviewed current revision or absence for acceptance: %s",
+    (currentRevision) => {
+      const input = {
+        cwd: "/workspace",
+        relativePath: "notes.md",
+        recoveryId: "recovery-1",
+        currentRevision,
+        choice: "accept-current" as const,
+      };
+      const decode = Schema.decodeUnknownSync(ProjectResolveFileMutationInput);
+      expect(decode(Schema.encodeSync(ProjectResolveFileMutationInput)(input))).toEqual(input);
+      const result = { recoveryId: input.recoveryId, revision: currentRevision };
+      expect(
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)(
+          Schema.encodeSync(ProjectResolveFileMutationResult)(result),
+        ),
+      ).toEqual(result);
+      expect(() => decode({ ...input, recoveryId: undefined })).toThrow();
+      expect(() => decode({ ...input, currentRevision: undefined })).toThrow();
+      expect(() => decode({ ...input, currentRevision: " " })).toThrow();
+      expect(() => decode({ ...input, choice: "overwrite" })).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+          ...result,
+          revision: undefined,
+        }),
+      ).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+          ...result,
+          revision: "",
+        }),
+      ).toThrow();
+    },
+  );
+
+  it("does not extend reviewed absence to source reads or revision-conflict metadata", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(ProjectReadFileResult)({
+        relativePath: "notes.md",
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+        revision: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(ProjectWriteFileError)({
+        _tag: "ProjectWriteFileError",
+        cwd: "/workspace",
+        relativePath: "notes.md",
+        failure: "revision_conflict",
+        message: "Current file differs.",
+        currentRevision: null,
+      }),
+    ).toThrow();
+  });
+
+  it("distinguishes authoritative pathname absence from ordinary not-found read failures", () => {
+    const input = {
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure: "operation_failed" as const,
+      reason: "not_found" as const,
+    };
+    const decode = Schema.decodeUnknownSync(ProjectReadFileError);
+    const encode = Schema.encodeSync(ProjectReadFileError);
+    expect(decode(encode(new ProjectReadFileError(input))).currentMissing).toBeUndefined();
+    const missing = new ProjectReadFileError({ ...input, currentMissing: true });
+    expect(decode(encode(missing))).toMatchObject({ ...input, currentMissing: true });
+    for (const currentMissing of [false, null]) {
+      expect(() => decode({ ...encode(missing), currentMissing })).toThrow();
+    }
+  });
+});
 
 describe("project file watch events", () => {
   it("carries only a readiness or change hint and never file contents", () => {

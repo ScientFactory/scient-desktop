@@ -1,7 +1,12 @@
-import type { SkillInvocationPolicy, SkillRelease } from "@scientfactory/scient-skills";
+import {
+  skillReleaseKey,
+  type SkillInvocationPolicy,
+  type SkillRelease,
+  type SkillReleaseRef,
+} from "@scientfactory/scient-skills";
 
 import type { ScientSkillPolicySnapshot } from "./ScientSkillPolicy.ts";
-import type { ScientSkillRegistryShape } from "./ScientSkillRegistry.ts";
+import type { ScientSkillCatalogView } from "./ScientSkillRegistry.ts";
 
 export interface EffectiveUserSkillPolicy {
   readonly release: SkillRelease;
@@ -10,16 +15,23 @@ export interface EffectiveUserSkillPolicy {
   readonly defaultActive: boolean;
 }
 
-const preferenceKey = (release: { readonly id: string; readonly origin: string }): string =>
-  `${release.origin}:${release.id}`;
+/**
+ * A trusted Scient app update keeps the user's choice for a stable skill id.
+ * Any other origin (add-ons) binds the choice to the exact reviewed release:
+ * changed bytes or versions need a fresh activation, even under one origin.
+ */
+const preferenceKey = (release: SkillReleaseRef): string =>
+  release.origin === "scient"
+    ? `scient:${release.id}`
+    : `${release.origin}:${skillReleaseKey(release)}`;
 
 /**
  * Resolves the single effective personal policy used by management and delivery.
- * User choices follow a stable skill within one origin; runtime authority remains
- * pinned to the exact release currently present in the reviewed catalog.
+ * Runtime authority remains pinned to the exact release currently present in
+ * the reviewed catalog.
  */
 export function resolveEffectiveUserSkillPolicies(
-  registry: ScientSkillRegistryShape,
+  registry: ScientSkillCatalogView,
   snapshot: ScientSkillPolicySnapshot,
 ): ReadonlyArray<EffectiveUserSkillPolicy> {
   const preferenceByKey = new Map(

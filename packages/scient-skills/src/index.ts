@@ -34,6 +34,7 @@ export {
   type ProjectSkillLockReadResult,
 } from "./projectLock.ts";
 export {
+  isStrictSemver,
   loadEmbeddedSkillRelease,
   loadProjectSkillRelease,
   loadSkillRelease,

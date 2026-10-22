@@ -40,6 +40,9 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+// SCIENT-FORK:START — Scient Extensions connectors.
+import type { McpConnectorRegistrationReporter } from "@t3tools/provider-core/server/mcpSession";
+// SCIENT-FORK:END
 
 import {
   advanceOpenCodePromptAdmission,
@@ -617,6 +620,9 @@ describe("OpenCodeAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-opencode",
           capabilities,
+          // SCIENT-FORK:START — Scient Extensions connectors.
+          connectors: [],
+          // SCIENT-FORK:END
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         let guidanceCapabilities: ReadonlySet<string> | undefined;
@@ -684,6 +690,142 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
     ),
   );
+
+  // SCIENT-FORK:START — Scient Extensions connectors.
+  it.effect(
+    "adds each connector beside Scient's server and reports the ones OpenCode did not connect",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const suffix = "connectors";
+          const threadId = ThreadId.make(`thread-opencode-${suffix}`);
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          const reports: Array<unknown> = [];
+          let begins = 0;
+          yield* mcpSessions.set({
+            environmentId: EnvironmentId.make(suffix),
+            threadId,
+            providerSessionId: suffix,
+            providerInstanceId: ProviderInstanceId.make(`opencode-${suffix}`),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer synthetic-opencode",
+            capabilities: new Set(),
+            connectors: [
+              {
+                connectorId: "connector-github",
+                serverName: "github",
+                displayName: "GitHub",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-github",
+              },
+              {
+                connectorId: "connector-linear",
+                serverName: "linear",
+                displayName: "Linear",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+              },
+              {
+                connectorId: "connector-notion",
+                serverName: "notion",
+                displayName: "Notion",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-notion",
+              },
+              {
+                connectorId: "connector-sentry",
+                serverName: "sentry",
+                displayName: "Sentry",
+                url: "http://127.0.0.1:43123/mcp/connectors/connector-sentry",
+              },
+            ],
+            beginConnectorRegistration: Effect.sync((): McpConnectorRegistrationReporter => {
+              begins++;
+              return (outcome) => Effect.sync(() => void reports.push(outcome));
+            }),
+          });
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+          const added: Array<unknown> = [];
+          let prompted = false;
+          const nativeEvents = asyncEventStream();
+          const h = yield* makeOpenCodeRuntimeHarness(
+            suffix,
+            "connectors-native",
+            {
+              event: {
+                subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                  options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                    once: true,
+                  });
+                  return { stream: nativeEvents.stream };
+                },
+              },
+              mcp: {
+                add: async (input: { readonly name: string }) => {
+                  added.push(input);
+                  // An unreachable connector must not stop the session.
+                  if (input.name === "github") throw new Error("connector unreachable");
+                  // A 200 answer still names failed or unusable servers.
+                  if (input.name === "notion")
+                    return { data: { notion: { status: "failed", error: "connection refused" } } };
+                  if (input.name === "sentry")
+                    return { data: { sentry: { status: "needs_auth" } } };
+                  return { data: { [input.name]: { status: "connected" } } };
+                },
+              },
+              session: {
+                ...nativePermissionPeer(),
+                create: async () => ({
+                  data: { id: "connectors-native", time: { created: 1, updated: 1 } },
+                }),
+                promptAsync: async () => {
+                  prompted = true;
+                  return { data: true };
+                },
+                abort: async () => ({ data: true }),
+                children: async () => ({ data: [] }),
+              },
+            },
+            false,
+          );
+          yield* h.startTurn();
+          const remote = (url: string) => ({
+            type: "remote",
+            url,
+            headers: { Authorization: "Bearer synthetic-opencode" },
+            oauth: false,
+          });
+          assert.deepEqual(added, [
+            { name: "t3-code", config: remote("http://127.0.0.1:43123/mcp") },
+            {
+              name: "github",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-github"),
+            },
+            {
+              name: "linear",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-linear"),
+            },
+            {
+              name: "notion",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-notion"),
+            },
+            {
+              name: "sentry",
+              config: remote("http://127.0.0.1:43123/mcp/connectors/connector-sentry"),
+            },
+          ]);
+          assert.isTrue(prompted);
+          assert.equal(begins, 1);
+          assert.deepEqual(reports, [
+            {
+              withheld: [
+                { serverName: "github", reason: "registration-failed" },
+                { serverName: "notion", reason: "registration-failed" },
+                { serverName: "sentry", reason: "registration-failed" },
+              ],
+            },
+          ]);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+      ),
+  );
+  // SCIENT-FORK:END
 
   it.effect.each(
     (["completed", "failed", "unresolved", "unavailable", "reconnect"] as const).map((ending) => ({

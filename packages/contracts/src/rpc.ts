@@ -253,6 +253,15 @@ import {
   ProjectRenameFileError,
   ProjectRenameFileInput,
   ProjectRenameFileResult,
+  ProjectDeleteFileError,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
+  ProjectListFileVersionsInput,
+  ProjectListFileVersionsResult,
+  ProjectDiscardFileVersionInput,
+  ProjectDiscardFileVersionResult,
+  ProjectResolveFileMutationInput,
+  ProjectResolveFileMutationResult,
   ProjectFileWatchEvent,
   ProjectSubscribeFileChangesInput,
   ProjectSearchContentsError,
@@ -416,6 +425,26 @@ import {
   WsProviderSkillsSetEnabledRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  SCIENT_EXTENSION_WS_METHODS,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsListRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsProviderPluginsActRpc,
+} from "./scient/extensionRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
 import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
@@ -468,6 +497,10 @@ export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
   projectsRenameFile: "projects.renameFile",
+  projectsDeleteFile: "projects.deleteFile",
+  projectsListFileVersions: "projects.listFileVersions",
+  projectsDiscardFileVersion: "projects.discardFileVersion",
+  projectsResolveFileMutation: "projects.resolveFileMutation",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -481,6 +514,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient skill methods.
   ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient extensions methods.
+  ...SCIENT_EXTENSION_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -1357,6 +1394,30 @@ const WsProjectsRenameFileRpc = Rpc.make(WS_METHODS.projectsRenameFile, {
   error: Schema.Union([ProjectRenameFileError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsDeleteFileRpc = Rpc.make(WS_METHODS.projectsDeleteFile, {
+  payload: ProjectDeleteFileInput,
+  success: ProjectDeleteFileResult,
+  error: Schema.Union([ProjectDeleteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsListFileVersionsRpc = Rpc.make(WS_METHODS.projectsListFileVersions, {
+  payload: ProjectListFileVersionsInput,
+  success: ProjectListFileVersionsResult,
+  error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsDiscardFileVersionRpc = Rpc.make(WS_METHODS.projectsDiscardFileVersion, {
+  payload: ProjectDiscardFileVersionInput,
+  success: ProjectDiscardFileVersionResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsResolveFileMutationRpc = Rpc.make(WS_METHODS.projectsResolveFileMutation, {
+  payload: ProjectResolveFileMutationInput,
+  success: ProjectResolveFileMutationResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsSubscribeFileChangesRpc = Rpc.make(WS_METHODS.projectsSubscribeFileChanges, {
   payload: ProjectSubscribeFileChangesInput,
   success: ProjectFileWatchEvent,
@@ -2176,6 +2237,10 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsSubscribeDocumentBindingChangesRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRenameFileRpc,
+  WsProjectsDeleteFileRpc,
+  WsProjectsListFileVersionsRpc,
+  WsProjectsDiscardFileVersionRpc,
+  WsProjectsResolveFileMutationRpc,
   WsAnalysisInspectRuntimesRpc,
 );
 
@@ -2268,6 +2333,26 @@ export const WsDeviceAndTelemetryRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
 );
 
+// SCIENT-FORK:START — Scient extensions group.
+export const WsExtensionsRpcGroup = RpcGroup.make(
+  WsExtensionsListRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsProviderPluginsActRpc,
+);
+// SCIENT-FORK:END
+
 export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsServerManagementRpcGroup,
   WsRepositoryRpcGroup,
@@ -2275,4 +2360,7 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
+  // SCIENT-FORK:START — Scient extensions group.
+  WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 ).middleware(RpcScopeAuthorization);

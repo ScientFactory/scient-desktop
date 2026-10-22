@@ -6,6 +6,9 @@ import {
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
   WsScientificRpcGroup,
+  // SCIENT-FORK:START — Scient extensions RPCs.
+  WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
@@ -73,6 +76,7 @@ import {
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  ProjectFilePublicationOutcome,
   type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
@@ -109,6 +113,7 @@ import {
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
+  ProjectDeleteFileError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -297,6 +302,19 @@ import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntime
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  ConnectorRuntime,
+  ExtensionDeliveryReceipts,
+  ExtensionsDiscover,
+  ProviderPluginManagement,
+  ScientPluginRegistry,
+} from "./scient/extensions/ExtensionsServices.ts";
+import {
+  ExtensionsChangeFeed,
+  makeExtensionsRpcHandlers,
+} from "./scient/extensions/ExtensionsRpcHandlers.ts";
+// SCIENT-FORK:END
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
 
@@ -403,6 +421,12 @@ function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
 
+const isWorkspaceEntriesError = Schema.is(WorkspaceEntries.WorkspaceEntriesError);
+const isWorkspaceListDirectoryError = Schema.is(
+  WorkspaceEntries.WorkspaceEntriesListDirectoryError,
+);
+const isProjectFilePublicationOutcome = Schema.is(ProjectFilePublicationOutcome);
+
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
   readonly failure: ProjectEntriesFailure;
   readonly normalizedCwd?: string;
@@ -489,11 +513,54 @@ function projectFileFailureContext(
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly mutationId?: string;
+  readonly publicationOutcome?: ProjectFilePublicationOutcome;
+  readonly recoveryId?: string;
+  readonly retainedPaths?: ReadonlyArray<string>;
   readonly reason?: ProjectFileErrorReason;
   readonly osErrorCode?: string;
 } {
+  const mutationContext = {
+    ...("mutationId" in error && typeof error.mutationId === "string"
+      ? { mutationId: error.mutationId }
+      : {}),
+    ...("publicationOutcome" in error && isProjectFilePublicationOutcome(error.publicationOutcome)
+      ? { publicationOutcome: error.publicationOutcome }
+      : {}),
+  };
   switch (error._tag) {
+    case "WorkspaceRootNotExistsError":
+      return {
+        failure: "operation_failed",
+        resolvedPath: error.normalizedWorkspaceRoot,
+        operation: "realpath-workspace-root",
+        operationPath: error.normalizedWorkspaceRoot,
+        reason: "not_found",
+        osErrorCode: "ENOENT",
+      };
+    case "WorkspaceRootCreateFailedError":
+    case "WorkspaceRootStatFailedError": {
+      const osErrorCode = projectFileOsErrorCode(error.cause);
+      const reason = projectFileErrorReason(osErrorCode);
+      return {
+        failure: "operation_failed",
+        resolvedPath: error.normalizedWorkspaceRoot,
+        operation: error._tag === "WorkspaceRootCreateFailedError" ? "make-directory" : "stat",
+        operationPath: error.normalizedWorkspaceRoot,
+        ...(reason ? { reason } : {}),
+        ...(osErrorCode ? { osErrorCode } : {}),
+      };
+    }
+    case "WorkspaceRootNotDirectoryError":
+      return {
+        failure: "operation_failed",
+        resolvedPath: error.normalizedWorkspaceRoot,
+        operation: "stat",
+        operationPath: error.normalizedWorkspaceRoot,
+        osErrorCode: "ENOTDIR",
+      };
     case "WorkspacePathOutsideRootError":
+      return { failure: "workspace_path_outside_root", ...mutationContext };
     case "UnknownWorkspaceError":
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError": {
@@ -502,8 +569,11 @@ function projectFileFailureContext(
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
+        ...mutationContext,
         operation: error.operation,
         operationPath: error.operationPath,
+        ...(error.recoveryId === undefined ? {} : { recoveryId: error.recoveryId }),
+        ...(error.retainedPaths === undefined ? {} : { retainedPaths: error.retainedPaths }),
         ...(reason ? { reason } : {}),
         ...(osErrorCode ? { osErrorCode } : {}),
       };
@@ -512,19 +582,43 @@ function projectFileFailureContext(
       return {
         failure: "resolved_path_outside_root",
         resolvedPath: error.resolvedPath,
+        ...mutationContext,
         resolvedWorkspaceRoot: error.resolvedWorkspaceRoot,
       };
     case "WorkspacePathNotFileError":
-      return { failure: "path_not_file", resolvedPath: error.resolvedPath };
+      return { failure: "path_not_file", resolvedPath: error.resolvedPath, ...mutationContext };
     case "WorkspaceFileExistsError":
-      return { failure: "path_exists", resolvedPath: error.resolvedPath };
+      return { failure: "path_exists", resolvedPath: error.resolvedPath, ...mutationContext };
     case "WorkspaceBinaryFileError":
-      return { failure: "binary_file", resolvedPath: error.resolvedPath };
+      return { failure: "binary_file", resolvedPath: error.resolvedPath, ...mutationContext };
     case "WorkspaceFileRevisionConflictError":
       return {
         failure: "revision_conflict",
         resolvedPath: error.resolvedPath,
+        ...mutationContext,
         currentRevision: error.currentRevision,
+      };
+    case "WorkspaceFileTargetChangedError":
+      return { failure: "target_changed", resolvedPath: error.resolvedPath, ...mutationContext };
+    case "WorkspaceFileMutationUnavailableError":
+      return {
+        failure: "mutation_unavailable",
+        resolvedPath: error.resolvedPath,
+        ...mutationContext,
+      };
+    case "WorkspaceFileMutationIntentConflictError":
+      return {
+        failure: "mutation_intent_conflict",
+        resolvedPath: error.resolvedPath,
+        ...mutationContext,
+      };
+    case "WorkspaceFileRecoveryRequiredError":
+      return {
+        failure: "recovery_required",
+        resolvedPath: error.resolvedPath,
+        ...mutationContext,
+        recoveryId: error.recoveryId,
+        retainedPaths: error.retainedPaths,
       };
     default:
       return unexpectedCompatibilityError(error);
@@ -1291,6 +1385,16 @@ const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      // SCIENT-FORK:START — Scient extensions services.
+      const extensionServices = {
+        connectorRuntime: yield* ConnectorRuntime,
+        pluginRegistry: yield* ScientPluginRegistry,
+        discover: yield* ExtensionsDiscover,
+        receipts: yield* ExtensionDeliveryReceipts,
+        providerPlugins: yield* ProviderPluginManagement,
+        changeFeed: yield* ExtensionsChangeFeed,
+      };
+      // SCIENT-FORK:END
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -2897,50 +3001,102 @@ const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
-            workspaceEntries.search(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSearchEntriesError({
-                    cwd: input.cwd,
-                    queryLength: input.query.length,
-                    limit: input.limit,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            workspaceFileSystem
+              .withSettledWorkspaceRead({ cwd: input.cwd }, () =>
+                workspaceEntries.search(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectSearchEntriesError({
+                        cwd: input.cwd,
+                        queryLength: input.query.length,
+                        limit: input.limit,
+                        ...projectEntriesFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProjectSearchEntriesError"
+                    ? cause
+                    : new ProjectSearchEntriesError({
+                        cwd: input.cwd,
+                        queryLength: input.query.length,
+                        limit: input.limit,
+                        ...(isWorkspaceEntriesError(cause)
+                          ? projectEntriesFailureContext(cause)
+                          : { failure: "search_index_search_failed" as const }),
+                        cause,
+                      }),
+                ),
               ),
-            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchContents,
-            workspaceEntries.searchContents(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSearchContentsError({
-                    cwd: input.cwd,
-                    queryLength: input.query.length,
-                    limit: input.limit,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            workspaceFileSystem
+              .withSettledWorkspaceRead({ cwd: input.cwd }, () =>
+                workspaceEntries.searchContents(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectSearchContentsError({
+                        cwd: input.cwd,
+                        queryLength: input.query.length,
+                        limit: input.limit,
+                        ...projectEntriesFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProjectSearchContentsError"
+                    ? cause
+                    : new ProjectSearchContentsError({
+                        cwd: input.cwd,
+                        queryLength: input.query.length,
+                        limit: input.limit,
+                        ...(isWorkspaceEntriesError(cause)
+                          ? projectEntriesFailureContext(cause)
+                          : { failure: "search_index_search_failed" as const }),
+                        cause,
+                      }),
+                ),
               ),
-            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsListEntries,
-            workspaceEntries.list(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectListEntriesError({
-                    ...input,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            workspaceFileSystem
+              .withSettledWorkspaceRead({ cwd: input.cwd }, () =>
+                workspaceEntries.list(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectListEntriesError({
+                        ...input,
+                        ...projectEntriesFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProjectListEntriesError"
+                    ? cause
+                    : new ProjectListEntriesError({
+                        ...input,
+                        ...(isWorkspaceEntriesError(cause)
+                          ? projectEntriesFailureContext(cause)
+                          : { failure: "directory_list_failed" as const }),
+                        cause,
+                      }),
+                ),
               ),
-            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
@@ -2960,6 +3116,11 @@ const layerWsRpc = (
                   new ProjectReadFileError({
                     ...input,
                     ...projectFileFailureContext(cause),
+                    ...(cause._tag === "WorkspaceFileSystemOperationError" &&
+                    "currentMissing" in cause &&
+                    cause.currentMissing === true
+                      ? { currentMissing: true as const }
+                      : {}),
                     cause,
                   }),
               ),
@@ -2976,6 +3137,7 @@ const layerWsRpc = (
                     new ProjectWriteFileError({
                       cwd: input.cwd,
                       relativePath: input.relativePath,
+                      ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
                       ...projectFileFailureContext(cause),
                       cause,
                     }),
@@ -2991,6 +3153,7 @@ const layerWsRpc = (
                 return yield* new ProjectWriteFileError({
                   cwd: input.cwd,
                   relativePath: target.relativePath,
+                  ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
                   failure: "read_only_in_files",
                 });
               }
@@ -3000,6 +3163,7 @@ const layerWsRpc = (
                     new ProjectWriteFileError({
                       cwd: input.cwd,
                       relativePath: input.relativePath,
+                      ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
                       ...projectFileFailureContext(cause),
                       cause,
                     }),
@@ -3011,16 +3175,32 @@ const layerWsRpc = (
         [WS_METHODS.projectsListDirectory]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsListDirectory,
-            workspaceEntries.listDirectory(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectListDirectoryError({
-                    ...input,
-                    ...projectDirectoryFailureContext(cause),
-                    cause,
-                  }),
+            workspaceFileSystem
+              .withSettledWorkspaceRead({ cwd: input.cwd }, () =>
+                workspaceEntries.listDirectory(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectListDirectoryError({
+                        ...input,
+                        ...projectDirectoryFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProjectListDirectoryError"
+                    ? cause
+                    : new ProjectListDirectoryError({
+                        ...input,
+                        ...(isWorkspaceListDirectoryError(cause)
+                          ? projectDirectoryFailureContext(cause)
+                          : { failure: "operation_failed" as const }),
+                        cause,
+                      }),
+                ),
               ),
-            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.projectsSubscribeFileChanges]: (input) =>
@@ -3060,6 +3240,71 @@ const layerWsRpc = (
                     cwd: input.cwd,
                     relativePath: input.relativePath,
                     destinationRelativePath: input.destinationRelativePath,
+                    ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteFile,
+            workspaceFileSystem.deleteFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectDeleteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListFileVersions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListFileVersions,
+            workspaceFileSystem.listFileVersions(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDiscardFileVersion]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDiscardFileVersion,
+            workspaceFileSystem.discardFileVersion(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectWriteFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsResolveFileMutation]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsResolveFileMutation,
+            workspaceFileSystem.resolveFileMutation(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    recoveryId: input.recoveryId,
                     ...projectFileFailureContext(cause),
                     cause,
                   }),
@@ -3409,6 +3654,14 @@ const layerWsRpc = (
           computeGateway,
         }),
       });
+      // SCIENT-FORK:START — Scient extensions RPCs.
+      const handlers7 = makeExtensionsRpcHandlers({
+        observeRpcEffect,
+        observeRpcStream,
+        providerRegistry,
+        ...extensionServices,
+      });
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — compose typed families without a recursive global
       // handler-map inference. Capture all services once above. Authorization and
       // instrumentation remain on ServerWsRpcGroup in RpcServer.make: Effect's
@@ -3422,6 +3675,7 @@ const layerWsRpc = (
         WsInteractiveRpcGroup.toLayer(handlers4),
         WsDeviceAndTelemetryRpcGroup.toLayer(handlers5),
         WsScientificRpcGroup.toLayer(handlers6),
+        WsExtensionsRpcGroup.toLayer(handlers7),
       );
       // SCIENT-FORK:END
     }),

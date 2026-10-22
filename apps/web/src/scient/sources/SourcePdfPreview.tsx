@@ -1,8 +1,11 @@
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+
+import type { AssetUrlState as RuntimeAssetUrlState } from "@t3tools/client-runtime/state/assets";
 import type { AssetUrlState } from "../../assets/assetUrls";
 import { Button } from "../../components/ui/button";
 import { workspacePdfSource } from "../pdf/pdfSource";
@@ -17,6 +20,11 @@ const ScientPdfReader = lazy(() =>
 type SourcePreviewAssetState = AssetUrlState & {
   readonly requestKey: string;
 };
+/** Held without its retry, which the render attaches. */
+type StoredSourcePreviewAsset = RuntimeAssetUrlState & {
+  readonly requestKey: string;
+  readonly waiting?: boolean;
+};
 
 export function SourcePdfPreview(props: {
   readonly readerScope?: string | undefined;
@@ -28,17 +36,28 @@ export function SourcePdfPreview(props: {
 }) {
   const requestKey = `${props.environmentId}\0${props.root}\0${props.sourceId}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
-  const refresh = () => setRequest((current) => current + 1);
-  const [asset, setAsset] = useState<SourcePreviewAssetState>({
+  const authorizationAttempt = useRef(0);
+  const [asset, setAsset] = useState<StoredSourcePreviewAsset>({
     _tag: "Loading",
     requestKey,
-    refresh,
+  });
+  const refresh = useStableCallback(() => {
+    authorizationAttempt.current += 1;
+    setAsset((previous) =>
+      previous._tag === "Loading" ? previous : { ...previous, waiting: true },
+    );
+    setRequest((current) => current + 1);
   });
 
+  // A new document starts loading; a retry of the same one keeps it, waiting.
   const [previousRequest, setPreviousRequest] = useState({ requestKey, request });
   if (previousRequest.requestKey !== requestKey || previousRequest.request !== request) {
     setPreviousRequest({ requestKey, request });
-    setAsset({ _tag: "Loading", requestKey, refresh });
+    setAsset((previous) =>
+      previous.requestKey === requestKey && previous._tag !== "Loading"
+        ? { ...previous, waiting: true }
+        : { _tag: "Loading", requestKey },
+    );
   }
 
   const previewRequest = {
@@ -51,6 +70,7 @@ export function SourcePdfPreview(props: {
   };
   useEffect(() => {
     let current = true;
+    const attempt = authorizationAttempt.current;
     const { attachmentId, environmentId, root, sourceId, requestKey } = previewRequest;
     void readScientSourceAttachmentPreview(environmentId, {
       root,
@@ -58,32 +78,37 @@ export function SourcePdfPreview(props: {
       attachmentId,
     }).then(
       (result) => {
-        if (current) {
+        if (current && attempt === authorizationAttempt.current) {
           setAsset({
             _tag: "Success",
             url: result.url,
             expiresAt: result.expiresAt,
             ...(result.sourcePath ? { sourcePath: result.sourcePath } : {}),
             requestKey,
-            refresh,
           });
         }
       },
       () => {
-        if (current) setAsset({ _tag: "Failure", requestKey, refresh });
+        if (current && attempt === authorizationAttempt.current) {
+          setAsset({ _tag: "Failure", requestKey });
+        }
       },
     );
     return () => {
       current = false;
     };
-  }, [previewRequest, refresh]);
+  }, [previewRequest]);
 
-  const currentAsset: SourcePreviewAssetState =
-    asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey, refresh };
+  const currentAsset: SourcePreviewAssetState = {
+    ...(asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey }),
+    refresh,
+  };
   const sourceRelativePath =
-    currentAsset._tag === "Success" ? (currentAsset.sourcePath ?? null) : null;
+    currentAsset._tag === "Success" && currentAsset.waiting !== true
+      ? (currentAsset.sourcePath ?? null)
+      : null;
 
-  const source =
+  const requestedSource =
     currentAsset._tag === "Success" && sourceRelativePath
       ? workspacePdfSource({
           environmentId: props.environmentId,
@@ -92,6 +117,25 @@ export function SourcePdfPreview(props: {
           relativePath: sourceRelativePath,
         })
       : null;
+  // Keyed by its inputs, not its identity: a reauthorization keeps the open reader.
+  const requestedSourceKey =
+    requestedSource === null
+      ? null
+      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}`;
+  const [retainedSource, setRetainedSource] = useState<{
+    requestKey: string;
+    sourceKey: string;
+    source: NonNullable<typeof requestedSource>;
+  } | null>(null);
+  if (
+    requestedSource !== null &&
+    requestedSourceKey !== null &&
+    (retainedSource?.requestKey !== requestKey || retainedSource.sourceKey !== requestedSourceKey)
+  ) {
+    setRetainedSource({ requestKey, sourceKey: requestedSourceKey, source: requestedSource });
+  }
+  const source =
+    requestedSource ?? (retainedSource?.requestKey === requestKey ? retainedSource.source : null);
   const resolver: PdfSourceResolver = { useResolve: () => currentAsset };
   if (source === null) {
     return (
@@ -105,7 +149,13 @@ export function SourcePdfPreview(props: {
               <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
               <h2>Couldn't open this PDF</h2>
               <p>Scient could not create an authorized preview for this file.</p>
-              <Button size="xs" variant="outline" onClick={refresh}>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={currentAsset.waiting === true}
+                aria-busy={currentAsset.waiting === true}
+                onClick={refresh}
+              >
                 Try again
               </Button>
             </>

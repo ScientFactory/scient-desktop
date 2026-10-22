@@ -104,10 +104,11 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
 ) {}
 
 const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
-  const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
+  const skillRegistry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
 
   const resolveRelease = (
+    registry: ScientSkillRegistry.ScientSkillCatalogView,
     reference: Parameters<typeof resolveExactSkillRelease>[1],
     expectedScope: "project" | "user",
     diagnostics: ScientSkillSessionDiagnostic[],
@@ -134,6 +135,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     "ScientSkillSessionPlanner.resolve",
   )(function* (input) {
     const { snapshot, snapshotIsComplete } = yield* policy.readState;
+    const registry = yield* skillRegistry.current;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
     let projectCatalogReadFailed = false;
     const releases = new Map<
@@ -180,7 +182,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
           });
         } else {
           for (const reference of lock.lock.skills) {
-            const release = resolveRelease(reference, "project", diagnostics);
+            const release = resolveRelease(registry, reference, "project", diagnostics);
             if (release) {
               const key = skillReleaseKey(release);
               if (!releases.has(key)) {

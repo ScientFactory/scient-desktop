@@ -1,8 +1,8 @@
 /**
  * Scient's optional per-instance seams on `ProviderInstance`: voice transcript
- * correction, native skill activation, assisted account connection and
- * app-managed runtime actions. Drivers that leave them absent keep pure T3
- * behaviour.
+ * correction, native skill activation, native plugin management, assisted
+ * account connection and app-managed runtime actions. Drivers that leave them
+ * absent keep pure T3 behaviour.
  */
 import type {
   ModelSelection,
@@ -12,6 +12,8 @@ import type {
   ProviderRuntimeOperationStatus,
   ProviderRuntimePlan,
   ProviderRuntimeSummary,
+  ServerProviderMcpServer,
+  ServerProviderPlugin,
   VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
@@ -39,6 +41,95 @@ export interface ProviderSkillActions {
     readonly scope?: string | undefined;
     readonly enabled: boolean;
   }) => Effect.Effect<{ readonly effectiveEnabled: boolean }, ProviderSkillActionFailure>;
+}
+
+export interface ProviderPluginActionFailure {
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+/** A provider-owned MCP server sign-in waiting for the user's browser. */
+export interface ProviderMcpSignInAttempt {
+  readonly authorizationUrl: string;
+  /**
+   * Settles when the provider reports the sign-in finished. The provider
+   * process that receives the browser callback lives in the scope the attempt
+   * was started in, so the caller keeps that scope open until this settles.
+   */
+  readonly waitForCompletion: Effect.Effect<void, ProviderPluginActionFailure>;
+}
+
+/**
+ * Reads and mutations a provider exposes for its own plugins and MCP servers.
+ * One object belongs to one instance generation: every member reads or
+ * changes the configuration that generation was created with.
+ */
+export interface ProviderPluginActions {
+  /**
+   * A fresh listing of the plugins this generation sees, in `cwd` when given.
+   * Fails unless the provider listed every plugin source.
+   */
+  readonly listPlugins: (input: {
+    readonly cwd?: string | undefined;
+  }) => Effect.Effect<ProviderPluginListing, ProviderPluginActionFailure>;
+  /** Fresh status of one configured MCP server; `undefined` when it is not configured. */
+  readonly readMcpServer: (input: {
+    readonly serverName: string;
+  }) => Effect.Effect<ServerProviderMcpServer | undefined, ProviderPluginActionFailure>;
+  readonly uninstall: (input: {
+    readonly pluginId: string;
+    /** Workspace whose provider inventory lists the plugin. */
+    readonly cwd?: string | undefined;
+  }) => Effect.Effect<void, ProviderPluginActionFailure>;
+  readonly startMcpSignIn: (input: {
+    readonly serverName: string;
+  }) => Effect.Effect<ProviderMcpSignInAttempt, ProviderPluginActionFailure, Scope.Scope>;
+  /** Whether this generation was rebuilt, disabled, or removed. */
+  readonly isRetired: Effect.Effect<boolean>;
+  /** Completes when this generation is retired. */
+  readonly whenRetired: Effect.Effect<void>;
+}
+
+/** A complete plugin listing and when it began, as `nextInventoryReadSequence` orders reads. */
+export interface ProviderPluginListing {
+  readonly plugins: ReadonlyArray<ServerProviderPlugin>;
+  readonly sequence: number;
+}
+
+/**
+ * Provider-native inventory reported outside the status probe: by live
+ * sessions or by bounded inventory enrichment. A report carries only the
+ * fields the provider listed completely; absent fields keep the last report.
+ * With `cwd`, the report is the plugins of that one workspace.
+ */
+export interface ProviderNativeInventory {
+  readonly cwd?: string | undefined;
+  readonly plugins?: ReadonlyArray<ServerProviderPlugin>;
+  readonly mcpServers?: ReadonlyArray<ServerProviderMcpServer>;
+  /**
+   * When the read began (`nextInventoryReadSequence`). A field is applied
+   * only if no read of the same scope that began later was applied already.
+   * Absent means the report is current as it arrives, as live sessions are.
+   */
+  readonly sequence?: number | undefined;
+}
+
+/**
+ * Workspace plugin listing that runs after a workspace scan is published, so
+ * a slow listing never delays the scan. Owned by the instance; its reports
+ * arrive on the instance's native inventory stream with `cwd` set.
+ */
+export interface ProviderWorkspaceInventory {
+  /** A newer scan of `cwd` started: stop any listing still running for it. */
+  readonly cancel: (cwd: string) => Effect.Effect<void>;
+  /** Start a bounded listing of `cwd` in the background, replacing a running one. */
+  readonly refresh: (cwd: string) => Effect.Effect<void>;
+  /**
+   * Stop every queued or running listing of a workspace outside `current`,
+   * the workspaces whose snapshots are published now. `current` is read
+   * under the lock that starts listings, so concurrent scans cannot race it.
+   */
+  readonly retain: (current: Effect.Effect<ReadonlySet<string>>) => Effect.Effect<void>;
 }
 
 export interface ProviderConnectionActionFailure {

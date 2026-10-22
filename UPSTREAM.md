@@ -1041,6 +1041,24 @@ Analytics sends OMP as the gateway's existing `other` provider and is not a moun
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
 
+Scient Extensions owns `apps/server/src/scient/extensions` and
+`apps/web/src/scient/extensions`. Connected services stay on the Scient server:
+agents reach them only through the per-connector proxy route
+`/mcp/connectors/<id>` with their existing thread-scoped MCP credential, and the
+OAuth callback is `/oauth/connectors/callback`. Vendor credentials never enter
+provider config, environment or transcripts. `ProviderSessionManager` adds the
+granted connectors to the same MCP session preparation that delivers `scient`,
+and each V2 adapter or provider package passes them in its own native form; ACP
+sessions always use the stdio bridge. Provider plugin and MCP inventory is read
+from the owning provider (Codex app-server, Claude session init) and mutated only
+through that provider's own API. `scient-extensions-seams.json` inventories the
+owned roots, the anchored `upstreamMounts` in upstream-owned files (RPC
+contracts, authorization and instrumentation, HTTP and WebSocket routes, MCP
+session registry, server secret store, provider registry, drivers, adapters and
+provider packages, settings navigation and the chat header) and the shared
+`scientMounts`; `scripts/scient-seam-check.mjs` checks it with the other
+inventories. See [Scient Extensions](docs/internals/scient-extensions.md).
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
@@ -1351,12 +1369,18 @@ native page handling and focused-guest checks remain authoritative.
 
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
-`packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
-outside those roots. The inherited-host seams are limited to file-preview
+`packages/client-runtime/src/state/scientLatexHttp.ts` as owned contracts and
+transport. The pure source-preserving visual projection lives in
+`packages/shared/src/latexVisual.ts`. Settings and installation helpers, file-editor
+bindings, preview and glyph generators, and standalone selection qualification
+are also Scient-owned files, enumerated in `scient-latex-seams.json`. The inherited-host seams are limited to file-preview
 recognition, the file-panel surface mount, server config and service wiring, and
 the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
+Visual mode reuses the existing controlled file editor and save coordinator;
+preserve the controlled-editor export and optional save debounce rather than
+forking persistence. Its interaction host stays in the source-neutral PDF reader.
 
 Browser HTML-to-PDF export prints the selected live tab through its physical owner:
 `apps/desktop/src/scient/documentExport` for native desktop tabs, or the environment's
@@ -1523,12 +1547,14 @@ The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
 compositor rules and approved shortcuts.
 
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
-retained mutation implementation in `apps/server/src/scient/workspace`. Its two
-additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
-retain that shared ownership with editor saves. macOS packaging, signing and the
-private desktop bootstrap also carry the owned protocol-1 file-exchange helper.
-Keep it outside ASAR, resolve it only from the server host, and preserve journaled
-mechanisms across app updates. No Overleaf routes or UI are mounted yet. See
+retained mutation implementation in `apps/server/src/scient/workspace`. Its
+`WorkspaceFileSystem` methods share physical-file publication ownership with
+editor saves. Desktop resources carry `scient-file-publication` for retained
+publication; macOS also carries the protocol-1 `scient-file-exchange` helper for
+Overleaf volume probes. Staging either helper must preserve the other's files.
+Keep both outside ASAR and resolve them only from the server host. Preserve
+journaled recovery across app updates, including review of ambiguous publication
+boundaries. No Overleaf routes or UI are mounted yet. See
 [Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels

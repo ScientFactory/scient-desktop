@@ -109,6 +109,7 @@ const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<s
       endpoint: "http://127.0.0.1/mcp",
       authorizationHeader: "Bearer selected-skills-fixture",
       capabilities: new Set(["skills:read"]),
+      connectors: [],
     });
     return yield* prepareScientV2SkillTurn({
       threadId,
@@ -230,6 +231,7 @@ it.effect(
         endpoint: "http://127.0.0.1/mcp",
         authorizationHeader: "Bearer stale",
         capabilities: new Set(["skills:read"]),
+        connectors: [],
       });
       const text = yield* prepareScientV2SkillTurn({
         threadId,

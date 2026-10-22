@@ -79,11 +79,12 @@ const compareReleasesForPresentation = (left: SkillRelease, right: SkillRelease)
   left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
 
 const make = Effect.fn("ScientSkillManagement.make")(function* () {
-  const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
+  const skillRegistry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
 
   const listUserSkills = Effect.gen(function* () {
     const snapshot = yield* policy.snapshot;
+    const registry = yield* skillRegistry.current;
     const effectiveByReleaseKey = new Map(
       resolveEffectiveUserSkillPolicies(registry, snapshot).map(
         (effective) => [skillReleaseKey(effective.release), effective] as const,
@@ -127,6 +128,7 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
       ),
     );
     const snapshot = yield* policy.snapshot;
+    const registry = yield* skillRegistry.current;
     const reservedNames = new Set(
       registry.catalog.releases.map((release) => release.name.toLowerCase()),
     );
@@ -192,11 +194,11 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
   const readDocument: ScientSkillManagementShape["readDocument"] = Effect.fn(
     "ScientSkillManagement.readDocument",
   )(function* (releaseKey) {
-    const release = registry.resolveReleaseKey(releaseKey);
+    const release = (yield* skillRegistry.current).resolveReleaseKey(releaseKey);
     if (!release) {
       return yield* new ScientSkillManagementError({
         operation: "readDocument",
-        message: "That exact managed skill release is not available in this Scient build.",
+        message: "That exact managed skill release is not available.",
       });
     }
     return {
@@ -210,11 +212,11 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
   const setUserActivation: ScientSkillManagementShape["setUserActivation"] = Effect.fn(
     "ScientSkillManagement.setUserActivation",
   )(function* (input) {
-    const release = registry.resolveReleaseKey(input.releaseKey);
+    const release = (yield* skillRegistry.current).resolveReleaseKey(input.releaseKey);
     if (!release) {
       return yield* new ScientSkillManagementError({
         operation: "setUserActivation",
-        message: "That exact skill release is not available in this Scient build.",
+        message: "That exact skill release is not available.",
       });
     }
     if (!release.supportedScopes.includes("user")) {

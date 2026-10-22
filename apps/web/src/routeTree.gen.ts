@@ -30,6 +30,8 @@ import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/setting
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsExtensionsRouteImport } from './routes/settings.extensions'
+import { Route as SettingsDocumentsRouteImport } from './routes/settings.documents'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsCustomModelsRouteImport } from './routes/settings.custom-models'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -41,8 +43,16 @@ import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
 import { Route as SettingsSkillsProjectRouteImport } from './routes/settings.skills_.project'
 import { Route as SettingsSkillsExternalRouteImport } from './routes/settings.skills_.external'
+import { Route as SettingsExtensionsInstalledRouteImport } from './routes/settings.extensions_.installed'
+import { Route as SettingsExtensionsAllRouteImport } from './routes/settings.extensions_.all'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as SettingsExtensionsCategoryCategoryRouteImport } from './routes/settings.extensions_.category.$category'
+import { Route as SettingsExtensionsItemServerSplatRouteImport } from './routes/settings.extensions_.item.server.$'
+import { Route as SettingsExtensionsItemPluginPluginIdRouteImport } from './routes/settings.extensions_.item.plugin.$pluginId'
+import { Route as SettingsExtensionsItemConnectorConnectorIdRouteImport } from './routes/settings.extensions_.item.connector.$connectorId'
+import { Route as SettingsExtensionsItemProviderInstanceIdServerServerNameRouteImport } from './routes/settings.extensions_.item.provider.$instanceId.server.$serverName'
+import { Route as SettingsExtensionsItemProviderInstanceIdPluginPluginIdRouteImport } from './routes/settings.extensions_.item.provider.$instanceId.plugin.$pluginId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -150,6 +160,16 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsExtensionsRoute = SettingsExtensionsRouteImport.update({
+  id: '/extensions',
+  path: '/extensions',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsDocumentsRoute = SettingsDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -205,6 +225,17 @@ const SettingsSkillsExternalRoute = SettingsSkillsExternalRouteImport.update({
   path: '/skills/external',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsExtensionsInstalledRoute =
+  SettingsExtensionsInstalledRouteImport.update({
+    id: '/extensions_/installed',
+    path: '/extensions/installed',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsAllRoute = SettingsExtensionsAllRouteImport.update({
+  id: '/extensions_/all',
+  path: '/extensions/all',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -215,6 +246,42 @@ const ChatEnvironmentIdThreadIdRoute =
     id: '/$environmentId/$threadId',
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
+  } as any)
+const SettingsExtensionsCategoryCategoryRoute =
+  SettingsExtensionsCategoryCategoryRouteImport.update({
+    id: '/extensions_/category/$category',
+    path: '/extensions/category/$category',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsItemServerSplatRoute =
+  SettingsExtensionsItemServerSplatRouteImport.update({
+    id: '/extensions_/item/server/$',
+    path: '/extensions/item/server/$',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsItemPluginPluginIdRoute =
+  SettingsExtensionsItemPluginPluginIdRouteImport.update({
+    id: '/extensions_/item/plugin/$pluginId',
+    path: '/extensions/item/plugin/$pluginId',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsItemConnectorConnectorIdRoute =
+  SettingsExtensionsItemConnectorConnectorIdRouteImport.update({
+    id: '/extensions_/item/connector/$connectorId',
+    path: '/extensions/item/connector/$connectorId',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsItemProviderInstanceIdServerServerNameRoute =
+  SettingsExtensionsItemProviderInstanceIdServerServerNameRouteImport.update({
+    id: '/extensions_/item/provider/$instanceId/server/$serverName',
+    path: '/extensions/item/provider/$instanceId/server/$serverName',
+    getParentRoute: () => SettingsRoute,
+  } as any)
+const SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute =
+  SettingsExtensionsItemProviderInstanceIdPluginPluginIdRouteImport.update({
+    id: '/extensions_/item/provider/$instanceId/plugin/$pluginId',
+    path: '/extensions/item/provider/$instanceId/plugin/$pluginId',
+    getParentRoute: () => SettingsRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -234,6 +301,8 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -249,8 +318,16 @@ export interface FileRoutesByFullPath {
   '/settings/voice': typeof SettingsVoiceRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/extensions/all': typeof SettingsExtensionsAllRoute
+  '/settings/extensions/installed': typeof SettingsExtensionsInstalledRoute
   '/settings/skills/external': typeof SettingsSkillsExternalRoute
   '/settings/skills/project': typeof SettingsSkillsProjectRoute
+  '/settings/extensions/category/$category': typeof SettingsExtensionsCategoryCategoryRoute
+  '/settings/extensions/item/connector/$connectorId': typeof SettingsExtensionsItemConnectorConnectorIdRoute
+  '/settings/extensions/item/plugin/$pluginId': typeof SettingsExtensionsItemPluginPluginIdRoute
+  '/settings/extensions/item/server/$': typeof SettingsExtensionsItemServerSplatRoute
+  '/settings/extensions/item/provider/$instanceId/plugin/$pluginId': typeof SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute
+  '/settings/extensions/item/provider/$instanceId/server/$serverName': typeof SettingsExtensionsItemProviderInstanceIdServerServerNameRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -268,6 +345,8 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -284,8 +363,16 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/extensions/all': typeof SettingsExtensionsAllRoute
+  '/settings/extensions/installed': typeof SettingsExtensionsInstalledRoute
   '/settings/skills/external': typeof SettingsSkillsExternalRoute
   '/settings/skills/project': typeof SettingsSkillsProjectRoute
+  '/settings/extensions/category/$category': typeof SettingsExtensionsCategoryCategoryRoute
+  '/settings/extensions/item/connector/$connectorId': typeof SettingsExtensionsItemConnectorConnectorIdRoute
+  '/settings/extensions/item/plugin/$pluginId': typeof SettingsExtensionsItemPluginPluginIdRoute
+  '/settings/extensions/item/server/$': typeof SettingsExtensionsItemServerSplatRoute
+  '/settings/extensions/item/provider/$instanceId/plugin/$pluginId': typeof SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute
+  '/settings/extensions/item/provider/$instanceId/server/$serverName': typeof SettingsExtensionsItemProviderInstanceIdServerServerNameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -305,6 +392,8 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/custom-models': typeof SettingsCustomModelsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/documents': typeof SettingsDocumentsRoute
+  '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
@@ -321,8 +410,16 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/extensions_/all': typeof SettingsExtensionsAllRoute
+  '/settings/extensions_/installed': typeof SettingsExtensionsInstalledRoute
   '/settings/skills_/external': typeof SettingsSkillsExternalRoute
   '/settings/skills_/project': typeof SettingsSkillsProjectRoute
+  '/settings/extensions_/category/$category': typeof SettingsExtensionsCategoryCategoryRoute
+  '/settings/extensions_/item/connector/$connectorId': typeof SettingsExtensionsItemConnectorConnectorIdRoute
+  '/settings/extensions_/item/plugin/$pluginId': typeof SettingsExtensionsItemPluginPluginIdRoute
+  '/settings/extensions_/item/server/$': typeof SettingsExtensionsItemServerSplatRoute
+  '/settings/extensions_/item/provider/$instanceId/plugin/$pluginId': typeof SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute
+  '/settings/extensions_/item/provider/$instanceId/server/$serverName': typeof SettingsExtensionsItemProviderInstanceIdServerServerNameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -343,6 +440,8 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -358,8 +457,16 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/extensions/all'
+    | '/settings/extensions/installed'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/settings/extensions/category/$category'
+    | '/settings/extensions/item/connector/$connectorId'
+    | '/settings/extensions/item/plugin/$pluginId'
+    | '/settings/extensions/item/server/$'
+    | '/settings/extensions/item/provider/$instanceId/plugin/$pluginId'
+    | '/settings/extensions/item/provider/$instanceId/server/$serverName'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -377,6 +484,8 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -393,8 +502,16 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/extensions/all'
+    | '/settings/extensions/installed'
     | '/settings/skills/external'
     | '/settings/skills/project'
+    | '/settings/extensions/category/$category'
+    | '/settings/extensions/item/connector/$connectorId'
+    | '/settings/extensions/item/plugin/$pluginId'
+    | '/settings/extensions/item/server/$'
+    | '/settings/extensions/item/provider/$instanceId/plugin/$pluginId'
+    | '/settings/extensions/item/provider/$instanceId/server/$serverName'
   id:
     | '__root__'
     | '/_chat'
@@ -413,6 +530,8 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/custom-models'
     | '/settings/diagnostics'
+    | '/settings/documents'
+    | '/settings/extensions'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -429,8 +548,16 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/settings/extensions_/all'
+    | '/settings/extensions_/installed'
     | '/settings/skills_/external'
     | '/settings/skills_/project'
+    | '/settings/extensions_/category/$category'
+    | '/settings/extensions_/item/connector/$connectorId'
+    | '/settings/extensions_/item/plugin/$pluginId'
+    | '/settings/extensions_/item/server/$'
+    | '/settings/extensions_/item/provider/$instanceId/plugin/$pluginId'
+    | '/settings/extensions_/item/provider/$instanceId/server/$serverName'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -593,6 +720,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/extensions': {
+      id: '/settings/extensions'
+      path: '/extensions'
+      fullPath: '/settings/extensions'
+      preLoaderRoute: typeof SettingsExtensionsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/documents': {
+      id: '/settings/documents'
+      path: '/documents'
+      fullPath: '/settings/documents'
+      preLoaderRoute: typeof SettingsDocumentsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/diagnostics': {
       id: '/settings/diagnostics'
       path: '/diagnostics'
@@ -670,6 +811,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSkillsExternalRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/extensions_/installed': {
+      id: '/settings/extensions_/installed'
+      path: '/extensions/installed'
+      fullPath: '/settings/extensions/installed'
+      preLoaderRoute: typeof SettingsExtensionsInstalledRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/all': {
+      id: '/settings/extensions_/all'
+      path: '/extensions/all'
+      fullPath: '/settings/extensions/all'
+      preLoaderRoute: typeof SettingsExtensionsAllRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -683,6 +838,48 @@ declare module '@tanstack/react-router' {
       fullPath: '/$environmentId/$threadId'
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/extensions_/category/$category': {
+      id: '/settings/extensions_/category/$category'
+      path: '/extensions/category/$category'
+      fullPath: '/settings/extensions/category/$category'
+      preLoaderRoute: typeof SettingsExtensionsCategoryCategoryRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/item/server/$': {
+      id: '/settings/extensions_/item/server/$'
+      path: '/extensions/item/server/$'
+      fullPath: '/settings/extensions/item/server/$'
+      preLoaderRoute: typeof SettingsExtensionsItemServerSplatRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/item/plugin/$pluginId': {
+      id: '/settings/extensions_/item/plugin/$pluginId'
+      path: '/extensions/item/plugin/$pluginId'
+      fullPath: '/settings/extensions/item/plugin/$pluginId'
+      preLoaderRoute: typeof SettingsExtensionsItemPluginPluginIdRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/item/connector/$connectorId': {
+      id: '/settings/extensions_/item/connector/$connectorId'
+      path: '/extensions/item/connector/$connectorId'
+      fullPath: '/settings/extensions/item/connector/$connectorId'
+      preLoaderRoute: typeof SettingsExtensionsItemConnectorConnectorIdRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/item/provider/$instanceId/server/$serverName': {
+      id: '/settings/extensions_/item/provider/$instanceId/server/$serverName'
+      path: '/extensions/item/provider/$instanceId/server/$serverName'
+      fullPath: '/settings/extensions/item/provider/$instanceId/server/$serverName'
+      preLoaderRoute: typeof SettingsExtensionsItemProviderInstanceIdServerServerNameRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/extensions_/item/provider/$instanceId/plugin/$pluginId': {
+      id: '/settings/extensions_/item/provider/$instanceId/plugin/$pluginId'
+      path: '/extensions/item/provider/$instanceId/plugin/$pluginId'
+      fullPath: '/settings/extensions/item/provider/$instanceId/plugin/$pluginId'
+      preLoaderRoute: typeof SettingsExtensionsItemProviderInstanceIdPluginPluginIdRouteImport
+      parentRoute: typeof SettingsRoute
     }
   }
 }
@@ -713,6 +910,8 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsCustomModelsRoute: typeof SettingsCustomModelsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsDocumentsRoute: typeof SettingsDocumentsRoute
+  SettingsExtensionsRoute: typeof SettingsExtensionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
@@ -726,8 +925,16 @@ interface SettingsRouteChildren {
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsStorageRoute: typeof SettingsStorageRoute
   SettingsVoiceRoute: typeof SettingsVoiceRoute
+  SettingsExtensionsAllRoute: typeof SettingsExtensionsAllRoute
+  SettingsExtensionsInstalledRoute: typeof SettingsExtensionsInstalledRoute
   SettingsSkillsExternalRoute: typeof SettingsSkillsExternalRoute
   SettingsSkillsProjectRoute: typeof SettingsSkillsProjectRoute
+  SettingsExtensionsCategoryCategoryRoute: typeof SettingsExtensionsCategoryCategoryRoute
+  SettingsExtensionsItemConnectorConnectorIdRoute: typeof SettingsExtensionsItemConnectorConnectorIdRoute
+  SettingsExtensionsItemPluginPluginIdRoute: typeof SettingsExtensionsItemPluginPluginIdRoute
+  SettingsExtensionsItemServerSplatRoute: typeof SettingsExtensionsItemServerSplatRoute
+  SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute: typeof SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute
+  SettingsExtensionsItemProviderInstanceIdServerServerNameRoute: typeof SettingsExtensionsItemProviderInstanceIdServerServerNameRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -736,6 +943,8 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsCustomModelsRoute: SettingsCustomModelsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsDocumentsRoute: SettingsDocumentsRoute,
+  SettingsExtensionsRoute: SettingsExtensionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
@@ -749,8 +958,22 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsStorageRoute: SettingsStorageRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
+  SettingsExtensionsAllRoute: SettingsExtensionsAllRoute,
+  SettingsExtensionsInstalledRoute: SettingsExtensionsInstalledRoute,
   SettingsSkillsExternalRoute: SettingsSkillsExternalRoute,
   SettingsSkillsProjectRoute: SettingsSkillsProjectRoute,
+  SettingsExtensionsCategoryCategoryRoute:
+    SettingsExtensionsCategoryCategoryRoute,
+  SettingsExtensionsItemConnectorConnectorIdRoute:
+    SettingsExtensionsItemConnectorConnectorIdRoute,
+  SettingsExtensionsItemPluginPluginIdRoute:
+    SettingsExtensionsItemPluginPluginIdRoute,
+  SettingsExtensionsItemServerSplatRoute:
+    SettingsExtensionsItemServerSplatRoute,
+  SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute:
+    SettingsExtensionsItemProviderInstanceIdPluginPluginIdRoute,
+  SettingsExtensionsItemProviderInstanceIdServerServerNameRoute:
+    SettingsExtensionsItemProviderInstanceIdServerServerNameRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

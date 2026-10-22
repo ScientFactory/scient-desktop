@@ -114,6 +114,7 @@ export type RightPanelSurface =
       htmlPresentationRequest?: HtmlFilePresentationRequest;
       latexPresentationRequest?: LatexFilePresentationRequest;
       latexRootRelativePath?: string;
+      latexSourceReveal?: { readonly id: number; readonly revision: string };
       /** Transient rendered-text reveal; the quote remains owned by the message. */
       fileCitation?: FileCitation;
       attachment?: ChatFileAttachment;
@@ -586,10 +587,12 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
                         fileCitation: _transientFileCitation,
+                        latexSourceReveal: _transientLatexSourceReveal,
                         latexRootRelativePath: persistedLatexRootRelativePath,
                         ...persistentSurface
                       } = surface;
                       const revealLine =
+                        _transientLatexSourceReveal === undefined &&
                         typeof surface.revealLine === "number" &&
                         Number.isFinite(surface.revealLine)
                           ? Math.max(1, Math.trunc(surface.revealLine))

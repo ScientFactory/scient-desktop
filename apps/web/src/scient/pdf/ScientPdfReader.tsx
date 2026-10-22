@@ -1,51 +1,33 @@
-import { useStableCallback } from "~/hooks/useStableCallback";
-import { useLayoutEffect } from "react";
-import type { Dispatch, SetStateAction, RefObject } from "react";
 import type {
   PdfSourceActions,
   PdfSourceDescriptor,
+  PdfSourceResolution,
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
 import { EnvironmentId } from "@t3tools/contracts";
+import { Download, FileText, ListTree, LoaderCircle, RotateCw, FolderSearch } from "lucide-react";
 import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Ellipsis,
-  FileText,
-  ListTree,
-  LoaderCircle,
-  Maximize2,
-  Minus,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Plus,
-  RotateCw,
-  Scan,
-  Search,
-  FolderSearch,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "~/components/ui/menu";
+import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { toastManager } from "~/components/ui/toast";
+import { installPdfRetainedSelection } from "./pdfRetainedSelection";
 import { ensureLocalApi } from "~/localApi";
-import { cn } from "~/lib/utils";
-import { ScientTooltip } from "../presentation/ScientTooltip";
+import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { attachShortcutHost } from "../keyboard/host";
+import { useHostedReaderShortcuts } from "../writing/readerBarHost";
 import {
   commandKeys,
   getKeyboardPreferences,
@@ -54,27 +36,18 @@ import {
 import { labelKeys } from "../keyboard/keys";
 
 import { PdfOutline } from "./PdfOutline";
+import { useRetainedPdfSource } from "./useRetainedPdfSource";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
 import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
-import {
-  formatPdfZoom,
-  parsePdfPageInput,
-  parseSafePdfExternalUrl,
-  stepPdfZoom,
-  type PdfSidebarMode,
-} from "./pdfReaderModel";
+import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
+import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader } from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
-
-const PDF_SOURCE_SYNC_HINT_DELAY_MS = 300;
-const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;
-
-let pdfSourceSyncHintLearnedThisSession = false;
 
 export interface PdfForwardSyncTarget {
   readonly requestId: number;
@@ -91,24 +64,8 @@ export interface PdfInverseSyncPoint {
 
 export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
-  readonly onInverseSearch?: (point: PdfInverseSyncPoint) => void;
+  readonly onInverseSearch?: (point: PdfInverseSyncPoint, selectedText?: string) => void;
   readonly onPageChange: (page: number) => void;
-}
-
-function ReaderButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
-  const { label, className, children, title: _title, ...buttonProps } = props;
-  return (
-    <ScientTooltip content={label}>
-      <button
-        {...buttonProps}
-        type="button"
-        className={cn("scient-pdf-toolbar-button", className)}
-        aria-label={label}
-      >
-        {children}
-      </button>
-    </ScientTooltip>
-  );
 }
 
 function PdfPasswordPrompt(props: {
@@ -150,6 +107,8 @@ function PdfPasswordPrompt(props: {
 
 export function ScientPdfReader(props: {
   readonly readerScope?: string | undefined;
+  /** LaTeX reports build freshness in its own header. */
+  readonly showStaleNotice?: boolean;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -158,13 +117,15 @@ export function ScientPdfReader(props: {
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
-  // Remounts the loaded reader so a failed document download is fetched again
-  // even when the renewed authorization yields the same URL.
+  const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
+  const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
+  const displayed = useRetainedPdfSource(documentKey, props.source, asset);
+  // Only the candidate request changes on retry; the painted reader stays mounted.
   const [loadAttempt, setLoadAttempt] = useState(0);
   const refreshAsset = asset.refresh;
   const retryLoad = () => {
-    setLoadAttempt((attempt) => attempt + 1);
     refreshAsset();
+    setLoadAttempt((attempt) => attempt + 1);
   };
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
@@ -172,7 +133,9 @@ export function ScientPdfReader(props: {
     previousRefreshKey.current = props.refreshKey;
     refreshAsset();
   }, [refreshAsset, props.refreshKey]);
-  if (asset._tag === "Failure") {
+  const authorizationPending = asset._tag === "Loading" || asset.waiting === true;
+  const candidateReady = asset._tag === "Success" && !authorizationPending;
+  if (asset._tag === "Failure" && displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card" role="alert">
@@ -185,7 +148,7 @@ export function ScientPdfReader(props: {
             variant="outline"
             disabled={asset.waiting === true}
             aria-busy={asset.waiting === true}
-            onClick={asset.refresh}
+            onClick={retryLoad}
           >
             <RefreshIcon size="xs" refreshing={asset.waiting === true} />
             Try again
@@ -194,7 +157,7 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  if (asset._tag !== "Success") {
+  if (displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card">
@@ -204,15 +167,28 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   return (
     <LoadedScientPdfReader
-      key={`${documentKey}\0${loadAttempt}`}
+      key={documentKey}
       documentKey={documentKey}
-      legacyDocumentKey={pdfReaderSessionDocumentKey(props.source)}
-      source={props.source}
-      sourceUrl={asset.url}
-      sourceExpiresAt={asset.expiresAt}
+      legacyDocumentKey={legacyDocumentKey}
+      source={displayed.source}
+      sourceAsset={displayed.asset}
+      loadAttempt={loadAttempt}
+      interactionReady={candidateReady}
+      authorizationPending={authorizationPending}
+      authorizationFailed={asset._tag === "Failure"}
+      sourceNotice={
+        authorizationPending
+          ? "Loading the updated PDF…"
+          : asset._tag === "Failure"
+            ? "Unable to load the updated PDF. Showing the previous revision."
+            : props.showStaleNotice !== false &&
+                props.source._tag === "generated-pdf" &&
+                props.source.bindingStatus === "stale"
+              ? "PDF is out of date. Showing the previous revision."
+              : null
+      }
       refreshSource={asset.refresh}
       onRetryLoad={retryLoad}
       actions={props.actions ?? webPdfSourceActions}
@@ -222,18 +198,32 @@ export function ScientPdfReader(props: {
 }
 
 function LoadedScientPdfReader(props: {
+  readonly sourceNotice: string | null;
+  readonly interactionReady: boolean;
+  readonly loadAttempt: number;
+  readonly authorizationPending: boolean;
+  readonly authorizationFailed: boolean;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly legacyDocumentKey: string;
   readonly source: PdfSourceDescriptor;
+  readonly sourceAsset: Extract<PdfSourceResolution, { readonly _tag: "Success" }>;
   readonly refreshSource: () => void;
   /** Fetches the document again after a failed load. */
   readonly onRetryLoad: () => void;
-  readonly sourceExpiresAt: number;
-  readonly sourceUrl: string;
   readonly syncNavigation?: PdfSyncNavigation;
 }) {
+  const requestedRevisionId =
+    props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  // Each document gets a fresh selection keeper on the same container.
+  const installRetainedSelection = useEffectEvent((..._changes: readonly unknown[]) =>
+    container ? installPdfRetainedSelection(container) : undefined,
+  );
+  useEffect(
+    () => installRetainedSelection(container, props.documentKey),
+    [container, props.documentKey],
+  );
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
   const [sidebar, setSidebarState] = useState<PdfSidebarMode>(() => {
     // Adopt the old document-wide position once, then keep this view independent.
@@ -245,9 +235,9 @@ function LoadedScientPdfReader(props: {
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocus, setSearchFocus] = useState(0);
   const [savingCopy, setSavingCopy] = useState(false);
   const saveCopyPendingRef = useRef(false);
-  const searchRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   useSyncExternalStore(
     subscribeKeyboardPreferences,
@@ -273,21 +263,23 @@ function LoadedScientPdfReader(props: {
         })
       : undefined;
   }, []);
-  const sourceSyncHintShowTimerRef = useRef<number | null>(null);
-  const sourceSyncHintHideTimerRef = useRef<number | null>(null);
-  const [pageInput, setPageInput] = useState("1");
-  const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
+  useHostedReaderShortcuts(keyboardAction);
   const reader = useScientPdfReader({
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
-    sourceUrl: props.sourceUrl,
+    revisionId: requestedRevisionId,
+    sourceUrl: props.sourceAsset.url,
+    candidateReady: props.interactionReady,
+    loadAttempt: props.loadAttempt,
     container,
     viewerElement,
   });
   const { state } = reader;
   const handleKeyboardAction = (command: string) => {
-    if (command === "pdf.find") setSearchOpen(true);
-    else if (state.phase !== "ready") return false;
+    if (command === "pdf.find") {
+      setSearchOpen(true);
+      setSearchFocus((request) => request + 1);
+    } else if (state.phase !== "ready") return false;
     else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
     else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
     else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
@@ -297,7 +289,18 @@ function LoadedScientPdfReader(props: {
   useLayoutEffect(() => {
     keyboardAction.current = handleKeyboardAction;
   });
-
+  const presentedSource = usePresentedPdfSourceBundle({
+    documentKey: props.documentKey,
+    source: props.source,
+    asset: props.sourceAsset,
+    presentation: reader.presentation,
+  });
+  const currentPresentation =
+    props.interactionReady &&
+    state.phase === "ready" &&
+    reader.presentationCurrent &&
+    reader.presentation?.revisionId === requestedRevisionId &&
+    reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = Array.from({ length: state.pageCount }, (_, index) => index + 1);
 
   const setSidebar = (next: PdfSidebarMode) => {
@@ -305,11 +308,6 @@ function LoadedScientPdfReader(props: {
     pdfReaderSessionStore.updateSidebar(props.documentKey, next);
   };
 
-  const [previousPage, setPreviousPage] = useState(state.page);
-  if (previousPage !== state.page) {
-    setPreviousPage(state.page);
-    setPageInput(String(state.page));
-  }
   const onSyncPageChange = props.syncNavigation?.onPageChange;
   useEffect(() => {
     if (state.phase === "ready") onSyncPageChange?.(state.page);
@@ -318,13 +316,12 @@ function LoadedScientPdfReader(props: {
   useEffect(() => {
     if (!searchOpen) return;
     prepareSearch();
-    searchRef.current?.focus();
   }, [prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
-    if (target === null || target === undefined || state.phase !== "ready") return;
+    if (target === null || target === undefined || !currentPresentation) return;
     goToSyncPoint(target);
-  }, [props.syncNavigation?.forwardTarget, goToSyncPoint, state.phase]);
+  }, [props.syncNavigation?.forwardTarget, goToSyncPoint, currentPresentation]);
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -332,93 +329,27 @@ function LoadedScientPdfReader(props: {
     reader.closeSearch();
   };
 
-  const saveCopy = () => createReaderSaveCopy({ props, saveCopyPendingRef, setSavingCopy })();
-
-  const clearSourceSyncHintTimers = useStableCallback(() => {
-    if (sourceSyncHintShowTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintShowTimerRef.current);
-      sourceSyncHintShowTimerRef.current = null;
-    }
-    if (sourceSyncHintHideTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintHideTimerRef.current);
-      sourceSyncHintHideTimerRef.current = null;
-    }
-  });
-
-  const dismissSourceSyncHint = useStableCallback(() => {
-    clearSourceSyncHintTimers();
-    setSourceSyncHintVisible(false);
-  });
-
-  const showSourceSyncHint = useStableCallback(() => {
-    if (sourceSyncHintHideTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintHideTimerRef.current);
-    }
-    setSourceSyncHintVisible(true);
-    sourceSyncHintHideTimerRef.current = window.setTimeout(() => {
-      sourceSyncHintHideTimerRef.current = null;
-      setSourceSyncHintVisible(false);
-    }, PDF_SOURCE_SYNC_HINT_VISIBLE_MS);
-  });
-
-  useEffect(() => clearSourceSyncHintTimers, [clearSourceSyncHintTimers]);
-
-  const scheduleSourceSyncHint = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (
-      props.syncNavigation?.onInverseSearch === undefined ||
-      state.phase !== "ready" ||
-      pdfSourceSyncHintLearnedThisSession ||
-      event.ctrlKey ||
-      event.metaKey
-    ) {
-      return;
-    }
-
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest("a, button, input, select, textarea, [contenteditable='true']")) return;
-    if (target.closest(".page[data-page-number]") === null) return;
-    if (window.getSelection()?.isCollapsed === false) return;
-
-    if (sourceSyncHintVisible) {
-      showSourceSyncHint();
-      return;
-    }
-    if (sourceSyncHintShowTimerRef.current !== null) return;
-
-    sourceSyncHintShowTimerRef.current = window.setTimeout(() => {
-      sourceSyncHintShowTimerRef.current = null;
-      if (pdfSourceSyncHintLearnedThisSession || window.getSelection()?.isCollapsed === false) {
-        return;
-      }
-      showSourceSyncHint();
-    }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
-  };
+  const saveCopy = () =>
+    createReaderSaveCopy({
+      presentedSource,
+      props,
+      saveCopyPendingRef,
+      setSavingCopy,
+    })();
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.key !== "Escape") return;
-    if (sourceSyncHintVisible || sourceSyncHintShowTimerRef.current !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      dismissSourceSyncHint();
-    } else if (searchOpen) {
+    if (searchOpen) {
       event.preventDefault();
       event.stopPropagation();
       closeSearch();
     }
   };
 
-  const commitPage = () => {
-    const page = parsePdfPageInput(pageInput, state.pageCount);
-    if (page === null) {
-      setPageInput(String(state.page));
-      return;
-    }
-    reader.goToPage(page);
-  };
   const canRevealSource =
     props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
-  const hasSourceActions = props.source.capabilities.canSaveCopy || canRevealSource;
+  const canSaveCopy = presentedSource?.source.capabilities.canSaveCopy === true;
+  const hasSourceActions = canSaveCopy || canRevealSource;
 
   return (
     <div
@@ -427,129 +358,42 @@ function LoadedScientPdfReader(props: {
       aria-label={`PDF reader: ${props.source.fileName}`}
       onKeyDown={onReaderKeyDown}
     >
-      <div className="scient-pdf-toolbar" role="toolbar" aria-label="PDF controls">
-        <ReaderButton
-          className="scient-pdf-action-sidebar"
-          label={sidebar === "closed" ? "Show thumbnails" : "Hide PDF sidebar"}
-          onClick={() => setSidebar(sidebar === "closed" ? "thumbnails" : "closed")}
-        >
-          {sidebar === "closed" ? <PanelLeftOpen /> : <PanelLeftClose />}
-        </ReaderButton>
-        <div className="scient-pdf-toolbar-separator" />
-        <ReaderButton
-          label="Previous page"
-          disabled={state.phase !== "ready" || state.page <= 1}
-          onClick={() => reader.goToPage(state.page - 1)}
-        >
-          <ChevronLeft />
-        </ReaderButton>
-        <div className="scient-pdf-page-control">
-          <input
-            value={pageInput}
-            inputMode="numeric"
-            aria-label="Page number"
-            disabled={state.phase !== "ready"}
-            onChange={(event) => setPageInput(event.target.value)}
-            onBlur={commitPage}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") commitPage();
-            }}
-          />
-          <span aria-label={`${state.pageCount} pages`}>/ {state.pageCount || "–"}</span>
-        </div>
-        <ReaderButton
-          label="Next page"
-          disabled={state.phase !== "ready" || state.page >= state.pageCount}
-          onClick={() => reader.goToPage(state.page + 1)}
-        >
-          <ChevronRight />
-        </ReaderButton>
-        <div className="scient-pdf-toolbar-separator" />
-        <ReaderButton
-          className="scient-pdf-action-zoom-step"
-          label={
-            "Zoom out" +
-            (shortcutLabel("pdf.zoomOut") ? " (" + shortcutLabel("pdf.zoomOut") + ")" : "")
-          }
-          disabled={state.phase !== "ready"}
-          onClick={() => reader.setZoom(stepPdfZoom(state.scale, "out"))}
-        >
-          <Minus />
-        </ReaderButton>
-        <ScientTooltip
-          content={
-            "Actual size" +
-            (shortcutLabel("pdf.actualSize") ? " (" + shortcutLabel("pdf.actualSize") + ")" : "")
-          }
-        >
-          <button
-            type="button"
-            className="scient-pdf-zoom-label"
-            disabled={state.phase !== "ready"}
-            onClick={() => reader.setZoomMode("page-actual")}
-          >
-            {formatPdfZoom(state.scale)}
-          </button>
-        </ScientTooltip>
-        <ReaderButton
-          className="scient-pdf-action-zoom-step"
-          label={
-            "Zoom in" +
-            (shortcutLabel("pdf.zoomIn") ? " (" + shortcutLabel("pdf.zoomIn") + ")" : "")
-          }
-          disabled={state.phase !== "ready"}
-          onClick={() => reader.setZoom(stepPdfZoom(state.scale, "in"))}
-        >
-          <Plus />
-        </ReaderButton>
-        <ReaderButton
-          className="scient-pdf-action-fit"
-          label="Fit width"
-          disabled={state.phase !== "ready"}
-          onClick={() => reader.setZoomMode("page-width")}
-        >
-          <Maximize2 />
-        </ReaderButton>
-        <div className="min-w-1 flex-1" />
-        <ReaderButton
-          className="scient-pdf-action-search"
-          label={
-            "Search PDF" + (shortcutLabel("pdf.find") ? " (" + shortcutLabel("pdf.find") + ")" : "")
-          }
-          aria-pressed={searchOpen}
-          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
-        >
-          <Search />
-        </ReaderButton>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<ReaderButton label="More PDF actions" />}>
-            <Ellipsis />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              disabled={state.phase !== "ready"}
-              onClick={() => reader.setZoom(stepPdfZoom(state.scale, "out"))}
-            >
-              <ZoomOut /> Zoom out
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={state.phase !== "ready"}
-              onClick={() => reader.setZoomMode("page-actual")}
-            >
-              <Scan /> Actual size
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={state.phase !== "ready"}
-              onClick={() => reader.setZoom(stepPdfZoom(state.scale, "in"))}
-            >
-              <ZoomIn /> Zoom in
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={state.phase !== "ready"}
-              onClick={() => reader.setZoomMode("page-width")}
-            >
-              <Maximize2 /> Fit width
-            </DropdownMenuItem>
+      <DocumentReaderControls
+        label="PDF"
+        ready={state.phase === "ready"}
+        page={state.page}
+        pageCount={state.pageCount}
+        scale={state.scale}
+        sidebarOpen={sidebar !== "closed"}
+        searchOpen={searchOpen}
+        onPage={reader.goToPage}
+        onZoom={reader.setZoom}
+        onActualSize={() => reader.setZoomMode("page-actual")}
+        onFitWidth={() => reader.setZoomMode("page-width")}
+        onToggleSidebar={() => setSidebar(sidebar === "closed" ? "thumbnails" : "closed")}
+        onToggleSearch={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+        onShowSearch={() => {
+          setSearchOpen(true);
+          setSearchFocus((request) => request + 1);
+        }}
+        search={{
+          query: searchQuery,
+          current: state.findCount.current,
+          total: state.findCount.total,
+          notFound: state.findPhase === "not-found",
+          focusRequest: searchFocus,
+          onFocus: () => setSearchOpen(true),
+          onQuery: (value) => {
+            setSearchOpen(true);
+            setSearchQuery(value);
+            reader.setSearchQuery(value);
+          },
+          onNavigate: reader.findAgain,
+          onClear: closeSearch,
+        }}
+        shortcutLabel={shortcutLabel}
+        moreActions={
+          <>
             <DropdownMenuItem
               closeOnClick={false}
               disabled={state.phase !== "ready"}
@@ -557,22 +401,19 @@ function LoadedScientPdfReader(props: {
             >
               <RotateCw /> Rotate clockwise
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setSearchOpen(true)}>
-              <Search /> Search PDF
-            </DropdownMenuItem>
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
-            {props.source.capabilities.canSaveCopy ? (
+            {canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
                 {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
-                {savingCopy ? "Saving copy…" : "Save a copy…"}
+                {savingCopy ? "Saving copy…" : "Save a copy"}
               </DropdownMenuItem>
             ) : null}
             {canRevealSource ? (
               <DropdownMenuItem
                 onClick={() =>
                   props.actions.revealSource?.(props.source, {
-                    url: props.sourceUrl,
-                    expiresAt: props.sourceExpiresAt,
+                    url: props.sourceAsset.url,
+                    expiresAt: props.sourceAsset.expiresAt,
                     refresh: props.refreshSource,
                   })
                 }
@@ -580,75 +421,9 @@ function LoadedScientPdfReader(props: {
                 <FolderSearch /> Reveal source
               </DropdownMenuItem>
             ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {props.source._tag === "generated-pdf" && props.source.bindingStatus === "stale" ? (
-        <div className="scient-pdf-notice" role="status">
-          The latest build failed. Showing the last successful PDF.
-          {props.source.staleReason ? ` ${props.source.staleReason}` : ""}
-        </div>
-      ) : null}
-      {searchOpen ? (
-        <form
-          className="scient-pdf-searchbar"
-          onSubmit={(event) => {
-            event.preventDefault();
-            reader.findAgain(false);
-          }}
-        >
-          <Search className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <input
-            ref={searchRef}
-            value={searchQuery}
-            placeholder="Search this PDF"
-            aria-label="Search this PDF"
-            onChange={(event) => {
-              const value = event.target.value;
-              setSearchQuery(value);
-              reader.setSearchQuery(value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                reader.findAgain(event.shiftKey);
-              } else if (event.key === "ArrowDown") {
-                event.preventDefault();
-                reader.findAgain(false);
-              } else if (event.key === "ArrowUp") {
-                event.preventDefault();
-                reader.findAgain(true);
-              }
-            }}
-          />
-          <span className="scient-pdf-find-count">
-            {state.findCount.total > 0
-              ? `${state.findCount.current} of ${state.findCount.total}`
-              : state.findPhase === "not-found"
-                ? "0 of 0"
-                : ""}
-          </span>
-          <ReaderButton
-            className="scient-pdf-search-secondary"
-            label="Previous result"
-            disabled={!searchQuery}
-            onClick={() => reader.findAgain(true)}
-          >
-            <ChevronDown className="rotate-180" />
-          </ReaderButton>
-          <ReaderButton
-            className="scient-pdf-search-secondary"
-            label="Next result"
-            disabled={!searchQuery}
-            onClick={() => reader.findAgain(false)}
-          >
-            <ChevronDown />
-          </ReaderButton>
-          <ReaderButton label="Close search" onClick={closeSearch}>
-            <X />
-          </ReaderButton>
-        </form>
-      ) : null}
+          </>
+        }
+      />
       {state.scanned === true && state.phase === "ready" ? (
         <div className="scient-pdf-notice">
           No selectable text was detected on the opening pages. Search and copying may be limited.
@@ -709,15 +484,17 @@ function LoadedScientPdfReader(props: {
         <div className="scient-pdf-content">
           <div
             ref={setContainer}
-            className="scient-pdf-viewer-container"
+            className="scient-pdf-presentation-mount"
             tabIndex={0}
-            onClick={scheduleSourceSyncHint}
             onDoubleClick={(event) => {
-              dismissSourceSyncHint();
+              if (!currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
+              // An editable page uses the ordinary click gesture. Keep inverse
+              // search available in Split without making a direct edit also navigate.
               const target = event.target;
               if (!(target instanceof Element)) return;
+              if (target.closest("a,button,input,select,textarea,[contenteditable='true']")) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
               if (pageElement === null) return;
               const point = reader.syncPointFromClient({
@@ -726,17 +503,31 @@ function LoadedScientPdfReader(props: {
                 clientY: event.clientY,
               });
               if (point !== null) {
-                pdfSourceSyncHintLearnedThisSession = true;
-                onInverseSearch(point);
+                // Preserve ordinary PDF selection before reading its word.
+                queueMicrotask(() =>
+                  onInverseSearch(point, pageElement.ownerDocument.getSelection()?.toString()),
+                );
               }
             }}
-            onScroll={dismissSourceSyncHint}
           >
-            <div ref={setViewerElement} className="pdfViewer" />
+            <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
-          {sourceSyncHintVisible ? (
-            <div className="scient-pdf-source-sync-hint" role="status">
-              Double-click a PDF word to show its matching source line
+          {props.sourceNotice || state.updateError ? (
+            <div className="scient-pdf-update-notice" role="status">
+              <span>{state.updateError ?? props.sourceNotice}</span>
+              {props.authorizationFailed || state.updateError ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={props.authorizationPending}
+                  aria-busy={props.authorizationPending}
+                  onClick={props.onRetryLoad}
+                >
+                  <RefreshIcon size="xs" refreshing={props.authorizationPending} />
+                  Try again
+                </Button>
+              ) : null}
             </div>
           ) : null}
           {state.phase === "loading" ? (
@@ -771,8 +562,15 @@ function LoadedScientPdfReader(props: {
                 <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
                 <h2>Couldn't open this PDF</h2>
                 <p>{state.error}</p>
-                <Button type="button" size="xs" variant="outline" onClick={props.onRetryLoad}>
-                  <RefreshIcon size="xs" />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={props.authorizationPending}
+                  aria-busy={props.authorizationPending}
+                  onClick={props.onRetryLoad}
+                >
+                  <RefreshIcon size="xs" refreshing={props.authorizationPending} />
                   Try again
                 </Button>
               </div>
@@ -785,28 +583,27 @@ function LoadedScientPdfReader(props: {
 }
 
 function createReaderSaveCopy({
+  presentedSource,
   props,
   saveCopyPendingRef,
   setSavingCopy,
 }: {
-  props: Parameters<typeof LoadedScientPdfReader>[0];
+  presentedSource: ReturnType<typeof usePresentedPdfSourceBundle>;
+  props: { readonly actions: PdfSourceActions };
   saveCopyPendingRef: RefObject<boolean>;
   setSavingCopy: Dispatch<SetStateAction<boolean>>;
 }) {
   return async () => {
-    if (saveCopyPendingRef.current) return;
+    if (saveCopyPendingRef.current || presentedSource === null) return;
+    const bundle = presentedSource;
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
-        props.actions.saveCopy(props.source, {
-          url: props.sourceUrl,
-          expiresAt: props.sourceExpiresAt,
-          refresh: props.refreshSource,
-        }),
+      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
+        props.actions.saveCopy(bundle.source, bundle.resolved),
       );
       const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) props.refreshSource();
+      if (presentation.refreshSource) bundle.resolved.refresh();
     } catch {
       toastManager.add({
         type: "error",

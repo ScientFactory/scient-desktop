@@ -8,6 +8,7 @@ import {
 import { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
 
 export type {
+  DocumentAuthorizedCurrentReview as MarkdownAuthorizedCurrentReview,
   DocumentPersistenceFailureKind as MarkdownPersistenceFailureKind,
   DocumentPersistenceReadResult as MarkdownPersistenceReadResult,
   DocumentPersistenceSnapshot as MarkdownPersistenceSnapshot,

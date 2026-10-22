@@ -15,6 +15,7 @@ import {
   BrainCircuitIcon,
   CalendarClockIcon,
   createLucideIcon,
+  FileTextIcon,
   GitBranchIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
@@ -23,6 +24,9 @@ import {
   Link2Icon,
   Mic2Icon,
   PaletteIcon,
+  // SCIENT-FORK:START — Scient Extensions
+  PuzzleIcon,
+  // SCIENT-FORK:END
   SearchIcon,
   Settings2Icon,
   XIcon,
@@ -104,9 +108,13 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/custom-models": BrainCircuitIcon,
   "/settings/skills": Layers3Icon,
+  // SCIENT-FORK:START — Scient Extensions
+  "/settings/extensions": PuzzleIcon,
+  // SCIENT-FORK:END
   "/settings/integrations": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/scientific-computing": ScientificComputingSidebarIcon,
+  "/settings/documents": FileTextIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,

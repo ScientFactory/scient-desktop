@@ -34,6 +34,7 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  filePublicationHelperPath: Schema.optionalKey(TrimmedNonEmptyString),
   syncTexNavigatorPath: Schema.optionalKey(TrimmedNonEmptyString),
   /** Host-owned native resource; never supplied by a renderer or a workspace. */
   fileExchangePath: Schema.optionalKey(TrimmedNonEmptyString),

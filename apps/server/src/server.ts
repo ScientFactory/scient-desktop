@@ -202,6 +202,11 @@ import {
   ScientSkillsLayerLive,
   WorkspaceBindingResolverLayerLive,
 } from "./scient/ScientServerLayers.ts";
+// SCIENT-FORK:START — Scient extensions.
+import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+import * as ConnectorProxyRoute from "./scient/extensions/connectors/ConnectorProxyRoute.ts";
+import * as ConnectorCallbackRoute from "./scient/extensions/connectors/ConnectorCallbackRoute.ts";
+// SCIENT-FORK:END
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
@@ -672,6 +677,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
+  // SCIENT-FORK:START — Scient extensions: provider sessions read connectors and record receipts.
+  Layer.provideMerge(ScientExtensionsLayerLive),
+  // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
@@ -803,6 +811,10 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
+    // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
+    ConnectorProxyRoute.layer,
+    ConnectorCallbackRoute.layer,
+    // SCIENT-FORK:END
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,

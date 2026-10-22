@@ -13,7 +13,6 @@ import {
   bytesRevision,
   directoryIdentity,
   assertRootBinding,
-  syncDirectory,
   decodeRetainedRecord,
   durableJson,
   fileRevision,
@@ -106,7 +105,6 @@ export interface WorkspaceApplyInput {
   readonly applicationDirectory: string;
   readonly id: string;
   readonly plan?: WorkspaceApplyPlan;
-  readonly exchangeHelper?: string;
 }
 export interface WorkspaceApplyResult {
   readonly outcome: "complete" | "replan" | "attention";
@@ -327,26 +325,54 @@ async function unitHasDurableMutation(
 export const make = (hooks: ApplierHooks = {}) =>
   Effect.gen(function* () {
     const files = yield* WorkspaceFileSystem;
+    const settledRevision = (cwd: string, relativePath: string) =>
+      Effect.runPromise(
+        files.withSettledFileRead({ cwd, relativePath }, (attention) =>
+          attention
+            ? Effect.fail(
+                new WorkspaceApplyError({
+                  cause: new Error(
+                    `Retained publication ${attention.recoveryId} needs explicit review before Overleaf may apply.`,
+                  ),
+                }),
+              )
+            : Effect.promise(() => revision(cwd, relativePath)),
+        ),
+      );
     // One applier instance owns all its connection-local journals. Serializing local
     // applies prevents concurrent recovery of a shared record (no hidden queue in UI).
     const semaphore = yield* Semaphore.make(1);
     const apply: WorkspaceApplier["Service"]["apply"] = (input) =>
       semaphore.withPermits(1)(
         Effect.gen(function* () {
+          if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
+            return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
+          const prepareDirectory = (retentionDirectory: string) =>
+            files
+              .prepareRetainedDirectory({ cwd: input.cwd, retentionDirectory })
+              .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
+          const applicationRoot = yield* prepareDirectory(input.applicationDirectory);
+          const directory = yield* prepareDirectory(NodePath.join(applicationRoot, input.id));
+          const retentionDirectory = yield* prepareDirectory(NodePath.join(directory, "files"));
+          yield* Effect.tryPromise({
+            try: async () => {
+              const device = (await NodeFSP.stat(input.cwd)).dev;
+              for (const prepared of [applicationRoot, directory, retentionDirectory]) {
+                if ((await NodeFSP.stat(prepared)).dev !== device)
+                  throw new Error("Apply retention must be on manuscript filesystem.");
+              }
+            },
+            catch: (cause) => new WorkspaceApplyError({ cause }),
+          });
+          yield* files
+            .registerRetainedFileHistory({ cwd: input.cwd, retentionDirectory })
+            .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
           const begin = yield* Effect.tryPromise({
             try: async () => {
-              if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id)) throw new Error("Invalid apply id.");
               const cwd = await NodeFSP.realpath(input.cwd);
               const rootIdentity = await directoryIdentity(cwd);
-              const owner = await NodeFSP.realpath(input.applicationDirectory);
-              const directory = NodePath.join(owner, input.id);
-              await NodeFSP.mkdir(directory, { mode: 0o700 }).catch((e) => {
-                if (e.code !== "EEXIST") throw e;
-              });
-              await syncDirectory(owner);
-              const stat = await NodeFSP.lstat(directory);
-              if (!stat.isDirectory() || stat.isSymbolicLink())
-                throw new Error("Unsafe apply directory.");
+              if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
+                throw new Error("Apply retention must be on manuscript filesystem.");
               const recordPath = NodePath.join(directory, "apply.json");
               const intentPath = NodePath.join(directory, "plan.json");
               let state: State;
@@ -422,11 +448,6 @@ export const make = (hooks: ApplierHooks = {}) =>
               validatePlan(state.plan);
               if (state.outcomes.length !== state.plan.units.length)
                 throw new Error("Invalid unit outcomes.");
-              const retentionDirectory = NodePath.join(directory, "files");
-              await NodeFSP.mkdir(retentionDirectory, { recursive: true, mode: 0o700 });
-              await syncDirectory(directory);
-              if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
-                throw new Error("Apply retention must be on manuscript filesystem.");
               if (state.phase === "applying" && Object.keys(state.steps).length === 0) {
                 // No local write has begun: stale capture means re-plan with zero mutations.
                 const records = await NodeFSP.readdir(retentionDirectory);
@@ -444,7 +465,8 @@ export const make = (hooks: ApplierHooks = {}) =>
                     if (captureBytes > 250 * 1024 * 1024)
                       throw new Error("Capture exceeds local read budget.");
                     if (
-                      (await revision(cwd, name)) !== (ownValue(state.plan.captured, name) ?? null)
+                      (await settledRevision(cwd, name)) !==
+                      (ownValue(state.plan.captured, name) ?? null)
                     ) {
                       state = { ...state, phase: "replan" };
                       await durableJson(recordPath, progress(state));
@@ -456,6 +478,12 @@ export const make = (hooks: ApplierHooks = {}) =>
             },
             catch: (cause) => new WorkspaceApplyError({ cause }),
           });
+          yield* files
+            .registerRetainedFileHistory({
+              cwd: input.cwd,
+              retentionDirectory: begin.retentionDirectory,
+            })
+            .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
           let state = begin.state;
           const save = () =>
             Effect.tryPromise({
@@ -489,7 +517,7 @@ export const make = (hooks: ApplierHooks = {}) =>
                   const target = ownValue(state.plan.target, name);
                   if (
                     (!unit.includes(name) || ownValue(state.steps, name) === "done") &&
-                    (await revision(state.cwd, name)) !== (target?.revision ?? null)
+                    (await settledRevision(state.cwd, name)) !== (target?.revision ?? null)
                   )
                     return false;
                 }
@@ -528,15 +556,6 @@ export const make = (hooks: ApplierHooks = {}) =>
                   id: `step-${index}`,
                   expectedRevision: ownValue(state.plan.captured, name) ?? null,
                   expectedRootIdentity: state.rootIdentity,
-                  ...(blockers.includes(name)
-                    ? {
-                        visibleRetentionPath: NodePath.join(
-                          state.cwd,
-                          `.scient-overleaf-apply-${input.id}-${index}.tmp`,
-                        ),
-                      }
-                    : {}),
-                  ...(input.exchangeHelper ? { exchangeHelper: input.exchangeHelper } : {}),
                   ...(file
                     ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
                     : {}),
@@ -600,91 +619,93 @@ export const make = (hooks: ApplierHooks = {}) =>
               catch: (cause) => new WorkspaceApplyError({ cause }),
             });
           }
-          return yield* Effect.tryPromise({
-            try: async (): Promise<WorkspaceApplyResult> => {
-              const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
-              for (const [index, name] of state.plan.units.flat().entries()) {
-                const directory = NodePath.join(begin.retentionDirectory, `step-${index}`);
-                try {
-                  const record = decodeRetainedRecord(
-                    await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
-                  );
-                  // Re-run the idempotent primitive through its shared lock below on the
-                  // next invocation; here late retained writes are surfaced without deletion.
-                  for (const leaf of ["slot", "retained"]) {
-                    const kept = NodePath.join(directory, leaf);
-                    const current = await fileRevision(kept);
-                    if (
-                      current !== null &&
-                      (leaf === "retained" ||
-                        record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
-                        record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
-                        current !== record.desired)
-                    ) {
-                      retained.push(
-                        await recheckRetainedFile(
-                          {
-                            outcome: record.outcome ?? "attention",
-                            recordDirectory: directory,
-                            retainedPath: kept,
-                            retainedRevision: current,
-                            retainedIdentity: null,
-                          },
-                          ownValue(state.plan.captured, name) ?? null,
-                        ),
+          return yield* files
+            .withSettledWorkspaceRead({ cwd: state.cwd }, () =>
+              Effect.tryPromise({
+                try: async (): Promise<WorkspaceApplyResult> => {
+                  const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
+                  for (const [index, name] of state.plan.units.flat().entries()) {
+                    const directory = NodePath.join(begin.retentionDirectory, `step-${index}`);
+                    try {
+                      const record = decodeRetainedRecord(
+                        await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
                       );
+                      for (const leaf of ["slot", "retained", "provisional"]) {
+                        const kept = NodePath.join(directory, leaf);
+                        const current = await fileRevision(kept);
+                        if (
+                          current !== null &&
+                          (leaf === "retained" ||
+                            record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
+                            record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
+                            current !== record.desired)
+                        ) {
+                          retained.push(
+                            await recheckRetainedFile(
+                              {
+                                outcome: record.outcome ?? "attention",
+                                recordDirectory: directory,
+                                retainedPath: kept,
+                                retainedRevision: current,
+                                retainedIdentity: null,
+                              },
+                              ownValue(state.plan.captured, name) ?? null,
+                            ),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                     }
                   }
-                } catch (e) {
-                  if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-                }
-              }
-              await assertRootBinding(state.cwd, state.rootIdentity);
-              let matchesTarget = true;
-              for (const name of new Set([
-                ...Object.keys(state.plan.captured),
-                ...Object.keys(state.plan.target),
-              ])) {
-                if (
-                  (await revision(state.cwd, name)) !==
-                  (ownValue(state.plan.target, name)?.revision ?? null)
-                )
-                  matchesTarget = false;
-              }
-              const markerPaths: string[] = [];
-              for (const name of state.plan.markerPaths) {
-                try {
-                  if (hasConflictMarkers(await readMarkerText(NodePath.join(state.cwd, name))))
-                    markerPaths.push(name);
-                } catch (e) {
-                  if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-                }
-              }
-              const interrupted = state.plan.guards.filter(
-                (_, i) => state.outcomes[i] === "interrupted",
-              );
-              return {
-                outcome:
-                  state.phase === "replan"
-                    ? "replan"
-                    : state.outcomes.every((o) => o === "done") &&
-                        retained.every((r) => !r.changed) &&
-                        !markerPaths.length &&
-                        matchesTarget
-                      ? "complete"
-                      : "attention",
-                base: new Map(Object.entries(state.nextBase)),
-                interrupted,
-                markerPaths,
-                retained,
-                matchesTarget,
-                stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
-                  name.startsWith(`.scient-overleaf-apply-${input.id}-`),
-                ),
-              };
-            },
-            catch: (cause) => new WorkspaceApplyError({ cause }),
-          });
+                  await assertRootBinding(state.cwd, state.rootIdentity);
+                  let matchesTarget = true;
+                  for (const name of new Set([
+                    ...Object.keys(state.plan.captured),
+                    ...Object.keys(state.plan.target),
+                  ])) {
+                    if (
+                      (await revision(state.cwd, name)) !==
+                      (ownValue(state.plan.target, name)?.revision ?? null)
+                    )
+                      matchesTarget = false;
+                  }
+                  const markerPaths: string[] = [];
+                  for (const name of state.plan.markerPaths) {
+                    try {
+                      if (hasConflictMarkers(await readMarkerText(NodePath.join(state.cwd, name))))
+                        markerPaths.push(name);
+                    } catch (e) {
+                      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+                    }
+                  }
+                  const interrupted = state.plan.guards.filter(
+                    (_, i) => state.outcomes[i] === "interrupted",
+                  );
+                  return {
+                    outcome:
+                      state.phase === "replan"
+                        ? "replan"
+                        : state.outcomes.every((o) => o === "done") &&
+                            retained.every((r) => !r.changed) &&
+                            !markerPaths.length &&
+                            matchesTarget
+                          ? "complete"
+                          : "attention",
+                    base: new Map(Object.entries(state.nextBase)),
+                    interrupted,
+                    markerPaths,
+                    retained,
+                    matchesTarget,
+                    stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
+                      name.startsWith(`.scient-overleaf-apply-${input.id}-`),
+                    ),
+                  };
+                },
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              }),
+            )
+            .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
         }).pipe(Effect.uninterruptible),
       );
     return WorkspaceApplier.of({ apply });
