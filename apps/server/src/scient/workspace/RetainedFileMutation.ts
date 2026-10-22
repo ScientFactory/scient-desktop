@@ -1243,6 +1243,17 @@ async function run(
         input.id,
       );
     if (record.desired !== null) {
+      // A slot whose identity was never recorded was still being written when the
+      // process died. It is private and was never published: discard it and stage
+      // again, or, without the bytes, close the step unpublished.
+      if (
+        record.stagedIdentity === null &&
+        (await fileIdentity(slot)) !== null &&
+        (await fileRevision(slot)) !== record.desired
+      ) {
+        await NodeFSP.unlink(slot);
+        await syncDirectory(directory);
+      }
       if ((await fileIdentity(slot)) === null) {
         if (input.bytes == null) return finish("skipped", "unavailable");
         const mode = record.publication === "create" ? (record.executable ? 0o777 : 0o666) : 0o600;
