@@ -1197,6 +1197,13 @@ When it finds a `latexmk` that will not run, the message names it and quotes
 what it said. If the TinyTeX installation fails, the card says which step
 failed and shows the installer's own message under **Details**.
 
+TeX Live cannot work from a Windows folder whose name has letters beyond plain
+English ones, such as an accented or Hebrew user name. On such computers Scient
+keeps TinyTeX and its build files in a folder of your own under
+`C:\ProgramData`, which only your account (and the computer's administrators)
+can open. Uninstalling Scient leaves that folder; you can delete it, named
+`scient-latex-` followed by 16 letters and digits, yourself.
+
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.
 

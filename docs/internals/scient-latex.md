@@ -736,7 +736,23 @@ descriptors do not disclose the canonical host root.
 
 `config.latexDir` is `<state root>/latex`, a sibling of `analysisDir` and the
 other environment-derived state directories — never inside the user's
-workspace. Every compile writes into
+workspace. On Windows, when that path is not printable ASCII, the LaTeX services
+see a different `latexDir` (`latexStateLocation.ts`, provided only to them in
+`ScientServerLayers.ts`). TeX Live cannot work from such a path: kpathsea does
+not find its own `texmf.cnf` (a single "ü" is enough), and `latexmk` converts
+every path argument to the system code page, so Hebrew or Cyrillic become "?".
+8.3 short names do not help, because kpathsea expands them back. The
+replacement is `%ProgramData%\scient-latex-<16 hex>`: created under a fresh
+random name, stripped of inherited access and granted only to the account (by
+SID, from `whoami`), SYSTEM and Administrators with `icacls`, then checked to be
+still empty before anything goes in it. `%ProgramData%` does not let other
+accounts delete what they did not create, so the folder cannot be swapped
+afterwards. Its path is recorded in `<profile latexDir>/tex-location.json` and
+reused while it exists; a recorded path is honored only if it is a direct child
+of `%ProgramData%` with that name pattern. Build evidence and SyncTeX indexes
+already in the profile folder are moved across. If any step fails, the profile
+`latexDir` stays in use, which is the earlier behavior. ASCII paths and other
+platforms are untouched. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.
