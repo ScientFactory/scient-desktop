@@ -6,9 +6,11 @@
  * application section, and a bulk mutation of the checkout (checkpoint restore,
  * pull, switching branch, removing the worktree). A bulk request closes new
  * application admission at once, waits for running ones to settle, then runs.
- * Bulk sections of one checkout run one at a time; a bulk change made inside
- * another of the same checkout (a provider checkout calling the Git driver)
- * joins it. Every bulk section advances the checkout's epoch as it starts and
+ * Bulk sections of one checkout run one at a time; a bulk change the owning
+ * fiber makes inside its own section (a provider checkout calling the Git
+ * driver) runs within it. Another fiber, a forked child included, waits its
+ * turn, so a section that awaits such a fiber's same-checkout change waits for
+ * itself. Every bulk section advances the checkout's epoch as it starts and
  * again as it ends, even when it fails, so a plan made against an earlier epoch
  * is stale.
  *
@@ -114,8 +116,6 @@ interface Entry {
   readonly turn: Semaphore.Semaphore;
   drained: Deferred.Deferred<void> | null;
   readonly held: Set<CheckoutSection>;
-  /** Work running inside a held section from outside its own fiber; the section waits for it. */
-  readonly joins: Map<CheckoutSection, { count: number; idle: Deferred.Deferred<void> | null }>;
 }
 
 interface Located {
@@ -124,13 +124,12 @@ interface Located {
 }
 
 /**
- * The bulk sections the current fiber runs inside, by checkout. A forked fiber
- * inherits them, so each is honored only while its section is still held.
+ * The bulk sections the current fiber runs inside, by checkout, with the fiber
+ * that owns each. A forked fiber inherits them but is not their owner.
  */
-class HeldCheckouts extends Context.Reference<ReadonlyMap<string, CheckoutSection>>(
-  "t3/scient/workspace/CheckoutBarrier/HeldCheckouts",
-  { defaultValue: () => new Map() },
-) {}
+class HeldCheckouts extends Context.Reference<
+  ReadonlyMap<string, { readonly section: CheckoutSection; readonly fiber: number }>
+>("t3/scient/workspace/CheckoutBarrier/HeldCheckouts", { defaultValue: () => new Map() }) {}
 
 const missing = (error: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "");
@@ -190,7 +189,6 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
         turn: Semaphore.makeUnsafe(1),
         drained: null,
         held: new Set(),
-        joins: new Map(),
       };
       entries.set(key, found);
     }
@@ -217,26 +215,16 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
       const key = found.keys[0]!;
       const already = yield* HeldCheckouts;
       const held = entry(key);
-      // A bulk change inside a live one of the same checkout joins it, and that
-      // section is not released until the joined work is done.
+      // A bulk change made by the very fiber that holds this checkout's section, while
+      // it holds it, runs within it: it is part of that fiber's own sequential work.
+      // Any other fiber, a forked child included, waits its turn like everyone else.
       const joined = already.get(key);
-      const join =
-        joined !== undefined && held.held.has(joined) ? held.joins.get(joined) : undefined;
-      if (join !== undefined)
-        return yield* Effect.acquireUseRelease(
-          Effect.sync(() => {
-            join.count++;
-          }),
-          () => effect,
-          () =>
-            Effect.suspend(() => {
-              join.count--;
-              const idle = join.idle;
-              if (join.count > 0 || idle === null) return Effect.void;
-              join.idle = null;
-              return Deferred.succeed(idle, undefined);
-            }),
-        );
+      if (
+        joined !== undefined &&
+        joined.fiber === (yield* Effect.fiberId) &&
+        held.held.has(joined.section)
+      )
+        return yield* effect;
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           held.bulks++;
@@ -265,24 +253,17 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
                 root: now.root,
                 epoch: epochOf(now.keys),
               };
-              const joins = { count: 0, idle: null as Deferred.Deferred<void> | null };
+              const fiber = yield* Effect.fiberId;
               held.held.add(section);
-              held.joins.set(section, joins);
               return yield* Effect.gen(function* () {
                 for (const settle of settlers) yield* settle(section);
                 return yield* effect;
               }).pipe(
-                Effect.provideService(HeldCheckouts, new Map([...already, [key, section]])),
-                Effect.ensuring(
-                  Effect.gen(function* () {
-                    while (joins.count > 0) {
-                      joins.idle ??= Deferred.makeUnsafe<void>();
-                      yield* Deferred.await(joins.idle);
-                    }
-                    held.held.delete(section);
-                    held.joins.delete(section);
-                  }),
+                Effect.provideService(
+                  HeldCheckouts,
+                  new Map([...already, [key, { section, fiber }]]),
                 ),
+                Effect.ensuring(Effect.sync(() => held.held.delete(section))),
               );
             }),
           ),

@@ -347,36 +347,51 @@ describe("CheckoutBarrier", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps a bulk section until work that joined it has finished", () =>
+  it.effect("makes another fiber's change of the same checkout wait its turn", () =>
     Effect.gen(function* () {
       const { repo } = yield* folders;
       const barrier = makeCheckoutBarrier();
-      const joinedIn = yield* Deferred.make<void>();
-      const gate = yield* Deferred.make<void>();
+      const order: string[] = [];
       let child: Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError> | undefined;
-      const outer = yield* barrier
+      yield* barrier.bulk(
+        repo,
+        Effect.gen(function* () {
+          // Forked inside the section, it inherits it but does not own it.
+          child = yield* barrier
+            .bulk(
+              repo,
+              Effect.sync(() => {
+                order.push("child");
+              }),
+            )
+            .pipe(Effect.forkDetach);
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          order.push("owner");
+        }),
+      );
+      yield* Fiber.join(child!);
+      assert.deepEqual(order, ["owner", "child"]);
+      assert.equal((yield* barrier.current(repo)).epoch, 4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reopens admission when an owner is interrupted while its child waits", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const inside = yield* Deferred.make<void>();
+      const owner = yield* barrier
         .bulk(
           repo,
           Effect.gen(function* () {
-            child = yield* barrier
-              .bulk(
-                repo,
-                Deferred.succeed(joinedIn, undefined).pipe(Effect.andThen(Deferred.await(gate))),
-              )
-              .pipe(Effect.forkDetach);
-            yield* Deferred.await(joinedIn);
+            yield* barrier.bulk(repo, Effect.void).pipe(Effect.forkChild);
+            yield* Deferred.succeed(inside, undefined);
+            return yield* Effect.never;
           }),
         )
         .pipe(Effect.forkChild);
-      yield* Deferred.await(joinedIn);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
-      // The outer change's own work is done, but the joined work still runs inside it.
-      assert.isTrue(
-        Exit.isFailure(yield* Effect.exit(barrier.application(repo, () => Effect.void))),
-      );
-      yield* Deferred.succeed(gate, undefined);
-      yield* Fiber.join(child!);
-      yield* Fiber.join(outer);
+      yield* Deferred.await(inside);
+      yield* Fiber.interrupt(owner);
       yield* barrier.application(repo, () => Effect.void);
     }).pipe(Effect.scoped),
   );
