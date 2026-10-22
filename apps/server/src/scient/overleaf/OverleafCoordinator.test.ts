@@ -60,7 +60,7 @@ const read = (folder: string, path: string) =>
 const world = (input: {
   readonly synced: Record<string, string>;
   readonly remote: Record<string, string>;
-  readonly at?: (point: Point) => Promise<void>;
+  readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
   readonly native?: (point: MutationPoint, folder: string) => Promise<void>;
 }) =>
@@ -171,7 +171,7 @@ const world = (input: {
       fetchRemote,
       volumeUuid,
       registry,
-      hooks: { at: async (point) => input.at?.(point) },
+      hooks: { at: (point) => input.at?.(point) ?? Effect.void },
     }).pipe(
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),
       Effect.provideService(OverleafRepository.OverleafRepository, repos),
@@ -307,9 +307,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          at: async (point) => {
-            if (crash && point === "applied") throw new Error("process died");
-          },
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
         });
         const before = yield* w.connection;
         expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
@@ -336,9 +335,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          at: async (point) => {
-            if (crash && point === "linked") throw new Error("process died");
-          },
+          at: (point) =>
+            crash && point === "linked" ? Effect.die(new Error("process died")) : Effect.void,
         });
         const before = yield* w.connection;
         expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
@@ -367,12 +365,15 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          at: async (point) => {
-            if (point === "linked" && coordinator)
-              competing = await Effect.runPromiseExit(
-                coordinator.prepare({ connectionId: CONNECTION }),
-              );
-          },
+          at: (point) =>
+            point === "linked" && coordinator
+              ? coordinator.prepare({ connectionId: CONNECTION }).pipe(
+                  Effect.exit,
+                  Effect.map((exit) => {
+                    competing = exit;
+                  }),
+                )
+              : Effect.void,
         });
         coordinator = w.coordinator;
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
@@ -391,20 +392,20 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          at: async (point) => {
-            order.push(point);
-            if (point === "linked" && barrier) {
-              bulk = Effect.runFork(
-                barrier.bulk(
+          at: (point) =>
+            Effect.gen(function* () {
+              order.push(point);
+              if (point !== "linked" || !barrier) return;
+              bulk = yield* barrier
+                .bulk(
                   checkout,
                   Effect.sync(() => {
                     order.push("bulk");
                   }),
-                ),
-              );
-              await Effect.runPromise(Effect.sleep("100 millis"));
-            }
-          },
+                )
+                .pipe(Effect.forkDetach);
+              yield* Effect.sleep("100 millis");
+            }),
         });
         barrier = w.barrier;
         checkout = w.checkout;
@@ -424,9 +425,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          at: async (point) => {
-            if (crash && point === "applied") throw new Error("process died");
-          },
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
         });
         const before = yield* w.connection;
         expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
@@ -501,6 +501,110 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           "new.tex",
           "old.tex",
         ]);
+      }),
+    );
+  });
+
+  /** Syncs `main.tex` from A to B, then lists the copy of A that the sync kept. */
+  const syncedThenListed = (at?: (point: Point) => Effect.Effect<void>) =>
+    Effect.gen(function* () {
+      const w = yield* world({
+        synced: { "main.tex": "A" },
+        remote: { "main.tex": "B" },
+        ...(at ? { at } : {}),
+      });
+      expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+      const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+      return { w, copy: copy! };
+    });
+
+  it.live("restores a kept copy, keeping what it replaces and leaving the base", () =>
+    run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed();
+        expect(copy).toMatchObject({ relativePath: "main.tex", state: "releasable" });
+        expect(copy.keptRevision).toBe(copy.revision);
+        expect(copy.currentRevision).not.toBe(copy.revision);
+        const before = yield* w.connection;
+        const restored = yield* w.coordinator.restoreKept({
+          connectionId: CONNECTION,
+          requestId: "restore-1",
+          applyId: copy.applyId,
+          relativePath: copy.relativePath,
+          keptRevision: copy.keptRevision!,
+          currentRevision: copy.currentRevision,
+        });
+        expect(restored).toMatchObject({ _tag: "restored", adopted: { outcome: "complete" } });
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
+        const after = yield* w.connection;
+        expect(after.base).toEqual(before.base);
+        expect(after.completedSyncCount).toBe(before.completedSyncCount);
+        expect(after.activeApply).toBeNull();
+        // The file the restore replaced is kept too, never released automatically.
+        const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(listed.map((entry) => entry.state).sort()).toEqual(["kept", "releasable"]);
+        // The restored bytes are a local change for the next review to send.
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.outgoing.map((change) => change.kind)).toEqual(["modified"]);
+      }),
+    ),
+  );
+
+  it.live("refuses a restore when the folder's file changed after listing", () =>
+    run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed();
+        yield* write(w.folder, { "main.tex": "edited after listing" });
+        const before = yield* w.connection;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            relativePath: copy.relativePath,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        ).toEqual({ _tag: "stale" });
+        expect(yield* read(w.folder, "main.tex")).toBe("edited after listing");
+        expect((yield* w.connection).revision).toBe(before.revision);
+      }),
+    ),
+  );
+
+  it.live("recovers a restore interrupted after the applier ran, leaving the base", () => {
+    let crash = false;
+    return run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed((point) =>
+          crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
+        );
+        const before = yield* w.connection;
+        crash = true;
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              w.coordinator.restoreKept({
+                connectionId: CONNECTION,
+                requestId: "restore-1",
+                applyId: copy.applyId,
+                relativePath: copy.relativePath,
+                keptRevision: copy.keptRevision!,
+                currentRevision: copy.currentRevision,
+              }),
+            ),
+          ),
+        ).toBe(true);
+        crash = false;
+        expect(yield* w.coordinator.recover({ connectionId: CONNECTION })).toMatchObject({
+          _tag: "recovered",
+          adopted: { outcome: "complete" },
+        });
+        const after = yield* w.connection;
+        expect(after.base).toEqual(before.base);
+        expect(after.activeApply).toBeNull();
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
       }),
     );
   });

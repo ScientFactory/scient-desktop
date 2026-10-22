@@ -243,6 +243,43 @@ is one instance per server process, shared however each layer was built.
 Arbitrary shell writers, external Git commands and other server profiles are
 outside it.
 
+## Coordinator, local half
+
+`OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
+confirmed one, recovers an interrupted apply, and lists and restores kept
+copies. It never publishes; step 4 continues from an adopted result.
+
+- **Lock order.** The connection's operation reservation comes first: in
+  memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
+  checkout barrier's application section, then the store's compare-and-set,
+  then the file layer's locks. Overleaf is fetched before the section.
+- **Confirm.** Inside the section, it checks the folder and retention
+  identities, captures the folder again and rebuilds the review with the same
+  selections and choices. A different digest is a stale review: the fresh one
+  is offered and nothing is applied. Before the applier runs, it records the
+  receipt, a local snapshot, the intent pin and `activeApply`, in that order.
+- **Adoption** is one document replacement:
+  - the base: a tree written from the applier's per-path base on the fetched
+    remote commit, with the previous base moved into `priorBases`;
+  - managed and local-only paths;
+  - `forcedConflicts` (interrupted groups) and `markerPaths`;
+  - kept copies, each with its place in the retention folder;
+  - `completedSyncCount`, which advances only on `complete`;
+  - unknown publication attempts, which become `superseded-unresolved`;
+  - the link, cleared.
+
+  Recovery resumes the applier by the linked ID and adopts once. A link whose
+  apply never recorded its plan is cleared as a replan.
+
+- **Bulk changes.** The coordinator registers the barrier's settler: a bulk
+  change of a checkout with a pending apply recovers it inline when the
+  reservation is free, and is refused otherwise. Structural copies in the
+  folder always refuse it.
+- **Restore.** It puts a kept copy back as a one-file `retained-restore` apply,
+  only if both the copy and the folder's file still have the revisions the
+  request saw. The file it replaces is kept (state `kept`), the base never
+  moves, and the restored bytes are a local change for the next review.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)

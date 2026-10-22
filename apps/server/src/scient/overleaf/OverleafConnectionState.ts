@@ -160,6 +160,12 @@ const RetainedCopy = Schema.Struct({
   retainedAt: IsoTime,
   /** The connection's completed-sync count when retained; release needs a later one. */
   retainedAtSyncCount: Count,
+  /** Where the copy is, relative to the retention folder: `<apply>/files/<step>/<leaf>`. */
+  kept: Schema.String.check(
+    Schema.isPattern(
+      /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
+    ),
+  ),
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
@@ -424,6 +430,7 @@ export function overleafTransitionViolation(
       kept.revision !== copy.revision ||
       kept.retainedAt !== copy.retainedAt ||
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
+      kept.kept !== copy.kept ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
       (kept.state === "releasable" && copy.state !== "releasable")
     )
