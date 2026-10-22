@@ -536,6 +536,7 @@ export const EVENT_DEFINITIONS = {
           "custom-models",
           "voice",
           "skills",
+          "extensions",
           "integrations",
           "scheduled-tasks",
           "snap-shot",

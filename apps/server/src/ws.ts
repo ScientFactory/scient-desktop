@@ -6,6 +6,9 @@ import {
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
   WsScientificRpcGroup,
+  // SCIENT-FORK:START — Scient extensions RPCs.
+  WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
@@ -299,6 +302,19 @@ import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntime
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  ConnectorRuntime,
+  ExtensionDeliveryReceipts,
+  ExtensionsDiscover,
+  ProviderPluginManagement,
+  ScientPluginRegistry,
+} from "./scient/extensions/ExtensionsServices.ts";
+import {
+  ExtensionsChangeFeed,
+  makeExtensionsRpcHandlers,
+} from "./scient/extensions/ExtensionsRpcHandlers.ts";
+// SCIENT-FORK:END
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import { coalesceProviderStatusUpdates } from "./scient/providerLifecycle/ProviderStatusCoalescing.ts";
 
@@ -1369,6 +1385,16 @@ const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      // SCIENT-FORK:START — Scient extensions services.
+      const extensionServices = {
+        connectorRuntime: yield* ConnectorRuntime,
+        pluginRegistry: yield* ScientPluginRegistry,
+        discover: yield* ExtensionsDiscover,
+        receipts: yield* ExtensionDeliveryReceipts,
+        providerPlugins: yield* ProviderPluginManagement,
+        changeFeed: yield* ExtensionsChangeFeed,
+      };
+      // SCIENT-FORK:END
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -3628,6 +3654,14 @@ const layerWsRpc = (
           computeGateway,
         }),
       });
+      // SCIENT-FORK:START — Scient extensions RPCs.
+      const handlers7 = makeExtensionsRpcHandlers({
+        observeRpcEffect,
+        observeRpcStream,
+        providerRegistry,
+        ...extensionServices,
+      });
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — compose typed families without a recursive global
       // handler-map inference. Capture all services once above. Authorization and
       // instrumentation remain on ServerWsRpcGroup in RpcServer.make: Effect's
@@ -3641,6 +3675,7 @@ const layerWsRpc = (
         WsInteractiveRpcGroup.toLayer(handlers4),
         WsDeviceAndTelemetryRpcGroup.toLayer(handlers5),
         WsScientificRpcGroup.toLayer(handlers6),
+        WsExtensionsRpcGroup.toLayer(handlers7),
       );
       // SCIENT-FORK:END
     }),

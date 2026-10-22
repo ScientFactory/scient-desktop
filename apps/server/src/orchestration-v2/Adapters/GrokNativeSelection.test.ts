@@ -112,6 +112,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer synthetic-grok-awareness",
       capabilities,
+      connectors: [],
     });
     yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }

@@ -58,6 +58,12 @@ import {
   makeScientProviderTransientState,
   overlayScientProviderTransientState,
 } from "./ScientProviderTransientState.ts";
+import {
+  makeScientProviderNativeInventory,
+  overlayProviderNativeInventory,
+  withoutProviderNativeInventory,
+} from "./ScientProviderNativeInventory.ts";
+import { nextInventoryReadSequence } from "./ProviderNativeInventory.ts";
 // SCIENT-FORK:END
 
 import type { ProviderConnectionOperation, ProviderRuntimeSummary } from "@t3tools/contracts";
@@ -67,6 +73,10 @@ import * as Data from "effect/Data";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
+  // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
+  ProviderNativeInventory,
+  ProviderPluginActions,
+  // SCIENT-FORK:END
   ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
 } from "./ScientProviderInstanceSeams.ts";
@@ -162,6 +172,28 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderSkillActions | undefined>;
 
+  // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
+  /**
+   * Resolve the provider-owned native plugin and MCP server seam of the
+   * instance's current generation, as the instance registry knows it.
+   */
+  readonly getProviderPluginActionsForInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ProviderPluginActions | undefined>;
+
+  /**
+   * Publish a provider-native listing an action just read fresh. Ignored
+   * unless `reportedBy` is still the instance's current plugin seam, so a
+   * retired generation never overwrites its successor's inventory. With
+   * `inventory.cwd`, only that workspace snapshot's plugins change.
+   */
+  readonly recordProviderNativeInventory: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly reportedBy: ProviderPluginActions;
+    readonly inventory: ProviderNativeInventory;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+  // SCIENT-FORK:END
+
   /** Resolve the optional transcript-correction capability for one live instance. */
   readonly getVoiceTranscriptCorrectionForInstance: (
     instanceId: ProviderInstanceId,
@@ -253,6 +285,11 @@ export function upsertProviderWorkspaceSnapshot(
   cwd: string,
   scopedSnapshot: ProviderWorkspaceSnapshot,
 ): ServerProvider {
+  // SCIENT-FORK:START — Scient Extensions: a failed plugin listing keeps the workspace's last inventory.
+  const plugins =
+    scopedSnapshot.plugins ??
+    provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.plugins;
+  // SCIENT-FORK:END
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
@@ -262,6 +299,9 @@ export function upsertProviderWorkspaceSnapshot(
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
+    // SCIENT-FORK:START — Scient Extensions: provider-native plugins listed for this workspace.
+    ...(plugins !== undefined ? { plugins } : {}),
+    // SCIENT-FORK:END
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
     ...provider,
@@ -581,9 +621,11 @@ export const layer = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
-    // SCIENT-FORK:START — connection operations, account failures and managed runtimes.
+    // SCIENT-FORK:START — connection operations, account failures, managed runtimes
+    // and provider-native inventory reported by live sessions.
     const scientTransientState = yield* makeScientProviderTransientState();
     const { authenticationFailuresRef } = scientTransientState;
+    const nativeInventory = yield* makeScientProviderNativeInventory;
     // SCIENT-FORK:END
 
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ScientProviderInstance>>(
@@ -603,12 +645,15 @@ export const layer = Layer.effect(
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
         const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
-        yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
+        // SCIENT-FORK:START — Scient Extensions: provider-native inventory is live state, never cached.
+        const cachedProvider = withoutProviderNativeInventory(machineProvider);
+        yield* writeProviderStatusCache({ filePath, provider: cachedProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.tapError(Effect.logError),
           Effect.ignore,
         );
+        // SCIENT-FORK:END
       });
 
     const applyProviderTransientState = Effect.fn("applyProviderTransientState")(function* (
@@ -616,12 +661,20 @@ export const layer = Layer.effect(
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      // SCIENT-FORK:START — overlay the connection, account-failure and runtime states.
+      // SCIENT-FORK:START — overlay the connection, account-failure, runtime and
+      // live-session inventory states.
       const scientStates = yield* scientTransientState.read(provider.instanceId);
       const providerWithUpdateState = updateState
         ? { ...provider, updateState }
         : (({ updateState: _updateState, ...rest }) => rest)(provider);
-      return overlayScientProviderTransientState(providerWithUpdateState, scientStates);
+      return overlayProviderNativeInventory(
+        overlayScientProviderTransientState(providerWithUpdateState, scientStates),
+        // Only the current generation's reports describe this configuration.
+        yield* nativeInventory.read(
+          provider.instanceId,
+          yield* instanceRegistry.getInstance(provider.instanceId),
+        ),
+      );
       // SCIENT-FORK:END
     });
 
@@ -770,6 +823,66 @@ export const layer = Layer.effect(
       applyProviderTransientState,
       upsertProviders,
     });
+
+    /**
+     * Applies a report from `instance`, unless a newer generation replaced it.
+     * Machine reports are overlaid on every snapshot; a workspace report sets
+     * the plugins of that workspace's published snapshot.
+     */
+    const applyNativeInventory = Effect.fn("applyNativeInventory")(function* (
+      instance: ScientProviderInstance,
+      inventory: ProviderNativeInventory,
+    ) {
+      if ((yield* instanceRegistry.getInstance(instance.instanceId)) !== instance) {
+        return yield* Ref.get(providersRef);
+      }
+      const sequence = inventory.sequence ?? (yield* nextInventoryReadSequence);
+      const accepted = yield* nativeInventory.accept(
+        instance.instanceId,
+        instance,
+        inventory,
+        sequence,
+      );
+      const { workspace } = accepted;
+      if (workspace) {
+        const [previousProviders, providers] = yield* Ref.modify(providersRef, (current) => {
+          const next = current.map((candidate) =>
+            candidate.instanceId === instance.instanceId &&
+            candidate.workspaceSnapshots?.some((snapshot) => snapshot.cwd === workspace.cwd)
+              ? {
+                  ...candidate,
+                  workspaceSnapshots: candidate.workspaceSnapshots.map((snapshot) =>
+                    snapshot.cwd === workspace.cwd
+                      ? { ...snapshot, plugins: workspace.plugins }
+                      : snapshot,
+                  ),
+                }
+              : candidate,
+          );
+          return [[current, next] as const, next];
+        });
+        if (haveProvidersChanged(previousProviders, providers)) {
+          yield* PubSub.publish(changesPubSub, providers);
+        }
+        return providers;
+      }
+      const matchingProvider = (yield* Ref.get(providersRef)).find(
+        (candidate) => candidate.instanceId === instance.instanceId,
+      );
+      if (!accepted.machine || !matchingProvider) return yield* Ref.get(providersRef);
+      return yield* upsertProviders([yield* applyProviderTransientState(matchingProvider)], {
+        persist: false,
+      });
+    });
+
+    const recordProviderNativeInventory: ProviderRegistryShape["recordProviderNativeInventory"] =
+      Effect.fn("recordProviderNativeInventory")(function* (input) {
+        const instance = yield* instanceRegistry.getInstance(input.instanceId);
+        if (!instance || instance.pluginActions !== input.reportedBy) {
+          return yield* Ref.get(providersRef);
+        }
+        return yield* applyNativeInventory(instance, input.inventory);
+      });
     // SCIENT-FORK:END
 
     const readRefreshedSource = Effect.fn("readRefreshedSource")(function* (
@@ -876,8 +989,9 @@ export const layer = Layer.effect(
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
       getProviderSkillActionsForInstance,
+      getProviderPluginActionsForInstance,
       getVoiceTranscriptCorrectionForInstance,
-    } = makeScientProviderInstanceActions(liveSubsRef);
+    } = makeScientProviderInstanceActions(liveSubsRef, instanceRegistry);
     // SCIENT-FORK:END
 
     const syncLiveSources = syncSemaphore.withPermits(1)(
@@ -900,6 +1014,12 @@ export const layer = Layer.effect(
             carriedOver.set(instanceId, previousInstance);
           }
         }
+        // SCIENT-FORK:START — Scient Extensions: a generation that is not carried over is retired,
+        // whether it was rebuilt, removed, or became unavailable: its reports go.
+        yield* nativeInventory.forget(
+          (instanceId) => !previousSubs.has(instanceId) || carriedOver.has(instanceId),
+        );
+        // SCIENT-FORK:END
 
         const newlyAdded: Array<readonly [ProviderInstanceId, ScientProviderInstance]> = [];
         for (const [instanceId, instance] of nextByInstance) {
@@ -921,7 +1041,9 @@ export const layer = Layer.effect(
               const providers = previousProviders.map((provider) => {
                 if (!rebuiltInstanceIds.has(provider.instanceId)) return provider;
                 const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
-                return machineSnapshot;
+                // SCIENT-FORK:START — Scient Extensions: a rebuilt configuration reports its own inventory.
+                return withoutProviderNativeInventory(machineSnapshot);
+                // SCIENT-FORK:END
               });
               return [[previousProviders, providers] as const, providers];
             },
@@ -940,6 +1062,14 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          // SCIENT-FORK:START — Scient Extensions: publish inventory reported by the instance's live sessions.
+          const nativeInventoryChanges = instance.nativeInventoryChanges;
+          if (nativeInventoryChanges) {
+            yield* Stream.runForEach(nativeInventoryChanges, (inventory) =>
+              applyNativeInventory(instance, inventory),
+            ).pipe(Effect.forkScoped);
+          }
+          // SCIENT-FORK:END
         }
         yield* Effect.yieldNow;
 
@@ -991,6 +1121,7 @@ export const layer = Layer.effect(
         });
         // SCIENT-FORK:START — forget the transient states of removed instances.
         yield* scientTransientState.prune(knownInstanceIds);
+        yield* nativeInventory.forget((instanceId) => knownInstanceIds.has(instanceId));
         // SCIENT-FORK:END
       }),
     );
@@ -1061,19 +1192,51 @@ export const layer = Layer.effect(
         ),
         Effect.map(([, nextProviders]) => nextProviders),
       );
+    // SCIENT-FORK:START — Scient Extensions: a workspace plugin listing stops once its snapshot is
+    // evicted or dropped. Each instance compares its listings with the
+    // snapshots published at that moment, so concurrent scans cannot miss one.
+    const publishedWorkspaces = (instanceId: ProviderInstanceId) =>
+      Ref.get(providersRef).pipe(
+        Effect.map(
+          (providers): ReadonlySet<string> =>
+            new Set(
+              providers
+                .find((candidate) => candidate.instanceId === instanceId)
+                ?.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
+            ),
+        ),
+      );
+    const retainWorkspaceListings = Effect.fn("retainWorkspaceListings")(function* (
+      instanceIds: Iterable<ProviderInstanceId>,
+    ) {
+      for (const instanceId of instanceIds) {
+        const workspaceInventory = (yield* instanceRegistry.getInstance(instanceId))
+          ?.workspaceInventory;
+        if (workspaceInventory) yield* workspaceInventory.retain(publishedWorkspaces(instanceId));
+      }
+    });
+    // SCIENT-FORK:END
+
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
     }) {
       if (input.fresh) {
-        yield* updateProviders((providers) =>
+        // SCIENT-FORK:START — Scient Extensions: the snapshots this drops stop their plugin listings.
+        const afterDrop = yield* updateProviders((providers) =>
           providers.map((candidate) =>
             candidate.instanceId === input.instanceId
               ? candidate
               : dropProviderWorkspaceSnapshot(candidate, input.cwd),
           ),
         );
+        yield* retainWorkspaceListings(
+          afterDrop
+            .map((candidate) => candidate.instanceId)
+            .filter((instanceId) => instanceId !== input.instanceId),
+        );
+        // SCIENT-FORK:END
       }
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
@@ -1096,59 +1259,97 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
-      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-        const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+      // SCIENT-FORK:START — Scient Extensions: kept narrowed for the claim-guarded scan below.
+      const snapshotForCwd = instance.snapshotForCwd;
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Scient Extensions: the claim is released after every step that follows
+      // admission, including listing cleanup that a cancelled caller abandons.
+      const releaseClaim = Ref.update(workspaceRefreshesRef, (refreshes) => {
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
-        return [true, next] as const;
+        const current = new Set(next.get(instance));
+        current.delete(input.cwd);
+        if (current.size) next.set(instance, current);
+        else next.delete(instance);
+        return next;
       });
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
-      const refreshMachineSnapshot = input.fresh
-        ? (instance.invalidateCaches ?? Effect.void).pipe(
-            Effect.andThen(refreshInstance(input.instanceId)),
-          )
-        : Effect.void;
-      return yield* refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
-        // A failed scan fails this effect, so a returned snapshot is a real
-        // inventory even while the provider's health check reports an error.
-        Effect.flatMap((scopedSnapshot) =>
-          instanceRegistry.getInstance(input.instanceId).pipe(
-            Effect.flatMap((currentInstance) => {
-              if (currentInstance !== instance) return Ref.get(providersRef);
-              return updateProviders((currentProviders) =>
-                currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Unless the driver reports its own command discovery,
-                        // commands come from the health check. A failed check
-                        // leaves them unknown, so keep the last ones and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+            const current = refreshes.get(instance);
+            if (current?.has(input.cwd)) return [false, refreshes] as const;
+            const next = new Map(refreshes);
+            next.set(instance, new Set(current).add(input.cwd));
+            return [true, next] as const;
+          });
+          if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+          return yield* restore(
+            Effect.gen(function* () {
+              // A newer scan supersedes a workspace plugin listing, and listings
+              // of this workspace that began before it no longer apply.
+              if (instance.workspaceInventory) {
+                yield* instance.workspaceInventory.cancel(input.cwd);
+              }
+              const scanSequence = yield* nextInventoryReadSequence;
+              const refreshMachineSnapshot = input.fresh
+                ? (instance.invalidateCaches ?? Effect.void).pipe(
+                    Effect.andThen(refreshInstance(input.instanceId)),
+                  )
+                : Effect.void;
+              return yield* refreshMachineSnapshot.pipe(
+                Effect.andThen(snapshotForCwd(input.cwd)),
+                // A failed scan fails this effect, so a returned snapshot is a real
+                // inventory even while the provider's health check reports an error.
+                Effect.flatMap((scopedSnapshot) =>
+                  instanceRegistry.getInstance(input.instanceId).pipe(
+                    Effect.flatMap((currentInstance) => {
+                      if (currentInstance !== instance) return Ref.get(providersRef);
+                      return updateProviders((currentProviders) =>
+                        currentProviders.map((candidate) =>
+                          candidate.instanceId === input.instanceId &&
+                          Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                            ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                                ...scopedSnapshot,
+                                checkedAt: scannedAt,
+                                // Unless the driver reports its own command discovery,
+                                // commands come from the health check. A failed check
+                                // leaves them unknown, so keep the last ones and retry.
+                                slashCommandsPending:
+                                  scopedSnapshot.slashCommandsPending ??
+                                  scopedSnapshot.status === "error",
+                              })
+                            : candidate,
+                        ),
+                      ).pipe(
+                        // List the workspace's plugins once its scan is
+                        // published, if the update kept it; evicted snapshots stop theirs.
+                        Effect.tap((afterScan) =>
+                          Effect.gen(function* () {
+                            yield* nativeInventory.markWorkspaceScan(
+                              input.instanceId,
+                              instance,
+                              input.cwd,
+                              scanSequence,
+                            );
+                            const published = afterScan
+                              .find((candidate) => candidate.instanceId === input.instanceId)
+                              ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === input.cwd);
+                            if (published && instance.workspaceInventory) {
+                              yield* instance.workspaceInventory.refresh(input.cwd);
+                            }
+                            yield* retainWorkspaceListings([input.instanceId]);
+                          }),
+                        ),
+                      );
+                    }),
+                  ),
                 ),
               );
+              // Release the claim (see above).
             }),
-          ),
-        ),
-        Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
-        ),
+          ).pipe(Effect.ensuring(claimed ? releaseClaim : Effect.void));
+        }),
       );
+      // SCIENT-FORK:END
     });
 
     return {
@@ -1168,6 +1369,10 @@ export const layer = Layer.effect(
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
       getProviderSkillActionsForInstance,
+      // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
+      getProviderPluginActionsForInstance,
+      recordProviderNativeInventory,
+      // SCIENT-FORK:END
       getVoiceTranscriptCorrectionForInstance,
       setProviderMaintenanceActionState,
       setProviderConnectionOperation,

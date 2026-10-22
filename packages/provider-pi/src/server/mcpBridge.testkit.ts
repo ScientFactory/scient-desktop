@@ -1,10 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
+// SCIENT-FORK:START — Scient Extensions connectors: hashed connector tool aliases.
+import * as NodeCrypto from "node:crypto";
+// SCIENT-FORK:END
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
-interface RegisteredTool {
+// SCIENT-FORK:START — Scient Extensions connectors: tests type connector tool registrations.
+export interface RegisteredTool {
+  // SCIENT-FORK:END
   readonly name: string;
   readonly description: string;
   readonly parameters: unknown;
@@ -36,6 +41,22 @@ type AgentStartHook = (
   },
 ) => Promise<{ systemPrompt: string }>;
 
+// SCIENT-FORK:START — Scient Extensions connectors: proxied MCP server fixtures.
+export interface FixtureConnector {
+  readonly serverName: string;
+  readonly url: string;
+  readonly tools: ReadonlyArray<{
+    readonly name: string;
+    readonly description?: string;
+    readonly annotations?: { readonly readOnlyHint?: boolean };
+  }>;
+  /** Listed verbatim after `tools`, as a misbehaving server might send them. */
+  readonly malformedTools?: ReadonlyArray<unknown>;
+  /** Fail every request, as an unreachable or misconfigured connector would. */
+  readonly fail?: boolean;
+}
+// SCIENT-FORK:END
+
 export async function loadMcpBridge(
   options: {
     readonly modern?: boolean;
@@ -45,6 +66,14 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
+    // SCIENT-FORK:START — Scient Extensions connectors: fixture servers and response encoding.
+    readonly connectors?: ReadonlyArray<FixtureConnector>;
+    /** Encodes a JSON-RPC response; undefined keeps the plain `application/json` reply. */
+    readonly respond?: (
+      message: { readonly jsonrpc: "2.0"; readonly id: number; readonly result: unknown },
+      request: { readonly url: string; readonly method: string },
+    ) => Response | undefined;
+    // SCIENT-FORK:END
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -91,11 +120,24 @@ export async function loadMcpBridge(
         ...(options.toolNameMap === undefined
           ? {}
           : { PI_TOOL_NAME_MAP: JSON.stringify(options.toolNameMap) }),
+        // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
+        ...(options.connectors === undefined
+          ? {}
+          : {
+              T3_MCP_CONNECTORS: JSON.stringify(
+                options.connectors.map(({ serverName, url }) => ({ serverName, url })),
+              ),
+            }),
+        // SCIENT-FORK:END
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
     },
     AbortSignal,
+    // SCIENT-FORK:START — Scient Extensions connectors: streamed responses and hashed aliases.
+    TextDecoder,
+    NodeCrypto,
+    // SCIENT-FORK:END
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -114,15 +156,42 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
+      // SCIENT-FORK:START — Scient Extensions connectors: fixture servers answer their own requests.
+      const connector = options.connectors?.find((candidate) => candidate.url === url);
+      if (connector?.fail === true) {
+        return new Response("connector unavailable", { status: 502 });
+      }
+      const calledTool =
+        typeof request.params === "object" && request.params !== null && "name" in request.params
+          ? String(request.params.name)
+          : "";
       const result =
         request.method === "tools/list"
-          ? { tools: catalog }
+          ? {
+              tools:
+                connector === undefined
+                  ? catalog
+                  : [
+                      ...connector.tools.map((tool) => ({
+                        ...tool,
+                        inputSchema: { type: "object", properties: {} },
+                      })),
+                      ...(connector.malformedTools ?? []),
+                    ],
+            }
           : request.method === "tools/call"
-            ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
+            ? connector === undefined
+              ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
+              : { content: [{ type: "text", text: `${connector.serverName}:${calledTool}` }] }
             : {};
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
-      });
+      const message = { jsonrpc: "2.0" as const, id: request.id, result };
+      return (
+        options.respond?.(message, { url, method: request.method }) ??
+        new Response(JSON.stringify(message), {
+          headers: { "content-type": "application/json" },
+        })
+      );
+      // SCIENT-FORK:END
     },
     pi: {
       registerCommand: () => undefined,

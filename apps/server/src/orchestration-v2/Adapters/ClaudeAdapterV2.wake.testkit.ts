@@ -211,6 +211,10 @@ const makeWakeHarnessWithOptions = (options?: {
   /** Synthetic SDK EOF observation; does not signal adapter cleanup completion. */
   readonly onStreamExit?: Effect.Effect<void>;
   readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
+  // SCIENT-FORK:START Scient Extensions native inventory
+  readonly onNativeInventory?: ClaudeAdapterV2.ClaudeAdapterV2Options["onNativeInventory"];
+  readonly mcpServerStatus?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["mcpServerStatus"];
+  // SCIENT-FORK:END
 }) =>
   Effect.gen(function* () {
     const observeStreamExit = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
@@ -258,6 +262,11 @@ const makeWakeHarnessWithOptions = (options?: {
             continuationRequests.push(request);
           }),
       },
+      // SCIENT-FORK:START Scient Extensions native inventory
+      ...(options?.onNativeInventory === undefined
+        ? {}
+        : { onNativeInventory: options.onNativeInventory }),
+      // SCIENT-FORK:END
       queryRunner: {
         allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
         open: (input) =>
@@ -318,6 +327,11 @@ const makeWakeHarnessWithOptions = (options?: {
               ...(options?.stopTask === undefined ? {} : { stopTask: options.stopTask }),
               interrupt: options?.interrupt ?? Effect.void,
               close: options?.close?.(sdkMessages) ?? Effect.void,
+              // SCIENT-FORK:START Scient Extensions native inventory
+              ...(options?.mcpServerStatus === undefined
+                ? {}
+                : { mcpServerStatus: options.mcpServerStatus }),
+              // SCIENT-FORK:END
             };
           }),
         forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),

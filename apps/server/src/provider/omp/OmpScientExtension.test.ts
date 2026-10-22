@@ -227,6 +227,332 @@ describe("Scient's Oh My Pi extension", () => {
     );
   });
 
+  describe("connectors", () => {
+    const GITHUB = "http://127.0.0.1/mcp/connectors/connector-github";
+    const LINEAR = "http://127.0.0.1/mcp/connectors/connector-linear";
+    const BROKEN = "http://127.0.0.1/mcp/connectors/connector-broken";
+    const CONNECTED = {
+      ...SESSION,
+      connectors: [
+        { serverName: "github", displayName: "GitHub", url: GITHUB },
+        { serverName: "linear", displayName: "Linear", url: LINEAR },
+      ],
+    };
+
+    /** Scient's endpoint plus one synthetic MCP server per connector URL; a catalog for
+     * Scient's endpoint replaces its default `scient_fixture`. */
+    const stubServers = (catalogs: Record<string, ReadonlyArray<string> | "fail">) => {
+      const requests: Array<{
+        readonly url: string;
+        readonly body: McpRequest & { readonly params?: { readonly name?: string } };
+        readonly authorization: string | null;
+      }> = [];
+      vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        const body = JSON.parse(String(init?.body)) as McpRequest & {
+          readonly params?: { readonly name?: string };
+        };
+        requests.push({
+          url,
+          body,
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        const catalog =
+          catalogs[url] ?? (url === SESSION.endpoint ? ["scient_fixture"] : undefined);
+        if (catalog === undefined || catalog === "fail") return new Response(null, { status: 502 });
+        if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+        const result =
+          body.method === "initialize"
+            ? { protocolVersion: "2025-06-18" }
+            : body.method === "tools/list"
+              ? { tools: catalog.map((name) => ({ name, inputSchema: { type: "object" } })) }
+              : {
+                  content: [{ type: "text", text: `${url} ran ${body.params?.name}` }],
+                  ...(body.params?.name === "fails" ? { isError: true } : {}),
+                };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result });
+      });
+      return requests;
+    };
+
+    const status = async (host: { readonly commands: ReadonlyMap<string, unknown> }) => {
+      const notices: Array<string> = [];
+      const command = host.commands.get("scient-status") as {
+        readonly handler: (
+          args: string,
+          ctx: { readonly ui: { readonly notify: (text: string) => void } },
+        ) => Promise<void>;
+      };
+      await command.handler("", { ui: { notify: (text) => notices.push(text) } });
+      return notices;
+    };
+
+    it("registers each connector's tools under its server name and calls them through the session bearer", async () => {
+      const requests = stubServers({ [GITHUB]: ["search.issues", "fails"], [LINEAR]: ["list"] });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        CONNECTED,
+      );
+      // Connector endpoints, like the bearer, stay in the bootstrap.
+      expect(extension.source).not.toContain("/mcp/connectors/");
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      expect([...host.tools.keys()]).toEqual([
+        "scient_fixture",
+        "github__search_issues",
+        "github__fails",
+        "linear__list",
+      ]);
+      expect([...host.tools.values()].every((tool) => tool.loadMode === "essential")).toBe(true);
+      const result = await host.tools.get("github__search_issues")!.execute("call-1", {});
+      expect(result.content).toEqual([{ type: "text", text: `${GITHUB} ran search.issues` }]);
+      expect((await host.tools.get("linear__list")!.execute("call-2", {})).content).toEqual([
+        { type: "text", text: `${LINEAR} ran list` },
+      ]);
+      expect((await host.tools.get("scient_fixture")!.execute("call-3", {})).content).toEqual([
+        { type: "text", text: `${SESSION.endpoint} ran scient_fixture` },
+      ]);
+      const failed = await host.tools.get("github__fails")!.execute("call-4", {});
+      expect(failed.content[0]).toEqual({
+        type: "text",
+        text: 'Connector "GitHub" tool reported an error:',
+      });
+      expect(
+        (host.handlers.get("tool_result") as Handler | undefined)?.({
+          toolName: "github__fails",
+          details: failed.details,
+        } as never),
+      ).toEqual({ isError: true });
+      expect(new Set(requests.map(({ url }) => url))).toEqual(
+        new Set([SESSION.endpoint, GITHUB, LINEAR]),
+      );
+      expect(requests.every(({ authorization }) => authorization === SESSION.authorization)).toBe(
+        true,
+      );
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 2 tools. Linear: 1 tools.",
+      ]);
+    });
+
+    it("keeps Scient's tools and the other connectors when one connector fails", async () => {
+      stubServers({ [GITHUB]: ["search"], [BROKEN]: "fail" });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        {
+          ...SESSION,
+          connectors: [
+            { serverName: "broken", displayName: "Broken", url: BROKEN },
+            { serverName: "github", displayName: "GitHub", url: GITHUB },
+          ],
+        },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      expect([...host.tools.keys()]).toEqual(["scient_fixture", "github__search"]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. Broken: unavailable. GitHub: 1 tools.",
+      ]);
+    });
+
+    const calledTools = (
+      requests: ReadonlyArray<{
+        readonly url: string;
+        readonly body: { readonly method: string; readonly params?: { readonly name?: string } };
+      }>,
+    ) =>
+      requests
+        .filter(({ body }) => body.method === "tools/call")
+        .map(({ url, body }) => [url, body.params?.name]);
+
+    it("aliases connector tool names that collide or run too long, and skips OMP's MCP namespace", async () => {
+      const requests = stubServers({
+        [GITHUB]: ["ok", "a.b", "a_b", "_x", "x".repeat(60)],
+        [LINEAR]: ["x", "list"],
+        [BROKEN]: ["native"],
+      });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        {
+          ...SESSION,
+          connectors: [
+            { serverName: "github", displayName: "GitHub", url: GITHUB },
+            // "github" + "__" + "_x" and "github_" + "__" + "x" both make "github___x".
+            { serverName: "github_", displayName: "Shadow", url: LINEAR },
+            { serverName: "mcp", displayName: "Native", url: BROKEN },
+          ],
+        },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      // "a.b" becomes "github__a_b", so the later "a_b" takes a hashed alias, as do
+      // the 68-character name and the later "github___x".
+      expect([...host.tools.keys()]).toEqual([
+        "scient_fixture",
+        "github__ok",
+        "github__a_b",
+        "github__a_b_44fdc099",
+        "github___x",
+        "github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd",
+        "github___x_4b9a77d4",
+        "github___list",
+      ]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. GitHub: 5 tools. Shadow: 2 tools. Native: 0 tools (1 omitted: name unusable).",
+      ]);
+      await host.tools.get("github__a_b_44fdc099")!.execute("call-1", {});
+      await host.tools
+        .get("github__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_592e2afd")!
+        .execute("call-2", {});
+      await host.tools.get("github___x_4b9a77d4")!.execute("call-3", {});
+      expect(calledTools(requests)).toEqual([
+        [GITHUB, "a_b"],
+        [GITHUB, "x".repeat(60)],
+        [LINEAR, "x"],
+      ]);
+    });
+
+    it("gives long names distinct deterministic aliases that call the connector's own tools", async () => {
+      const server = "k".repeat(44);
+      const first = `search_documents_${"a".repeat(47)}`;
+      const second = `search_documents_${"b".repeat(47)}`;
+      const requests = stubServers({ [GITHUB]: [first, second] });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: server, displayName: "Docs", url: GITHUB }] },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      const names = [...host.tools.keys()];
+      expect(names).toEqual([
+        "scient_fixture",
+        `${server}__search_do_3ff089b7`,
+        `${server}__search_do_73415594`,
+      ]);
+      for (const name of names) expect(name).toMatch(/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/u);
+      await host.tools.get(`${server}__search_do_73415594`)!.execute("call-1", {});
+      await host.tools.get(`${server}__search_do_3ff089b7`)!.execute("call-2", {});
+      expect(calledTools(requests)).toEqual([
+        [GITHUB, second],
+        [GITHUB, first],
+      ]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 1 tools. Full access; no native sandbox. Docs: 2 tools.",
+      ]);
+    });
+
+    it("aliases a connector tool whose name a Scient tool already has", async () => {
+      const requests = stubServers({
+        [SESSION.endpoint]: ["scient_fixture", "github__search"],
+        [GITHUB]: ["search"],
+      });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      expect([...host.tools.keys()]).toEqual([
+        "scient_fixture",
+        "github__search",
+        "github__search_6c8b0b27",
+      ]);
+      await host.tools.get("github__search_6c8b0b27")!.execute("call-1", {});
+      await host.tools.get("github__search")!.execute("call-2", {});
+      expect(calledTools(requests)).toEqual([
+        [GITHUB, "search"],
+        [SESSION.endpoint, "github__search"],
+      ]);
+    });
+
+    it("skips a connector tool whose name and alias are both taken", async () => {
+      stubServers({
+        [SESSION.endpoint]: ["github__search", "github__search_6c8b0b27"],
+        [GITHUB]: ["search", "list"],
+      });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        { ...SESSION, connectors: [{ serverName: "github", displayName: "GitHub", url: GITHUB }] },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      expect([...host.tools.keys()]).toEqual([
+        "github__search",
+        "github__search_6c8b0b27",
+        "github__list",
+      ]);
+      expect(await status(host)).toEqual([
+        "Scient connected: 2 tools. Full access; no native sandbox. GitHub: 1 tools (1 omitted: name unusable).",
+      ]);
+    });
+
+    it("starts a digit-led server's tool names with an underscore", async () => {
+      const requests = stubServers({ [GITHUB]: ["item.get"] });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        {
+          ...SESSION,
+          connectors: [{ serverName: "1password", displayName: "1Password", url: GITHUB }],
+        },
+      );
+      const host = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(host.api);
+
+      expect([...host.tools.keys()]).toEqual(["scient_fixture", "_1password__item_get"]);
+      await host.tools.get("_1password__item_get")!.execute("call-1", {});
+      expect(calledTools(requests)).toEqual([[GITHUB, "item.get"]]);
+    });
+
+    it("gives a subagent's re-run the connector tools over the same connections", async () => {
+      const requests = stubServers({ [GITHUB]: ["search"], [LINEAR]: ["list"] });
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        CONNECTED,
+      );
+      const parent = makeApi();
+      const child = makeApi();
+
+      await (
+        await extension.importFresh()
+      )(parent.api);
+      await (
+        await extension.importFresh()
+      )(child.api);
+
+      expect([...child.tools.keys()]).toEqual(["scient_fixture", "github__search", "linear__list"]);
+      expect(requests.filter(({ body }) => body.method === "initialize")).toHaveLength(3);
+      expect((await child.tools.get("github__search")!.execute("call-1", {})).content).toEqual([
+        { type: "text", text: `${GITHUB} ran search` },
+      ]);
+    });
+  });
+
   describe("tool results", () => {
     const run = async (toolResult: Record<string, unknown>) => {
       stubMcp(toolResult);
@@ -281,6 +607,99 @@ describe("Scient's Oh My Pi extension", () => {
         } as never),
       ).toEqual({ isError: true });
     });
+  });
+
+  describe("event-stream responses", () => {
+    /** Scient's endpoint answering every request as one event stream, framed by `frame`. */
+    const stubEventStream = (
+      frame: (message: string) => string,
+      options: { readonly chunkSize?: number; readonly open?: boolean } = {},
+    ) => {
+      const cancelled: Array<string> = [];
+      vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as McpRequest;
+        if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+        const result =
+          body.method === "initialize"
+            ? { protocolVersion: "2025-06-18" }
+            : body.method === "tools/list"
+              ? { tools: [{ name: "scient_fixture", inputSchema: { type: "object" } }] }
+              : { content: [{ type: "text", text: "streamed" }] };
+        const bytes = new TextEncoder().encode(
+          frame(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }, null, 2)),
+        );
+        const chunkSize = options.chunkSize ?? bytes.length;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                controller.enqueue(bytes.slice(offset, offset + chunkSize));
+              }
+              if (options.open !== true) controller.close();
+            },
+            cancel() {
+              cancelled.push(body.method);
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      });
+      return cancelled;
+    };
+    const dataLines = (message: string, eol: string) =>
+      message
+        .split("\n")
+        .map((line) => `data: ${line}`)
+        .join(eol);
+    const callFixture = async () => {
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        SESSION,
+      );
+      const host = makeApi();
+      await (
+        await extension.importFresh()
+      )(host.api);
+      return host.tools.get("scient_fixture")!.execute("call-1", {});
+    };
+
+    it("parses CR-only events on an open stream fed byte by byte", async () => {
+      const cancelled = stubEventStream(
+        (message) =>
+          `: ping\r\r${dataLines(JSON.stringify({ jsonrpc: "2.0", method: "notifications/message" }), "\r")}\r\r${dataLines(message, "\r")}\r\r`,
+        { chunkSize: 1, open: true },
+      );
+      const result = await callFixture();
+      expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+      expect(cancelled).toEqual(["initialize", "tools/list", "tools/call"]);
+    });
+
+    it("does not take a server request that reuses the pending id as its response", async () => {
+      stubEventStream(
+        (message) => {
+          // The server numbers its own requests, so one may carry this call's id.
+          const { id } = JSON.parse(message) as { readonly id: unknown };
+          const request = JSON.stringify({ jsonrpc: "2.0", id, method: "sampling/createMessage" });
+          return `${dataLines(request, "\n")}\n\n${dataLines(message, "\n")}\n\n`;
+        },
+        { open: true },
+      );
+      const result = await callFixture();
+      expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+    });
+
+    it.each([
+      ["no line break", ""],
+      ["one LF", "\n"],
+      ["one CRLF", "\r\n"],
+    ])(
+      "accepts a final event the stream ends without a blank line after (%s)",
+      async (_name, end) => {
+        stubEventStream((message) => `${dataLines(message, "\n")}${end}`, { chunkSize: 5 });
+        const result = await callFixture();
+        expect(result.content).toEqual([{ type: "text", text: "streamed" }]);
+      },
+    );
   });
 });
 

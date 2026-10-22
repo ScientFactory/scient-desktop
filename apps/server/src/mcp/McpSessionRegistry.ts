@@ -23,7 +23,23 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly skillScope?: McpInvocationContext.McpScientSkillScope;
+  // SCIENT-FORK:START Scient Extensions connectors
+  /**
+   * Connectors delivered with this credential. The registry derives each
+   * proxy URL from its own endpoint; the set is bound into the scope so the
+   * connector proxy honors exactly what the session received. Defaults to none.
+   */
+  readonly connectors?: ReadonlyArray<McpCredentialConnector>;
+  // SCIENT-FORK:END
 }
+
+// SCIENT-FORK:START Scient Extensions connectors
+export interface McpCredentialConnector {
+  readonly connectorId: string;
+  readonly serverName: string;
+  readonly displayName: string;
+}
+// SCIENT-FORK:END
 
 export interface McpIssuedCredential {
   readonly config: McpProviderSession.McpProviderSessionConfig;
@@ -83,6 +99,12 @@ const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
     ? "127.0.0.1"
     : NetAddress.formatUrlHostString(NetAddress.formatIp(address));
 
+// SCIENT-FORK:START Scient Extensions connectors
+/** The connector proxy endpoint beside the Scient MCP endpoint, same origin and bearer. */
+export const connectorProxyUrl = (endpoint: string, connectorId: string): string =>
+  new URL(`/mcp/connectors/${encodeURIComponent(connectorId)}`, endpoint).toString();
+// SCIENT-FORK:END
+
 const copySkillScope = (
   skillScope: McpInvocationContext.McpScientSkillScope,
 ): McpInvocationContext.McpScientSkillScope => ({
@@ -128,6 +150,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
+      // SCIENT-FORK:START Scient Extensions connectors
+      const connectors = (request.connectors ?? []).map(
+        (connector): McpProviderSession.McpProviderSessionConnector => ({
+          connectorId: connector.connectorId,
+          serverName: connector.serverName,
+          displayName: connector.displayName,
+          url: connectorProxyUrl(endpoint, connector.connectorId),
+        }),
+      );
+      // SCIENT-FORK:END
       const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
         requestNamespace: providerSessionId,
@@ -140,6 +172,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         capabilities: new Set<McpInvocationContext.McpCapability>(
           request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : []),
         ),
+        // SCIENT-FORK:START Scient Extensions connectors
+        connectorIds: new Set(connectors.map((connector) => connector.connectorId)),
+        // SCIENT-FORK:END
         ...(request.skillScope ? { skillScope: copySkillScope(request.skillScope) } : {}),
         issuedAt,
       };
@@ -160,6 +195,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           // authorization record. `ReadonlySet` is compile-time only; sharing
           // one mutable Set would let an adapter accidentally widen its token.
           capabilities: new Set(scope.capabilities),
+          // SCIENT-FORK:START Scient Extensions connectors
+          connectors,
+          // SCIENT-FORK:END
         },
       };
     },
@@ -180,6 +218,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           {
             ...record.scope,
             capabilities: new Set(record.scope.capabilities),
+            // SCIENT-FORK:START Scient Extensions connectors
+            connectorIds: new Set(record.scope.connectorIds),
+            // SCIENT-FORK:END
             ...(record.scope.skillScope
               ? {
                   skillScope: {

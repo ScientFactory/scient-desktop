@@ -1,0 +1,654 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderMcpServer,
+  type ServerProviderPlugin,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
+import * as ModelManifest from "./ModelManifest.ts";
+import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import { nextInventoryReadSequence } from "./ProviderNativeInventory.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
+import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
+import type {
+  ProviderNativeInventory,
+  ProviderPluginActions,
+  ProviderWorkspaceInventory,
+} from "./ScientProviderInstanceSeams.ts";
+
+const DRIVER = ProviderDriverKind.make("codex");
+const INSTANCE_ID = ProviderInstanceId.make("codex");
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+
+const linear: ServerProviderPlugin = {
+  id: "linear@curated",
+  name: "linear",
+  source: "remote",
+  enabled: true,
+  canUninstall: true,
+};
+const notion: ServerProviderMcpServer = {
+  name: "notion",
+  status: "needs-auth",
+  canStartSignIn: true,
+};
+
+function provider(checkedAt: string, inventory: ProviderNativeInventory = {}): ServerProvider {
+  return {
+    instanceId: INSTANCE_ID,
+    driver: DRIVER,
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt,
+    version: "0.150.0",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    ...inventory,
+  };
+}
+
+const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+  reportClientActivity: () => Effect.void,
+  removeRpcClient: () => Effect.void,
+  reportHostPowerState: () => Effect.void,
+  snapshot: Effect.succeed({
+    hostPower: {
+      source: "unknown",
+      idle: "unknown",
+      idleSeconds: null,
+      locked: "unknown",
+      suspended: false,
+      onBattery: "unknown",
+      lowPowerMode: "unknown",
+      thermalState: "unknown",
+      stale: true,
+      updatedAt: TEST_EPOCH,
+    },
+    leases: [],
+    activeForegroundLeaseCount: 0,
+    activeScopeKeys: [],
+    shouldRunOpportunisticWork: true,
+    updatedAt: TEST_EPOCH,
+  }),
+  streamChanges: Stream.empty,
+  hasDemand: () => Effect.succeed(true),
+  shouldRunScopeWork: () => Effect.succeed(true),
+  shouldRunOpportunisticWork: Effect.succeed(true),
+});
+
+const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(function* () {
+  const snapshotRef = yield* Ref.make(provider("2026-10-21T00:00:00.000Z"));
+  const registryChanges = yield* PubSub.unbounded<void>();
+
+  const harnessScope = yield* Effect.scope;
+  // Workspace scans finish when this gate does; tests hold it to run scans concurrently.
+  const scanGateRef = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+  // Listing cleanup (`cancel`) finishes when this gate does, like a slow teardown.
+  const cancelGateRef = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+  const scanCalls = yield* Ref.make(0);
+  const makeInstance = Effect.fn("makeInstance")(function* () {
+    const liveInventory = yield* PubSub.unbounded<ProviderNativeInventory>();
+    // Workspace listings answer when the test opens this gate, after the scan.
+    const workspaceListingGate = yield* Deferred.make<void>();
+    const workspaceCalls: Array<string> = [];
+    /** Workspaces whose listing is queued or running. */
+    const runningWorkspaceListings = new Set<string>();
+    const workspaceInventory: ProviderWorkspaceInventory = {
+      cancel: (cwd) =>
+        Ref.get(cancelGateRef).pipe(
+          Effect.flatten,
+          Effect.andThen(
+            Effect.sync(() => {
+              workspaceCalls.push(`cancel ${cwd}`);
+              runningWorkspaceListings.delete(cwd);
+            }),
+          ),
+        ),
+      refresh: (cwd) =>
+        Effect.sync(() => {
+          workspaceCalls.push(`refresh ${cwd}`);
+          runningWorkspaceListings.add(cwd);
+        }).pipe(
+          Effect.andThen(
+            Deferred.await(workspaceListingGate).pipe(
+              Effect.andThen(PubSub.publish(liveInventory, { cwd, plugins: [linear] })),
+              Effect.forkIn(harnessScope),
+            ),
+          ),
+          Effect.asVoid,
+        ),
+      retain: (current) =>
+        current.pipe(
+          Effect.map((keep) => {
+            for (const cwd of [...runningWorkspaceListings]) {
+              if (keep.has(cwd)) continue;
+              runningWorkspaceListings.delete(cwd);
+              workspaceCalls.push(`stop ${cwd}`);
+            }
+          }),
+        ),
+    };
+    const pluginActions: ProviderPluginActions = {
+      listPlugins: () => Effect.die("unused"),
+      readMcpServer: () => Effect.die("unused"),
+      uninstall: () => Effect.die("unused"),
+      startMcpSignIn: () => Effect.die("unused"),
+      isRetired: Effect.succeed(false),
+      whenRetired: Effect.never,
+    };
+    const instance: ScientProviderInstance = {
+      instanceId: INSTANCE_ID,
+      driverKind: DRIVER,
+      continuationIdentity: { driverKind: DRIVER, continuationKey: "codex:instance:codex" },
+      displayName: undefined,
+      enabled: true,
+      snapshot: {
+        resolveMaintenance: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
+          ),
+        getSnapshot: Ref.get(snapshotRef),
+        applyUsageLimits: () => Effect.void,
+        refresh: Ref.get(snapshotRef),
+        streamChanges: Stream.empty,
+      },
+      snapshotForCwd: () =>
+        Ref.update(scanCalls, (count) => count + 1).pipe(
+          Effect.andThen(Ref.get(scanGateRef)),
+          Effect.flatten,
+          Effect.andThen(Ref.get(snapshotRef)),
+        ),
+      get orchestrationAdapter(): never {
+        throw new Error("Snapshot projection must not start an orchestration adapter.");
+      },
+      textGeneration: {} as ScientProviderInstance["textGeneration"],
+      pluginActions,
+      nativeInventoryChanges: Stream.fromPubSub(liveInventory),
+      workspaceInventory,
+    };
+    return {
+      instance,
+      liveInventory,
+      pluginActions,
+      workspaceListingGate,
+      workspaceCalls,
+      runningWorkspaceListings,
+    };
+  });
+
+  const initial = yield* makeInstance();
+  const instancesRef = yield* Ref.make<ReadonlyArray<ScientProviderInstance>>([initial.instance]);
+  const unavailableRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+  const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+    getInstance: (instanceId) =>
+      Ref.get(instancesRef).pipe(
+        Effect.map((instances) => instances.find((instance) => instance.instanceId === instanceId)),
+      ),
+    rebuildInstance: () => Effect.void,
+    listInstances: Ref.get(instancesRef),
+    listUnavailable: Ref.get(unavailableRef),
+    streamChanges: Stream.fromPubSub(registryChanges),
+    subscribeChanges: PubSub.subscribe(registryChanges),
+  });
+  const services = yield* Layer.build(
+    ProviderRegistry.layer.pipe(
+      Layer.provideMerge(instanceRegistryLayer),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "scient-provider-native-inventory-" }),
+      ),
+      Layer.provideMerge(ModelManifest.layerTest),
+      Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  );
+  const registry = yield* ProviderRegistry.ProviderRegistry.pipe(Effect.provide(services));
+  const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(services));
+  const cachePath = yield* resolveProviderStatusCachePath({
+    cacheDir: config.providerStatusCacheDir,
+    instanceId: INSTANCE_ID,
+  }).pipe(Effect.provide(services));
+  const readCache = readProviderStatusCache(cachePath).pipe(Effect.provide(NodeServices.layer));
+  return {
+    registry,
+    snapshotRef,
+    registryChanges,
+    instancesRef,
+    unavailableRef,
+    makeInstance,
+    liveInventory: initial.liveInventory,
+    pluginActions: initial.pluginActions,
+    workspaceListingGate: initial.workspaceListingGate,
+    workspaceCalls: initial.workspaceCalls,
+    runningWorkspaceListings: initial.runningWorkspaceListings,
+    scanGateRef,
+    cancelGateRef,
+    scanCalls,
+    readCache,
+  };
+});
+
+/** Lets forked registry subscribers run until `ready` holds for the published providers. */
+const awaitProviders = Effect.fn("awaitProviders")(function* (
+  registry: ProviderRegistry.ProviderRegistry["Service"],
+  ready: (provider: ServerProvider | undefined) => boolean,
+) {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const current = (yield* registry.getProviders)[0];
+    if (ready(current)) return current;
+    yield* Effect.yieldNow;
+  }
+  return yield* Effect.die(new Error("The registry never published the expected inventory."));
+});
+
+describe("ProviderRegistry provider-native inventory", () => {
+  it.effect(
+    "keeps the last complete report across probes and partial reports, never caching it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { registry, snapshotRef, liveInventory, readCache } = yield* makeHarness();
+          yield* registry.refreshInstance(INSTANCE_ID);
+          yield* PubSub.publish(liveInventory, { plugins: [linear], mcpServers: [notion] });
+          yield* awaitProviders(registry, (current) => current?.plugins?.length === 1);
+
+          // The plugin listing was incomplete this time, so the report omits it.
+          yield* PubSub.publish(liveInventory, { mcpServers: [] });
+          const partial = yield* awaitProviders(
+            registry,
+            (current) => current?.mcpServers?.length === 0,
+          );
+          assert.deepStrictEqual(partial?.plugins, [linear]);
+
+          // A probe never carries this inventory and never erases it.
+          yield* Ref.set(snapshotRef, provider("2026-10-21T00:00:02.000Z"));
+          const probed = (yield* registry.refreshInstance(INSTANCE_ID))[0];
+          assert.deepStrictEqual(probed?.plugins, [linear]);
+          assert.strictEqual(probed?.checkedAt, "2026-10-21T00:00:02.000Z");
+          const cached = yield* readCache;
+          assert.exists(cached);
+          assert.strictEqual(cached.checkedAt, "2026-10-21T00:00:02.000Z");
+          assert.strictEqual("plugins" in cached, false);
+          assert.strictEqual("mcpServers" in cached, false);
+
+          // A complete empty listing is authoritative.
+          yield* PubSub.publish(liveInventory, { plugins: [] });
+          yield* awaitProviders(registry, (current) => current?.plugins?.length === 0);
+        }),
+      ),
+  );
+
+  it.effect("resolves plugin actions from the current generation before the registry syncs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, instancesRef, makeInstance } = yield* makeHarness();
+        const rebuilt = yield* makeInstance();
+        // The instance registry already holds the new generation; no sync has run.
+        yield* Ref.set(instancesRef, [rebuilt.instance]);
+        assert.strictEqual(
+          yield* registry.getProviderPluginActionsForInstance(INSTANCE_ID),
+          rebuilt.pluginActions,
+        );
+      }),
+    ),
+  );
+
+  it.effect("ignores reports and recorded listings from a retired generation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry, instancesRef, registryChanges, makeInstance } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        const retired = {
+          liveInventory: harness.liveInventory,
+          pluginActions: harness.pluginActions,
+        };
+
+        const rebuilt = yield* makeInstance();
+        yield* Ref.set(instancesRef, [rebuilt.instance]);
+        yield* PubSub.publish(registryChanges, undefined);
+        yield* PubSub.publish(retired.liveInventory, { plugins: [linear] });
+        const ignored = yield* registry.recordProviderNativeInventory({
+          instanceId: INSTANCE_ID,
+          reportedBy: retired.pluginActions,
+          inventory: { plugins: [linear] },
+        });
+        for (let attempt = 0; attempt < 200; attempt++) yield* Effect.yieldNow;
+        assert.strictEqual(ignored[0]?.plugins, undefined);
+        assert.strictEqual((yield* registry.getProviders)[0]?.plugins, undefined);
+
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        const recorded = yield* registry.recordProviderNativeInventory({
+          instanceId: INSTANCE_ID,
+          reportedBy: rebuilt.pluginActions,
+          inventory: { cwd: "/repo", plugins: [linear] },
+        });
+        assert.deepStrictEqual(recorded[0]?.workspaceSnapshots?.[0]?.plugins, [linear]);
+        // A workspace listing leaves the machine inventory alone.
+        assert.strictEqual(recorded[0]?.plugins, undefined);
+      }),
+    ),
+  );
+
+  it.effect("publishes workspace plugins listed after the scan was published", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry, snapshotRef } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        const scanned = yield* registry.refreshWorkspaceSnapshot({
+          instanceId: INSTANCE_ID,
+          cwd: "/repo",
+        });
+        // The scan returned with its skills; the listing has not answered yet.
+        assert.strictEqual(scanned[0]?.workspaceSnapshots?.[0]?.plugins, undefined);
+        assert.deepStrictEqual(harness.workspaceCalls, ["cancel /repo", "refresh /repo"]);
+
+        yield* Deferred.succeed(harness.workspaceListingGate, undefined);
+        const listed = yield* awaitProviders(
+          registry,
+          (current) => current?.workspaceSnapshots?.[0]?.plugins !== undefined,
+        );
+        assert.deepStrictEqual(listed?.workspaceSnapshots?.[0]?.plugins, [linear]);
+        assert.strictEqual(listed?.plugins, undefined);
+
+        // A newer scan without a listing keeps the workspace's last list.
+        yield* Ref.set(snapshotRef, provider("2026-10-21T00:00:09.000Z"));
+        const rescanned = yield* registry.refreshWorkspaceSnapshot({
+          instanceId: INSTANCE_ID,
+          cwd: "/repo",
+          fresh: true,
+        });
+        assert.deepStrictEqual(rescanned[0]?.workspaceSnapshots?.[0]?.plugins, [linear]);
+        assert.deepStrictEqual(harness.workspaceCalls.slice(2), ["cancel /repo", "refresh /repo"]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "publishes live-session inventory over probes and drops it when the instance rebuilds",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const {
+            registry,
+            snapshotRef,
+            liveInventory,
+            readCache,
+            instancesRef,
+            registryChanges,
+            makeInstance,
+          } = yield* makeHarness();
+          yield* registry.refreshInstance(INSTANCE_ID);
+
+          yield* PubSub.publish(liveInventory, { plugins: [linear] });
+          yield* awaitProviders(registry, (current) => current?.plugins?.length === 1);
+          // A later partial report keeps the fields it does not carry.
+          yield* PubSub.publish(liveInventory, { mcpServers: [notion] });
+          const live = yield* awaitProviders(
+            registry,
+            (current) => current?.mcpServers !== undefined,
+          );
+          assert.deepStrictEqual(live?.plugins, [linear]);
+
+          // The live report wins over a probe that reports something else.
+          yield* Ref.set(
+            snapshotRef,
+            provider("2026-10-21T00:00:04.000Z", { plugins: [], mcpServers: [] }),
+          );
+          const refreshed = (yield* registry.refreshInstance(INSTANCE_ID))[0];
+          assert.deepStrictEqual(refreshed?.plugins, [linear]);
+          assert.deepStrictEqual(refreshed?.mcpServers, [notion]);
+          const cached = yield* readCache;
+          assert.exists(cached);
+          assert.strictEqual("plugins" in cached, false);
+
+          yield* Ref.set(snapshotRef, provider("2026-10-21T00:00:05.000Z"));
+          const rebuilt = yield* makeInstance();
+          yield* Ref.set(instancesRef, [rebuilt.instance]);
+          yield* PubSub.publish(registryChanges, undefined);
+          const afterRebuild = yield* awaitProviders(
+            registry,
+            (current) => current?.checkedAt === "2026-10-21T00:00:05.000Z",
+          );
+          assert.strictEqual(afterRebuild?.plugins, undefined);
+          assert.strictEqual(afterRebuild?.mcpServers, undefined);
+        }),
+      ),
+  );
+
+  it("keeps a workspace's plugins when its scan could not list them", () => {
+    const scanned = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+      provider("2026-10-21T00:00:00.000Z", { plugins: [] }),
+      "/repo",
+      provider("2026-10-21T00:00:01.000Z", { plugins: [linear] }),
+    );
+    assert.deepStrictEqual(scanned.workspaceSnapshots?.[0]?.plugins, [linear]);
+    // Machine-level plugins are untouched by a workspace scan.
+    assert.deepStrictEqual(scanned.plugins, []);
+
+    const failedScan = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+      scanned,
+      "/repo",
+      provider("2026-10-21T00:00:02.000Z"),
+    );
+    assert.deepStrictEqual(failedScan.workspaceSnapshots?.[0]?.plugins, [linear]);
+    assert.strictEqual(failedScan.workspaceSnapshots?.[0]?.checkedAt, "2026-10-21T00:00:02.000Z");
+  });
+
+  it.effect(
+    "drops a generation's inventory when it becomes unavailable, and never revives it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          const { registry, instancesRef, unavailableRef, registryChanges, makeInstance } = harness;
+          yield* registry.refreshInstance(INSTANCE_ID);
+          yield* PubSub.publish(harness.liveInventory, { plugins: [linear], mcpServers: [notion] });
+          yield* awaitProviders(registry, (current) => current?.mcpServers?.length === 1);
+
+          // The rebuild fails: the configured instance is unavailable for now.
+          yield* Ref.set(instancesRef, []);
+          yield* Ref.set(unavailableRef, [
+            { ...provider("2026-10-21T00:00:05.000Z"), status: "error", installed: false },
+          ]);
+          yield* PubSub.publish(registryChanges, undefined);
+          const unavailable = yield* awaitProviders(
+            registry,
+            (current) => current?.status === "error",
+          );
+          assert.strictEqual(unavailable?.plugins, undefined);
+          assert.strictEqual(unavailable?.mcpServers, undefined);
+
+          // The repaired configuration comes back as a new generation.
+          const recovered = yield* makeInstance();
+          yield* Ref.set(harness.snapshotRef, provider("2026-10-21T00:00:06.000Z"));
+          yield* Ref.set(unavailableRef, []);
+          yield* Ref.set(instancesRef, [recovered.instance]);
+          yield* PubSub.publish(registryChanges, undefined);
+          const back = yield* awaitProviders(registry, (current) => current?.status === "ready");
+          assert.strictEqual(back?.plugins, undefined);
+          assert.strictEqual(back?.mcpServers, undefined);
+          // Its first, partial report cannot pick up the other field from the old generation.
+          yield* PubSub.publish(recovered.liveInventory, { mcpServers: [] });
+          const reported = yield* awaitProviders(
+            registry,
+            (current) => current?.mcpServers?.length === 0,
+          );
+          assert.strictEqual(reported?.plugins, undefined);
+        }),
+      ),
+  );
+
+  it.effect("stops the plugin listing of a workspace snapshot the registry evicts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        // One more workspace than the registry keeps.
+        for (let index = 0; index <= 16; index++) {
+          yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: `/w-${index}` });
+        }
+        const kept = (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.cwd);
+        assert.notInclude(kept ?? [], "/w-0");
+        assert.strictEqual(harness.workspaceCalls.at(-1), "stop /w-0");
+        assert.sameMembers([...harness.runningWorkspaceListings], kept ?? []);
+      }),
+    ),
+  );
+
+  it.effect("stops every evicted listing when workspace scans finish concurrently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        // All scans start against the same empty inventory, then finish together.
+        const scanGate = yield* Deferred.make<void>();
+        yield* Ref.set(harness.scanGateRef, Deferred.await(scanGate));
+        const workspaces = Array.from({ length: 24 }, (_, index) => `/w-${index}`);
+        const scans = yield* Effect.forEach(workspaces, (cwd) =>
+          registry
+            .refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd })
+            .pipe(Effect.forkChild),
+        );
+        for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
+        yield* Deferred.succeed(scanGate, undefined);
+        yield* Fiber.joinAll(scans);
+
+        const kept = (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.cwd);
+        assert.lengthOf(kept ?? [], 16);
+        // Only the published workspaces still have a listing.
+        assert.sameMembers([...harness.runningWorkspaceListings], kept ?? []);
+      }),
+    ),
+  );
+
+  it.effect("never lets a read that began earlier replace a verified uninstall", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry, liveInventory, pluginActions } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+
+        // Background listings begin, then an uninstall is verified with a later read.
+        const backgroundRead = yield* nextInventoryReadSequence;
+        const verifiedRead = yield* nextInventoryReadSequence;
+        yield* registry.recordProviderNativeInventory({
+          instanceId: INSTANCE_ID,
+          reportedBy: pluginActions,
+          inventory: { plugins: [], sequence: verifiedRead },
+        });
+        yield* registry.recordProviderNativeInventory({
+          instanceId: INSTANCE_ID,
+          reportedBy: pluginActions,
+          inventory: { cwd: "/repo", plugins: [], sequence: verifiedRead },
+        });
+
+        // The slow background results arrive afterwards.
+        yield* PubSub.publish(liveInventory, { plugins: [linear], sequence: backgroundRead });
+        yield* PubSub.publish(liveInventory, {
+          cwd: "/repo",
+          plugins: [linear],
+          sequence: backgroundRead,
+        });
+        // A newer MCP listing still applies.
+        yield* PubSub.publish(liveInventory, {
+          mcpServers: [notion],
+          sequence: yield* nextInventoryReadSequence,
+        });
+        const current = yield* awaitProviders(
+          registry,
+          (candidate) => candidate?.mcpServers !== undefined,
+        );
+        assert.deepStrictEqual(current?.plugins, []);
+        assert.deepStrictEqual(current?.workspaceSnapshots?.[0]?.plugins, []);
+      }),
+    ),
+  );
+
+  it.effect(
+    "ignores a listing of an evicted workspace that began before it was scanned again",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { registry, liveInventory } = yield* makeHarness();
+          yield* registry.refreshInstance(INSTANCE_ID);
+          const beforeRescan = yield* nextInventoryReadSequence;
+          yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+          yield* PubSub.publish(liveInventory, {
+            cwd: "/repo",
+            plugins: [linear],
+            sequence: beforeRescan,
+          });
+          yield* PubSub.publish(liveInventory, { mcpServers: [notion] });
+          const current = yield* awaitProviders(
+            registry,
+            (candidate) => candidate?.mcpServers !== undefined,
+          );
+          assert.strictEqual(current?.workspaceSnapshots?.[0]?.plugins, undefined);
+        }),
+      ),
+  );
+
+  it.effect(
+    "releases a workspace scan's claim when the scan is cancelled during listing cleanup",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          const { registry } = harness;
+          yield* registry.refreshInstance(INSTANCE_ID);
+          // Cleanup of the workspace's old listing is slow.
+          const cleanupStarted = yield* Deferred.make<void>();
+          const cleanupGate = yield* Deferred.make<void>();
+          yield* Ref.set(
+            harness.cancelGateRef,
+            Deferred.succeed(cleanupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(cleanupGate)),
+            ),
+          );
+          const scan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(cleanupStarted);
+          // The caller goes away while the old listing is still shutting down.
+          yield* Fiber.interrupt(scan);
+          yield* Deferred.succeed(cleanupGate, undefined);
+          assert.strictEqual(yield* Ref.get(harness.scanCalls), 0);
+
+          // An ordinary scan of the same workspace is admitted and runs.
+          yield* Ref.set(harness.cancelGateRef, Effect.void);
+          const scanned = yield* registry.refreshWorkspaceSnapshot({
+            instanceId: INSTANCE_ID,
+            cwd: "/repo",
+          });
+          assert.strictEqual(yield* Ref.get(harness.scanCalls), 1);
+          assert.include(
+            scanned[0]?.workspaceSnapshots?.map((snapshot) => snapshot.cwd) ?? [],
+            "/repo",
+          );
+        }),
+      ),
+  );
+});

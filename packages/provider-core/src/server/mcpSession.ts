@@ -1,4 +1,37 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+// SCIENT-FORK:START Scient Extensions connectors
+import type {
+  EnvironmentId,
+  ExtensionDeliverySkipReason,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
+
+/**
+ * A Scient connector delivered to one provider session. `url` is the Scient
+ * connector proxy endpoint for this connector; the agent authenticates to it
+ * with the session's own `authorizationHeader`. Vendor credentials never
+ * appear here: the server applies them behind the proxy.
+ */
+export interface McpProviderSessionConnector {
+  readonly connectorId: string;
+  /** Unique, provider-safe MCP server name (`[a-z0-9_-]{1,48}`, never `scient`). */
+  readonly serverName: string;
+  readonly displayName: string;
+  readonly url: string;
+}
+
+/**
+ * Reports one connector registration's settled outcome: the delivered
+ * connectors the adapter did not get registered (empty when all were).
+ */
+export type McpConnectorRegistrationReporter = (input: {
+  readonly withheld: ReadonlyArray<{
+    readonly serverName: string;
+    readonly reason: ExtensionDeliverySkipReason;
+  }>;
+}) => Effect.Effect<void>;
+// SCIENT-FORK:END
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -8,6 +41,18 @@ export interface McpProviderSessionConfig {
   readonly endpoint: string;
   readonly authorizationHeader: string;
   readonly capabilities: ReadonlySet<string>;
+  // SCIENT-FORK:START Scient Extensions connectors
+  /** Connectors delivered with this credential, in a stable order. Empty when none. */
+  readonly connectors: ReadonlyArray<McpProviderSessionConnector>;
+  /**
+   * Run when a query starts registering connectors for this credential; the
+   * returned reporter receives that query's settled outcome. The thread's
+   * delivery receipt keeps the outcome of the query that started last, across
+   * every session sharing the credential. Bound by the server runtime that
+   * issued the credential to its own receipt store.
+   */
+  readonly beginConnectorRegistration?: Effect.Effect<McpConnectorRegistrationReporter>;
+  // SCIENT-FORK:END
   /**
    * Set when the session may drive devices. Adapters spread this into the
    * provider subprocess environment so the `agent-device` CLI is on PATH and

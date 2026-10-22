@@ -97,6 +97,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             endpoint: "http://127.0.0.1:43123/mcp",
             authorizationHeader: "Bearer synthetic-claude",
             capabilities,
+            connectors: [],
           });
           yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         }
