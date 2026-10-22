@@ -896,7 +896,13 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
           );
           try {
-            await started;
+            // An apply that fails before holding the lock ends the test at once.
+            await Promise.race([
+              started,
+              applying.then(() => {
+                throw new Error("The apply finished before holding the lock.");
+              }),
+            ]);
             const save = h.run(
               Effect.result(
                 h.files.writeFile({
