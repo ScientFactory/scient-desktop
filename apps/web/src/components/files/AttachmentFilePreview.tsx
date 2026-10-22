@@ -23,6 +23,11 @@ import {
   UNSUPPORTED_PREVIEW_TITLE,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 
+// SCIENT-FORK:START — attachment PDFs open in Scient's reader
+import { AttachmentPdfPreview } from "~/scient/pdf/AttachmentPdfPreview";
+import { attachmentPdfMount } from "~/scient/pdf/attachmentPdfMount";
+// SCIENT-FORK:END
+
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -61,6 +66,9 @@ export function AttachmentFilePreview(props: {
   asset?: { environmentId: EnvironmentId; attachmentId: string };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
+  // SCIENT-FORK:START — names a draft attachment to Scient's PDF reader
+  draftPdf?: { threadRef: ScopedThreadRef; contextId: string };
+  // SCIENT-FORK:END
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
@@ -208,7 +216,17 @@ export function AttachmentFilePreview(props: {
     });
   };
 
-  const body = failure ? (
+  // SCIENT-FORK:START — PDFs open in Scient's reader (find, outline, zoom, Ask in chat)
+  const scientPdf = kind === "pdf" ? attachmentPdfMount(props) : null;
+  // SCIENT-FORK:END
+  const body = scientPdf ? (
+    <AttachmentPdfPreview
+      environmentId={scientPdf.environmentId}
+      fileName={props.name}
+      locator={scientPdf.locator}
+      file={props.file ?? null}
+    />
+  ) : failure ? (
     <FileSurfaceFailure
       {...(failure.kind === "media" && (kind === "image" || kind === "audio" || kind === "video")
         ? MEDIA_FAILURE_COPY[kind]

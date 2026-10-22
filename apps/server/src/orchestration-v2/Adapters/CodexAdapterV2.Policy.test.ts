@@ -299,6 +299,7 @@ describe("CodexAdapterV2 process spawning", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer secret-codex-token",
         capabilities: new Set(["preview"] as const),
+        connectors: [],
       });
       yield* Effect.addFinalizer(() => sessions.clear(threadId));
 

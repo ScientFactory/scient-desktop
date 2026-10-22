@@ -13,7 +13,9 @@ import * as Schema from "effect/Schema";
 import { piContextExtension } from "./contextExtension.ts";
 import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
-import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+// SCIENT-FORK:START — Scient Extensions connectors: connector tool registrations.
+import { loadMcpBridge, type RegisteredTool } from "./mcpBridge.testkit.ts";
+// SCIENT-FORK:END
 
 const decodeBudget = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -551,6 +553,518 @@ describe("Pi tool discovery permissions", () => {
     assert.equal(confirmations.at(-1), "Allow tool_search?");
   });
 });
+
+// SCIENT-FORK:START — Scient Extensions connectors: proxied MCP servers and event-stream responses.
+describe("Pi Scient connectors", () => {
+  const linear = {
+    serverName: "linear",
+    url: "http://fixture.invalid/mcp/connectors/linear",
+    tools: [
+      {
+        name: "search.issues",
+        description: "Search Linear issues.",
+        annotations: { readOnlyHint: true },
+      },
+      { name: "create_issue", description: "Create a Linear issue." },
+    ],
+  };
+  const notion = {
+    serverName: "notion",
+    url: "http://fixture.invalid/mcp/connectors/notion",
+    tools: [{ name: "search", description: "Search Notion." }],
+  };
+
+  it("registers each connector's tools under a server prefix on the session credential", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [linear, notion],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    assert.deepEqual(
+      bridge.tools.map((tool) => [tool.name, tool.exposure]),
+      [
+        ["orchestrator_capabilities", "direct"],
+        ["delegate_task", "direct"],
+        ["task_status", "direct"],
+        ["preview_snapshot", "deferred"],
+        ["linear__search_issues", "deferred"],
+        ["linear__create_issue", "deferred"],
+        ["notion__search", "deferred"],
+      ],
+    );
+    for (const name of ["linear__search_issues", "linear__create_issue", "notion__search"]) {
+      assert.include(bridge.getActiveTools(), name);
+    }
+
+    const output = await bridge.tools
+      .find((tool) => tool.name === "linear__search_issues")!
+      .execute("connector-call", { query: "bug" });
+    assert.equal(output.content[0]?.text, "linear:search.issues");
+    assert.equal(bridge.transports.at(-1)?.url, linear.url);
+    assert.deepEqual(bridge.requests.at(-1)?.params, {
+      name: "search.issues",
+      arguments: { query: "bug" },
+    });
+    assert.isTrue(
+      bridge.transports.every((transport) => transport.authorization === "Bearer fixture-token"),
+    );
+    assert.sameMembers(
+      [...new Set(bridge.transports.map((transport) => transport.url))],
+      ["http://fixture.invalid/mcp", linear.url, notion.url],
+    );
+  });
+
+  it("confirms connector tools even when they are annotated read-only", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      runtimeMode: "approval-required",
+      connectors: [linear],
+    });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: { hasUI: boolean; ui: { confirm: (title: string) => Promise<boolean> } },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const confirmations: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        confirm: async (title: string) => {
+          confirmations.push(title);
+          return false;
+        },
+      },
+    };
+    assert.isUndefined(await hook({ toolName: "orchestrator_capabilities", input: {} }, ctx));
+    assert.equal((await hook({ toolName: "linear__search_issues", input: {} }, ctx))?.block, true);
+    assert.deepEqual(confirmations, ["Allow linear__search_issues?"]);
+  });
+
+  it("keeps Scient and healthy connectors when one connector fails", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [{ ...linear, fail: true }, notion],
+    });
+    const notifications: Array<readonly [string, string]> = [];
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      {
+        model: { api: "anthropic-messages" },
+        ui: { notify: (message, severity) => notifications.push([message, severity]) },
+      },
+    );
+    assert.deepEqual(
+      bridge.tools.map((tool) => tool.name),
+      [
+        "orchestrator_capabilities",
+        "delegate_task",
+        "task_status",
+        "preview_snapshot",
+        "notion__search",
+      ],
+    );
+    assert.deepEqual(notifications, [["Scient connector linear unavailable.", "warning"]]);
+    const scientResult = await bridge.tools
+      .find((tool) => tool.name === "preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scientResult.content[0]?.text, "browser snapshot");
+  });
+
+  it("gives a connector tool colliding with a projected Scient tool name a hashed alias", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolNameMap: { preview_snapshot: "mcp__scient__preview_snapshot" },
+      connectors: [
+        {
+          serverName: "mcp",
+          url: "http://fixture.invalid/mcp/connectors/mcp",
+          tools: [{ name: "scient__preview_snapshot" }, { name: "other" }],
+        },
+      ],
+    });
+    assert.deepEqual(
+      bridge.tools.filter((tool) => tool.name.startsWith("mcp__")).map((tool) => tool.name),
+      ["mcp__scient__preview_snapshot", "mcp__scient__preview_snapshot_573af5c1", "mcp__other"],
+    );
+    const scient = await bridge.tools
+      .find((tool) => tool.name === "mcp__scient__preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scient.content[0]?.text, "browser snapshot");
+    const connector = await bridge.tools
+      .find((tool) => tool.name === "mcp__scient__preview_snapshot_573af5c1")!
+      .execute("connector-call", {});
+    assert.equal(connector.content[0]?.text, "mcp:scient__preview_snapshot");
+    assert.deepEqual(bridge.requests.at(-1)?.params, {
+      name: "scient__preview_snapshot",
+      arguments: {},
+    });
+  });
+
+  const VALID_TOOL_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+  const longServer = {
+    serverName: "k".repeat(44),
+    url: "http://fixture.invalid/mcp/connectors/long",
+    tools: [
+      { name: "search_documents_" + "a".repeat(47) },
+      { name: "search_documents_" + "b".repeat(47) },
+    ],
+  };
+  const connectorNames = (bridge: { readonly tools: ReadonlyArray<{ readonly name: string }> }) =>
+    bridge.tools.map((tool) => tool.name).filter((name) => name.includes("__"));
+
+  it("aliases over-long connector tool names deterministically and calls the original name", async () => {
+    const expected = [
+      "k".repeat(44) + "__search_do_3ff089b7",
+      "k".repeat(44) + "__search_do_73415594",
+    ];
+    const first = await loadMcpBridge({ modern: true, connectors: [longServer] });
+    const second = await loadMcpBridge({ modern: true, connectors: [longServer] });
+    assert.deepEqual(connectorNames(first), expected);
+    assert.deepEqual(connectorNames(second), expected);
+    for (const name of expected) {
+      assert.equal(name.length, 64);
+      assert.match(name, VALID_TOOL_NAME);
+    }
+
+    const output = await first.tools
+      .find((tool) => tool.name === expected[1])!
+      .execute("connector-call", { query: "q" });
+    assert.equal(output.content[0]?.text, `${longServer.serverName}:${longServer.tools[1]!.name}`);
+    assert.equal(first.transports.at(-1)?.url, longServer.url);
+    assert.deepEqual(first.requests.at(-1)?.params, {
+      name: longServer.tools[1]!.name,
+      arguments: { query: "q" },
+    });
+  });
+
+  it("prefixes an underscore when the server name starts with a digit", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [
+        {
+          serverName: "1password",
+          url: "http://fixture.invalid/mcp/connectors/1password",
+          tools: [{ name: "item.get" }],
+        },
+      ],
+    });
+    assert.deepEqual(connectorNames(bridge), ["_1password__item_get"]);
+    const output = await bridge.tools
+      .find((tool) => tool.name === "_1password__item_get")!
+      .execute("connector-call", {});
+    assert.equal(output.content[0]?.text, "1password:item.get");
+  });
+
+  it("resolves names across connectors in delivered order", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [
+        {
+          serverName: "a",
+          url: "http://fixture.invalid/mcp/connectors/a",
+          tools: [{ name: "b__c" }],
+        },
+        {
+          serverName: "a__b",
+          url: "http://fixture.invalid/mcp/connectors/ab",
+          tools: [{ name: "c" }],
+        },
+      ],
+    });
+    assert.deepEqual(connectorNames(bridge), ["a__b__c", "a__b__c_a92700ce"]);
+    const output = await bridge.tools
+      .find((tool) => tool.name === "a__b__c_a92700ce")!
+      .execute("connector-call", {});
+    assert.equal(output.content[0]?.text, "a__b:c");
+  });
+
+  it("declares only valid connector tool names to completion gateways", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [
+        longServer,
+        {
+          serverName: "1password",
+          url: "http://fixture.invalid/mcp/connectors/1password",
+          tools: [{ name: "item.get" }, { name: "vault/list items" }],
+        },
+      ],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const names = connectorNames(bridge);
+    assert.lengthOf(names, 4);
+    for (const name of names) assert.include(bridge.getActiveTools(), name);
+    for (const name of bridge.getActiveTools()) assert.match(name, VALID_TOOL_NAME);
+  });
+
+  it("keeps Scient and other connectors when one connector lists a pathological catalog", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      connectors: [
+        {
+          serverName: "patho",
+          url: "http://fixture.invalid/mcp/connectors/patho",
+          tools: [
+            { name: "a.b" },
+            { name: "a_b" },
+            { name: "dup" },
+            { name: "dup" },
+            { name: "x".repeat(300) },
+            { name: "x".repeat(300) + "!" },
+          ],
+          malformedTools: [null, {}, { name: 42 }, { name: "" }],
+        },
+        notion,
+      ],
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const names = bridge.tools.map((tool) => tool.name);
+    assert.includeMembers(names, [
+      "orchestrator_capabilities",
+      "delegate_task",
+      "task_status",
+      "preview_snapshot",
+      "patho__a_b",
+      "patho__a_b_602396cf",
+      "patho__dup",
+      "notion__search",
+    ]);
+    assert.lengthOf(names, new Set(names).size);
+    assert.lengthOf(connectorNames(bridge), 6);
+    for (const name of names) assert.match(name, VALID_TOOL_NAME);
+    for (const name of bridge.getActiveTools()) assert.match(name, VALID_TOOL_NAME);
+
+    const notionOutput = await bridge.tools
+      .find((tool) => tool.name === "notion__search")!
+      .execute("connector-call", {});
+    assert.equal(notionOutput.content[0]?.text, "notion:search");
+    const scientOutput = await bridge.tools
+      .find((tool) => tool.name === "preview_snapshot")!
+      .execute("scient-call", {});
+    assert.equal(scientOutput.content[0]?.text, "browser snapshot");
+  });
+});
+
+/** An event-stream response delivered in `chunkSize`-byte pieces, optionally left open. */
+function sseResponse(
+  text: string,
+  options: {
+    readonly chunkSize?: number;
+    readonly open?: boolean;
+    readonly onCancel?: () => void;
+  } = {},
+) {
+  const bytes = new TextEncoder().encode(text);
+  const chunkSize = options.chunkSize ?? bytes.length;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          controller.enqueue(bytes.slice(offset, offset + chunkSize));
+        }
+        if (options.open !== true) controller.close();
+      },
+      cancel() {
+        options.onCancel?.();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+}
+
+const dataLines = (value: unknown, eol = "\n") =>
+  JSON.stringify(value, null, 2)
+    .split("\n")
+    .map((line) => `data: ${line}`)
+    .join(eol);
+
+describe("Pi MCP event-stream responses", () => {
+  const connector = {
+    serverName: "remote",
+    url: "http://fixture.invalid/mcp/connectors/remote",
+    tools: [{ name: "lookup" }],
+  };
+  const callRemote = (bridge: { readonly tools: ReadonlyArray<RegisteredTool> }) =>
+    bridge.tools.find((tool) => tool.name === "remote__lookup")!.execute("connector-call", {});
+
+  it("joins a pretty-printed message split across data lines and chunks", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url }) =>
+        url === connector.url
+          ? sseResponse(`event: message\n${dataLines(message)}\n\n`, { chunkSize: 7 })
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
+  it("decodes UTF-8 split across chunks inside a multi-line message", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              `${dataLines({ ...message, result: { content: [{ type: "text", text: "Zürich ✓" }] } })}\n\n`,
+              { chunkSize: 1 },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "Zürich ✓");
+  });
+
+  it("resolves on the matching response while the stream stays open, then cancels it", async () => {
+    const cancelled: string[] = [];
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url
+          ? sseResponse(`data: ${JSON.stringify(message)}\n\n`, {
+              open: true,
+              onCancel: () => cancelled.push(method),
+            })
+          : undefined,
+    });
+    // Bootstrap (initialize, tools/list) completed over open streams too.
+    assert.deepEqual(cancelled, ["initialize", "tools/list"]);
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+    assert.deepEqual(cancelled, ["initialize", "tools/list", "tools/call"]);
+  });
+
+  it("skips comments, notifications and other requests' responses before the matching one", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              [
+                ": keep-alive",
+                "",
+                "event: message",
+                "id: 1",
+                "retry: 1000",
+                `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1 } })}`,
+                "",
+                dataLines({
+                  jsonrpc: "2.0",
+                  id: message.id + 100,
+                  result: { content: [{ type: "text", text: "wrong" }] },
+                }),
+                "",
+                dataLines({ jsonrpc: "2.0", id: 7, method: "sampling/createMessage", params: {} }),
+                "",
+                dataLines(message),
+                "",
+                "",
+              ].join("\n"),
+              { open: true },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
+  it("does not take a server request that reuses the pending id as its response", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              [
+                // The server numbers its own requests, so one may carry this call's id.
+                dataLines({ jsonrpc: "2.0", id: message.id, method: "sampling/createMessage" }),
+                "",
+                dataLines(message),
+                "",
+                "",
+              ].join("\n"),
+              { open: true },
+            )
+          : undefined,
+    });
+    const output = await callRemote(bridge);
+    assert.equal(output.content[0]?.text, "remote:lookup");
+  });
+
+  it.each([
+    ["CRLF", "\r\n"],
+    ["CR", "\r"],
+  ])(
+    "parses %s-delimited events, including terminators split across chunks",
+    async (_name, eol) => {
+      const bridge = await loadMcpBridge({
+        modern: true,
+        connectors: [connector],
+        respond: (message, { url }) =>
+          url === connector.url
+            ? sseResponse(
+                `: ping${eol}${eol}${dataLines({ jsonrpc: "2.0", method: "notifications/message", params: {} }, eol)}${eol}${eol}${dataLines(message, eol)}${eol}${eol}`,
+                { chunkSize: 1, open: true },
+              )
+            : undefined,
+      });
+      const output = await callRemote(bridge);
+      assert.equal(output.content[0]?.text, "remote:lookup");
+    },
+  );
+
+  it("reports a JSON-RPC error carried by the matching event", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(
+              `${dataLines({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "upstream refused" } })}\n\n`,
+              { open: true },
+            )
+          : undefined,
+    });
+    await expect(callRemote(bridge)).rejects.toThrow("upstream refused");
+  });
+
+  it("fails clearly when the stream ends without the matching response", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      connectors: [connector],
+      respond: (message, { url, method }) =>
+        url === connector.url && method === "tools/call"
+          ? sseResponse(`${dataLines({ ...message, id: message.id + 1 })}\n\n`)
+          : undefined,
+    });
+    await expect(callRemote(bridge)).rejects.toThrow(
+      "MCP tools/call event stream ended without its response.",
+    );
+  });
+
+  it("keeps Scient's own server working over an event stream", async () => {
+    const bridge = await loadMcpBridge({
+      respond: (message) => sseResponse(`data: ${JSON.stringify(message)}\n\n`, { open: true }),
+    });
+    const output = await bridge.tools[0]!.execute("scient-call", {});
+    assert.equal(output.content[0]?.text, "browser snapshot");
+  });
+});
+// SCIENT-FORK:END
 
 async function loadRequestHook(): Promise<RequestHook> {
   const h = await loadContextGuard(PI_T3_MCP_EXTENSION_SOURCE, 0);

@@ -7396,6 +7396,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         mimeType={previewFile.mimeType}
                         sizeBytes={previewFile.sizeBytes}
                         file={previewFile.file}
+                        // SCIENT-FORK:START — names the draft to Scient's PDF reader
+                        draftPdf={{
+                          threadRef: routeThreadRef,
+                          contextId: toKindScopedComposerContextId("file", previewFile.id),
+                        }}
+                        // SCIENT-FORK:END
                         origin="Draft"
                         {...(previewFile.uploadedAttachmentId && previewFile.uploadEnvironmentId
                           ? {

@@ -573,11 +573,43 @@ nowhere fails with `ENOENT` and the probe reads that as absent. The Windows
 other case — a shim that does resolve but cannot find what it wraps — so that
 its diagnostic is not misread as "found."
 
+The first `latexmk` on `PATH` is not always one that runs. MiKTeX's
+`latexmk.exe` needs a Perl it does not ship, so a computer with MiKTeX ahead of
+TeX Live on `PATH` used to report no LaTeX at all. When the bare `latexmk`
+fails, the probe tries every `latexmk` on `PATH` by its own absolute path
+(relative entries resolved against the server's directory), then, on Windows,
+the default install folders: `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64`,
+`%ProgramFiles%\MiKTeX\miktex\bin\x64`, and `%SystemDrive%\texlive\<year>\bin\{windows,win64,win32}`
+(newest year first). Nothing is skipped as "already tried": the bare spawn's
+resolution is cached and cannot say which file it ran, so the copy reported is
+always the copy probed. On Windows only `latexmk.exe` counts, because builds
+start the driver without a shell and could never run a `.cmd`/`.bat`
+launcher. The default folders also cover a `PATH` that this process inherited
+before the distribution was installed. A driver found by absolute path leads
+its own child's `PATH` (`latexDriverBinDirectory`), so TeX Live's `latexmk`
+drives TeX Live's `pdflatex`, not MiKTeX's. Only Scient's own distribution is
+ever extended by package installs; a system driver found this way is not.
+
+A driver that exists but does not answer (non-zero exit or a 10-second
+timeout) is recorded in the status's `unusable` list with the first line of
+its complaint, the user's home folder written as `~`, but only when no driver
+was found; a broken Tectonic is recorded the same way. The setup card shows
+the full path; the build's failure summary names only the distribution and
+file ("MiKTeX's latexmk.exe did not run: …") because it also reaches agents,
+whose copy of the status carries file names only. A driver that fails to
+spawn, or a Windows shim that exits 9009, stays "absent".
+
+Discovery may take several bounded probes, longer than one status request
+waits. It therefore runs once, in a fiber owned by the service: callers join
+it, a caller that gives up stops waiting rather than stopping discovery, and
+the cache's five-minute freshness counts from when discovery finished. A
+refresh that joins a discovery started before it was asked for runs another
+afterwards.
+
 The probe result is cached for `PROBE_CACHE_TTL_MS = 5 minutes` per server
-process. Every build and every status poll asks for the toolchain, so the
-cache is filled behind a single-permit `Semaphore`: one fiber runs the actual
-subprocess probe, and every fiber that arrives while it is in flight reads the
-answer that fiber leaves behind instead of shelling out again.
+process. Every build and every status poll asks for the toolchain, so one
+discovery runs at a time, and every caller that arrives while it is in flight
+joins it and reads the answer it leaves behind instead of shelling out again.
 
 The same cached observation independently probes `pdflatex`, `xelatex`, and
 `lualatex` with bounded `--version` processes when the active driver is latexmk.
@@ -596,18 +628,31 @@ resolves a "latest" pointer at install time. Windows x64, Linux x64, and the
 universal Darwin bundle used by both macOS x64 and arm64 are pinned. Windows
 arm64 and Linux arm64 remain explicit unsupported slots until their assets are
 verified; the setup card falls back to plain install-it-yourself instructions
-there. Upstream ships the Windows bundle as a 7-Zip self-extracting `.exe`;
-Scient never runs that stub. `LatexArchiveUnpacker` shells out to `tar`, which
-reads the SFX file as an ordinary archive and extracts its payload directly.
+there. Upstream ships the Windows bundle as a 7-Zip self-extracting `.exe`.
+`LatexArchiveUnpacker` first shells out to `tar`, which reads the SFX file as
+an ordinary archive and extracts its payload directly.
 Only libarchive's tar
 does that, though, so which `tar` cannot be left to `PATH` on Windows, where
 Git for Windows and MSYS2 both place a GNU tar that rejects the bundle: the
 unpacker resolves `%SystemRoot%\System32\tar.exe` (the bsdtar Windows 10+
-ships) by absolute path and fails with `unpacker-unavailable` if it is not
-there, which also keeps PATH — the one input on this path a user's other
-software can rewrite — out of the install entirely. Elsewhere the command
+ships) by absolute path and never a `tar` from PATH, which keeps PATH — the
+one input on this path a user's other software can rewrite — out of the
+install entirely. If that file is absent, the bundle unpacks itself instead
+(below). Elsewhere the command
 stays `tar`: macOS ships bsdtar under that name, and Linux only ever reads the
 `.tar.xz` asset.
+
+Windows 10's bsdtar (libarchive without liblzma) opens the bundle and then
+cannot decode its LZMA payload, and some installs have no System32 `tar.exe`
+at all. On Windows only, when the system tar fails for any reason, the
+unpacker clears the half-written destination and runs the bundle itself as
+7-Zip's console self-extractor, `x -y -o<destination>`: it carries its own
+decoder, shows no window, and handles Unicode paths. The bundle's SHA-256 was
+already checked against the pin, and it is the same reviewed release whose
+`latexmk.exe` the install runs next, so this trusts nothing new. If the self-extractor fails too, its exit code and complaint lead the
+reported detail, followed by a shortened tar complaint; both appear in full
+in the server log. Computers
+where the system tar works keep exactly the path they had.
 
 The install downloads to a staging directory under
 `<latexDir>/managed/.staging` (streamed with a declared-size check, a hard byte
@@ -691,8 +736,38 @@ descriptors do not disclose the canonical host root.
 
 `config.latexDir` is `<state root>/latex`, a sibling of `analysisDir` and the
 other environment-derived state directories — never inside the user's
-workspace. Every compile writes into
-`<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
+workspace. On Windows, when that path is not printable ASCII, the folders TeX
+itself reads and writes — `managed`, `builds` and `artwork` — live elsewhere
+(`latexTexDirectory.ts`: a `LatexTexDirectory` reference provided only to the
+LaTeX services in `ScientServerLayers.ts`, read through `latexTexDirectory`,
+which falls back to `latexDir`). Build evidence and SyncTeX indexes, which only
+Node and Scient's own helper read, stay in `latexDir`, so nothing moves and
+nothing is migrated. TeX Live cannot work from such a path: kpathsea does not
+find its own `texmf.cnf` (a single "ü" is enough), and `latexmk` converts every
+path argument to the system code page, so Hebrew or Cyrillic become "?". 8.3
+short names do not help, because kpathsea expands them back. The replacement is
+`%ProgramData%\scient-latex-<16 hex>`. No other account can ever reach it. It
+is made inside the profile `latexDir`, where only this account can open it,
+locked there with `icacls` (inherited access removed, full control for the
+account's SID from `whoami`, SYSTEM and Administrators), and only then moved
+into `%ProgramData%`. A same-volume move keeps the folder's protected access
+list, so it arrives private. A profile on another drive cannot be moved, and
+nothing changes. `%ProgramData%` lets accounts delete only what they created, so
+the folder cannot be removed or replaced afterwards. Its path and NTFS identity
+(`dev:ino`) are recorded in `<latexDir>/tex-location.json`. A later start reuses
+it only if the path is a direct child of `%ProgramData%` with that name pattern
+and the same real folder (not a link) is still there; a folder recreated under
+the name has a different identity and is ignored. The work runs on a detached
+fiber and server start waits only for its answer, at most 30 seconds, never for
+cleanup it cannot interrupt (stopping a hung process, closing a file). Whichever
+settles first wins: the new folder, or `latexDir` when the wait runs out or a
+step fails, which is the earlier behavior. A folder recorded after the wait ran
+out is the one the next start uses, and the next start sweeps an attempt's
+leftovers from the profile. ASCII paths and other platforms are untouched. All
+of this assumes the state directory is private to the account, as Scient's
+state directory must be anyway: whoever can write there can already replace the
+managed TeX. Every compile writes into
+`<TeX folder>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.
 Build-input evidence is the only other per-document state this lane keeps, one
@@ -707,8 +782,8 @@ output basename changes. SyncTeX is still requested, but TeX distributions that
 encode its input paths through a Windows code page may lose Unicode characters
 there, so successful compilation does not establish Unicode source navigation.
 The managed TinyTeX
-distribution lives under a separate
-`<latexDir>/managed` root, entirely apart from build work directories. Published
+distribution lives under a separate `managed` root in the TeX folder (normally
+`<latexDir>/managed`), entirely apart from build work directories. Published
 navigation indexes live under
 `<latexDir>/synctex/<artifact-id>/<revision-id>` and are swept when the shared
 PDF store no longer retains the matching immutable revision.

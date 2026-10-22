@@ -137,6 +137,7 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     <Suspense fallback={null}>
       <SourcePdfPreview
         readerScope={activeThreadRef.threadId}
+        citeThread={activeThreadRef}
         attachmentId={renderedRightPanelSurface.attachmentId}
         environmentId={activeThread.environmentId}
         fileName={renderedRightPanelSurface.fileName}

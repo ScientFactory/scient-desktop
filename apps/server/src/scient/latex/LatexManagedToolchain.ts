@@ -18,7 +18,10 @@
 import * as NodeCrypto from "node:crypto";
 
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
-import { ScientLatexManagedInstallFailureReason } from "@t3tools/contracts";
+import {
+  ScientLatexManagedInstallFailureReason,
+  ScientLatexManagedInstallFailureStep,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -35,12 +38,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
 import { latexEngineEnvironment } from "./latexCommand.ts";
 import { LatexPackageInstaller, clearFailedPackageSearches } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { latexTexDirectory } from "./latexTexDirectory.ts";
 import {
   decodeManagedLatexInstallRecord,
   encodeManagedLatexInstallRecord,
@@ -126,6 +129,7 @@ class ManagedLatexInstallFailure extends Schema.TaggedError<ManagedLatexInstallF
   {
     reason: ScientLatexManagedInstallFailureReason,
     detail: Schema.String,
+    step: Schema.optionalKey(ScientLatexManagedInstallFailureStep),
   },
 ) {
   override get message(): string {
@@ -133,8 +137,24 @@ class ManagedLatexInstallFailure extends Schema.TaggedError<ManagedLatexInstallF
   }
 }
 
-const failInstall = (reason: ManagedLatexInstallFailure["reason"], detail: string) =>
-  Effect.fail(new ManagedLatexInstallFailure({ reason, detail }));
+const failInstall = (
+  reason: ManagedLatexInstallFailure["reason"],
+  detail: string,
+  step?: ScientLatexManagedInstallFailureStep,
+) =>
+  Effect.fail(
+    new ManagedLatexInstallFailure({ reason, detail, ...(step === undefined ? {} : { step }) }),
+  );
+
+const MAX_FAILURE_DETAIL_LENGTH = 300;
+
+/** One readable line of a failure's detail, which may carry a tool's whole stderr. */
+function managedInstallFailureDetail(detail: string): string {
+  const line = detail.replace(/\s+/gu, " ").trim();
+  return line.length > MAX_FAILURE_DETAIL_LENGTH
+    ? `${line.slice(0, MAX_FAILURE_DETAIL_LENGTH - 1)}…`
+    : line;
+}
 
 /**
  * Why this URL may not be fetched, or `null` when it may be. Artifact URLs are
@@ -180,7 +200,6 @@ export const make = Effect.gen(function* () {
   const manifest = yield* TinyTexManifestRef;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
   const unpacker = yield* LatexArchiveUnpacker.LatexArchiveUnpacker;
   const toolchain = yield* LatexToolchain;
   const packageInstaller = yield* LatexPackageInstaller;
@@ -191,7 +210,7 @@ export const make = Effect.gen(function* () {
   const pathDelimiter = platform === "win32" ? ";" : ":";
   const assetLookup = resolveTinyTexAsset(platform, architecture, manifest);
   const asset = assetLookup.supported ? assetLookup.asset : null;
-  const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
+  const paths = managedLatexPaths({ latexDir: yield* latexTexDirectory, join: path.join });
   // The install runs on a fiber whose callers hold no context, so the atomic
   // write helper's own services are captured here.
   const fileContext = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
@@ -212,10 +231,17 @@ export const make = Effect.gen(function* () {
     ) => Omit<ScientLatexManagedInstallState, "updatedAtEpochMs">,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    return yield* Ref.updateAndGet(stateRef, (current) => ({
-      ...update(current),
-      updatedAtEpochMs: now,
-    }));
+    return yield* Ref.updateAndGet(stateRef, (current) => {
+      const next = update(current);
+      // A failure's step and detail describe that failure only, so a retry
+      // that moves on to downloading must not carry them along.
+      const published = { ...next, updatedAtEpochMs: now };
+      if (published.state !== "failed") {
+        delete published.failureStep;
+        delete published.failureDetail;
+      }
+      return published;
+    });
   });
 
   const phase = (next: ScientLatexManagedInstallState["state"]) =>
@@ -381,10 +407,9 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.catch((cause) =>
-          failInstall(
-            cause.reason === "unsupported-archive" ? "unsupported-archive" : "unpack-failed",
-            cause.detail,
-          ),
+          cause.reason === "unsupported-archive"
+            ? failInstall("unsupported-archive", cause.detail)
+            : failInstall("unpack-failed", cause.detail, "extract"),
         ),
       );
     const executable = path.join(input.payloadPath, input.asset.executableRelativePath);
@@ -393,6 +418,7 @@ export const make = Effect.gen(function* () {
       return yield* failInstall(
         "unpack-failed",
         "The LaTeX download did not contain the engine Scient expected.",
+        "engine-missing",
       );
     }
     // GNU tar and bsdtar normally preserve executable bits, but a one-click
@@ -406,6 +432,7 @@ export const make = Effect.gen(function* () {
             failInstall(
               "unpack-failed",
               `Scient could not make the LaTeX engine executable: ${cause.message}`,
+              "engine-failed",
             ),
         }),
       );
@@ -430,6 +457,7 @@ export const make = Effect.gen(function* () {
           failInstall(
             "unpack-failed",
             `Scient could not start the unpacked LaTeX engine: ${cause.message}`,
+            "engine-failed",
           ),
         ),
       );
@@ -443,6 +471,7 @@ export const make = Effect.gen(function* () {
               validation.stdout.trim() ||
               `latexmk exited with ${String(validation.code)}`
             }`,
+        "engine-failed",
       );
     }
   });
@@ -637,6 +666,7 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* Effect.logWarning("scient latex managed install failed", {
               reason: cause.reason,
+              ...(cause.step === undefined ? {} : { step: cause.step }),
               detail: cause.detail,
             });
             yield* publish((current) => ({
@@ -645,6 +675,8 @@ export const make = Effect.gen(function* () {
               bytesReceived: null,
               totalBytes: null,
               failureReason: cause.reason,
+              ...(cause.step === undefined ? {} : { failureStep: cause.step }),
+              failureDetail: managedInstallFailureDetail(cause.detail),
             }));
           }),
         ),

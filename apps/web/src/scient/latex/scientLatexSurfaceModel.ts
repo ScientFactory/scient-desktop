@@ -297,6 +297,11 @@ function descriptorsEqual(left: LatexPdfDescriptor, right: LatexPdfDescriptor): 
       );
     case "environment-pdf":
       return right._tag === "environment-pdf" && left.path === right.path;
+    case "attachment-pdf":
+      return (
+        right._tag === "attachment-pdf" &&
+        JSON.stringify(left.locator) === JSON.stringify(right.locator)
+      );
   }
 }
 
@@ -316,7 +321,13 @@ export function toolchainsEqual(
     left.executable === right.executable &&
     left.version === right.version &&
     left.source === right.source &&
-    left.probedAtEpochMs === right.probedAtEpochMs
+    left.probedAtEpochMs === right.probedAtEpochMs &&
+    (left.unusable ?? []).length === (right.unusable ?? []).length &&
+    (left.unusable ?? []).every(
+      (entry, index) =>
+        entry.executable === right.unusable?.[index]?.executable &&
+        entry.reason === right.unusable?.[index]?.reason,
+    )
   );
 }
 

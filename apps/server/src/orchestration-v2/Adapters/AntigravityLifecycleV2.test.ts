@@ -366,6 +366,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             endpoint: "http://127.0.0.1:12345/mcp",
             authorizationHeader: "Bearer synthetic-first-session",
             capabilities: new Set<never>(),
+            connectors: [],
           };
           yield* Effect.acquireRelease(mcpSessions.set(mcp), () => mcpSessions.clear(h.threadId));
           const firstScope = yield* Scope.make();
@@ -481,6 +482,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             endpoint: "http://127.0.0.1:12345/mcp",
             authorizationHeader: "Bearer synthetic-disabled-session",
             capabilities: new Set<never>(),
+            connectors: [],
           }),
           () => mcpSessions.clear(h.threadId),
         );

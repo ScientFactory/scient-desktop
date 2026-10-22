@@ -1054,6 +1054,24 @@ Analytics sends OMP as the gateway's existing `other` provider and is not a moun
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
 
+Scient Extensions owns `apps/server/src/scient/extensions` and
+`apps/web/src/scient/extensions`. Connected services stay on the Scient server:
+agents reach them only through the per-connector proxy route
+`/mcp/connectors/<id>` with their existing thread-scoped MCP credential, and the
+OAuth callback is `/oauth/connectors/callback`. Vendor credentials never enter
+provider config, environment or transcripts. `ProviderSessionManager` adds the
+granted connectors to the same MCP session preparation that delivers `scient`,
+and each V2 adapter or provider package passes them in its own native form; ACP
+sessions always use the stdio bridge. Provider plugin and MCP inventory is read
+from the owning provider (Codex app-server, Claude session init) and mutated only
+through that provider's own API. `scient-extensions-seams.json` inventories the
+owned roots, the anchored `upstreamMounts` in upstream-owned files (RPC
+contracts, authorization and instrumentation, HTTP and WebSocket routes, MCP
+session registry, server secret store, provider registry, drivers, adapters and
+provider packages, settings navigation and the chat header) and the shared
+`scientMounts`; `scripts/scient-seam-check.mjs` checks it with the other
+inventories. See [Scient Extensions](docs/internals/scient-extensions.md).
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,

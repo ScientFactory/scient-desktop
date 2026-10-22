@@ -1410,6 +1410,17 @@ export function codexThreadRuntimeParams(input: {
               http_headers: {
                 Authorization: mcpSession.authorizationHeader,
               },
+              // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
+              ...Object.fromEntries(
+                mcpSession.connectors.map((connector) => [
+                  connector.serverName,
+                  {
+                    url: connector.url,
+                    http_headers: { Authorization: mcpSession.authorizationHeader },
+                  },
+                ]),
+              ),
+              // SCIENT-FORK:END Scient Extensions connectors
             },
           }),
     },

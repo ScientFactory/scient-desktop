@@ -688,6 +688,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             condition: record.condition,
             executable: record.executable,
             ...(record.guardMaxBytes === null ? {} : { guardMaxBytes: record.guardMaxBytes }),
+            ...(record.peerGuards ? { peerGuards: record.peerGuards } : {}),
             ...(record.expectedMutationEpoch === undefined
               ? {}
               : { expectedMutationEpoch: record.expectedMutationEpoch }),

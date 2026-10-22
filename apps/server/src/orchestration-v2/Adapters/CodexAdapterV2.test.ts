@@ -781,6 +781,9 @@ describe("CodexAdapterV2 process spawning", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-codex-token",
       capabilities: new Set(["preview"]),
+      // SCIENT-FORK:START — Scient Extensions connectors.
+      connectors: [],
+      // SCIENT-FORK:END
     };
 
     assert.deepEqual(
@@ -811,6 +814,53 @@ describe("CodexAdapterV2 process spawning", () => {
       },
     );
   });
+
+  // SCIENT-FORK:START — Scient Extensions connectors.
+  it("adds one mcp_servers entry per delivered connector with the session bearer", () => {
+    const threadId = ThreadId.make("thread-codex-connectors");
+    const params = CodexAdapterV2.codexThreadRuntimeParams({
+      mcpSession: {
+        environmentId: EnvironmentId.make("environment-codex-connectors"),
+        threadId,
+        providerSessionId: "mcp-session-codex-connectors",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        capabilities: new Set(["preview"]),
+        connectors: [
+          {
+            connectorId: "con_linear0001",
+            serverName: "linear",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
+          },
+          {
+            connectorId: "con_hf00000001",
+            serverName: "hugging-face",
+            displayName: "Hugging Face",
+            url: "http://127.0.0.1:43123/mcp/connectors/con_hf00000001",
+          },
+        ],
+      },
+    });
+
+    assert.deepEqual(params.config.mcp_servers, {
+      scient: {
+        url: "http://127.0.0.1:43123/mcp",
+        tool_timeout_sec: 3_900,
+        http_headers: { Authorization: "Bearer secret-codex-token" },
+      },
+      linear: {
+        url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
+        http_headers: { Authorization: "Bearer secret-codex-token" },
+      },
+      "hugging-face": {
+        url: "http://127.0.0.1:43123/mcp/connectors/con_hf00000001",
+        http_headers: { Authorization: "Bearer secret-codex-token" },
+      },
+    });
+  });
+  // SCIENT-FORK:END
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
@@ -3282,6 +3332,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
           capabilities: new Set(["preview"]),
+          // SCIENT-FORK:START — Scient Extensions connectors.
+          connectors: [],
+          // SCIENT-FORK:END
         });
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({

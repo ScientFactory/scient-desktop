@@ -185,6 +185,8 @@ function makeHarness(options?: {
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
       getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+      recordProviderNativeInventory: () => Ref.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

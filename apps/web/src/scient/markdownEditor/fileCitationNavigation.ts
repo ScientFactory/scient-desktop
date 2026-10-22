@@ -1,4 +1,4 @@
-import type { FileCitation, ScopedThreadRef } from "@t3tools/contracts";
+import { isPdfCitation, type FileCitation, type ScopedThreadRef } from "@t3tools/contracts";
 import { formatFileCitationHref, parseFileCitationHref } from "@t3tools/shared/composerCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
@@ -7,6 +7,12 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { randomUUID } from "~/lib/utils";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { toastManager } from "~/components/ui/toast";
+import {
+  openPdfCitation,
+  pdfCitationActivation,
+  pdfCitationFromLocation,
+  supersedePdfCitationNavigation,
+} from "~/scient/pdf/anchors/pdfCitationNavigation";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -96,8 +102,40 @@ export function useFileCitationTarget(
   currentCwd: string | undefined,
   runAfterPendingSave: (surfaceId: string, run: () => void) => void,
 ): void {
-  const citation = fileCitationFromLocation(location.href);
+  const citation =
+    fileCitationFromLocation(location.href) ?? pdfCitationFromLocation(location.href);
   const handled = useRef<string | null>(null);
+  // Leaving the thread abandons the PDF quote this view started, if it is
+  // still the latest. The cleanup waits a task: React's development replay
+  // re-runs this effect for the same thread at once, which is not leaving it.
+  // A view replaced by another never cancels the newer view's quote.
+  const threadKey = ref ? `${ref.environmentId}\0${ref.threadId}` : null;
+  const started = useRef<number | null>(null);
+  const leaving = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  useEffect(() => {
+    const abandonOwn = () => {
+      if (started.current !== null && started.current === pdfCitationActivation()) {
+        supersedePdfCitationNavigation();
+      }
+      started.current = null;
+    };
+    const pending = leaving.current;
+    if (pending) {
+      clearTimeout(pending.timer);
+      leaving.current = null;
+      if (pending.key !== threadKey) abandonOwn();
+    }
+    if (threadKey === null) return;
+    return () => {
+      leaving.current = {
+        key: threadKey,
+        timer: setTimeout(() => {
+          leaving.current = null;
+          abandonOwn();
+        }, 0),
+      };
+    };
+  }, [threadKey]);
   useEffect(() => {
     if (
       !citation ||
@@ -110,6 +148,12 @@ export function useFileCitationTarget(
     const key = `${location.key ?? ""}:${location.href}`;
     if (handled.current === key) return;
     handled.current = key;
-    openFileCitation(citation, currentCwd, runAfterPendingSave);
+    if (isPdfCitation(citation)) {
+      started.current = openPdfCitation(citation, currentCwd, runAfterPendingSave);
+    } else {
+      // A later file quote supersedes a PDF quote still waiting for its document.
+      supersedePdfCitationNavigation();
+      openFileCitation(citation, currentCwd, runAfterPendingSave);
+    }
   }, [citation, ref, location.href, location.key, currentCwd, runAfterPendingSave]);
 }

@@ -154,6 +154,7 @@ describe("PiAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer secret-pi-token",
           capabilities: new Set(["preview"] as const),
+          connectors: [],
         }),
         () => mcpSessions.clear(THREAD_ID),
       );

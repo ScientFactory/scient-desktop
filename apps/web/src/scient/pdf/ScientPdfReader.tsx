@@ -5,7 +5,7 @@ import type {
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { Download, FileText, ListTree, LoaderCircle, RotateCw, FolderSearch } from "lucide-react";
 import {
   useEffect,
@@ -45,6 +45,8 @@ import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdf
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader } from "./useScientPdfReader";
+import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
+import { usePdfRevealClaim } from "./anchors/pdfRevealRequests";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -114,10 +116,14 @@ export function ScientPdfReader(props: {
   readonly resolver?: PdfSourceResolver;
   readonly source: PdfSourceDescriptor;
   readonly syncNavigation?: PdfSyncNavigation;
+  /** The conversation "Ask in chat" quotes into; absent means no Ask in chat. */
+  readonly citeThread?: ScopedThreadRef | undefined;
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
+  // Held from the first render, so a quote waiting for this PDF survives authorization and loading.
+  const revealOwner = usePdfRevealClaim(legacyDocumentKey);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   const displayed = useRetainedPdfSource(documentKey, props.source, asset);
   // Only the candidate request changes on retry; the painted reader stays mounted.
@@ -193,6 +199,8 @@ export function ScientPdfReader(props: {
       onRetryLoad={retryLoad}
       actions={props.actions ?? webPdfSourceActions}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
+      citeThread={props.citeThread}
+      revealOwner={revealOwner}
     />
   );
 }
@@ -212,6 +220,8 @@ function LoadedScientPdfReader(props: {
   /** Fetches the document again after a failed load. */
   readonly onRetryLoad: () => void;
   readonly syncNavigation?: PdfSyncNavigation;
+  readonly citeThread?: ScopedThreadRef | undefined;
+  readonly revealOwner: object;
 }) {
   const requestedRevisionId =
     props.source._tag === "generated-pdf" ? props.source.revisionId : null;
@@ -512,6 +522,15 @@ function LoadedScientPdfReader(props: {
           >
             <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
+          <PdfQuoteLayer
+            container={container}
+            runtimeRef={reader.runtimeRef}
+            presentedSource={presentedSource?.source ?? null}
+            revealKey={props.legacyDocumentKey}
+            ready={currentPresentation}
+            citeThread={props.citeThread}
+            revealOwner={props.revealOwner}
+          />
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
               <span>{state.updateError ?? props.sourceNotice}</span>

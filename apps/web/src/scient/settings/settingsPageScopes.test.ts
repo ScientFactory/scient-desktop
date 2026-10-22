@@ -26,4 +26,20 @@ describe("settings page scopes", () => {
     expect(settingsPageIgnoresProjects("/settings/providers")).toBe(false);
     expect(settingsPageScopeSearch("/settings/providers", search)).toBe(search);
   });
+
+  it("has Extensions manage one server, so its picker names the machine every change goes to", () => {
+    const search = { project: "paper", machine: "remote", checkout: "remote:paper" };
+    expect(settingsPageChoosesOneEnvironment("/settings/extensions")).toBe(true);
+    expect(settingsPageScopeSearch("/settings/extensions", search)).toEqual({ machine: "remote" });
+    expect(settingsPageRendersOffline("/settings/extensions")).toBe(false);
+    for (const page of [
+      "/settings/extensions/installed",
+      "/settings/extensions/item/connector/con_linear0001",
+      "/settings/extensions/item/server/io.github.owner/server",
+    ]) {
+      expect(settingsPageChoosesOneEnvironment(page)).toBe(true);
+      expect(settingsPageScopeSearch(page, search)).toEqual({ machine: "remote" });
+    }
+    expect(settingsPageChoosesOneEnvironment("/settings/skills/external")).toBe(false);
+  });
 });

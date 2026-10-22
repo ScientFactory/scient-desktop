@@ -283,6 +283,15 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             awareness: buildScientAwareness(
               mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
             ),
+            ...(mcp === undefined || mcp.connectors.length === 0
+              ? {}
+              : {
+                  connectors: mcp.connectors.map(({ serverName, displayName, url }) => ({
+                    serverName,
+                    displayName,
+                    url,
+                  })),
+                }),
           },
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),

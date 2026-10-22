@@ -417,6 +417,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
             authorizationHeader: TOKEN,
             capabilities: new Set(["skills:read"]),
+            connectors: [],
           });
           yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
@@ -561,6 +562,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
             authorizationHeader: TOKEN,
             capabilities: new Set(["skills:read"]),
+            connectors: [],
           });
           yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
@@ -796,6 +798,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                   endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
                   authorizationHeader: TOKEN,
                   capabilities: new Set(["skills:read"] as const),
+                  connectors: [],
                 },
               }),
             resolve: () => Effect.succeed(undefined),

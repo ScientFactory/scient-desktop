@@ -27,6 +27,9 @@ import {
   setCodexSkillEnabled,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
+// SCIENT-FORK:START — Scient Extensions: provider-native plugin and MCP server management.
+import { makeCodexNativeInventory } from "../CodexPluginInventory.ts";
+// SCIENT-FORK:END
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
@@ -266,6 +269,21 @@ export const CodexDriver: ScientProviderDriver<
           })),
         ),
     };
+    // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers: bounded
+    // enrichment and generation-bound actions, owned by this instance.
+    const nativeInventory = yield* makeCodexNativeInventory((cwd) =>
+      withCodexAppServerClient({
+        binaryPath: effectiveConfig.binaryPath,
+        homePath: effectiveConfig.homePath,
+        launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+        cwd: cwd ?? serverConfig.cwd,
+        environment: processEnv,
+      }).pipe(
+        Effect.map(({ client }) => client),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    );
+    // SCIENT-FORK:END
 
     const orchestrationAdapter = yield* createCodexAdapterV2(
       {
@@ -318,17 +336,29 @@ export const CodexDriver: ScientProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
+      // SCIENT-FORK:START — Scient Extensions: beside the version advisory, the machine inventory is
+      // listed after each healthy probe, off its path; a failed probe keeps the
+      // last inventory without another spawn.
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-        resolveMaintenance().pipe(
-          Effect.flatMap((maintenanceCapabilities) =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            }),
-          ),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+        Effect.all(
+          [
+            resolveMaintenance().pipe(
+              Effect.flatMap((maintenanceCapabilities) =>
+                enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                }),
+              ),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+              Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+            ),
+            snapshot.installed && snapshot.status !== "error"
+              ? nativeInventory.refresh
+              : Effect.void,
+          ],
+          { concurrency: "unbounded", discard: true },
         ),
+      // SCIENT-FORK:END
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -452,6 +482,11 @@ export const CodexDriver: ScientProviderDriver<
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
       skillActions,
+      // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers.
+      pluginActions: nativeInventory.actions,
+      nativeInventoryChanges: nativeInventory.reports,
+      workspaceInventory: nativeInventory.workspace,
+      // SCIENT-FORK:END
     } satisfies ScientProviderInstance;
   }),
 };

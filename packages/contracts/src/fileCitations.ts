@@ -1,3 +1,4 @@
+import { PdfTarget } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
 import { AssistantCitation } from "./assistantCitations.ts";
 import { EnvironmentId, ThreadId, NonNegativeInt } from "./baseSchemas.ts";
@@ -56,8 +57,33 @@ export const FileCitation = Schema.Struct({
   ),
 );
 export type FileCitation = typeof FileCitation.Type;
-export type ComposerCitation = AssistantCitation | FileCitation;
+
+/**
+ * A quote from a PDF: where it is (the shared PDF target, which a saved
+ * annotation will reuse) and the user's optional comment. The quoted text is
+ * the target's own; it is not copied a second time.
+ */
+export const PdfCitation = Schema.Struct({
+  kind: Schema.Literal("pdf"),
+  version: Schema.Literal(1),
+  environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
+  threadId: ThreadId.check(Schema.isMaxLength(512)),
+  target: PdfTarget,
+  comment: AssistantCitation.fields.comment,
+});
+export type PdfCitation = typeof PdfCitation.Type;
+
+export type ComposerCitation = AssistantCitation | FileCitation | PdfCitation;
 
 export function isFileCitation(citation: ComposerCitation): citation is FileCitation {
   return "kind" in citation && citation.kind === "file";
+}
+
+export function isPdfCitation(citation: ComposerCitation): citation is PdfCitation {
+  return "kind" in citation && citation.kind === "pdf";
+}
+
+/** The quoted text of a PDF citation, across its pages. */
+export function pdfCitationText(citation: PdfCitation): string {
+  return citation.target.selector.pages.map((page) => page.quote).join("");
 }

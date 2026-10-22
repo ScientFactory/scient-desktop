@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
+  "ownedFiles": [
+    "packages/contracts/src/scient/extensions.ts",
+    "packages/contracts/src/scient/extensionRpcs.ts",
+    "packages/contracts/src/scient/secrets.ts",
+    "apps/web/src/routes/settings.extensions.tsx",
+    "apps/web/src/routes/settings.extensions_.all.tsx",
+    "apps/web/src/routes/settings.extensions_.category.$category.tsx",
+    "apps/web/src/routes/settings.extensions_.installed.tsx",
+    "apps/web/src/routes/settings.extensions_.item.connector.$connectorId.tsx",
+    "apps/web/src/routes/settings.extensions_.item.plugin.$pluginId.tsx",
+    "apps/web/src/routes/settings.extensions_.item.provider.$instanceId.plugin.$pluginId.tsx",
+    "apps/web/src/routes/settings.extensions_.item.provider.$instanceId.server.$serverName.tsx",
+    "apps/web/src/routes/settings.extensions_.item.server.$.tsx",
+    "apps/server/src/provider/CodexPluginInventory.ts",
+    "apps/server/src/provider/ProviderNativeInventory.ts",
+    "apps/server/src/provider/ScientProviderNativeInventory.ts"
+  ],
+  "extensionsDiffSignals": [
+    "ConnectorRuntime",
+    "connectorIds",
+    "[Cc]onnectors?\\b",
+    "ExtensionDeliveryReceipt",
+    "SCIENT_EXTENSION_WS_METHODS",
+    "scient/extensions",
+    "ServerProvider(Plugin|McpServer)",
+    "NativeInventory",
+    "[Pp]luginActions",
+    "Scient Extensions"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/server/scripts/acp-mock-agent.ts",
+      "anchor": "T3_ACP_MCP_HTTP",
+      "purpose": "Let the ACP mock agent advertise HTTP MCP support so the connector delivery tests can exercise ACP agents (AcpAdapterV2.test.ts)."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "WS_METHODS.extensionsList",
+      "purpose": "Authorize extensions reads under the read scope and every extensions change under settings write (RpcAuthorization.test.ts)."
+    },
+    {
+      "path": "apps/server/src/observability/RpcInstrumentation.ts",
+      "anchor": "WS_METHODS.extensionsList",
+      "purpose": "Attribute extensions RPC metrics and spans to their aggregate."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "makeExtensionsRpcHandlers",
+      "purpose": "Expose the authenticated extensions RPC family over the shared WebSocket server."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "ScientExtensionsLayerLive",
+      "purpose": "Provide the extensions owners to provider sessions, routes and RPCs, and mount the connector proxy and sign-in callback routes."
+    },
+    {
+      "path": "apps/server/src/mcp/McpInvocationContext.ts",
+      "anchor": "connectorIds",
+      "purpose": "Carry the connector set delivered with a provider-session credential so the proxy honors exactly what the session received."
+    },
+    {
+      "path": "apps/server/src/mcp/McpSessionRegistry.ts",
+      "anchor": "McpCredentialConnector",
+      "purpose": "Bind the delivered connector set to each issued MCP bearer and derive the per-connector proxy URLs (McpSessionRegistry.test.ts)."
+    },
+    {
+      "path": "apps/server/src/mcp/McpSessionRegistry.testkit.ts",
+      "anchor": "connectors",
+      "purpose": "Let session-registry fixtures issue credentials that deliver connectors."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "anchor": "ConnectorSessionDelivery",
+      "purpose": "Resolve, filter and record connector delivery when issuing or reusing a session's MCP credential (ProviderSessionManager.mcp.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "anchor": "claudeNativeInventoryFromInit",
+      "purpose": "Report the plugins and MCP servers Claude announces at session init into the provider snapshot."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+      "anchor": "mcpSession.connectors",
+      "purpose": "Deliver connectors to Codex as additional mcp_servers entries behind the session bearer."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
+      "anchor": "ProviderNativeInventory",
+      "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
+      "anchor": "makeCodexNativeInventory",
+      "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/ProviderRegistry.ts",
+      "anchor": "overlayProviderNativeInventory",
+      "purpose": "Overlay provider-native plugin and MCP inventory onto canonical provider snapshots."
+    },
+    {
+      "path": "apps/server/src/provider/testUtils/providerRegistryMock.ts",
+      "anchor": "getProviderPluginActionsForInstance",
+      "purpose": "Keep the provider registry test double in step with the plugin action accessor."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatHeader.tsx",
+      "anchor": "ExtensionsReceiptIndicator",
+      "purpose": "Show the thread's extensions delivery receipt in the maintained chat header."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsBreadcrumb.tsx",
+      "anchor": "/settings/extensions/installed",
+      "purpose": "Label the Extensions subpages in the maintained Settings breadcrumb; category and item pages fall back to the Extensions section."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
+      "anchor": "/settings/extensions",
+      "purpose": "Link Settings → Extensions from the maintained Settings shell."
+    },
+    {
+      "path": "apps/web/src/components/settings/settingsSearch.ts",
+      "anchor": "/settings/extensions",
+      "purpose": "Make Settings → Extensions discoverable through Settings search."
+    },
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "anchor": "SettingsExtensionsRouteImport",
+      "purpose": "Generated registration for the fork-owned Settings → Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
+    },
+    {
+      "path": "packages/client-runtime/src/rpc/client.ts",
+      "anchor": "WS_METHODS.extensionsSubscribeChanges",
+      "purpose": "Treat the extensions change feed as a subscription stream in the shared RPC client."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scient/extensions.ts",
+      "purpose": "Export the fork-owned extensions and vault-reference contracts."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "...SCIENT_EXTENSION_WS_METHODS",
+      "purpose": "Register the extensions RPC group and method names."
+    },
+    {
+      "path": "packages/contracts/src/server.ts",
+      "anchor": "ServerProviderPlugin",
+      "purpose": "Carry provider-owned plugin and MCP server inventory in provider snapshots."
+    },
+    {
+      "path": "packages/provider-acp/src/server/adapter.ts",
+      "anchor": "acpConnectorBridges",
+      "purpose": "Deliver every connector to ACP agents as its own stdio acp-mcp-bridge to the connector's Scient proxy endpoint, even when the agent advertises HTTP MCP."
+    },
+    {
+      "path": "packages/provider-acp/src/server/clientPolicy.ts",
+      "anchor": "sessionHasConnectors",
+      "purpose": "Keep connector tools out of the pre-approval Scient grants to its own server."
+    },
+    {
+      "path": "packages/provider-core/src/server/McpProviderSessions.ts",
+      "anchor": "config.connectors",
+      "purpose": "Copy the delivered connector list with each provider-facing MCP session config."
+    },
+    {
+      "path": "packages/provider-core/src/server/mcpSession.ts",
+      "anchor": "McpProviderSessionConnector",
+      "purpose": "Carry the delivered connectors (server name and Scient proxy URL) into provider adapters."
+    },
+    {
+      "path": "packages/provider-cursor/src/server/adapter.ts",
+      "anchor": "session.connectors",
+      "purpose": "Deliver connectors to Cursor as additional mcpServers entries."
+    },
+    {
+      "path": "packages/provider-muse/src/server/adapter.ts",
+      "anchor": "mcpSession.connectors",
+      "purpose": "Deliver connectors to Muse through Scient's connector proxy."
+    },
+    {
+      "path": "packages/provider-opencode/src/server/adapter.ts",
+      "anchor": "mcpSession.connectors",
+      "purpose": "Register connectors with OpenCode as best-effort remote MCP entries."
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "anchor": "openCode2ConnectorKey",
+      "purpose": "Register connectors beside the thread's own server for OpenCode 2."
+    },
+    {
+      "path": "packages/provider-pi/src/server/mcpExtensionSource.ts",
+      "anchor": "T3_MCP_CONNECTORS_ENV",
+      "purpose": "Register each delivered connector's tools in the Pi extension with a server prefix."
+    },
+    {
+      "path": "packages/provider-pi/src/server/mcpInjection.ts",
+      "anchor": "T3_MCP_CONNECTORS_ENV",
+      "purpose": "Pass the session's connector list to the Pi extension bootstrap."
+    },
+    {
+      "path": "packages/provider-pi/src/server/mcpBridge.testkit.ts",
+      "anchor": "FixtureConnector",
+      "purpose": "Let Pi MCP bridge fixtures serve connector endpoints."
+    },
+    {
+      "path": "package.json",
+      "anchor": "extensions:seams:check",
+      "purpose": "Expose the extensions seam audit as a repository command."
+    },
+    {
+      "path": "apps/server/src/auth/ServerSecretStore.ts",
+      "anchor": "durable replace",
+      "purpose": "Sync replaced secrets and their directory so acknowledged connector credential rotations and removals survive a crash (ConnectorRuntime.test.ts)."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts",
+      "anchor": "mcp.connectors",
+      "purpose": "Pass delivered connectors to the Oh My Pi bootstrap."
+    },
+    {
+      "path": "apps/server/src/provider/omp/OmpScientExtension.ts",
+      "anchor": "OmpScientExtensionConnector",
+      "purpose": "Proxy each delivered connector through Scient's connector endpoint inside the OMP extension."
+    },
+    {
+      "path": "apps/server/src/provider/ScientProviderInstance.ts",
+      "anchor": "ProviderPluginActions",
+      "purpose": "Expose optional provider-owned plugin actions and native inventory on a provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/ScientProviderInstanceActions.ts",
+      "anchor": "getProviderPluginActionsForInstance",
+      "purpose": "Resolve provider plugin actions for the exact live provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/ScientProviderInstanceSeams.ts",
+      "anchor": "ServerProviderPlugin",
+      "purpose": "Define the provider-native plugin inventory and action seams."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderSessionManagerTestHarness.ts",
+      "anchor": "ConnectorRuntime",
+      "purpose": "Provide connector runtime doubles to provider session manager tests."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/PiNativeInitiatedWorkTestHarness.ts",
+      "anchor": "connectors: []",
+      "purpose": "Keep Pi native-work fixtures on the connector-aware MCP session config."
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/mcpRegistration.ts",
+      "anchor": "OpenCode2McpConnectorEntry",
+      "purpose": "Describe connector MCP registrations beside the thread's own server."
+    },
+    {
+      "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
+      "anchor": "\"/settings/extensions\"",
+      "purpose": "Scope Settings → Extensions to one environment, like the other per-server settings pages."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
+      "anchor": "onNativeInventory",
+      "purpose": "Let Claude adapter wake fixtures observe native plugin and MCP inventory reports."
+    }
+  ]
+}

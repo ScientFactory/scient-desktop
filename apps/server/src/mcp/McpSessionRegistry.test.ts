@@ -241,6 +241,57 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
+// SCIENT-FORK:START — Scient Extensions connectors.
+it.effect("binds the delivered connector set and derives proxy URLs from the bound host", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer("::1"));
+    const connectors = [
+      { connectorId: "con_linear0001", serverName: "linear", displayName: "Linear" },
+      { connectorId: "con_notion0001", serverName: "notion", displayName: "Notion" },
+    ];
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-connectors"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
+      connectors,
+    });
+    expect(issued.config.connectors).toEqual([
+      { ...connectors[0], url: "http://[::1]:43123/mcp/connectors/con_linear0001" },
+      { ...connectors[1], url: "http://[::1]:43123/mcp/connectors/con_notion0001" },
+    ]);
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    // Neither the request nor the provider-facing copy can widen the bound set.
+    connectors.push({ connectorId: "con_widened01", serverName: "widened", displayName: "W" });
+    const resolved = yield* registry.resolve(token);
+    const boundIds = resolved?.connectorIds;
+    expect(boundIds).toEqual(new Set(["con_linear0001", "con_notion0001"]));
+    (boundIds as Set<string>).add("con_widened01");
+    expect((yield* registry.resolve(token))?.connectorIds).toEqual(
+      new Set(["con_linear0001", "con_notion0001"]),
+    );
+
+    const withoutConnectors = yield* registry.issue({
+      threadId: ThreadId.make("thread-no-connectors"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
+    });
+    expect(withoutConnectors.config.connectors).toEqual([]);
+    expect(
+      (yield* registry.resolve(
+        withoutConnectors.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+      ))?.connectorIds,
+    ).toEqual(new Set());
+  }),
+);
+
+it("places connector proxy URLs beside the MCP endpoint and escapes the id", () => {
+  expect(McpSessionRegistry.connectorProxyUrl("http://127.0.0.1:43123/mcp", "con_a/b?c")).toBe(
+    "http://127.0.0.1:43123/mcp/connectors/con_a%2Fb%3Fc",
+  );
+});
+// SCIENT-FORK:END
+
 it.effect("expires credentials once their session stops showing signs of life", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

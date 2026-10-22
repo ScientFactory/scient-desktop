@@ -95,6 +95,29 @@ describe("conflictGroups", () => {
     expect(groups[0]?.origins).toEqual(["guard", "merge"]);
     expect(groups[2]?.origins).toEqual(["interrupted"]);
   });
+
+  it("makes a never-synchronized local file meeting Overleaf content a decision of its own", () => {
+    const groups = conflictGroups({
+      trees: {
+        base: tree({ chapter: "c" }),
+        local: tree({ "chapter/private.txt": "p" }),
+        remote: tree({ chapter: "c" }),
+        merged: tree({ "chapter/private.txt": "p" }),
+      },
+      merge: [],
+      guarded: [],
+      interrupted: [],
+      collisions: [["chapter", "chapter/private.txt"]],
+      renames: [],
+    });
+    expect(groups).toEqual([
+      {
+        paths: ["chapter", "chapter/private.txt"],
+        types: ["local file never synchronized"],
+        origins: ["collision"],
+      },
+    ]);
+  });
 });
 
 describe("canMergeInEditor", () => {

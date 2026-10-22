@@ -373,6 +373,16 @@
       "path": "apps/server/src/provider/Drivers/ScientNativeSkills.ts",
       "anchor": "setGrokSkillEnabled",
       "purpose": "Preserve unrelated Grok TOML while changing only the native disabled-skill list."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/plugins/ScientPluginRegistry.ts",
+      "anchor": "replaceAddonReleases",
+      "purpose": "Offer enabled plugin bundles' immutable add-on skill releases (origin addon:<id>@<version>) through the Scient skill registry; never default-active (ScientPluginRegistry.test.ts)."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/plugins/ScientPluginManifest.ts",
+      "anchor": "isStrictSemver",
+      "purpose": "Apply the skill release loader's exact SemVer rule to plugin versions (ScientPluginManifest.test.ts)."
     }
   ]
 }

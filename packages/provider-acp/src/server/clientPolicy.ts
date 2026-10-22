@@ -213,6 +213,9 @@ export function acpMcpToolApprovalElicitationDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.CreateElicitationRequest,
   nativeRequestId?: string,
+  // SCIENT-FORK:START — Scient Extensions connectors (remote MCP servers proxied by Scient).
+  sessionHasConnectors = false,
+  // SCIENT-FORK:END
 ): AcpPermissionDisposition | undefined {
   if (
     request.mode !== "form" ||
@@ -221,6 +224,16 @@ export function acpMcpToolApprovalElicitationDisposition(
   ) {
     return undefined;
   }
+  // SCIENT-FORK:START — Scient Extensions connectors never inherit the grant below. The
+  // elicitation does not name its MCP server, so once connectors share the session it is
+  // answered only by a policy that already allows any operation; otherwise the user decides.
+  if (sessionHasConnectors) {
+    return acpOperationDisposition(runtimePolicy, { kind: "other", locations: undefined }) ===
+      "allow"
+      ? "allow"
+      : "ask";
+  }
+  // SCIENT-FORK:END
   // This request comes from T3's authenticated, scope-checked MCP endpoint,
   // not an arbitrary provider command. Let explicit approval mode surface it
   // to the user and otherwise allow the endpoint to enforce its own policy.
