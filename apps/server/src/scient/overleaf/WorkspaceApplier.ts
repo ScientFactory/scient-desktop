@@ -111,7 +111,10 @@ export interface WorkspaceApplyResult {
   readonly base: ReadonlyMap<string, string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly markerPaths: ReadonlyArray<string>;
-  readonly retained: ReadonlyArray<RetainedMutationResult & { readonly changed: boolean }>;
+  /** Kept copies; `relativePath` is the plan path whose step kept it. */
+  readonly retained: ReadonlyArray<
+    RetainedMutationResult & { readonly changed: boolean; readonly relativePath: string }
+  >;
   readonly matchesTarget: boolean;
   /** Temporary structural source copies excluded from manuscript capture. Never auto-delete. */
   readonly stagingPaths: ReadonlyArray<string>;
@@ -451,7 +454,13 @@ export const make = (hooks: ApplierHooks = {}) =>
               } else {
                 if (intentText === null) {
                   if (saved !== null) throw new Error("Missing durable apply intent.");
-                  if (!input.plan) throw new Error("Missing apply plan.");
+                  if (!input.plan) {
+                    // Recovery of an apply that never recorded its plan. Every file
+                    // mutation creates its record folder first, so an empty folder
+                    // proves nothing was written: there is nothing to resume.
+                    if ((await NodeFSP.readdir(retentionDirectory)).length === 0) return null;
+                    throw new Error("Missing apply plan.");
+                  }
                   const plan = storePlan(input.plan);
                   validatePlan(plan);
                   const intent = { version: 2 as const, cwd, rootIdentity, plan };
@@ -517,6 +526,16 @@ export const make = (hooks: ApplierHooks = {}) =>
             },
             catch: (cause) => new WorkspaceApplyError({ cause }),
           });
+          if (begin === null)
+            return {
+              outcome: "replan",
+              base: new Map(),
+              interrupted: [],
+              markerPaths: [],
+              retained: [],
+              matchesTarget: false,
+              stagingPaths: [],
+            } satisfies WorkspaceApplyResult;
           yield* files
             .registerRetainedFileHistory({
               cwd: input.cwd,
@@ -738,7 +757,9 @@ export const make = (hooks: ApplierHooks = {}) =>
             .withSettledWorkspaceRead({ cwd: state.cwd }, () =>
               Effect.tryPromise({
                 try: async (): Promise<WorkspaceApplyResult> => {
-                  const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
+                  const retained: Array<
+                    RetainedMutationResult & { changed: boolean; relativePath: string }
+                  > = [];
                   for (const [index, name] of state.plan.units.flat().entries())
                     for (const attempt of await stepAttempts(begin.retentionDirectory, index)) {
                       const directory = NodePath.join(begin.retentionDirectory, attempt);
@@ -756,8 +777,9 @@ export const make = (hooks: ApplierHooks = {}) =>
                               record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
                               current !== record.desired)
                           ) {
-                            retained.push(
-                              await recheckRetainedFile(
+                            retained.push({
+                              relativePath: name,
+                              ...(await recheckRetainedFile(
                                 {
                                   outcome: record.outcome ?? "attention",
                                   recordDirectory: directory,
@@ -766,8 +788,8 @@ export const make = (hooks: ApplierHooks = {}) =>
                                   retainedIdentity: null,
                                 },
                                 ownValue(state.plan.captured, name) ?? null,
-                              ),
-                            );
+                              )),
+                            });
                           }
                         }
                       } catch (e) {

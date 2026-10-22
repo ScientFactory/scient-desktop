@@ -90,6 +90,10 @@ const ApplyLink = Schema.Struct({
   baseGeneration: Count,
   /** Pinned private ref holding the immutable target tree. */
   intentTree: Oid,
+  /** What adoption needs that the applier does not keep, so recovery can adopt without the review. */
+  remoteCommit: Oid,
+  newLocalOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 });
 
 export const OverleafAttemptOutcome = Schema.Literals([
@@ -208,7 +212,16 @@ export const OverleafConnectionDocument = Schema.Struct({
   localSnapshots: Schema.Array(LocalSnapshot).check(Schema.isMaxLength(LOCAL_SNAPSHOT_LIMIT)),
   managedPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   localOnlyPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  attentionPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Groups an earlier apply left half done: forced conflicts until a reviewed resolution. */
+  forcedConflicts: Schema.Array(
+    Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Files where Scient wrote conflict material that may still be unresolved. */
+  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** The applier's structural source copies in the folder; never captured, never deleted automatically. */
+  stagingPaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
+    Schema.isMaxLength(MANAGED_PATH_LIMIT),
+  ),
   retention: Schema.Struct({
     vaultIdentity: VolumeFileIdentity,
     copies: Schema.Array(RetainedCopy).check(Schema.isMaxLength(RETAINED_COPY_LIMIT)),

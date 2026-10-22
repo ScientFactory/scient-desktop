@@ -223,6 +223,9 @@ describe("overleafTransitionViolation", () => {
       planDigest: "a".repeat(64),
       baseGeneration: 1,
       intentTree: oid("5"),
+      remoteCommit: oid("7"),
+      newLocalOnly: [],
+      priorMarkers: [],
     };
     const applying = next(first, { activeApply: link });
     // The apply's result advances the base and clears its link in one replacement.
@@ -276,6 +279,9 @@ describe("overleafTransitionViolation", () => {
       planDigest: "a".repeat(64),
       baseGeneration: 1,
       intentTree: oid("5"),
+      remoteCommit: oid("7"),
+      newLocalOnly: [],
+      priorMarkers: [],
     };
     const applying = next(synced, { activeApply: link });
     expect(overleafTransitionViolation(synced, applying, NOW)).toBeNull();
@@ -315,6 +321,9 @@ describe("overleafTransitionViolation", () => {
         planDigest: "a".repeat(64),
         baseGeneration: 1,
         intentTree: oid("5"),
+        remoteCommit: oid("7"),
+        newLocalOnly: [],
+        priorMarkers: [],
       },
     });
     expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");
