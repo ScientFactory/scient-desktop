@@ -25,7 +25,7 @@ paths or another branch's capabilities.
 
 - **Reviewing a pushed branch, pull request or commit (macOS and Windows):**
   prefer the standing stable app: `pnpm dev:app:review <#123 | branch |
-commit:<sha>>`, then `pnpm dev:app:stable status`. Read
+  commit:<sha>>`, then `pnpm dev:app:stable status`. Read
   `docs/operations/dev-app-review.md` first. Never edit its review checkout
   or profiles by hand; if `review` refuses, report why instead of working
   around it.

@@ -2207,7 +2207,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
           providerTurnId: previous.id,
           requestRuntimeRestart: true,
         });
-        yield* Effect.sleep(40);
+        // The stale request completed under the transition permit without touching turn two.
         assert.lengthOf(terminals(h), 1);
         assert.isFalse(
           (yield* h.readLog!()).some((message) => message.method === "session/cancel"),
@@ -2355,29 +2355,37 @@ const customModelFixture = Effect.fnUntraced(function* (
     },
   ];
   const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+  const handledChanges = yield* Queue.unbounded<void>();
+  const nativeClosed = yield* Deferred.make<void>();
   const snapshot = () => ({
     ...DEFAULT_SERVER_SETTINGS,
     customModels: { revision: 0, connections },
   });
-  const productionFactory = yield* makeDroidCustomModelsRuntimeFactory(
+  const factory = yield* makeDroidCustomModelsRuntimeFactory(
     {
       committedCustomModels: () => snapshot().customModels,
       resolveCustomModels: () => Effect.sync(() => connections),
-      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+      subscribeChanges: PubSub.subscribe(changes).pipe(
+        Effect.map((subscription) =>
+          Stream.fromSubscription(subscription).pipe(
+            Stream.flatMap((settings) =>
+              Stream.concat(
+                Stream.succeed(settings),
+                Stream.fromEffectDrain(Queue.offer(handledChanges, undefined)),
+              ),
+            ),
+          ),
+        ),
+      ),
     },
     instanceId,
-    makeDroidAcpRuntime,
+    (input) =>
+      // Register first so the receipt follows every native process finalizer.
+      Effect.addFinalizer(() => Deferred.succeed(nativeClosed, undefined)).pipe(
+        Effect.andThen(makeDroidAcpRuntime(input)),
+      ),
     () => Effect.succeed("overlay-hooks-allowed" as const),
   );
-  const customRuntimes: Array<Effect.Success<ReturnType<DroidAcpRuntimeFactory>>> = [];
-  const factory: DroidAcpRuntimeFactory = (input) =>
-    productionFactory(input).pipe(
-      Effect.tap((runtime) =>
-        Effect.sync(() => {
-          customRuntimes.push(runtime);
-        }),
-      ),
-    );
   const update = (change: "add" | "rotate" | "remove") =>
     Effect.gen(function* () {
       connections =
@@ -2397,7 +2405,7 @@ const customModelFixture = Effect.fnUntraced(function* (
                   : connection.models,
             }));
       yield* PubSub.publish(changes, snapshot());
-      while (customRuntimes.at(-1)?.isConfigurationCurrent?.() !== false) yield* Effect.sleep(10);
+      yield* Queue.take(handledChanges);
     });
   const model = droidCustomModelId("fixture", "model");
   const body = `
@@ -2413,7 +2421,7 @@ const customModelFixture = Effect.fnUntraced(function* (
       reply(message, {stopReason: "end_turn"});
     }
   `;
-  return { factory, model, body, update };
+  return { factory, model, body, update, nativeClosed: Deferred.await(nativeClosed) };
 });
 const notices = (h: Effect.Success<ReturnType<typeof harness>>) =>
   h.recorded.flatMap((event) => {
@@ -2636,18 +2644,8 @@ it.layer(testLayer, { excludeTestServices: true })(
             });
             yield* f.update("rotate");
             const pid = h.ownedPids()[0]!;
-            while (true) {
-              const alive = yield* Effect.sync(() => {
-                try {
-                  process.kill(pid, 0);
-                  return true;
-                } catch {
-                  return false;
-                }
-              });
-              if (!alive) break;
-              yield* Effect.sleep(10);
-            }
+            yield* f.nativeClosed;
+            yield* Effect.sync(() => assert.throws(() => process.kill(pid, 0), /ESRCH/));
             const rejected = yield* h
               .send(1, "full-access", "default", "retired", f.model)
               .pipe(Effect.result);

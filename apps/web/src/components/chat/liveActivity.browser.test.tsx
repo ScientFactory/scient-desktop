@@ -5,7 +5,8 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
-import { cdp } from "vitest/browser";
+import { cdp } from "vite-plus/test/browser";
+import type { CDPSession } from "vite-plus/test/browser-playwright";
 import { ThreadId } from "@t3tools/contracts";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
@@ -105,7 +106,9 @@ it("sweeps only the current activity, and shows the working header's dot", async
   await _setupFixture0(_fixture);
 
   await render(_fixture, "live:thinking", [entry(1, "Find the bug")], working);
-  await expect.poll(() => sweeps(_fixture).length).toBe(1);
+  await vi.waitFor(() => {
+    expect(sweeps(_fixture).length).toBe(1);
+  });
   expect(rowOf(sweeps(_fixture)[0]!)).toBe("thinking");
   // The working header has the steady dot and no sweep of its own.
   const header = _fixture.host!.querySelector('[data-timeline-row-kind="working"]')!;
@@ -130,7 +133,9 @@ it("moves the sweep to the running tool, with no stepped shine anywhere", async 
     [entry(1, "Run the tests"), runningTool("tool-1", "Running pnpm test")],
     working,
   );
-  await expect.poll(() => sweeps(_fixture).length).toBe(1);
+  await vi.waitFor(() => {
+    expect(sweeps(_fixture).length).toBe(1);
+  });
   expect(rowOf(sweeps(_fixture)[0]!)).toBe("work-live");
   expect(_fixture.host!.querySelector(".live-tool-shine")).toBeNull();
 });
@@ -141,7 +146,9 @@ it("gives a longer label a longer cycle at the same pace", async () => {
   await _setupFixture0(_fixture);
 
   await render(_fixture, "live:short", [entry(1, "Short")], working);
-  await expect.poll(() => sweeps(_fixture).length).toBe(1);
+  await vi.waitFor(() => {
+    expect(sweeps(_fixture).length).toBe(1);
+  });
   const short = cycleSeconds(sweeps(_fixture)[0]!);
   await render(
     _fixture,
@@ -152,7 +159,9 @@ it("gives a longer label a longer cycle at the same pace", async () => {
     ],
     working,
   );
-  await expect.poll(() => rowOf(sweeps(_fixture)[0] ?? document.body)).toBe("work-live");
+  await vi.waitFor(() => {
+    expect(rowOf(sweeps(_fixture)[0] ?? document.body)).toBe("work-live");
+  });
   const long = cycleSeconds(sweeps(_fixture)[0]!);
   expect(short).toBeGreaterThan(0.9);
   expect(long).toBeGreaterThan(short + 0.5);
@@ -164,7 +173,9 @@ it("runs the light at the label's own pace, looping with no pause", async () => 
   await _setupFixture0(_fixture);
 
   await render(_fixture, "live:timing", [entry(1, "Timing")], working);
-  await expect.poll(() => sweeps(_fixture).length).toBe(1);
+  await vi.waitFor(() => {
+    expect(sweeps(_fixture).length).toBe(1);
+  });
   const overlay = sweeps(_fixture)[0]!;
   const cycle = cycleSeconds(overlay);
   const counter = overlay.querySelector(".live-activity-focus-counter")!;
@@ -188,7 +199,9 @@ it("lets the header's own label sweep while compacting before the compaction row
     ...working,
     isCompacting: true,
   });
-  await expect.poll(() => sweeps(_fixture).length).toBe(1);
+  await vi.waitFor(() => {
+    expect(sweeps(_fixture).length).toBe(1);
+  });
   expect(rowOf(sweeps(_fixture)[0]!)).toBe("working");
 });
 
@@ -198,7 +211,9 @@ it("keeps the dot through the header's exit, so the label never shifts", async (
   await _setupFixture0(_fixture);
 
   await render(_fixture, "live:exit", [entry(1, "Done soon")], working);
-  await expect.poll(() => _fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(_fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+  });
   await render(_fixture, "live:exit", [entry(1, "Done soon")], { isWorking: false });
   const header = _fixture.host!.querySelector('[data-timeline-row-kind="working"]');
   expect(header).not.toBeNull();
@@ -280,7 +295,9 @@ it("re-measures the pace between passes when the running tool changes", async ()
 
   const prompt = entry(1, "Run things");
   await render(_fixture, "live:retime", [prompt, runningTool("tool-a", "ls")], working);
-  await expect.poll(() => rowOf(sweeps(_fixture)[0] ?? document.body)).toBe("work-live");
+  await vi.waitFor(() => {
+    expect(rowOf(sweeps(_fixture)[0] ?? document.body)).toBe("work-live");
+  });
   const first = cycleSeconds(sweeps(_fixture)[0]!);
   // The same live row now shows a much longer tool label.
   await render(
@@ -296,14 +313,18 @@ it("re-measures the pace between passes when the running tool changes", async ()
     ],
     working,
   );
-  // After the current pass ends, the cycle follows the new width…
-  await expect
-    .poll(() => cycleSeconds(sweeps(_fixture)[0]!), { timeout: 8000 })
-    .toBeGreaterThan(first + 0.5);
-  // …starting a fresh pass, not landing midway across the label.
-  const animation = sweeps(_fixture)[0]!
-    .getAnimations()
-    .find((candidate) => candidate instanceof CSSAnimation)!;
+  const overlay = sweeps(_fixture)[0]!;
+  const animation = overlay.getAnimations().find((candidate) => candidate instanceof CSSAnimation)!;
+  // Drive the pass boundary without waiting for a browser animation.
+  animation.currentTime = first * 1000;
+  overlay.dispatchEvent(
+    new AnimationEvent("animationiteration", {
+      bubbles: true,
+      animationName: "scient-live-activity-sweep",
+    }),
+  );
+  expect(cycleSeconds(overlay)).toBeGreaterThan(first + 0.5);
+  // A new pace starts a fresh pass rather than jumping into its middle.
   expect(animation.effect!.getComputedTiming().progress ?? 1).toBeLessThan(0.2);
 });
 
@@ -331,14 +352,18 @@ it("never sweeps the setup popover beside the timeline's current activity", asyn
   });
   const chip = () =>
     document.querySelector<HTMLButtonElement>('button[aria-label$="Show setup progress."]');
-  await expect.poll(chip).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(chip()).not.toBeNull();
+  });
   chip()!.click();
   // The popover's own card, rendered outside the timeline.
   const popoverStage = () =>
     Array.from(document.querySelectorAll('[data-worktree-setup-stage="setup-script"]')).find(
       (stage) => !_fixture.host!.contains(stage),
     );
-  await expect.poll(popoverStage).toBeDefined();
+  await vi.waitFor(() => {
+    expect(popoverStage()).toBeDefined();
+  });
   const popoverCard = popoverStage()!.closest("section")!;
   // Its running stage stays still: one sweep on the whole page, on the timeline.
   expect(popoverCard.querySelector(".live-activity-focus")).toBeNull();
@@ -347,7 +372,8 @@ it("never sweeps the setup popover beside the timeline's current activity", asyn
 });
 
 async function emulate(feature: "prefers-reduced-motion" | "forced-colors", value: string) {
-  await cdp().send("Emulation.setEmulatedMedia", { features: [{ name: feature, value }] });
+  const session: CDPSession = cdp();
+  await session.send("Emulation.setEmulatedMedia", { features: [{ name: feature, value }] });
 }
 
 it("with reduced motion: no sweep or dimming, the dot still and visible", async () => {
@@ -358,7 +384,9 @@ it("with reduced motion: no sweep or dimming, the dot still and visible", async 
   await emulate("prefers-reduced-motion", "reduce");
   try {
     await render(_fixture, "live:reduced", [entry(1, "Calm")], working);
-    await expect.poll(() => _fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(_fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+    });
     const dot = _fixture.host!.querySelector(".live-activity-dot")!;
     expect(getComputedStyle(dot).animationName).toBe("none");
     expect(getComputedStyle(dot).opacity).toBe("1");
@@ -382,13 +410,17 @@ it("in high contrast mode: the dot keeps the system text color", async () => {
   await emulate("forced-colors", "active");
   try {
     await render(_fixture, "live:contrast", [entry(1, "Contrast")], working);
-    await expect.poll(() => _fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(_fixture.host!.querySelector(".live-activity-dot")).not.toBeNull();
+    });
     const dot = getComputedStyle(_fixture.host!.querySelector(".live-activity-dot")!);
     expect(dot.forcedColorAdjust).toBe("none");
     expect(dot.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(dot.animationName).toBe("none");
     // No sweep (overlay hidden, no motion) and no dimmed text either.
-    await expect.poll(() => _fixture.host!.querySelector(".live-activity-focus")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(_fixture.host!.querySelector(".live-activity-focus")).not.toBeNull();
+    });
     const overlay = _fixture.host!.querySelector(".live-activity-focus")!;
     expect(getComputedStyle(overlay).opacity).toBe("0");
     expect(getComputedStyle(overlay).animationName).toBe("none");

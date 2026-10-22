@@ -103,7 +103,7 @@ it("keeps formula views through a prose edit, source publication and undo", asyn
   expect([..._fixture.container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(
     maths,
   );
-}, 15_000);
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

@@ -203,7 +203,11 @@ describe("rich Markdown direction presentation", () => {
       "",
     ].join("\n");
     const { controller, onUserSourceChange, view } = mount(_fixture, source);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
     expect(view.dom.querySelector(".scient-markdown-table")).not.toBeNull();
     const table = view.dom.querySelector("table");
     const cells = Array.from(view.dom.querySelectorAll("th, td"));
@@ -236,7 +240,11 @@ describe("rich Markdown direction presentation", () => {
       "",
     ].join("\n");
     const { controller, onUserSourceChange, view } = mount(_fixture, source);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
     const rows = Array.from(view.dom.querySelectorAll("tr")).map((row) =>
       Array.from(row.querySelectorAll("th, td")),
     );
@@ -265,7 +273,11 @@ describe("rich Markdown direction presentation", () => {
 
     const source = ["| אבחנה | Value |", "| --- | --- |", "| TNBC | stable |", ""].join("\n");
     const { controller, onUserSourceChange, view } = mount(_fixture, source);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
     const columnDirections = () =>
       Array.from(view.dom.querySelectorAll("tr")).map((row) =>
         row.querySelector("th, td")?.getAttribute("data-scient-table-column-direction"),
@@ -288,9 +300,7 @@ describe("rich Markdown direction presentation", () => {
         headerPosition! + 1 + (header?.content.size ?? 0),
       ),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(columnDirections()).toEqual(["ltr", "ltr"]);
+    await vi.waitFor(() => expect(columnDirections()).toEqual(["ltr", "ltr"]));
     expect(controller.session.session.draftSource).toContain("Diagnosis details");
     expect(onUserSourceChange).toHaveBeenCalled();
   });

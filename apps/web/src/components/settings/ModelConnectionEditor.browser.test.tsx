@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -102,10 +102,15 @@ it("keeps invalid manual limits in view instead of silently refusing to save", a
   await userEvent.fill(page.getByRole("textbox", { name: "Model ID" }), "local-model");
   const contextWindow = page.getByRole("spinbutton", { name: "Context window" });
   // Both limits are filled, but the context window is below the minimum (1024).
+  const clock = _fixture.cleanup.use(fakeTimers());
   await userEvent.fill(contextWindow, "512");
   await userEvent.fill(page.getByRole("spinbutton", { name: "Max output tokens" }), "4096");
   // Longer than the panel's collapse animation: Advanced must not close on the user.
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  clock[Symbol.dispose]();
+  await expect
+    .element(page.getByRole("button", { name: "Advanced", exact: true }))
+    .toHaveAttribute("aria-expanded", "true");
   await expect.element(contextWindow).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Save model" }));
   // The browser can point at the field: it is visible, invalid and focused.

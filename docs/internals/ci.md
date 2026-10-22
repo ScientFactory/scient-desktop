@@ -26,7 +26,7 @@ gates (a queue candidate or main push may reuse an exact earlier qualification, 
   imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
   The verifier first parses imports, then executes the trusted artifact with controlled bridge stubs.
 - **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3'
---filter '!@t3tools/web' --filter '!@t3tools/monorepo' test` across workspace packages except the
+  --filter '!@t3tools/web' --filter '!@t3tools/monorepo' test` across workspace packages except the
   server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
   runner time. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.

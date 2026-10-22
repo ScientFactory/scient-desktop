@@ -1,4 +1,4 @@
-import { render as _fixtureRender } from "../../../test/render";
+import { act, fakeTimers, render as _fixtureRender } from "../../../test/render";
 import { EnvironmentId, type ScientLatexArtworkRequest } from "@t3tools/contracts";
 
 import { expect, it, vi } from "vite-plus/test";
@@ -265,12 +265,13 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
       algorithmNumber: 2,
     };
     try {
+      using _clock = fakeTimers();
       await root.rerender(<LatexTikzArtwork {...original} />);
       await expect.poll(() => panel.textContent).toContain("this is not a sandbox");
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      await act(() => vi.advanceTimersByTimeAsync(200));
       expect(captured.requests).toEqual([]);
       await runPreview(panel);
-      await expect.poll(() => captured.requests.length).toBe(1);
+      await vi.waitFor(() => expect(captured.requests).toHaveLength(1));
       expect(captured.requests[0]).toMatchObject({
         authorization: "execute-host-tex",
         preamble: original.preamble,
@@ -283,17 +284,17 @@ it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorith
         .poll(() => panel.querySelector("button")?.textContent)
         .toBe("Run this drawing preview");
       expect(panel.querySelector("canvas")?.hidden).toBe(true);
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      await act(() => vi.advanceTimersByTimeAsync(200));
       expect(captured.requests.length).toBe(1);
       // Returning to previously admitted text must not revive the old action.
       await root.rerender(<LatexTikzArtwork {...original} />);
       await expect
         .poll(() => panel.querySelector("button")?.textContent)
         .toBe("Run this drawing preview");
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      await act(() => vi.advanceTimersByTimeAsync(200));
       expect(captured.requests.length).toBe(1);
       await runPreview(panel);
-      await expect.poll(() => captured.requests.length).toBe(2);
+      await vi.waitFor(() => expect(captured.requests).toHaveLength(2));
     } finally {
       await root.unmount();
       panel.remove();

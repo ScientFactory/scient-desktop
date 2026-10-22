@@ -82,7 +82,9 @@ jobs:
         env:
           SCIENT_TEST_MANAGED_PYTHON: "1"
           MPLBACKEND: Agg
-        run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
+        run: >-
+          vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 &&
+          vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
 
   real_kernel:
     if: ${{ inputs.real_kernel }}

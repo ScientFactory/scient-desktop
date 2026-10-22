@@ -1,4 +1,9 @@
-import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
+import {
+  fakeTimers,
+  act as _fixtureAct,
+  render as _fixtureRender,
+  type Screen,
+} from "../../../test/render";
 import "../../index.css";
 import { EnvironmentId, MessageId, RunId, TurnId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
@@ -42,10 +47,18 @@ const paragraph = (index: number) => `Message ${index}\n\n${"Readable paragraph.
 const history = (count: number) =>
   Array.from({ length: count }, (_, i) => message(i, "user", paragraph(i)));
 
-const frames = async (count = 4) => {
-  for (let i = 0; i < count; i++)
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-};
+/** Legend's receipt needs scheduled work; waitFor drives the owned clock while it is pending. */
+async function scroll(operation: () => Promise<void>) {
+  let receipt!: Promise<void>;
+  await _fixtureAct(() => {
+    receipt = operation();
+  });
+  await vi.waitFor(() => receipt);
+}
+
+async function advanceClock(ms = 64) {
+  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+}
 async function render(
   _fixture: _Fixture,
   key: string,
@@ -56,9 +69,11 @@ async function render(
     _fixture.host = document.createElement("div");
     Object.assign(_fixture.host.style, { width: "720px", height: "600px" });
     document.body.append(_fixture.host);
+    // No routed controls are exercised in this measured viewport fixture.
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
+    _fixture.cleanup.use(fakeTimers());
   }
   await _fixtureAct(
     async () =>
@@ -67,7 +82,7 @@ async function render(
           emptyPlaceholderInset={0}
           {..._fixture.base}
           routeThreadKey={key}
-          timelineEntries={entries}
+          timelineEntries={[...entries]}
           {...extra}
         />,
       ),
@@ -110,7 +125,9 @@ it("reveals past progress notes to the start of the message the agent is writing
   const key = "reading-end:notes";
   const entries = history(10);
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
   const prompt = message(20, "user", "A new question");
   const running = { isWorking: true, readingFollowPromptId: prompt.message.id };
   const notes = [0, 1, 2, 3, 4].map((i) =>
@@ -123,14 +140,16 @@ it("reveals past progress notes to the start of the message the agent is writing
   );
   let timeline = [...entries, prompt];
   await render(_fixture, key, timeline, running);
-  await frames(8);
+  await advanceClock(128);
   for (const note of notes) {
-    timeline = [...timeline, note];
+    timeline.push(note);
     await render(_fixture, key, timeline, running);
-    await frames(12);
+    await advanceClock(192);
   }
   const latest = notes.at(-1)!.message.id;
-  await expect.poll(() => firstLinesVisible(_fixture, latest), { timeout: 4000 }).toBe(true);
+  await vi.waitFor(() => {
+    expect(firstLinesVisible(_fixture, latest)).toBe(true);
+  });
 });
 
 it("counts one unread per response, not one per progress note", async () => {
@@ -141,25 +160,28 @@ it("counts one unread per response, not one per progress note", async () => {
   const entries = history(15);
   const onUnreadBelowChange = vi.fn();
   await render(_fixture, key, entries, { onUnreadBelowChange });
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 200, animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 200, animated: false }));
+  await advanceClock();
   const later = "2026-09-29T01:00:00.000Z";
   let timeline = [...entries, message(40, "user", "Question", "turn-40", later)];
   for (let i = 0; i < 5; i++) {
-    timeline = [
-      ...timeline,
+    timeline.push(
       message(41 + i, "assistant", `Note ${i}. ${"Working. ".repeat(20)}`, "turn-40", later),
-    ];
+    );
     // A running turn keeps its notes as rows (a settled one folds them).
     await render(_fixture, key, timeline, {
       onUnreadBelowChange,
       isWorking: true,
       runningRunId: RunId.make("turn-40"),
     });
-    await frames(3);
+    await advanceClock(48);
   }
-  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
+  await vi.waitFor(() => {
+    expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
+  });
 });
 
 it("keeps revealing after a click or text selection in the timeline", async () => {
@@ -169,19 +191,21 @@ it("keeps revealing after a click or text selection in the timeline", async () =
   const key = "reading-end:click";
   const entries = history(10);
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
   const prompt = message(20, "user", "Question");
   const running = { isWorking: true, readingFollowPromptId: prompt.message.id };
   await render(_fixture, key, [...entries, prompt], running);
-  await frames(8);
+  await advanceClock(128);
   node(_fixture).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   // Scrolling down (or trackpad momentum toward the end) is not a cancel either.
   node(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true }));
   const answer = message(21, "assistant", `Answer. ${"Explaining. ".repeat(300)}`, "turn-20");
   await render(_fixture, key, [...entries, prompt, answer], running);
-  await expect
-    .poll(() => firstLinesVisible(_fixture, answer.message.id), { timeout: 4000 })
-    .toBe(true);
+  await vi.waitFor(() => {
+    expect(firstLinesVisible(_fixture, answer.message.id)).toBe(true);
+  });
 });
 
 it("treats the end of the last message's text as the bottom", async () => {
@@ -198,9 +222,11 @@ it("treats the end of the last message's text as the bottom", async () => {
       onIsAtEndChange,
     },
   );
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock();
   const state = _fixture.listRef.current!.getState();
   const reading = withReadingEnd(state, COMPOSER_INSET)!;
   // Rows after the answer's text (its timestamp and actions) are not reading content.
@@ -208,11 +234,13 @@ it("treats the end of the last message's text as the bottom", async () => {
   expect(trailing).toBeGreaterThan(0);
   // Scrolled up so the trailing rows plus a little more are hidden: the
   // answer's text is still fully in view, so this is the bottom.
-  await _fixture.listRef.current!.scrollToOffset({
-    offset: node(_fixture).scrollTop - trailing - 30,
-    animated: false,
-  });
-  await frames();
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({
+      offset: node(_fixture).scrollTop - trailing - 30,
+      animated: false,
+    }),
+  );
+  await advanceClock();
   expect(
     resolveTimelineIsAtEnd(withReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)),
   ).toBe(true);
@@ -226,13 +254,15 @@ it("opens a thread without a saved position at the end, even when rows grow afte
   const key = "reading-end:fresh-open";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await frames(3);
+  await advanceClock(48);
   // The last answer grows just after the first jump to the end (late layout).
   await render(_fixture, key, [
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(4)),
   ]);
-  await expect.poll(() => gapToListEnd(_fixture), { timeout: 4000 }).toBeLessThanOrEqual(1);
+  await vi.waitFor(() => {
+    expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
+  });
 });
 
 it("keeps the end in view while idle, and never moves the reader while the thread works", async () => {
@@ -242,16 +272,20 @@ it("keeps the end in view while idle, and never moves the reader while the threa
   const key = "reading-end:idle";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
   // Late layout at the end of an idle thread (a diagram finishing its render).
   await render(_fixture, key, [
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await expect.poll(() => gapToListEnd(_fixture), { timeout: 4000 }).toBeLessThanOrEqual(1);
+  await vi.waitFor(() => {
+    expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
+  });
   // While the thread works, growth lands below the reader.
   const before = node(_fixture).scrollTop;
   await render(
@@ -262,7 +296,7 @@ it("keeps the end in view while idle, and never moves the reader while the threa
       isWorking: true,
     },
   );
-  await frames(8);
+  await advanceClock(128);
   expect(Math.abs(node(_fixture).scrollTop - before)).toBeLessThanOrEqual(1);
 });
 
@@ -292,13 +326,15 @@ it("stops paging history for a missing saved message after a few pages", async (
   });
   await render(_fixture, key, recent, { loadEarlier: loadEarlier() });
   for (let i = 0; i < 6; i++) {
-    await frames(4);
+    await advanceClock(64);
     await render(_fixture, key, recent, { loadEarlier: loadEarlier() });
   }
-  await frames(8);
+  await advanceClock(128);
   expect(load.mock.calls.length).toBeLessThanOrEqual(2);
   // The reader is placed (at a neighbor or the end) rather than left waiting.
-  await expect.poll(() => readTimelinePosition(key)?.messageId).not.toBe("message-gone");
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)?.messageId).not.toBe("message-gone");
+  });
 });
 
 it("reveals the latest message after very tall notes", async () => {
@@ -308,7 +344,9 @@ it("reveals the latest message after very tall notes", async () => {
   const key = "reading-end:virtualized";
   const entries = history(10);
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
   const prompt = message(20, "user", "A question with a long investigation");
   // A running turn keeps its notes as rows; a settled one would fold them.
   const running = {
@@ -317,7 +355,7 @@ it("reveals the latest message after very tall notes", async () => {
     readingFollowPromptId: prompt.message.id,
   };
   await render(_fixture, key, [...entries, prompt], running);
-  await frames(8);
+  await advanceClock(128);
   // Several very tall notes push the next message far past the rendered window.
   const tallNotes = [21, 22, 23, 24].map((index) =>
     message(
@@ -331,14 +369,14 @@ it("reveals the latest message after very tall notes", async () => {
   // The notes are measured first; the latest message arrives afterwards, far
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
-  await frames(12);
+  await advanceClock(192);
   await render(_fixture, key, [...entries, prompt, ...tallNotes, latest], running);
-  await frames(1);
+  await advanceClock(16);
   // Precondition: the latest message has never been rendered.
   expect(rowRect(_fixture, latest.message.id)).toBeNull();
-  await expect
-    .poll(() => firstLinesVisible(_fixture, latest.message.id), { timeout: 8000 })
-    .toBe(true);
+  await vi.waitFor(() => {
+    expect(firstLinesVisible(_fixture, latest.message.id)).toBe(true);
+  });
 });
 
 it("waits for a history page still loading before giving up on the saved message", async () => {
@@ -361,17 +399,21 @@ it("waits for a history page still loading before giving up on the saved message
   await render(_fixture, key, recent, {
     loadEarlier: { loading: false, cursor: "page-1", onLoadEarlier: load },
   });
-  await expect.poll(() => load.mock.calls.length).toBe(1);
+  await vi.waitFor(() => {
+    expect(load.mock.calls.length).toBe(1);
+  });
   const middle = Array.from({ length: 10 }, (_, i) => message(i + 20, "user", paragraph(i + 20)));
   await render(_fixture, key, [...middle, ...recent], {
     loadEarlier: { loading: false, cursor: "page-2", onLoadEarlier: load },
   });
-  await expect.poll(() => load.mock.calls.length).toBe(2);
+  await vi.waitFor(() => {
+    expect(load.mock.calls.length).toBe(2);
+  });
   // The second page is slow: restoration must keep waiting for it.
   await render(_fixture, key, [...middle, ...recent], {
     loadEarlier: { loading: true, cursor: "page-2", onLoadEarlier: load },
   });
-  await frames(30);
+  await advanceClock(480);
   const all = [
     ...Array.from({ length: 10 }, (_, i) => message(i, "user", paragraph(i))),
     ...middle,
@@ -380,15 +422,14 @@ it("waits for a history page still loading before giving up on the saved message
   await render(_fixture, key, all, {
     loadEarlier: { loading: false, cursor: null, onLoadEarlier: load },
   });
-  await expect
-    .poll(
-      () => {
+  await vi.waitFor(() => {
+    expect(
+      (() => {
         const rect = rowRect(_fixture, saved.message.id);
         return rect ? Math.abs(rect.top - node(_fixture).getBoundingClientRect().top) : Infinity;
-      },
-      { timeout: 5000 },
-    )
-    .toBeLessThanOrEqual(2);
+      })(),
+    ).toBeLessThanOrEqual(2);
+  });
 });
 
 it("pins the idle end again once a reveal has finished", async () => {
@@ -398,16 +439,18 @@ it("pins the idle end again once a reveal has finished", async () => {
   const key = "reading-end:after-reveal";
   const entries = history(10);
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
   const prompt = message(20, "user", "Question");
   const answer = message(21, "assistant", "Short answer.", "turn-20");
   // The response has settled; the reveal stops, but the prompt id stays set.
   await render(_fixture, key, [...entries, prompt, answer], {
     readingFollowPromptId: prompt.message.id,
   });
-  await frames(10);
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await advanceClock(160);
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   await render(
     _fixture,
     key,
@@ -416,7 +459,9 @@ it("pins the idle end again once a reveal has finished", async () => {
       readingFollowPromptId: prompt.message.id,
     },
   );
-  await expect.poll(() => gapToListEnd(_fixture), { timeout: 4000 }).toBeLessThanOrEqual(1);
+  await vi.waitFor(() => {
+    expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
+  });
 });
 
 it("does not pin the end right after a click that expands content", async () => {
@@ -426,9 +471,11 @@ it("does not pin the end right after a click that expands content", async () => 
   const key = "reading-end:click-expand";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   const before = node(_fixture).scrollTop;
   // A click (e.g. Show full message) grows content below the reader.
   node(_fixture).dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -436,7 +483,7 @@ it("does not pin the end right after a click that expands content", async () => 
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await frames(6);
+  await advanceClock(96);
   expect(Math.abs(node(_fixture).scrollTop - before)).toBeLessThanOrEqual(1);
 });
 
@@ -448,17 +495,21 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
   const answer = (text: string) => message(30, "assistant", text, "turn-30");
   const entries = [...history(10), message(29, "user", "Question", "turn-30")];
   await render(_fixture, key, [...entries, answer("Short answer.")]);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   // Rest exactly at the end of the answer's text, above its trailing rows.
   const state = _fixture.listRef.current!.getState();
   const trailing = state.contentLength - withReadingEnd(state, COMPOSER_INSET)!.contentLength;
-  await _fixture.listRef.current!.scrollToOffset({
-    offset: node(_fixture).scrollTop - trailing,
-    animated: false,
-  });
-  await frames(6);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({
+      offset: node(_fixture).scrollTop - trailing,
+      animated: false,
+    }),
+  );
+  await advanceClock(96);
   const readingGap = () => {
     const now = _fixture.listRef.current!.getState();
     return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
@@ -466,9 +517,9 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
   const before = readingGap();
   // The answer's content grows late (an image or diagram finishing its render).
   await render(_fixture, key, [...entries, answer(paragraph(30).repeat(3))]);
-  await expect
-    .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
-    .toBeLessThanOrEqual(2);
+  await vi.waitFor(() => {
+    expect(Math.abs(readingGap() - before)).toBeLessThanOrEqual(2);
+  });
 });
 
 it("keeps the answer's end in view when content above it grows in the same layout", async () => {
@@ -480,9 +531,11 @@ it("keeps the answer's end in view when content above it grows in the same layou
   const answer = message(30, "assistant", `Answer. ${"Text. ".repeat(40)}`, "turn-30");
   const entries = [...history(8), earlier, message(29, "user", "Question", "turn-30")];
   await render(_fixture, key, [...entries, answer]);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(8);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(128);
   const readingGap = () => {
     const now = _fixture.listRef.current!.getState();
     // The virtualizer can report its requested scroll after the browser clamps
@@ -499,9 +552,9 @@ it("keeps the answer's end in view when content above it grows in the same layou
     message(29, "user", "Question", "turn-30"),
     message(30, "assistant", paragraph(30).repeat(3), "turn-30"),
   ]);
-  await expect
-    .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
-    .toBeLessThanOrEqual(2);
+  await vi.waitFor(() => {
+    expect(Math.abs(readingGap() - before)).toBeLessThanOrEqual(2);
+  });
 });
 
 it("never pulls the reader back when they scroll in the same frame the answer grows", async () => {
@@ -511,9 +564,11 @@ it("never pulls the reader back when they scroll in the same frame the answer gr
   const key = "reading-end:scroll-and-grow";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   // The reader scrolls up, and the answer grows before the next frame.
   node(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
   node(_fixture).scrollTop -= 120;
@@ -522,7 +577,7 @@ it("never pulls the reader back when they scroll in the same frame the answer gr
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await frames(8);
+  await advanceClock(128);
   expect(Math.abs(node(_fixture).scrollTop - readerTop)).toBeLessThanOrEqual(1);
 });
 
@@ -533,14 +588,16 @@ it("never pulls the reader back during a scrollbar drag that spans several frame
   const key = "reading-end:scrollbar-drag";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   // A press on the scroll node itself (its scrollbar), then movement over frames.
   node(_fixture).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   for (let step = 0; step < 3; step++) {
     node(_fixture).scrollTop -= 40;
-    await frames(1);
+    await advanceClock(16);
   }
   const readerTop = node(_fixture).scrollTop;
   // A late render lands mid-drag, several frames after the only input event.
@@ -548,7 +605,7 @@ it("never pulls the reader back during a scrollbar drag that spans several frame
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await frames(8);
+  await advanceClock(128);
   expect(Math.abs(node(_fixture).scrollTop - readerTop)).toBeLessThanOrEqual(1);
   document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 });
@@ -560,19 +617,23 @@ it("still keeps the end after typing in the composer", async () => {
   const key = "reading-end:typing";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(10);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(160);
   const composer = document.createElement("textarea");
   document.body.append(composer);
   composer.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
   composer.remove();
-  await frames(2);
+  await advanceClock(32);
   await render(_fixture, key, [
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await expect.poll(() => gapToListEnd(_fixture), { timeout: 4000 }).toBeLessThanOrEqual(1);
+  await vi.waitFor(() => {
+    expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
+  });
 });
 
 it("counts the reader at the end when only their own latest message is hidden below the answer", async () => {
@@ -585,14 +646,18 @@ it("counts the reader at the end when only their own latest message is hidden be
   // A message the reader sent (or queued) after the answer, tall enough to hide.
   const sent = message(31, "user", paragraph(31).repeat(2), "turn-31");
   await render(_fixture, key, [...history(8), answer, sent], { onIsAtEndChange });
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   // Scroll up until the answer's text ends exactly at the visible bottom.
   const state = _fixture.listRef.current!.getState();
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
-  await _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false });
-  await frames(6);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false }),
+  );
+  await advanceClock(96);
   expect(rowRect(_fixture, sent.message.id)?.top ?? Infinity).toBeGreaterThan(
     node(_fixture).getBoundingClientRect().top + node(_fixture).clientHeight - COMPOSER_INSET,
   );
@@ -606,29 +671,37 @@ it("still judges a thread with no answer yet by the reader's own latest message"
 
   const key = "reading-end:no-answer";
   await render(_fixture, key, history(12));
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
   // Before any answer, the inherited 40px band holds past the message's text
   // end: 30px hidden is the end, 60px is not (three lines would allow ~68px).
   const end = node(_fixture).scrollTop;
   const state = _fixture.listRef.current!.getState();
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
-  await _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 30, animated: false });
-  await frames(4);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 30, animated: false }),
+  );
+  await advanceClock(64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
-  await _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 60, animated: false });
-  await frames(4);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 60, animated: false }),
+  );
+  await advanceClock(64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
-  await _fixture.listRef.current!.scrollToOffset({ offset: end, animated: false });
-  await frames(4);
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: end, animated: false }));
+  await advanceClock(64);
   // Well above the end (far more than three lines) is not the end.
-  await _fixture.listRef.current!.scrollToOffset({
-    offset: node(_fixture).scrollTop - 400,
-    animated: false,
-  });
-  await frames(4);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({
+      offset: node(_fixture).scrollTop - 400,
+      animated: false,
+    }),
+  );
+  await advanceClock(64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
 });
 
@@ -658,16 +731,20 @@ it("shows the end control while a running turn has new activity below the reader
   }));
   const running = { isWorking: true, runningRunId: RunId.make("turn-40"), onIsAtEndChange };
   await render(_fixture, key, [...history(8), answer, prompt, ...tools], running);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET, true)).toBe(true);
   // The reader scrolls up a little: the turn's latest tool steps are now below them.
-  await _fixture.listRef.current!.scrollToOffset({
-    offset: node(_fixture).scrollTop - 200,
-    animated: false,
-  });
-  await frames(6);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({
+      offset: node(_fixture).scrollTop - 200,
+      animated: false,
+    }),
+  );
+  await advanceClock(96);
   const state = _fixture.listRef.current!.getState();
   // Precondition: the previous answer is still in view, while new activity
   // is hidden below (judging by that answer alone would say "at the end").
@@ -722,18 +799,22 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
     runningRunId: RunId.make("turn-40"),
     onIsAtEndChange,
   });
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   // Rest with the interim note in view and the tool steps after it hidden.
   const view = () =>
     node(_fixture).getBoundingClientRect().top + node(_fixture).clientHeight - COMPOSER_INSET;
   const noteBottom = rowRect(_fixture, message(32, "assistant", "").message.id)!.bottom;
-  await _fixture.listRef.current!.scrollToOffset({
-    offset: node(_fixture).scrollTop + noteBottom - view() + 4,
-    animated: false,
-  });
-  await frames(6);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({
+      offset: node(_fixture).scrollTop + noteBottom - view() + 4,
+      animated: false,
+    }),
+  );
+  await advanceClock(96);
   const now = _fixture.listRef.current!.getState();
   expect(rowRect(_fixture, message(32, "assistant", "").message.id)!.bottom).toBeLessThanOrEqual(
     view(),
@@ -753,7 +834,7 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
     latestRun: interrupted,
     onIsAtEndChange,
   });
-  await frames(6);
+  await advanceClock(96);
   expect(isAtEndNow(_fixture, true)).toBe(false);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
@@ -775,13 +856,17 @@ it("judges a finished turn by its answer, and a busy thread without a running tu
   ];
   // Forking or reverting keeps the thread busy without a running turn.
   await render(_fixture, key, rows, { isWorking: true, runningRunId: null, onIsAtEndChange });
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  await advanceClock(96);
   const state = _fixture.listRef.current!.getState();
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
-  await _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false });
-  await frames(6);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false }),
+  );
+  await advanceClock(96);
   const now = _fixture.listRef.current!.getState();
   // Precondition: the trailing tool rows are hidden below.
   expect(now.contentLength - now.scroll - now.scrollLength).toBeGreaterThan(40);

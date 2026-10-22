@@ -1,4 +1,4 @@
-import { act as _fixtureAct, render as _fixtureRender } from "../../../test/render";
+import { fakeTimers, act as _fixtureAct, render as _fixtureRender } from "../../../test/render";
 import "../../index.css";
 import {
   CheckpointId,
@@ -135,7 +135,9 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
           </>,
         ),
     );
-    await expect.poll(() => host.textContent).toContain("Here. What do you need?");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Here. What do you need?");
+    });
     if (import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT) {
       await page.screenshot({ path: import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT, element: host });
     }
@@ -165,8 +167,11 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
   document.body.append(host);
   const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
 
+  using _clock = fakeTimers();
+  const now = Date.parse("2026-10-20T00:02:05.000Z");
+  vi.setSystemTime(now);
   // The turn began 2m 5s ago; its sub-agents were launched a minute in.
-  const start = Date.now() - 125_000;
+  const start = now - 125_000;
   const at = (seconds: number) => new Date(start + seconds * 1_000).toISOString();
   const runId = RunId.make("run-subagents");
   const threadId = ThreadId.make("thread-subagents");
@@ -268,15 +273,18 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
       match ? Number(match[1] ?? 0) * 60 + Number(match[2]) : Number.NaN;
 
     // The collapsed row: how the sub-agents stand, and for how long they have worked.
-    await expect.poll(() => host.textContent).toContain("Kicked off 2 subagents · 1 working · 1m");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Kicked off 2 subagents · 1 working · 1m");
+    });
     const spawn = rowWith("Kicked off 2 subagents")!;
     const first = seconds(elapsedIn(spawn.textContent, "1 working · "));
     expect(first).toBeGreaterThanOrEqual(65);
     expect(first).toBeLessThan(80);
-    // It is a clock: it moves without any new event.
-    await expect
-      .poll(() => seconds(elapsedIn(spawn.textContent, "1 working · ")), { timeout: 5_000 })
-      .toBeGreaterThan(first);
+    // The timer advances without another orchestration event.
+    await _fixtureAct(() => vi.advanceTimersByTimeAsync(1_000));
+    await vi.waitFor(() => {
+      expect(seconds(elapsedIn(spawn.textContent, "1 working · "))).toBeGreaterThan(first);
+    });
 
     const fitsOnOneLine = (row: HTMLElement) => {
       expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(48);
@@ -289,7 +297,9 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
     // Opened: each sub-agent with its type, state, and why it stopped.
     (spawn.closest<HTMLElement>("[aria-expanded]") ??
       spawn.querySelector<HTMLElement>("[aria-expanded]"))!.click();
-    await expect.poll(() => host.textContent).toContain("Cancelled when you sent a follow-up");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Cancelled when you sent a follow-up");
+    });
     const text = host.textContent ?? "";
     expect(text).toContain("explorer");
     expect(text).toMatch(/Working · 1m \d+s/);
@@ -303,7 +313,9 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
 
     // The main agent then waits on a sub-agent: the step says so and counts too.
     await _fixtureAct(async () => await root.rerender(timeline([...subagents, waiting])));
-    await expect.poll(() => host.textContent).toContain("Waiting for sub-agent");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Waiting for sub-agent");
+    });
     const wait = rowWith("Waiting for sub-agent")!;
     expect(seconds(elapsedIn(wait.textContent, "(up to 10 min) · "))).toBeGreaterThanOrEqual(25);
     fitsOnOneLine(wait);

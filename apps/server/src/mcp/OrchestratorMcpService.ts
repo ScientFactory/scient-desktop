@@ -59,6 +59,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
@@ -359,6 +360,7 @@ function taskStatusForRun(
   }
 }
 
+// SCIENT-FORK: native/legacy task-ownership acceptance consumes this selection seam.
 export function delegatedTaskRun(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
   task: OrchestrationV2Subagent,
@@ -379,6 +381,7 @@ export function delegatedTaskRun(
     : childProjection.runs.find((run) => run.id === spawnTransfer.targetRunId);
 }
 
+// SCIENT-FORK: retained task acknowledgement tests exercise held-queue isolation.
 export function hasPendingChildRuns(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs">,
   delegatedRun: OrchestrationV2Run | undefined,
@@ -2416,12 +2419,37 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+      // A follow-up that lost its child run (#19002) stays running on the parent, while its
+      // status here comes from the child's last run. Stop on the parent cancels that task.
+      const cancelOrphan = Effect.gen(function* () {
+        if (parentTask?.runId == null || !isOrchestrationV2WorkActive(parentTask.status))
+          return false;
+        yield* threadManagement
+          .dispatch({
+            type: "subagent.stop",
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "cancel-task-orphan",
+            }),
+            threadId: scope.thread.threadId,
+            runId: parentTask.runId,
+            subagentId: parentTask.id,
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+        const { subagents } = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, ["subagents"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
+      });
       if (isTerminalTaskStatus(current.status)) {
+        // The child can still run work for another turn, so it is stopped either way.
         yield* stopWithinLimit;
+        const cancelled = yield* cancelOrphan;
         yield* disposeCompletionDelivery;
         return {
           taskId: input.taskId,
-          status: current.status,
+          status: cancelled ? "cancelled" : current.status,
         } satisfies OrchestratorMcpTaskCancelResult;
       }
       const child = yield* loadProjection(current.childThreadId);
@@ -2434,6 +2462,7 @@ const make = Effect.gen(function* () {
             (run.delegatedTaskId === input.taskId || run.id === current.childRunId),
         )
       ) {
+        if (yield* cancelOrphan) return { taskId: input.taskId, status: "cancelled" };
         return yield* failure(
           "task_not_cancellable",
           `Delegated task ${input.taskId} has no interruptible child run.`,

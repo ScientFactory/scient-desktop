@@ -30,9 +30,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
-
 const LONG_NOTE =
   "that's the day the ultrasound noticed the gallbladder was inflamed and the follow-up was scheduled for the next morning";
 const TABLE = `| Day | Note |\n|---|---|\n| 1 | ${LONG_NOTE} |`;
@@ -43,12 +40,11 @@ async function mountTable(_fixture: _Fixture) {
   _fixture.host.style.width = "640px";
   _fixture.host.className = "overflow-x-clip";
   document.body.append(_fixture.host);
+  // Table geometry is independent of navigation; useNavigate is mocked above.
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
   await _fixture.root0.rerender(<ChatMarkdown cwd="/workspace" text={TABLE} />);
-  await nextFrame();
-  await nextFrame();
   const container = _fixture.host.querySelector<HTMLElement>(".chat-markdown-table-container")!;
   const viewport = container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
   const cells = [...container.querySelectorAll<HTMLElement>("th, td")];
@@ -67,9 +63,12 @@ it("opens tables with wrapped cells even when Word wrap is off", async () => {
 
   const { container, viewport, cells } = await mountTable(_fixture);
 
-  expect(container.dataset.expanded).toBe("true");
-  expect(clippedCells(cells)).toEqual([]);
-  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
+  await vi.waitFor(() => {
+    expect(container.dataset.expanded).toBe("true");
+    expect(clippedCells(cells)).toEqual([]);
+    expect(viewport.clientWidth).toBeGreaterThan(0);
+    expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
+  });
 });
 
 it("keeps full single-line cells reachable by horizontal scrolling when collapsed", async () => {
@@ -77,17 +76,19 @@ it("keeps full single-line cells reachable by horizontal scrolling when collapse
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const { container, viewport, cells } = await mountTable(_fixture);
-  container.querySelector<HTMLButtonElement>('button[aria-label="Collapse table cells"]')!.click();
-  await nextFrame();
-  await nextFrame();
-
-  expect(container.dataset.expanded).toBe("false");
-  expect(clippedCells(cells)).toEqual([]);
-  expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+  await userEvent.click(
+    container.querySelector<HTMLButtonElement>('button[aria-label="Collapse table cells"]')!,
+  );
+  await vi.waitFor(() => {
+    expect(container.dataset.expanded).toBe("false");
+    expect(clippedCells(cells)).toEqual([]);
+    expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+  });
 
   await userEvent.wheel(viewport, { delta: { x: 2000 } });
-  await nextFrame();
-  expect(viewport.scrollLeft).toBe(viewport.scrollWidth - viewport.clientWidth);
+  await vi.waitFor(() =>
+    expect(viewport.scrollLeft).toBe(viewport.scrollWidth - viewport.clientWidth),
+  );
 });
 
 function _createFixture() {

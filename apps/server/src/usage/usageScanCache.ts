@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 7 as const;
+const USAGE_SCAN_CACHE_VERSION = 8 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -19,8 +19,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * A server imports the newest prior cache once, when its own file is missing,
  * and never writes the prior files.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v7.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v8.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v7.json",
   "usage-scan-cache-v6.json",
   "usage-scan-cache-v5.json",
   "usage-scan-cache.json",
@@ -313,9 +314,9 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // Only Codex requires new provenance state in v7.
+    // Older Codex entries lack provenance state (v7) or misread compaction and resume counters (v8).
     const legacy =
-      format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 7));
+      format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 8));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

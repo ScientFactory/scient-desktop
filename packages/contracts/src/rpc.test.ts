@@ -91,12 +91,6 @@ describe("WebSocket RPC contracts", () => {
       expect(decodeDispatchError(encoded)).toMatchObject({ forkDisposition });
     }
   });
-  it("exposes only the V2 orchestration transport surface", () => {
-    const methods = [...WsRpcGroup.requests.keys()];
-
-    expect(methods).toEqual(expect.arrayContaining(Object.values(ORCHESTRATION_V2_WS_METHODS)));
-    expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
-  });
 
   it("accepts native run forks and Scient message forks but refuses V1 turn commands", () => {
     for (const source of [

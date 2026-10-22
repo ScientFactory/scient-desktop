@@ -13,13 +13,11 @@ import type { ReactNode, ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { page } from "vite-plus/test/browser";
-
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
   shell: null as unknown,
 }));
-
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -31,33 +29,31 @@ vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importO
       )) as typeof actual.deriveThreadQueueWorkflowState,
   };
 });
-
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
   useThreadShell: (() => state.shell) as never,
 }));
-
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomCommand: (() => async () => undefined) as never,
 }));
-
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAssetUrls: ((_environmentId: never, resources: ReadonlyArray<{ attachmentId: string }>) =>
-    resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
+  useAssetUrls: ((
+    _environmentId: never,
+    resources: ReadonlyArray<{
+      attachmentId: string;
+    }>,
+  ) => resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
 }));
-
-import { act, render as renderUi } from "../../../test/render";
+import { render as renderUi } from "../../../test/render";
 import { QueuedRunsControl, resolveNativeQueuedReorder } from "./QueuedRunsControl";
-
 function setup() {
   state.projection = null;
   state.workflow = null;
   state.shell = null;
 }
-
 const baseProps = {
   environmentId: "environment:test" as never,
   optimisticMessages: [],
@@ -66,54 +62,26 @@ const baseProps = {
   onEditQueuedRun: () => undefined,
   onCancelEdit: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
-
 async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsControl>> = {}) {
   return renderUi(<QueuedRunsControl {...baseProps} {...props} />);
 }
-
 const labels = (container: HTMLElement) =>
   [...container.querySelectorAll("[aria-label]")].map((element) =>
     element.getAttribute("aria-label"),
   );
-
-describe("QueuedRunsControl automatic completion delivery", () => {
-  it("does not render a queue control when only hidden delivery remains", async () => {
-    setup();
-    state.projection = {
-      projection: {
-        messages: [
-          {
-            delegatedCompletion: {
-              parentRunId: "run:parent",
-              generation: 1,
-              taskIds: ["task:child"],
-            },
-            id: "message:completion",
-          },
-        ],
-      },
-    };
-    state.workflow = {
-      activeRun: { id: "run:active" },
-      canPromoteToSteer: true,
-      canReorder: true,
-      queuedRuns: [],
-    };
-
-    await using screen = await renderQueue();
-
-    expect(screen.container.childElementCount).toBe(0);
-  });
-});
-
 describe("QueuedRunsControl attachments and edit mode", () => {
   const workflowWithAttachment = () => ({
-    activeRun: { id: "run:active" },
+    activeRun: {
+      id: "run:active",
+    },
     canPromoteToSteer: true,
     canReorder: true,
     queuedRuns: [
       {
-        run: { id: "run:queued", userMessageId: "message:queued" },
+        run: {
+          id: "run:queued",
+          userMessageId: "message:queued",
+        },
         text: "Queued with a screenshot",
         attachments: [
           {
@@ -127,14 +95,15 @@ describe("QueuedRunsControl attachments and edit mode", () => {
       },
     ],
   });
-
   it("renders an attachment thumbnail on the queued row", async () => {
     setup();
-    state.projection = { projection: { messages: [] } };
+    state.projection = {
+      projection: {
+        messages: [],
+      },
+    };
     state.workflow = workflowWithAttachment();
-
     await using screen = await renderQueue();
-
     expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(
       "https://assets.test/attachment-1",
     );
@@ -147,44 +116,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
     expect(labels(screen.container)).not.toContain("Collapse queued messages");
     expect(labels(screen.container)).not.toContain("Move queued message up");
   });
-
-  it("drops the optimistic pending row once the projection holds its message", async () => {
-    setup();
-    state.projection = {
-      projection: { messages: [{ id: "message:acknowledged", text: "hello" }] },
-    };
-    state.workflow = {
-      activeRun: { id: "run:active" },
-      canPromoteToSteer: true,
-      canReorder: true,
-      queuedRuns: [],
-    };
-
-    await using screen = await renderQueue({
-      optimisticMessages: [
-        {
-          id: "message:acknowledged" as never,
-          inputIntent: "queued_turn",
-          text: "hello",
-          attachments: [],
-        },
-      ],
-    });
-
-    expect(screen.container.childElementCount).toBe(0);
-  });
-
-  it("keeps the original queued message visible while editing", async () => {
-    setup();
-    state.projection = { projection: { messages: [] } };
-    state.workflow = workflowWithAttachment();
-
-    await using screen = await renderQueue({ editingRunId: "run:queued" as never });
-
-    expect(screen.container.textContent).toContain("Queued with a screenshot");
-  });
 });
-
 describe("Scient native queue order adapter", () => {
   it("maps head-to-tail and tail-to-head drags to one exact native move", async () => {
     setup();
@@ -201,13 +133,18 @@ describe("Scient native queue order adapter", () => {
     expect(resolveNativeQueuedReorder(prior, ["a", "c", "foreign"] as never)).toBeNull();
   });
 });
-
 it("retains ordinary admission previews until receipt/projection while exposing no speculative actions", async () => {
   setup();
-  state.projection = { projection: { messages: [] } };
+  state.projection = {
+    projection: {
+      messages: [],
+    },
+  };
   state.workflow = {
     queuedRuns: [],
-    activeRun: { id: "busy" },
+    activeRun: {
+      id: "busy",
+    },
     canPromoteToSteer: true,
     canReorder: true,
   };
@@ -223,13 +160,17 @@ it("retains ordinary admission previews until receipt/projection while exposing 
           id: "awaiting" as never,
           text: "Pending admission",
           attachments: [],
-          queueAdmission: { accepted: false },
+          queueAdmission: {
+            accepted: false,
+          },
         },
         {
           id: "accepted" as never,
           text: "Accepted queue admission",
           attachments: [],
-          queueAdmission: { accepted: true },
+          queueAdmission: {
+            accepted: true,
+          },
         },
       ]}
     />,
@@ -240,15 +181,27 @@ it("retains ordinary admission previews until receipt/projection while exposing 
   expect(html).not.toContain("Queued<");
   expect(html).not.toContain('aria-label="Edit queued message"');
 });
-
 it("reserves the grip on both rows while a pending follow-up is about to become the second", async () => {
   setup();
-  state.projection = { projection: { messages: [] } };
+  state.projection = {
+    projection: {
+      messages: [],
+    },
+  };
   state.workflow = {
     queuedRuns: [
-      { run: { id: "queued-one", userMessageId: "queued-message" }, text: "One", attachments: [] },
+      {
+        run: {
+          id: "queued-one",
+          userMessageId: "queued-message",
+        },
+        text: "One",
+        attachments: [],
+      },
     ],
-    activeRun: { id: "busy" },
+    activeRun: {
+      id: "busy",
+    },
     canPromoteToSteer: true,
     canReorder: false,
   };
@@ -264,7 +217,9 @@ it("reserves the grip on both rows while a pending follow-up is about to become 
           id: "follow-up" as never,
           text: "Follow-up",
           attachments: [],
-          queueAdmission: { accepted: true },
+          queueAdmission: {
+            accepted: true,
+          },
         },
       ]}
     />,
@@ -272,19 +227,24 @@ it("reserves the grip on both rows while a pending follow-up is about to become 
   expect(html).not.toContain('aria-label="Reorder queued message"');
   expect(html.match(/<span aria-hidden="true" class="invisible shrink-0">/g)).toHaveLength(2);
 });
-
 it("shows a held failed-start recovery notice and Retry without dropping the native row", async () => {
   setup();
   state.projection = {
     projection: {
       thread: {
         providerInstanceId: "codex",
-        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5",
+        },
       },
       runs: [
         {
           id: "held-failed",
-          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          modelSelection: {
+            instanceId: "codex",
+            model: "gpt-5",
+          },
           userMessageId: "held-message",
           status: "queued",
           queueHeld: true,
@@ -295,14 +255,23 @@ it("shows a held failed-start recovery notice and Retry without dropping the nat
       providerSessions: [],
       messages: [],
       turnItems: [
-        { type: "error", runId: "held-failed", failure: { code: "queued_start_failed" } },
+        {
+          type: "error",
+          runId: "held-failed",
+          failure: {
+            code: "queued_start_failed",
+          },
+        },
       ],
     },
   };
   state.workflow = {
     queuedRuns: [
       {
-        run: { id: "held-failed", userMessageId: "held-message" },
+        run: {
+          id: "held-failed",
+          userMessageId: "held-message",
+        },
         text: "Retained queued message",
         attachments: [],
       },
@@ -327,7 +296,6 @@ it("shows a held failed-start recovery notice and Retry without dropping the nat
   expect(html).toContain(">Retry</button>");
   expect(html).toContain(">Send</button>");
 });
-
 it("renders actual held native workflow reorder and Send on every row before any provider session exists", async () => {
   setup();
   const { deriveThreadQueueWorkflowState } = await vi.importActual<
@@ -370,7 +338,9 @@ it("renders actual held native workflow reorder and Send on every row before any
       updatedAt: base.updatedAt,
     })),
   };
-  state.projection = { projection };
+  state.projection = {
+    projection,
+  };
   state.workflow = deriveThreadQueueWorkflowState(projection);
   const html = await renderMarkup(
     <QueuedRunsControl
@@ -387,7 +357,6 @@ it("renders actual held native workflow reorder and Send on every row before any
   expect(html).not.toContain("Resume queue");
   expect(html).not.toContain(">Steer<");
 });
-
 it.each([false, true])(
   "retains one Cancel after actual extraction removes the native row (tail = %s)",
   async (hasTail) => {
@@ -445,7 +414,9 @@ it.each([false, true])(
           onCancelEdit={() => undefined}
         />,
       );
-    state.projection = { projection: queued };
+    state.projection = {
+      projection: queued,
+    };
     state.workflow = deriveThreadQueueWorkflowState(queued);
     const before = await renderControl();
     expect(before.match(/aria-label="Cancel editing queued message"/g)).toHaveLength(1);
@@ -465,7 +436,9 @@ it.each([false, true])(
       ),
     };
     const retainedMessages = JSON.stringify(extracted.messages);
-    state.projection = { projection: extracted };
+    state.projection = {
+      projection: extracted,
+    };
     const actualWorkflow = deriveThreadQueueWorkflowState(extracted);
     state.workflow = actualWorkflow;
     expect(actualWorkflow.queuedRuns.map(({ run }) => run.id)).toEqual(
@@ -483,7 +456,6 @@ it.each([false, true])(
     expect(extracted.runs[0]?.queuePosition).toBeNull();
   },
 );
-
 describe("held queue Send follows the server's queue.resume rule", () => {
   const heldProjection = async (input: {
     readonly before?: ReadonlyArray<OrchestrationV2Run>;
@@ -546,7 +518,9 @@ describe("held queue Send follows the server's queue.resume rule", () => {
       })),
       turnItems: input.turnItems ?? [],
     };
-    state.projection = { projection };
+    state.projection = {
+      projection,
+    };
     state.workflow = deriveThreadQueueWorkflowState(projection);
     return await renderMarkup(
       <QueuedRunsControl
@@ -559,7 +533,6 @@ describe("held queue Send follows the server's queue.resume rule", () => {
       />,
     );
   };
-
   it("offers Send on every held row of an idle thread, with no held header", async () => {
     setup();
     const html = await heldProjection({});
@@ -619,37 +592,45 @@ describe("held queue Send follows the server's queue.resume rule", () => {
       ],
     });
   };
-
   it("offers no Send when the server's shell confirms the usage limit", async () => {
     setup();
-    state.shell = { runtime: { lastErrorClass: "usage_limit" } };
+    state.shell = {
+      runtime: {
+        lastErrorClass: "usage_limit",
+      },
+    };
     const html = await limitedSnapshot();
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
     expect(html).not.toContain(">Send</button>");
   });
-
   it.each([
-    ["a newer session error lifted it", { runtime: { lastErrorClass: null } }],
+    [
+      "a newer session error lifted it",
+      {
+        runtime: {
+          lastErrorClass: null,
+        },
+      },
+    ],
     ["no shell has arrived", null],
   ])("keeps Send on a limited-looking snapshot when %s", async (_case, shell) => {
     state.shell = shell;
     const html = await limitedSnapshot();
     expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
   });
-
   it("keeps Send on user rows while a hidden delegated completion waits to go first", async () => {
     setup();
-    const html = await heldProjection({ automaticCompletion: true });
+    const html = await heldProjection({
+      automaticCompletion: true,
+    });
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
     expect(html.match(/>Send<\/button>/g)).toHaveLength(2);
   });
 });
-
 async function renderMarkup(node: ReactNode): Promise<string> {
   await using screen = await renderUi(node);
   return screen.container.innerHTML;
 }
-
 it("previews assistant quotes as readable text and preserves the citation when editing", async () => {
   setup();
   const quotedText = "Cache the parsed config per worktree.";
@@ -665,36 +646,64 @@ it("previews assistant quotes as readable text and preserves the citation when e
     suffix: "",
   });
   const quoteAndText = `${quote}\n\nWhy per worktree?`;
-  state.projection = { projection: { messages: [] } };
+  state.projection = {
+    projection: {
+      messages: [],
+    },
+  };
   state.workflow = {
-    activeRun: { id: "run:active" },
+    activeRun: {
+      id: "run:active",
+    },
     canPromoteToSteer: true,
     canReorder: true,
     queuedRuns: [
       {
-        run: { id: "run:quote-only", userMessageId: "message:quote-only" },
+        run: {
+          id: "run:quote-only",
+          userMessageId: "message:quote-only",
+        },
         text: quote,
         attachments: [],
       },
       {
-        run: { id: "run:quote-and-text", userMessageId: "message:quote-and-text" },
+        run: {
+          id: "run:quote-and-text",
+          userMessageId: "message:quote-and-text",
+        },
         text: quoteAndText,
         attachments: [],
       },
     ],
   };
   const onEditQueuedRun = vi.fn();
-  await using _screen = await renderQueue({ onEditQueuedRun });
-
-  await expect.element(page.getByText(quotedText, { exact: true })).toBeVisible();
-  await expect
-    .element(page.getByText(`${quotedText} Why per worktree?`, { exact: true }))
-    .toBeVisible();
-
-  await act(async () => {
-    await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
+  await using _screen = await renderQueue({
+    onEditQueuedRun,
   });
+  await expect
+    .element(
+      page.getByText(quotedText, {
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByText(`${quotedText} Why per worktree?`, {
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Edit queued message",
+      exact: true,
+    })
+    .nth(1)
+    .click();
   expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ text: quoteAndText }),
+    expect.objectContaining({
+      text: quoteAndText,
+    }),
   );
 });

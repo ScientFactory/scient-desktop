@@ -68,7 +68,7 @@ cherry-picked.
 Every overlapping CI feature was compared across base, Scient, and upstream:
 
 - Adopted from upstream: the general `test` job (`--parallel --concurrency-limit
-4`), the matrix `test_server` job relying on `fileParallelism: false`,
+  4`), the matrix `test_server` job relying on `fileParallelism: false`,
   presence-gated transfer-budget publishing under the exact artifact name
   `thread-transfer-results`, the dedicated `rust` job (Rust toolchain removed
   from Check), the `mobile_native_changes` detector gating macOS static

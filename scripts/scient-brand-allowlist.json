@@ -254,126 +254,126 @@
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "ariaLabel = \"Enable T3 Connect\",",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"Sign in to T3 Connect to manage this environment.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"Your session does not have permission to manage T3 Connect access.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"T3 Connect linked\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"T3 Connect tunnel disabled\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": ": \"T3 Connect unlinked\",",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"This environment is available through T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": ": \"This environment is no longer available through T3 Connect.\",",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"T3 Connect keeps webhook requests for up to 24 hours while this environment is offline.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"This environment was removed from T3 Connect. Turn it on to link it again.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"This environment is available to your other devices through T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": ": \"Make this environment available to your other devices through T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "description=\"This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.\"",
     "rules": ["t3-connect", "t3-command"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "description=\"Send activity to mobile notifications and Live Activities without T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "description=\"Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "title=\"T3 Connect\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "? \"Click “Add environment” to pair another environment, or connect one from T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",

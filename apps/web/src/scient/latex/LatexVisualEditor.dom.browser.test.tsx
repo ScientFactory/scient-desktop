@@ -1,9 +1,14 @@
 import "../../index.css";
 import "./scient-latex.css";
-import { render as _fixtureRender, type Screen, act as reactAct } from "../../../test/render";
+import {
+  fakeTimers,
+  render as _fixtureRender,
+  type Screen,
+  act as reactAct,
+} from "../../../test/render";
 import type { Editor, NodeViewRenderer, NodeViewRendererProps } from "@tiptap/core";
 import type { LatexMathFieldHandle } from "./LatexMathField";
-import { useImperativeHandle, useState, type Ref } from "react";
+import { useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 import { PDF_FIT_WIDTH_PADDING } from "../pdf/pdfReaderModel";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -42,6 +47,7 @@ import { setLatexPageMarkers } from "./latexPageMarkers";
 import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
 import {
   createLatexVisualTestOwner,
+  readMountedLatexVisualTestEditor,
   stubLatexReadingFonts,
   useLatexVisualTestOwner,
 } from "./latexVisualTestOwner";
@@ -60,12 +66,11 @@ import {
   saveKeyboardPreferences,
 } from "../keyboard/preferences";
 
-// Wait for the editor's paint-delayed conversion and source publication.
-const act = async (callback: () => unknown) =>
-  await reactAct(async () => {
-    await callback();
-    await new Promise((resolve) => setTimeout(resolve, 320));
-  });
+// Commit the interaction before driving its controlled source-publication debounce.
+const act = async (callback: () => unknown) => {
+  await reactAct(callback);
+  await reactAct(() => vi.advanceTimersByTimeAsync(320));
+};
 
 const readerHosted = vi.fn();
 
@@ -74,12 +79,22 @@ describe("writing editor source transactions", () => {
   let confirmed: string | null;
 
   const writes = vi.fn();
+  const writeReceipts = new Set<() => void>();
+  const nextWriteReceipt = () =>
+    new Promise<void>((resolve) => {
+      writeReceipts.add(resolve);
+    });
+  const publishWriteReceipt = () => {
+    for (const resolve of writeReceipts) resolve();
+    writeReceipts.clear();
+  };
   const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
     `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
+    writeReceipts.clear();
     confirmed = null;
     flushReferences.mockReset().mockResolvedValue(false);
     clearVisualDraft("synthetic-editor-test");
@@ -95,13 +110,22 @@ describe("writing editor source transactions", () => {
       await _fixtureRender(null, { container: _fixture.container, router: false }),
     );
   }
+  async function renderMountedEditor(_fixture: _Fixture, ui: ReactNode) {
+    await _fixture.root0.rerender(ui);
+    await vi.waitFor(() => {
+      const mounted = readMountedLatexVisualTestEditor(_fixture.container);
+      expect(mounted).not.toBeNull();
+      expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
+    });
+    _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+  }
   async function _cleanupFixture1(_fixture: _Fixture) {
     // References keeps forms across remounts; discard this fixture's retained form.
     const cancel = [..._fixture.container.querySelectorAll<HTMLButtonElement>("form button")].find(
       (button) => button.textContent === "Cancel",
     );
     if (cancel) await reactAct(() => cancel.click());
-    await act(async () => await _fixture.root0.unmount());
+    await reactAct(async () => await _fixture.root0.unmount());
     _fixture.container.remove();
     clearVisualDraft("synthetic-editor-test");
     clearTypingDraft("synthetic-editor-test");
@@ -266,6 +290,7 @@ describe("writing editor source transactions", () => {
             writes(request.edit.source, outcome.snapshot.source);
             current = outcome.snapshot.source;
             setSource(current);
+            publishWriteReceipt();
             return outcome;
           }}
         />
@@ -278,12 +303,7 @@ describe("writing editor source transactions", () => {
         editorElement
       );
     }
-    await act(async () => {
-      await _fixture.root0.rerender(<Harness />);
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    await renderMountedEditor(_fixture, <Harness />);
   }
 
   it.each([
@@ -301,12 +321,18 @@ describe("writing editor source transactions", () => {
       const original = current;
       expect(editor(_fixture).isEditable).toBe(true);
       expect(editor(_fixture).state.doc.textContent).toBe("Actual body.");
+      let published = nextWriteReceipt();
       await act(() => editor(_fixture).chain().setTextSelection(1).insertContent("New ").run());
+      await published;
       const changed = original.replace("Actual body.", "New Actual body.");
       expect(current).toBe(changed);
+      published = nextWriteReceipt();
       await act(() => editor(_fixture).commands.undo());
+      await published;
       expect(current).toBe(original);
+      published = nextWriteReceipt();
       await act(() => editor(_fixture).commands.redo());
+      await published;
       expect(current).toBe(changed);
     },
   );
@@ -1695,8 +1721,7 @@ Control & 1 \\\\
         />
       );
     }
-    await act(async () => await _fixture.root0.rerender(<Harness />));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    await renderMountedEditor(_fixture, <Harness />);
     const title = _fixture.container.querySelector<HTMLTextAreaElement>(
       "textarea[aria-label='Document title']",
     )!;
@@ -2143,7 +2168,6 @@ Control & 1 \\\\
         expect(inner.isActive(mark)).toBe(false);
       }
     },
-    30_000,
   );
 
   it("counts a cell text selection in the footer and follows cell selection changes", async () => {
@@ -2580,20 +2604,13 @@ Theory & Proofs \\\\
         />
       );
     };
-    await act(async () => {
-      await _fixture.root0.rerender(renderEditor(tex("Hello")));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    await renderMountedEditor(_fixture, renderEditor(tex("Hello")));
     await act(async () => {
       editor(_fixture).commands.insertContent("Old ");
     });
     expect(editor(_fixture).can().undo()).toBe(true);
     const external = tex("External replacement");
-    await act(async () => {
-      await _fixture.root0.rerender(renderEditor(external));
-    });
+    await renderMountedEditor(_fixture, renderEditor(external));
     expect(editor(_fixture).getText()).toBe("External replacement");
     expect(editor(_fixture).can().undo()).toBe(false);
   });
@@ -2624,8 +2641,7 @@ Theory & Proofs \\\\
         />
       );
     };
-    await act(async () => await _fixture.root0.rerender(renderEditor(titled("First paragraph"))));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    await renderMountedEditor(_fixture, renderEditor(titled("First paragraph")));
     let bodyPosition = -1;
     editor(_fixture).state.doc.descendants((node, position) => {
       if (node.isText && node.text?.includes("First paragraph")) bodyPosition = position + 5;
@@ -2634,12 +2650,12 @@ Theory & Proofs \\\\
     await act(async () => editor(_fixture).commands.setTextSelection(bodyPosition));
 
     const external = titled("Changed paragraph");
-    await act(async () => await _fixture.root0.rerender(renderEditor(external)));
+    await renderMountedEditor(_fixture, renderEditor(external));
     expect(editor(_fixture).getText()).toContain("Changed paragraph");
     expect(editor(_fixture).state.selection.empty).toBe(true);
     expect(editor(_fixture).state.selection.$from.parent.type.name).toBe("paragraph");
     await act(async () => editor(_fixture).commands.insertContent("X"));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
     expect(writes).toHaveBeenCalledWith(external, expect.stringContaining("\\maketitle"));
     expect(writes.mock.lastCall?.[1]).toContain("\\title{Keep this title}");
     expect(writes.mock.lastCall?.[1]).toContain("ChangedX paragraph");
@@ -2662,7 +2678,7 @@ Theory & Proofs \\\\
         tex: String(editor(_fixture).state.doc.firstChild!.attrs.tex).replace("x &=", "z &="),
       });
     });
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    await act(async () => vi.advanceTimersByTimeAsync(300));
     expect(current).toBe(before.replace("x &=", "z &="));
     const saved = current;
     const math = editor(_fixture).state.doc.firstChild!.attrs.tex;
@@ -2683,6 +2699,7 @@ function _createFixture() {
     container: undefined! as HTMLDivElement,
     stack,
     cleanup,
+    clock: undefined as Disposable | undefined,
     root0: undefined! as Screen,
     async [Symbol.asyncDispose]() {
       try {

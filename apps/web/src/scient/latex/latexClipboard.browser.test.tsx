@@ -154,7 +154,7 @@ it("copies and pastes mixed commands, escaping and Hebrew, then undoes and reope
   expect(source).toBe(original);
   reopened.commands.setTextSelection({ from: 1, to: reopened.state.doc.firstChild!.nodeSize - 1 });
   expect(clipboard(reopened, "copy").getData("text/plain")).toBe(body);
-}, 45000);
+});
 
 it("cuts the selected command to the clipboard and undo restores exact source", async () => {
   await using _fixture = _createFixture();
@@ -284,7 +284,7 @@ it("stress-tests thirty mixed-command copy/paste/undo cycles without source drif
     editor.commands.undo();
     await expect.poll(() => source).toBe(original);
   }
-}, 60000);
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

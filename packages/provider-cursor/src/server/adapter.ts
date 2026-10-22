@@ -2814,4 +2814,9 @@ export function makeCursorAdapterV2Driver(
   };
 }
 
+/**
+ * Default native Cursor adapter for hosts without application-owned prompt policy.
+ *
+ * @public
+ */
 export const CursorAdapterV2Driver = makeCursorAdapterV2Driver();

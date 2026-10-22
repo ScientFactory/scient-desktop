@@ -1,6 +1,6 @@
-import { render as _fixtureRender } from "../../../test/render";
+import { fakeTimers, render as _fixtureRender } from "../../../test/render";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import {
   LatexReferencesPanel,
   type BibliographyDetails,
@@ -47,14 +47,13 @@ it("prose acknowledgements preserve the reference catalog while bibliography cha
     );
   };
   try {
+    using _timers = fakeTimers();
     await render(source("First paragraph."));
     await expect.poll(() => reports.length).toBe(1);
     expect(reports[0]).toEqual([{ key: "alpha", title: "Original reference.", path: "main.tex" }]);
     for (const body of ["Typing more.", "Typing more words.", "Typing more words again."]) {
       await render(source(body));
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
+      await vi.advanceTimersByTimeAsync(32);
     }
     expect(reports).toHaveLength(1);
     await render(source("Same prose.", "renamed", "Updated reference"));

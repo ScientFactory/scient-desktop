@@ -66,8 +66,9 @@ it.each([
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
   await _fixture.root0.rerender(<ToastProvider />);
-  // The provider must be listening before the notification is added.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="toast-viewport"]')).not.toBeNull(),
+  );
   // The real opener: a browser tab whose popup is blocked, or a page that fails to open.
   resetProviderSignInForTests({
     claim: async () => ({
@@ -78,7 +79,7 @@ it.each([
       ? { open: () => Promise.reject(new Error("The system browser refused.")) }
       : {}),
   });
-  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  using _open = vi.spyOn(window, "open").mockReturnValue(null);
   await startProviderSignIn({
     key: {
       environmentId: EnvironmentId.make("local"),
@@ -89,7 +90,6 @@ it.each([
     start: async (id) => waiting(id, `connect-${outcome}`),
     operationOf: (operation) => operation,
   });
-  open.mockRestore();
   await expect.element(page.getByText(title)).toBeVisible();
   expect(titleLines(title)).toBe(1);
 });

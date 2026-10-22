@@ -36,7 +36,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+
 // SCIENT-FORK:START — portable history and the frozen conversation-fork start.
 import {
   makeTurnStartHistory,

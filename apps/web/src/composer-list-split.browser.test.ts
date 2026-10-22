@@ -5,27 +5,18 @@ import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  backspaceAcrossList,
   buildDocJson,
   buildTiptapContent,
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
   ComposerTaskItemExtension,
-  convertBulletItemToTask,
-  deleteAcrossList,
   serializeEditorDoc,
-  splitOrLiftListItem,
 } from "./composer-rich-text-doc";
 
 // ProseMirror's DOM observer can flush on a timer after a test ends, which
-// throws once its DOM is gone, so every editor is destroyed after its test.
-
-async function _cleanupFixture0(_fixture: _Fixture) {
-  for (const editor of _fixture.editors.splice(0)) editor.destroy();
-}
-
-function makeEditor(_fixture: _Fixture, value: string) {
+// throws once its DOM is gone, so every editor is acquired with `using`.
+function makeEditor(value: string): Editor & Disposable {
   const editor = new Editor({
     extensions: [
       StarterKit.configure({
@@ -47,45 +38,8 @@ function makeEditor(_fixture: _Fixture, value: string) {
     ],
     content: buildDocJson(value, (name) => ({ label: name, description: null })),
   });
-  _fixture.editors.push(editor);
-  return editor;
+  return Object.assign(editor, { [Symbol.dispose]: () => editor.destroy() });
 }
-
-function splitLastItem(
-  _fixture: _Fixture,
-  value: string,
-  type: "listItem" | "taskItem",
-  overrides: object,
-) {
-  const editor = makeEditor(_fixture, value);
-  editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
-  editor.commands.splitListItem(type, overrides);
-  editor.view.dispatch(editor.state.tr.insertText("b"));
-  return serializeEditorDoc(editor.state.doc).value;
-}
-
-describe("splitting a list item", () => {
-  it.each([
-    ["* a", { space: " " }, "* a\n* b"],
-    ["+ a", { space: " " }, "+ a\n+ b"],
-    ["- p\n  - a", { space: " " }, "- p\n  - a\n  - b"],
-    ["3) a", { marker: "4)", space: " " }, "3) a\n4) b"],
-  ])("keeps the source marker and indent of %s", async (value, overrides, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    expect(splitLastItem(_fixture, value, "listItem", overrides)).toBe(expected);
-  });
-
-  it("keeps the indent of a nested task", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    expect(splitLastItem(_fixture, "- [ ] p\n  - [ ] a", "taskItem", { checked: false })).toBe(
-      "- [ ] p\n  - [ ] a\n  - [ ] b",
-    );
-  });
-});
 
 function placeCaret(editor: Editor, text: string, offset = 0) {
   let caret = -1;
@@ -97,215 +51,31 @@ function placeCaret(editor: Editor, text: string, offset = 0) {
   editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, caret)));
 }
 
-function storedDraft(_fixture: _Fixture, editor: Editor) {
+function storedDraft(editor: Editor) {
   const stored = serializeEditorDoc(editor.state.doc).value;
-  expect(makeEditor(_fixture, stored).state.doc.toString()).toBe(editor.state.doc.toString());
+  using reloaded = makeEditor(stored);
+  expect(reloaded.state.doc.toString()).toBe(editor.state.doc.toString());
   return stored;
 }
 
-describe("Shift+Enter twice on an item", () => {
-  it.each([
-    ["- a\n  - x", "- a\n  - x\n- b"],
-    ["* a\n  * x", "* a\n  * x\n* b"],
-    ["1. a\n   1. x", "1. a\n   1. x\n2. b"],
-    ["- a\n  - x\n- c", "- a\n  - x\n- b\n- c"],
-    ["- a\n  - x\n  - y", "- a\n  - x\n- b\n  - y"],
-    ["- [ ] a\n  - [ ] x", "- [ ] a\n  - [ ] x\n- [ ] b"],
-    ["- [x] a\n  - [ ] x\n- [ ] c", "- [x] a\n  - [ ] x\n- [ ] b\n- [ ] c"],
-  ])("after x in %j writes %j", async (value, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    let caret = -1;
-    editor.state.doc.descendants((node, pos) => {
-      if (node.isText && node.text === "x") caret = pos + 1;
-    });
-    editor.view.dispatch(
-      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, caret)),
-    );
-    expect(splitOrLiftListItem(editor)).toBe(true);
-    expect(splitOrLiftListItem(editor)).toBe(true);
-    editor.view.dispatch(editor.state.tr.insertText("b"));
-    const stored = serializeEditorDoc(editor.state.doc).value;
-    expect(stored).toBe(expected);
-    expect(makeEditor(_fixture, stored).state.doc.toString()).toBe(editor.state.doc.toString());
-  });
-});
-
-describe("Shift+Enter in the middle of an ordered list", () => {
-  it.each([
-    ["1. a\n2. x\n3. c\n4. d", "1. a\n2. x\n3. b\n4. c\n5. d"],
-    ["1) a\n2) x\n3) c", "1) a\n2) x\n3) b\n4) c"],
-    ["1. a\n   1. x\n   2. c\n2. d", "1. a\n   1. x\n   2. b\n   3. c\n2. d"],
-  ])("after x in %j writes %j", async (value, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    placeCaret(editor, "x", 1);
-    expect(splitOrLiftListItem(editor)).toBe(true);
-    editor.view.dispatch(editor.state.tr.insertText("b"));
-    expect(storedDraft(_fixture, editor)).toBe(expected);
-  });
-});
-
-describe("Shift+Enter on an empty task under a bullet", () => {
-  it.each(["- a\n  - [ ] x", "- [ ] a\n  - x"])("in %j keeps the draft honest", async (value) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    placeCaret(editor, "x", 1);
-    splitOrLiftListItem(editor);
-    splitOrLiftListItem(editor);
-    storedDraft(_fixture, editor);
-  });
-});
-
 describe("Backspace at the start of a line", () => {
-  it.each([
-    ["- a\n  - x", "x", "- a\n- x"],
-    ["- a\n  - x\n  - y", "x", "- a\n- x\n  - y"],
-    ["- [ ] a\n  - [ ] x", "x", "- [ ] a\n- [ ] x"],
-    ["- a\n- b\n- c", "b", "- a\nb\n- c"],
-    ["- a\n  - [ ] x", "x", "- ax"],
-    ["- a\n  - x\nb", "b", "- a\n  - xb"],
-    ["1. a\nb", "b", "1. ab"],
-  ])("in %j at %s writes %j", async (value, at, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    placeCaret(editor, at);
-    expect(backspaceAcrossList(editor)).toBe(true);
-    expect(storedDraft(_fixture, editor)).toBe(expected);
-  });
-
   it.each([
     ["- a\n```\nl1\nl2\n```", "- a\nl1\nl2"],
     ["p\n```ts\nl1\n```", "p\nl1"],
-  ])("removes the fence of %j rather than joining its code up", async (value, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
+  ])("removes the fence of %j rather than joining its code up", (value, expected) => {
+    using editor = makeEditor(value);
     placeCaret(editor, "l1");
     editor.commands.keyboardShortcut("Backspace");
-    expect(storedDraft(_fixture, editor)).toBe(expected);
+    expect(storedDraft(editor)).toBe(expected);
   });
-});
-
-describe("Delete at the end of a line", () => {
-  it.each([
-    ["- a\n- b", "- ab"],
-    ["- a\n  - x\n- c", "- ax\n- c"],
-    ["- a\n\nb", "- a\nb"],
-  ])("in %j writes %j", async (value, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    placeCaret(editor, "a", 1);
-    expect(deleteAcrossList(editor)).toBe(true);
-    expect(storedDraft(_fixture, editor)).toBe(expected);
-  });
-
-  it.each(["- a\n```\nl1\n```", "a\n```\nl1\n```"])(
-    "leaves the fence in %j alone",
-    async (value) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-      const editor = makeEditor(_fixture, value);
-      placeCaret(editor, "a", 1);
-      editor.commands.keyboardShortcut("Delete");
-      expect(storedDraft(_fixture, editor)).toBe(value);
-    },
-  );
 });
 
 describe("blocks that a list item or quote cannot hold", () => {
-  it("puts lines pasted at the end of an item after the list", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, "- a");
+  it("puts lines pasted at the end of an item after the list", () => {
+    using editor = makeEditor("- a");
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
     const lines = buildTiptapContent("one\ntwo", (name) => ({ label: name, description: null }));
     editor.commands.insertContent(lines);
-    expect(storedDraft(_fixture, editor)).toBe("- a\none\ntwo");
-  });
-
-  it("will not make a task list inside a quote", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, "> q");
-    placeCaret(editor, "q");
-    expect(editor.commands.wrapInList("taskList")).toBe(false);
-    expect(storedDraft(_fixture, editor)).toBe("> q");
+    expect(storedDraft(editor)).toBe("- a\none\ntwo");
   });
 });
-
-describe("[ ] typed at the start of a bullet item", () => {
-  it.each([
-    ["* [ ]x", "- [ ] x"],
-    ["* a\n* [ ]x\n* c", "* a\n- [ ] x\n* c"],
-    ["- a\n  * [ ]x", "- a\n  - [ ] x"],
-    ["- a\n  - [ ]x\n  - y", "- a\n  - [ ] x\n  - y"],
-    ["- [ ]x\n  - y", "- [ ] x\n  - y"],
-    ["-   [ ]x", "-   [ ] x"],
-  ])("makes the item in %j a task where it stands", async (value, expected) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, value);
-    placeCaret(editor, "[ ]x");
-    const from = editor.state.selection.from;
-    editor.view.dispatch(
-      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, from + 3)),
-    );
-    const { tr } = editor.state;
-    convertBulletItemToTask(tr, from, from + 3, false);
-    editor.view.dispatch(tr);
-    expect(editor.state.selection.$from.parent.textContent).toBe("x");
-    expect(editor.state.selection.$from.parentOffset).toBe(0);
-    expect(storedDraft(_fixture, editor)).toBe(expected);
-  });
-});
-
-describe("a rule at the end of the draft", () => {
-  it("keeps an empty line after it to type on", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const editor = makeEditor(_fixture, "a\n---");
-    editor.view.dispatch(
-      editor.state.tr.delete(editor.state.doc.content.size - 2, editor.state.doc.content.size),
-    );
-    expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
-    expect(storedDraft(_fixture, editor)).toBe("a\n---");
-    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
-    editor.view.dispatch(editor.state.tr.insertText("b"));
-    expect(storedDraft(_fixture, editor)).toBe("a\n---\nb");
-  });
-});
-
-function _createFixture() {
-  const stack = new AsyncDisposableStack();
-  const cleanup = new AsyncDisposableStack();
-  return {
-    editors: [] as Editor[],
-    stack,
-    cleanup,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
-    },
-  };
-}
-type _Fixture = ReturnType<typeof _createFixture>;

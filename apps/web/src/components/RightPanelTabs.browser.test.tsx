@@ -1,10 +1,24 @@
-import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { ComponentProps } from "react";
+import { userEvent } from "vite-plus/test/browser";
+import type {
+  ContextMenuItem,
+  DesktopPreviewFavicon,
+  PreviewSessionSnapshot,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
 
 const setAudioMuted = vi.hoisted(() => vi.fn(async () => undefined));
+const menu = vi.hoisted(() => ({
+  profiles: [] as Array<{ id: string; name: string }>,
+  show: vi.fn<(...args: unknown[]) => Promise<string | undefined>>(async () => undefined),
+}));
+vi.mock(import("~/localApi"), async (original) => ({
+  ...(await original()),
+  readLocalApi: () => ({ contextMenu: { show: menu.show } }) as never,
+}));
 
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
@@ -12,7 +26,7 @@ vi.mock(import("~/hooks/useTheme"), async (original) => ({
 }));
 vi.mock(import("~/browser/browserDefaults"), async (original) => ({
   ...(await original()),
-  useBrowserDefaults: () => ({ profiles: [] }) as never,
+  useBrowserDefaults: () => ({ profiles: menu.profiles }) as never,
 }));
 vi.mock(import("./preview/previewBridge"), () => ({
   previewBridge: { setAudioMuted } as never,
@@ -23,10 +37,8 @@ import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   buildTabContextMenuItems,
   resolvePullRequestTabLink,
-  shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
-  tabMuteMenuItem,
 } from "./RightPanelTabs";
 // SCIENT-FORK:END
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -98,6 +110,7 @@ function tabs(
   second?: DesktopPreviewFavicon,
   audio?: { audible?: boolean; audioMuted?: boolean },
   previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
+  overrides: Partial<ComponentProps<typeof RightPanelTabs>> = {},
 ) {
   return (
     <RightPanelTabs
@@ -150,6 +163,7 @@ function tabs(
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
       deviceAvailable={false}
+      {...overrides}
     >
       <div>content</div>
     </RightPanelTabs>
@@ -158,6 +172,8 @@ function tabs(
 
 function setup() {
   setAudioMuted.mockClear();
+  menu.show.mockClear();
+  menu.profiles = [];
 }
 
 function renderTabs(...args: Parameters<typeof tabs>) {
@@ -223,404 +239,250 @@ describe("preview tab audio toggle", () => {
   });
 });
 
-// SCIENT-FORK:START
-{
-  async function renderMarkup(node: import("react").ReactNode) {
-    await using screen = await render(node);
-    return screen.container.innerHTML;
-  }
-  describe("browser profile submenu", () => {
-    it("reserves touch clicks for opening the choices while mouse clicks use the default", async () => {
-      expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
-      expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
-      expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
-    });
+function shortcutEvent(
+  key: string,
+  overrides: Partial<Parameters<typeof surfaceShortcutActionForKey>[1]> = {},
+): Parameters<typeof surfaceShortcutActionForKey>[1] {
+  return {
+    key,
+    altKey: false,
+    ctrlKey: false,
+    defaultPrevented: false,
+    isComposing: false,
+    metaKey: false,
+    ...overrides,
+  };
+}
+
+describe("surface shortcuts", () => {
+  const actions = [
+    { shortcut: "B", available: true, label: "Browser" },
+    { shortcut: "D", available: false, label: "Diff" },
+  ] as const;
+
+  it("matches available surface shortcuts case-insensitively", async () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
   });
 
-  function shortcutEvent(
-    key: string,
-    overrides: Partial<Parameters<typeof surfaceShortcutActionForKey>[1]> = {},
-  ): Parameters<typeof surfaceShortcutActionForKey>[1] {
-    return {
-      key,
-      altKey: false,
-      ctrlKey: false,
-      defaultPrevented: false,
-      isComposing: false,
-      metaKey: false,
-      ...overrides,
-    };
-  }
-
-  const previewSurface = {
-    id: "browser:tab-1" as const,
-    kind: "preview" as const,
-    resourceId: "tab-1",
-  };
-  const secondSurface = {
-    id: "browser:tab-2" as const,
-    kind: "preview" as const,
-    resourceId: "tab-2",
-  };
-  const sessions: Readonly<Record<string, PreviewSessionSnapshot>> = {
-    "tab-1": {
-      threadId: "thread-1",
-      tabId: "tab-1",
-      navStatus: { _tag: "Success", url: "http://24x.xf.local/", title: "Local site" },
-      canGoBack: false,
-      canGoForward: false,
-      updatedAt: "2026-08-09T00:00:00.000Z",
-    },
-    "tab-2": {
-      threadId: "thread-1",
-      tabId: "tab-2",
-      navStatus: { _tag: "Success", url: "http://24x.xf.local/admin", title: "Admin" },
-      canGoBack: false,
-      canGoForward: false,
-      updatedAt: "2026-08-09T00:00:00.000Z",
-    },
-  };
-
-  const favicon = (dataUrl: string, pageUrl: string): DesktopPreviewFavicon => ({
-    dataUrl,
-    pageUrl,
-    capturedAt: 1,
+  it("does not activate unavailable surfaces", async () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
   });
 
-  function overlay(
-    icon: DesktopPreviewFavicon | null,
-    audio?: { audible?: boolean; audioMuted?: boolean },
-  ) {
-    return {
-      hasWebContents: true,
-      canGoBack: false,
-      canGoForward: false,
-      loading: false,
-      zoomFactor: 1,
-      pictureInPicture: false,
-      colorScheme: "system" as const,
-      audioMuted: audio?.audioMuted ?? false,
-      audible: audio?.audible ?? false,
-      controller: "none" as const,
-      favicon: icon,
+  it("leaves modified, composing, and already-handled key events alone", async () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true }))).toBeNull();
+    expect(
+      surfaceShortcutActionForKey(actions, shortcutEvent("b", { isComposing: true })),
+    ).toBeNull();
+    expect(
+      surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
+    ).toBeNull();
+  });
+});
+
+describe("surface shortcut typing contexts", () => {
+  const makeTarget = (matches: string | null) => ({
+    closest(selectors: string) {
+      if (matches === null || !selectors.includes(matches)) return null;
+      return {};
+    },
+  });
+
+  it("treats form fields and every editable region as typing contexts", async () => {
+    expect(surfaceShortcutTargetsTypingContext(makeTarget("input"))).toBe(true);
+    expect(surfaceShortcutTargetsTypingContext(makeTarget("textarea"))).toBe(true);
+    expect(surfaceShortcutTargetsTypingContext(makeTarget("select"))).toBe(true);
+    expect(surfaceShortcutTargetsTypingContext(makeTarget("[contenteditable]"))).toBe(true);
+  });
+
+  it("claims letters when focus sits outside any editable region", async () => {
+    expect(surfaceShortcutTargetsTypingContext(null)).toBe(false);
+    expect(surfaceShortcutTargetsTypingContext(makeTarget(null))).toBe(false);
+  });
+});
+
+describe("RightPanelTabs context menu", () => {
+  it("offers explicit relative and full path actions for file tabs", async () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: ["relative", "full"],
+        mute: null,
+        surfaceIndex: 0,
+        surfaceCount: 2,
+      }).map(({ id, label }) => ({ id, label })),
+    ).toEqual([
+      { id: "copy-relative-path", label: "Copy relative path" },
+      { id: "copy-full-path", label: "Copy full path" },
+      { id: "close", label: "Close" },
+      { id: "close-others", label: "Close others" },
+      { id: "close-to-right", label: "Close to the right" },
+      { id: "close-all", label: "Close all" },
+    ]);
+  });
+
+  it("offers only a full path for host files outside the workspace", async () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: ["full"],
+        mute: null,
+        surfaceIndex: 0,
+        surfaceCount: 1,
+      }).map((item) => item.id),
+    ).toEqual(["copy-full-path", "close", "close-others", "close-to-right", "close-all"]);
+  });
+
+  it("does not add path actions to non-file tabs", async () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: [],
+        mute: null,
+        surfaceIndex: 0,
+        surfaceCount: 1,
+      }).map((item) => item.id),
+    ).toEqual(["close", "close-others", "close-to-right", "close-all"]);
+  });
+
+  it("preserves the preview mute action alongside the shared close actions", async () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: [],
+        mute: { label: "Unmute tab", disabled: false },
+        surfaceIndex: 0,
+        surfaceCount: 1,
+      }).map(({ id, label, disabled }) => ({ id, label, disabled: disabled ?? false })),
+    ).toEqual([
+      { id: "toggle-mute", label: "Unmute tab", disabled: false },
+      { id: "close", label: "Close", disabled: false },
+      { id: "close-others", label: "Close others", disabled: true },
+      { id: "close-to-right", label: "Close to the right", disabled: true },
+      { id: "close-all", label: "Close all", disabled: false },
+    ]);
+  });
+});
+
+describe("pull request tab snapshots", () => {
+  const environmentId = EnvironmentId.make("local");
+  const link: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "acme/api",
+    number: 7,
+    url: "https://github.com/acme/api/pull/7",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00Z",
+    stack: null,
+    snapshot: null,
+  };
+  it("keeps unknown linked state authoritative and scopes matches to environment and host", async () => {
+    const threads = [{ environmentId, pullRequests: [link] }];
+    expect(resolvePullRequestTabLink(threads, environmentId, "github.com", link)).toBe(link);
+    expect(
+      resolvePullRequestTabLink(threads, EnvironmentId.make("remote"), "github.com", link),
+    ).toBeUndefined();
+    expect(
+      resolvePullRequestTabLink(threads, environmentId, "github.enterprise.test", link),
+    ).toBeUndefined();
+  });
+  it("uses the newest snapshot when several threads link the same PR", async () => {
+    const snapshot = {
+      state: "merged" as const,
+      title: "API",
+      headBranch: "api",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: null,
+      syncedAt: "2026-02-01T00:00:00Z",
     };
-  }
-
-  async function renderTabs(
-    first: DesktopPreviewFavicon | null,
-    second?: DesktopPreviewFavicon,
-    audio?: { audible?: boolean; audioMuted?: boolean },
-    previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
-    previewSessions: Readonly<Record<string, PreviewSessionSnapshot>> = sessions,
-  ) {
-    return await renderMarkup(
-      <RightPanelTabs
-        mode="inline"
-        open
-        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-        getShortcutContext={() => ({
-          terminalFocus: false,
-          terminalOpen: false,
-          previewFocus: false,
-          previewOpen: false,
-          isWeb: true,
-          isDesktop: false,
-        })}
-        surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
-        environmentId={null}
-        activeSurfaceId={previewSurface.id}
-        pendingSurfaceIds={new Set()}
-        previewSessions={previewSessions}
-        desktopByTabId={{
-          "tab-1": overlay(first, audio),
-          ...(second ? { "tab-2": overlay(second) } : {}),
-        }}
-        {...(previewRuntimeTabId ? { previewRuntimeTabId } : {})}
-        terminalLabelsById={new Map()}
-        onActivate={() => undefined}
-        onCloseSurface={() => undefined}
-        onCloseOtherSurfaces={() => undefined}
-        onCloseSurfacesToRight={() => undefined}
-        onCloseAllSurfaces={() => undefined}
-        onCopyFilePath={() => undefined}
-        onAddBrowser={() => undefined}
-        onAddBrowserInProfile={() => undefined}
-        onAddTerminal={() => undefined}
-        onAddPullRequest={() => undefined}
-        onAddPullRequests={() => undefined}
-        onAddDiff={() => undefined}
-        onAddFiles={() => undefined}
-        onAddAgents={() => undefined}
-        onAddSources={() => undefined}
-        onAddCompute={() => undefined}
-
-        onAddDevice={() => undefined}
-        browserAvailable
-        terminalAvailable={false}
-        diffAvailable={false}
-        filesAvailable={false}
-        pullRequestAvailable={false}
-        pullRequestsAvailable={false}
-        agentsAvailable={false}
-        sourcesAvailable={false}
-        computeAvailable={false}
-
-        deviceAvailable={false}
-      >
-        <div>content</div>
-      </RightPanelTabs>,
-    );
-  }
-
-  describe("RightPanelTabs preview favicon", () => {
-    it("applies automatic direction to the complete tab layout", async () => {
-      const html = await renderTabs(null, undefined, undefined, undefined, {
+    const newer = { ...link, snapshot };
+    expect(
+      resolvePullRequestTabLink(
+        [{ environmentId, pullRequests: [link, newer] }],
+        environmentId,
+        "github.com",
+        link,
+      ),
+    ).toBe(newer);
+  });
+});
+it("applies automatic direction to the complete tab layout", async () => {
+  setup();
+  await using screen = await render(
+    tabs(null, undefined, undefined, undefined, {
+      previewSessions: {
         ...sessions,
         "tab-1": {
           ...sessions["tab-1"]!,
           navStatus: { _tag: "Success", url: "http://24x.xf.local/", title: "דוח תוצאות" },
         },
-      });
-
-      expect(html).toMatch(/data-active-tab="true"[^>]*dir="auto"/u);
-      expect(html).toContain('<span class="min-w-0 flex-1 truncate text-start" dir="auto">');
-    });
-
-    it("prefers a live capture and never asks Google about a private hostname", async () => {
-      const captured = await renderTabs(favicon(PIXEL_A, "http://24x.xf.local/"));
-      expect(captured).toContain(PIXEL_A);
-      expect(captured).not.toContain("s2/favicons");
-      expect(await renderTabs(null)).not.toContain("s2/favicons");
-    });
-
-    it("keeps route-specific captures isolated between live tabs on one origin", async () => {
-      const html = await renderTabs(
-        favicon(PIXEL_A, "http://24x.xf.local/"),
-        favicon(PIXEL_B, "http://24x.xf.local/admin"),
-      );
-      expect(html).toContain(PIXEL_A);
-      expect(html).toContain(PIXEL_B);
-    });
-
-    it("hides a capture while the server session still describes another origin", async () => {
-      const html = await renderTabs(favicon(PIXEL_A, "https://example.com/"));
-      expect(html).not.toContain(PIXEL_A);
-    });
-  });
-
-  describe("surface shortcuts", () => {
-    const actions = [
-      { shortcut: "B", available: true, label: "Browser" },
-      { shortcut: "D", available: false, label: "Diff" },
-    ] as const;
-
-    it("matches available surface shortcuts case-insensitively", async () => {
-      expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
-      expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
-    });
-
-    it("does not activate unavailable surfaces", async () => {
-      expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
-    });
-
-    it("leaves modified, composing, and already-handled key events alone", async () => {
-      expect(
-        surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true })),
-      ).toBeNull();
-      expect(
-        surfaceShortcutActionForKey(actions, shortcutEvent("b", { isComposing: true })),
-      ).toBeNull();
-      expect(
-        surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
-      ).toBeNull();
-    });
-  });
-
-  describe("surface shortcut typing contexts", () => {
-    const makeTarget = (matches: string | null) => ({
-      closest(selectors: string) {
-        if (matches === null || !selectors.includes(matches)) return null;
-        return {};
       },
-    });
+    }),
+  );
+  const tab = screen.container.querySelector<HTMLElement>('[data-active-tab="true"]')!;
+  expect(tab.dir).toBe("auto");
+  expect(
+    [...tab.querySelectorAll("span")].find((span) => span.textContent === "דוח תוצאות")?.dir,
+  ).toBe("auto");
+});
 
-    it("treats form fields and every editable region as typing contexts", async () => {
-      expect(surfaceShortcutTargetsTypingContext(makeTarget("input"))).toBe(true);
-      expect(surfaceShortcutTargetsTypingContext(makeTarget("textarea"))).toBe(true);
-      expect(surfaceShortcutTargetsTypingContext(makeTarget("select"))).toBe(true);
-      expect(surfaceShortcutTargetsTypingContext(makeTarget("[contenteditable]"))).toBe(true);
+it.each([
+  { present: false, addressable: true, audioMuted: false, disabled: true },
+  { present: true, addressable: false, audioMuted: false, disabled: true },
+  { present: true, addressable: true, audioMuted: false, disabled: false },
+  { present: true, addressable: true, audioMuted: true, disabled: false },
+])(
+  "derives the context menu from actual desktop ownership: %j",
+  async ({ present, addressable, audioMuted, disabled }) => {
+    setup();
+    await using screen = await render(
+      tabs(
+        null,
+        undefined,
+        { audioMuted },
+        addressable ? (id) => `runtime:${id}` : null,
+        present ? {} : { desktopByTabId: {} },
+      ),
+    );
+    const tab = screen.container.querySelector<HTMLElement>('[data-active-tab="true"]')!;
+    await act(() => {
+      tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
-
-    it("claims letters when focus sits outside any editable region", async () => {
-      expect(surfaceShortcutTargetsTypingContext(null)).toBe(false);
-      expect(surfaceShortcutTargetsTypingContext(makeTarget(null))).toBe(false);
+    const items = menu.show.mock.calls.at(-1)?.[0] as readonly ContextMenuItem[] | undefined;
+    expect(items?.find((item) => item.id === "toggle-mute")).toMatchObject({
+      label: audioMuted ? "Unmute tab" : "Mute tab",
+      disabled,
     });
-  });
+  },
+);
 
-  describe("RightPanelTabs audio indicator", () => {
-    const cases = [
-      { audible: false, audioMuted: false, label: null },
-      { audible: false, audioMuted: true, label: null },
-      { audible: true, audioMuted: false, label: "Mute Local site" },
-      { audible: true, audioMuted: true, label: "Unmute Local site" },
-    ] as const;
-
-    it.each(cases)("audible=$audible muted=$audioMuted", async ({ audible, audioMuted, label }) => {
-      const html = await renderTabs(null, undefined, { audible, audioMuted });
-      if (label === null) {
-        expect(html).not.toContain("Mute Local site");
-        expect(html).not.toContain("Unmute Local site");
-      } else {
-        expect(html).toContain(`aria-label="${label}"`);
-      }
+it.each(["touch", "mouse", undefined] as const)(
+  "reserves touch for profile choices and opens the other defaults: %s",
+  async (pointerType) => {
+    setup();
+    menu.profiles = [
+      { id: "default", name: "Default" },
+      { id: "work", name: "Work" },
+    ];
+    const openDefault = vi.fn();
+    await using screen = await render(
+      tabs(null, undefined, undefined, undefined, {
+        onAddBrowser: openDefault,
+      }),
+    );
+    await userEvent.click(screen.container.querySelector('[aria-label="Add panel surface"]')!);
+    const trigger = await vi.waitFor(() => {
+      const item = document.querySelector<HTMLElement>('[role="menuitem"][aria-keyshortcuts="B"]');
+      if (!item) throw new Error("Browser submenu is not open");
+      return item;
     });
-
-    it("addresses the desktop by runtime tab id, never the server session id", async () => {
-      const seen: string[] = [];
-      await renderTabs(null, undefined, { audible: true }, (tabId) => {
-        seen.push(tabId);
-        return `runtime:${tabId}`;
-      });
-      expect(seen).toContain("tab-1");
+    await act(() => {
+      trigger.dispatchEvent(
+        pointerType === undefined
+          ? new MouseEvent("click", { bubbles: true, cancelable: true })
+          : new PointerEvent("click", { pointerType, bubbles: true, cancelable: true }),
+      );
     });
-
-    it("hides the toggle when no runtime tab id can be resolved", async () => {
-      const html = await renderTabs(null, undefined, { audible: true }, null);
-      expect(html).not.toContain("Mute Local site");
-    });
-  });
-
-  describe("tabMuteMenuItem", () => {
-    const overlay = (audioMuted: boolean) =>
-      ({ audioMuted, audible: false }) as Parameters<typeof tabMuteMenuItem>[0]["overlay"];
-
-    it("stays disabled until the desktop tab exists", async () => {
-      expect(tabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
-        label: "Mute tab",
-        disabled: true,
-      });
-    });
-
-    it("stays disabled when no runtime tab id can be resolved", async () => {
-      expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false })).toEqual({
-        label: "Mute tab",
-        disabled: true,
-      });
-    });
-
-    it("offers mute and unmute once the tab is addressable", async () => {
-      expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true })).toEqual({
-        label: "Mute tab",
-        disabled: false,
-      });
-      expect(tabMuteMenuItem({ overlay: overlay(true), canResolveRuntimeTabId: true })).toEqual({
-        label: "Unmute tab",
-        disabled: false,
-      });
-    });
-  });
-
-  describe("RightPanelTabs context menu", () => {
-    it("offers explicit relative and full path actions for file tabs", async () => {
-      expect(
-        buildTabContextMenuItems({
-          pathCopyFormats: ["relative", "full"],
-          mute: null,
-          surfaceIndex: 0,
-          surfaceCount: 2,
-        }).map(({ id, label }) => ({ id, label })),
-      ).toEqual([
-        { id: "copy-relative-path", label: "Copy relative path" },
-        { id: "copy-full-path", label: "Copy full path" },
-        { id: "close", label: "Close" },
-        { id: "close-others", label: "Close others" },
-        { id: "close-to-right", label: "Close to the right" },
-        { id: "close-all", label: "Close all" },
-      ]);
-    });
-
-    it("offers only a full path for host files outside the workspace", async () => {
-      expect(
-        buildTabContextMenuItems({
-          pathCopyFormats: ["full"],
-          mute: null,
-          surfaceIndex: 0,
-          surfaceCount: 1,
-        }).map((item) => item.id),
-      ).toEqual(["copy-full-path", "close", "close-others", "close-to-right", "close-all"]);
-    });
-
-    it("does not add path actions to non-file tabs", async () => {
-      expect(
-        buildTabContextMenuItems({
-          pathCopyFormats: [],
-          mute: null,
-          surfaceIndex: 0,
-          surfaceCount: 1,
-        }).map((item) => item.id),
-      ).toEqual(["close", "close-others", "close-to-right", "close-all"]);
-    });
-
-    it("preserves the preview mute action alongside the shared close actions", async () => {
-      expect(
-        buildTabContextMenuItems({
-          pathCopyFormats: [],
-          mute: { label: "Unmute tab", disabled: false },
-          surfaceIndex: 0,
-          surfaceCount: 1,
-        }).map(({ id, label, disabled }) => ({ id, label, disabled: disabled ?? false })),
-      ).toEqual([
-        { id: "toggle-mute", label: "Unmute tab", disabled: false },
-        { id: "close", label: "Close", disabled: false },
-        { id: "close-others", label: "Close others", disabled: true },
-        { id: "close-to-right", label: "Close to the right", disabled: true },
-        { id: "close-all", label: "Close all", disabled: false },
-      ]);
-    });
-  });
-
-  describe("pull request tab snapshots", () => {
-    const environmentId = EnvironmentId.make("local");
-    const link: ThreadPullRequestLink = {
-      host: "github.com",
-      repository: "acme/api",
-      number: 7,
-      url: "https://github.com/acme/api/pull/7",
-      source: "manual",
-      linkedAt: "2026-01-01T00:00:00Z",
-      stack: null,
-      snapshot: null,
-    };
-    it("keeps unknown linked state authoritative and scopes matches to environment and host", async () => {
-      const threads = [{ environmentId, pullRequests: [link] }];
-      expect(resolvePullRequestTabLink(threads, environmentId, "github.com", link)).toBe(link);
-      expect(
-        resolvePullRequestTabLink(threads, EnvironmentId.make("remote"), "github.com", link),
-      ).toBeUndefined();
-      expect(
-        resolvePullRequestTabLink(threads, environmentId, "github.enterprise.test", link),
-      ).toBeUndefined();
-    });
-    it("uses the newest snapshot when several threads link the same PR", async () => {
-      const snapshot = {
-        state: "merged" as const,
-        title: "API",
-        headBranch: "api",
-        baseBranch: "main",
-        isDraft: false,
-        updatedAt: null,
-        syncedAt: "2026-02-01T00:00:00Z",
-      };
-      const newer = { ...link, snapshot };
-      expect(
-        resolvePullRequestTabLink(
-          [{ environmentId, pullRequests: [link, newer] }],
-          environmentId,
-          "github.com",
-          link,
-        ),
-      ).toBe(newer);
-    });
-  });
-}
-// SCIENT-FORK:END
+    if (pointerType === "touch") {
+      expect(openDefault).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Work"));
+    } else expect(openDefault).toHaveBeenCalledOnce();
+  },
+);

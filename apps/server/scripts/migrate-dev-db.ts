@@ -5,6 +5,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+// SCIENT-FORK:START — destination identity stays shared with the dev server.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -116,6 +119,9 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
 
 export interface RunMigrateDevDbInput {
   readonly baseDir?: string | undefined;
+  // SCIENT-FORK:START — explicit selection preserves existing userdata callers.
+  readonly developmentState?: boolean | undefined;
+  // SCIENT-FORK:END
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
@@ -217,12 +223,11 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
 
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
 
+// Settled threads stay: they are most of real history, and the UI shows them.
 const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
   root.deleted_at IS NULL
   AND json_extract(root.payload_json, '$.deletedAt') IS NULL
-  AND json_extract(root.payload_json, '$.archivedAt') IS NULL
-  AND json_extract(root.payload_json, '$.settledAt') IS NULL
-  AND json_extract(root.payload_json, '$.settledOverride') IS NOT 'settled'`;
+  AND json_extract(root.payload_json, '$.archivedAt') IS NULL`;
 
 /**
  * One transaction reads the source, so the copy is consistent while the real server writes.
@@ -309,7 +314,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     FROM orchestration_v2_projection_threads`;
 
   yield* sql`CREATE TEMP TABLE stopped_families AS
-    SELECT f.root_id, root.project_id, MAX(f.updated_at) AS updated_at
+    SELECT f.root_id, root.project_id, MAX(f.updated_at) AS updated_at, COUNT(*) AS size
     FROM thread_families f
     JOIN orchestration_v2_projection_threads root ON root.thread_id = f.root_id
     WHERE ${rootIsVisible(sql)}
@@ -341,6 +346,9 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
           ) AS recency_rank
         FROM stopped_families sf
         JOIN kept_projects kp ON kp.project_id = sf.project_id
+        -- One orchestrator family can hold hundreds of subagents and most of
+        -- the database, so a family larger than the limit is skipped.
+        WHERE sf.size <= ${input.threadsPerProject}
       )
       WHERE recency_rank <= ${input.threadsPerProject}
     )`;
@@ -432,7 +440,12 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (baseDir === undefined) {
     return yield* new MigrateDevDbNotInWorktreeError();
   }
-  const stateDir = path.join(baseDir, "userdata");
+  // SCIENT-FORK:START — match the dev server without redirecting existing callers.
+  const stateDir = path.join(
+    baseDir,
+    input.developmentState ? SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName : "userdata",
+  );
+  // SCIENT-FORK:END
   const databasePath = path.join(stateDir, "statev2.sqlite");
   const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
 
@@ -585,7 +598,7 @@ const migrateDevDbCommand = Command.make(
     threadsPerProject: Flag.Int("threads-per-project").pipe(
       Flag.withDefault(10),
       Flag.withDescription(
-        "How many recent stopped threads, with their forks and subagents, to keep per project.",
+        "How many recent stopped threads, with their forks and subagents, to keep per project. A family with more threads than this is skipped.",
       ),
     ),
     baseDir: Flag.String("base-dir").pipe(
@@ -596,13 +609,20 @@ const migrateDevDbCommand = Command.make(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
     ),
+    // SCIENT-FORK:START — the runner explicitly targets its development database.
+    developmentState: Flag.Boolean("development-state").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Target the Scient development state directory, not userdata."),
+    ),
+    // SCIENT-FORK:END
   },
-  ({ projects, threadsPerProject, baseDir, source }) =>
+  ({ projects, threadsPerProject, baseDir, source, developmentState }) =>
     Effect.gen(function* () {
       const result = yield* runMigrateDevDb({
         projects,
         threadsPerProject,
         baseDir: Option.getOrUndefined(baseDir),
+        developmentState,
         source: Option.getOrUndefined(source),
       });
       yield* Console.log("");

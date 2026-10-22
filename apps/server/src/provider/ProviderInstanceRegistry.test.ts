@@ -1,3 +1,5 @@
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -18,8 +20,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { GrokSettings } from "@t3tools/provider-grok/settings";
-import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

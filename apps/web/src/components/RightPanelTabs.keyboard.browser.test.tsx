@@ -114,7 +114,7 @@ async function press(key: string, options: KeyboardEventInit = {}) {
 }
 
 async function pressNative(keys: string) {
-  await act(async () => userEvent.keyboard(keys));
+  await userEvent.keyboard(keys);
   await settle();
 }
 
@@ -210,7 +210,7 @@ describe("right panel new-tab shortcut", () => {
     });
     document.body.append(input);
     using _input = { [Symbol.dispose]: () => input.remove() };
-    await act(async () => userEvent.click(input));
+    await userEvent.click(input);
     expect(document.activeElement).toBe(input);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
     await pressNative("{Meta>}y{/Meta}");

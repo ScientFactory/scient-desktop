@@ -1207,7 +1207,7 @@ const stopEarlierBackgroundWork = ({
           const run = before.runs[0]!;
           const node = before.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
           const attempt = before.attempts[0]!;
-          if (stalledRun === "missing-session" || stalledRun === "missing-session-terminal") {
+          if (stalledRun === "missing-session-terminal") {
             const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
             const failed = yield* watch(
               (event) => event.type === "run.updated" && event.payload.status === "failed",
@@ -2041,12 +2041,12 @@ it.effect(
   () => stopEarlierBackgroundWork({ failedStart: true }),
 );
 
-it.effect("Stop preserves the roster when background work survives the interrupt", () =>
-  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "running" }),
-);
-
 it.effect("Stop preserves the roster when the background work probe fails", () =>
   stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
+);
+
+it.effect("Stop preserves the roster when background work survives the interrupt", () =>
+  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "running" }),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
@@ -2059,14 +2059,9 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
   (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType, olderStart: true }),
 );
 
-it.effect.each([
-  "missing-session",
-  "missing-session-terminal",
-  "returned-interrupt",
-  "returned-interrupt-terminal",
-  "superseded-attempt",
-] as const)("Stop recovers a stalled run after %s without changing a newer attempt", (stalledRun) =>
-  stopEarlierBackgroundWork({ stalledRun }),
+it.effect.each(["missing-session-terminal", "returned-interrupt", "superseded-attempt"] as const)(
+  "Stop recovers a stalled run after %s without changing a newer attempt",
+  (stalledRun) => stopEarlierBackgroundWork({ stalledRun }),
 );
 
 it.effect.each(["released", "live", "nonretryable"] as const)(

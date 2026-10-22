@@ -5,7 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";

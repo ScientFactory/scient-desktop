@@ -34,7 +34,7 @@ export type ServiceReconcileResult =
       readonly plan: BootService.BootServicePlan;
     };
 
-export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
+const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
 }) {
   const service = yield* BootService.BootService;

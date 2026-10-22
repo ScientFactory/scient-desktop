@@ -31,10 +31,7 @@ import {
   makeAcpDroidSteerSupervision,
   makeDroidSteerSafety,
 } from "./DroidSteerSafety.ts";
-import {
-  isPreAcceptanceRejectionCode,
-  nativeTurnAcceptance,
-} from "../scient-provider/NativeTurnReceipts.ts";
+
 import { scientAcpApplicationBridge } from "./ScientAcpApplicationBridge.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { isDroidAuthenticationRequiredError } from "../../provider/DroidProvider.ts";

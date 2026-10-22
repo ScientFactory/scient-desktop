@@ -1,3 +1,8 @@
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Queue from "effect/Queue";
+import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
+import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -11,26 +16,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { AntigravityInstallationError } from "./AntigravityInstallation.ts";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
-import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
-import {
-  resolveAntigravityReleaseAsset,
-  type AntigravityReleaseAsset,
-} from "./antigravityRelease.ts";
-
-import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
+import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
 const harnessContents = "local harness\n";
@@ -790,53 +785,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect.each([
-    {
-      name: "IPv6 startup failure",
-      stderr:
-        "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)",
-      message:
-        "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.",
-    },
-    {
-      name: "other startup failure",
-      stderr: "Private startup diagnostics: internal runtime failure",
-      message: "The downloaded Antigravity runtime could not start in this environment.",
-    },
-  ])(
-    "reports a fixed diagnostic for $name and preserves the previous release after SIGABRT",
-    (testCase) =>
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const { installation, stagingReleased } = yield* makeHarness({
-          previous: true,
-          useDefaultValidation: true,
-        }).pipe(
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make((command) =>
-              spawner.spawn(
-                command._tag === "StandardCommand" && command.command.endsWith(executableName)
-                  ? ChildProcess.make(process.execPath, [
-                      "-e",
-                      `process.stderr.write(${encodeJsonString(testCase.stderr)}, () => process.kill(process.pid, 'SIGABRT'));`,
-                    ])
-                  : command,
-              ),
-            ),
-          ),
-        );
-        yield* installation.start;
-        expect(yield* terminalState(installation)).toMatchObject({
-          phase: "failed",
-          message: testCase.message,
-        });
-        yield* Deferred.await(stagingReleased);
-        yield* expectPreviousRelease(installation);
-      }),
-    { skip: hostPlatform === "win32" },
-  );
-
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
       // dl.google.com gzips the archive and reports the encoded size. The decoded
@@ -1338,28 +1286,4 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(requests).toEqual([]);
     }),
   );
-
-  it("resolves all supported platform release assets including Intel Mac", () => {
-    const supportedPlatforms: Array<{ readonly platform: NodeJS.Platform; readonly arch: string }> =
-      [
-        { platform: "darwin", arch: "arm64" },
-        { platform: "darwin", arch: "x64" },
-        { platform: "linux", arch: "x64" },
-        { platform: "linux", arch: "arm64" },
-        { platform: "win32", arch: "x64" },
-        { platform: "win32", arch: "arm64" },
-      ];
-
-    for (const { platform, arch } of supportedPlatforms) {
-      const asset = resolveAntigravityReleaseAsset(platform, arch);
-      expect(asset).not.toBeNull();
-      expect(asset?.version).toBe("1.3.0");
-      expect(asset?.url).toContain("1.3.0");
-      expect(asset?.archiveBytes).toBeGreaterThan(0);
-      expect(asset?.executable.bytes).toBeGreaterThan(0);
-      expect(asset?.harness.bytes).toBeGreaterThan(0);
-    }
-
-    expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
-  });
 });

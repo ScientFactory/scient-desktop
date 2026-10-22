@@ -71,7 +71,6 @@ it.live(
         );
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
-  60000,
 );
 
 it.live.each(["fork-first", "rollback-first", "concurrent", "native-delete-first"] as const)(
@@ -238,5 +237,4 @@ it.live.each(["fork-first", "rollback-first", "concurrent", "native-delete-first
         Effect.timeout("30 seconds"),
       ),
     ),
-  60000,
 );

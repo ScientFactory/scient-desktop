@@ -6,6 +6,8 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
+  type ModelSelection,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -326,6 +328,8 @@ const projectLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly threadCaller?: boolean;
+  readonly defaultRuntimeMode?: RuntimeMode;
+  readonly overrideModel?: ModelSelection;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
@@ -346,7 +350,19 @@ const projectLaunchHarness = (input: {
     modelSelection,
   };
   const layerDependencies = Layer.mergeAll(
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest({
+      ...(input.defaultRuntimeMode === undefined
+        ? {}
+        : { defaultRuntimeMode: input.defaultRuntimeMode }),
+      ...(input.overrideModel === undefined
+        ? {}
+        : {
+            projectSettingsFolded: true,
+            projectSettingsOverrides: {
+              [projectId]: { defaultModelSelection: input.overrideModel },
+            },
+          }),
+    }),
     NodeCrypto.layer,
     Layer.mock(ProviderSessionManagerV2)({
       resolveMcpInvocationPolicy: (requested) =>
@@ -414,7 +430,7 @@ const projectLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: input.overrideModel === undefined ? modelSelection : null,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
@@ -435,12 +451,13 @@ const projectLaunchHarness = (input: {
 };
 
 it.effect(
-  "client launch requests retain their ceiling but require a Scient thread credential",
+  "approved client launches retain their ceiling and use project defaults without a thread credential",
   () =>
     Effect.gen(function* () {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-      const { projectId, dependencies } = projectLaunchHarness({
+      const { projectId, modelSelection, dependencies } = projectLaunchHarness({
         runtimeModeCeiling: "auto-accept-edits",
+        defaultRuntimeMode: "auto-accept-edits",
         launched,
       });
       const toolkit = yield* ProjectToolkit.pipe(
@@ -456,18 +473,27 @@ it.effect(
           .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
       const result = yield* handle({ title: "Fix", projectId, message: "Fix the bug" });
-      expect(result.at(-1)?.result).toMatchObject({ code: "thread_credential_required" });
-      expect(launched).toEqual([]);
+      expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+      expect(launched).toHaveLength(1);
+      expect(launched[0]).toMatchObject({
+        projectId,
+        modelSelection,
+        runtimeMode: "auto-accept-edits",
+      });
+      expect(launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
 
       const escalated = yield* handle({ title: "Fix", projectId, runtimeMode: "full-access" });
       expect(escalated.at(-1)?.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
 
       const untargeted = yield* handle({ title: "Fix" });
-      expect(untargeted.at(-1)?.result).toMatchObject({ code: "thread_credential_required" });
-      expect(launched).toHaveLength(0);
+      expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
+      expect(launched).toHaveLength(1);
 
-      // Even a separately approved full client has no Scient calling-thread identity.
-      const fullClient = projectLaunchHarness({ runtimeModeCeiling: "full-access", launched });
+      const fullClient = projectLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        defaultRuntimeMode: "auto-accept-edits",
+        launched,
+      });
       const fullClientToolkit = yield* ProjectToolkit.pipe(
         Effect.provide(
           McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
@@ -478,8 +504,9 @@ it.effect(
       const fullClientResult = yield* fullClientToolkit
         .handle("scient_thread_launch", { title: "Fix", projectId })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(fullClient.dependencies));
-      expect(fullClientResult.at(-1)?.result).toMatchObject({ code: "thread_credential_required" });
-      expect(launched).toEqual([]);
+      expect(fullClientResult.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+      expect(launched).toHaveLength(2);
+      expect(launched[1]?.runtimeMode).toBe("auto-accept-edits");
     }),
 );
 

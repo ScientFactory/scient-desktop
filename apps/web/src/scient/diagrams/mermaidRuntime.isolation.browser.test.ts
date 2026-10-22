@@ -1,77 +1,45 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const frame = vi.hoisted(() => ({ render: vi.fn() }));
-vi.mock("./isolatedMermaid", () => ({ sharedIsolatedMermaid: async () => frame }));
-const page = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
-vi.mock("mermaid", () => ({ default: page }));
+const renderer = vi.hoisted(() => ({ render: vi.fn() }));
+vi.mock("../../components/chat/MermaidDiagram", () => ({ renderMermaidSvg: renderer.render }));
 
-const drawn = (body: string) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" id="d"><g id="n">${body}</g></svg>`;
+function setup() {
+  renderer.render.mockReset();
+}
 
-describe("Mermaid runtime isolation", () => {
-  async function _setupFixture0(_fixture: _Fixture) {
-    vi.resetModules();
-    frame.render.mockReset();
-    page.render.mockReset();
-  }
-
-  it("draws chat diagrams in the frame and strips what they would load", async () => {
-    await using _fixture = _createFixture();
-    await _setupFixture0(_fixture);
-
-    frame.render.mockResolvedValue({
-      svg: drawn('<image href="https://icons.example/a.png"/><text>A</text>'),
-      diagramType: "sequence",
-      refused: 2,
+describe("Scient uses the upstream renderer", () => {
+  it("retains blocked-resource notices even when Pele omits the resource before emitting SVG", async () => {
+    setup();
+    renderer.render.mockResolvedValue({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>A</text></svg>',
+      diagramType: "flowchart-v2",
+      resources: ["https://icons.example/a.png"],
     });
     const { renderMermaidDiagram } = await import("./mermaidRuntime");
-    const rendered = await renderMermaidDiagram("sequenceDiagram\nA->>A: hi", "dark");
-
-    expect(frame.render).toHaveBeenCalledWith("sequenceDiagram\nA->>A: hi", {
-      theme: "dark",
-      awaitRefusals: false,
-    });
-    expect(page.render).not.toHaveBeenCalled();
-    expect(rendered.svg).not.toContain("icons.example");
-    expect(rendered.svg).toContain("<text>A</text>");
-    expect(rendered.blocked).toEqual(["https://icons.example/a.png"]);
+    const source = 'flowchart LR\nA@{ img: "https://icons.example/a.png", label: "A", h: 40 }';
+    const result = await renderMermaidDiagram(source, "dark");
+    expect(renderer.render).toHaveBeenCalledExactlyOnceWith(source);
+    expect(result.blocked).toEqual(["https://icons.example/a.png"]);
+    expect(result.svg).not.toContain("icons.example");
+    expect(result.svg).toContain("<text>A</text>");
   });
 
-  it("reports nothing blocked for an ordinary diagram and caches each renderer apart", async () => {
-    await using _fixture = _createFixture();
-    await _setupFixture0(_fixture);
-
-    frame.render.mockResolvedValue({
-      svg: drawn("<text>A</text>"),
-      diagramType: "flowchart-v2",
-      refused: 0,
-    });
-    page.render.mockResolvedValue({ svg: drawn("<text>A</text>"), diagramType: "flowchart-v2" });
+  it("deduplicates concurrent requests, rebases instances and never caches failures", async () => {
+    setup();
     const { renderMermaidDiagram } = await import("./mermaidRuntime");
-
-    const first = await renderMermaidDiagram("flowchart LR\nA", "light");
-    await renderMermaidDiagram("flowchart LR\nA", "light");
-    await renderMermaidDiagram("flowchart LR\nA", "light", "page");
-
-    expect(first.blocked).toBeUndefined();
-    expect(frame.render).toHaveBeenCalledTimes(1);
-    expect(page.render).toHaveBeenCalledTimes(1);
+    const source = "flowchart LR\nCache --> Retry";
+    renderer.render.mockRejectedValueOnce(new Error("Chunk unavailable"));
+    await expect(renderMermaidDiagram(source, "light")).rejects.toThrow("Chunk unavailable");
+    renderer.render.mockResolvedValue({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><g id="node"/></svg>',
+      diagramType: "flowchart-v2",
+    });
+    const copies = await Promise.all(
+      Array.from({ length: 12 }, () => renderMermaidDiagram(source, "light")),
+    );
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+    expect(new Set(copies.map(({ svg }) => svg)).size).toBe(12);
+    await renderMermaidDiagram(source, "dark");
+    expect(renderer.render).toHaveBeenCalledTimes(3);
   });
 });
-
-function _createFixture() {
-  const stack = new AsyncDisposableStack();
-  const cleanup = new AsyncDisposableStack();
-  return {
-    stack,
-    cleanup,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
-    },
-  };
-}
-type _Fixture = ReturnType<typeof _createFixture>;

@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import "../../index.css";
 
 import { CSS } from "@dnd-kit/utilities";
@@ -143,6 +143,9 @@ async function renderView(
       renderShelfHeader={() => <li style={{ height: 32, listStyle: "none" }} />}
       onSettleThread={() => {}}
       onReorderSections={onReorderSections}
+      onInteractionChange={(active) => {
+        _fixture.interacting = active;
+      }}
       onSectionMenu={() => {}}
       onNewThreadInSection={() => {}}
       renamingSectionId={options.renaming === undefined ? null : groupKey(options.renaming)}
@@ -152,9 +155,6 @@ async function renderView(
     />,
   );
 }
-
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
 /** A header by section id (or General's id). */
 const headerOf = (id: string) =>
@@ -166,28 +166,44 @@ const headerOf = (id: string) =>
 const layoutTops = () =>
   [GENERAL_SECTION_GROUP_ID, "a", "b", "c"].map((groupId) => headerOf(groupId).offsetTop);
 
-function pointer(type: string, target: EventTarget, clientX: number, clientY: number) {
-  target.dispatchEvent(
-    new PointerEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      clientX,
-      clientY,
-      isPrimary: true,
-      pointerId: 1,
-      button: 0,
-      buttons: type === "pointerup" ? 0 : 1,
-    }),
-  );
+async function pointer(
+  _fixture: _Fixture,
+  type: string,
+  target: EventTarget,
+  clientX: number,
+  clientY: number,
+) {
+  if (type === "pointerdown" && target instanceof HTMLElement) {
+    _fixture.pickup = { y: clientY };
+  }
+  await act(() => {
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        isPrimary: true,
+        pointerId: 1,
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+      }),
+    );
+  });
+  const pickup = _fixture.pickup;
+  if (type === "pointermove" && pickup && Math.abs(clientY - pickup.y) > 6) {
+    await vi.waitFor(() => {
+      expect(_fixture.interacting).toBe(true);
+    });
+  }
+  if (type === "pointerup") _fixture.pickup = undefined;
 }
-
 it("drags a section as a block without hiding rows or reflowing the list", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const onReorderSections = vi.fn();
   await renderView(_fixture, onReorderSections);
-  await nextFrame();
 
   const rowCount = document.querySelectorAll("[data-row]").length;
   expect(rowCount).toBe(8);
@@ -199,12 +215,11 @@ it("drags a section as a block without hiding rows or reflowing the list", async
   const start = handle.getBoundingClientRect();
   const x = start.left + 20;
   let y = start.top + start.height / 2;
-  pointer("pointerdown", handle, x, y);
+  await pointer(_fixture, "pointerdown", handle, x, y);
   const aMiddle = headerOf("a").getBoundingClientRect().top + (32 + 3 * 48) / 2;
   while (y > aMiddle - 10) {
     y -= 12;
-    pointer("pointermove", document, x, y);
-    await nextFrame();
+    await pointer(_fixture, "pointermove", document, x, y);
   }
 
   // Nothing unmounts and nothing reflows: blocks only slide.
@@ -219,11 +234,12 @@ it("drags a section as a block without hiding rows or reflowing the list", async
   const overlayRect = overlay!.getBoundingClientRect();
   expect(Math.abs(overlayRect.top + overlayRect.height / 2 - y)).toBeLessThan(20);
   // C's block slides to its landing slot: where A's header was, right after General.
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  expect(Math.round(headerOf("c").getBoundingClientRect().top)).toBe(Math.round(aTopBefore));
+  await vi.waitFor(() =>
+    expect(Math.round(headerOf("c").getBoundingClientRect().top)).toBe(Math.round(aTopBefore)),
+  );
 
-  pointer("pointerup", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointerup", document, x, y);
+
   expect(onReorderSections).toHaveBeenCalledWith(
     [GENERAL_SECTION_GROUP_ID, "c", "a", "b"].map(groupKey),
   );
@@ -236,21 +252,20 @@ it("still files a dragged thread into the section it is dropped in", async () =>
 
   moveThreadsToSection.mockClear();
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
   const x = start.left + 20;
   let y = start.top + start.height / 2;
-  pointer("pointerdown", row, x, y);
+  await pointer(_fixture, "pointerdown", row, x, y);
   // Carry it down into B, between b1 and b2.
   const target = document.querySelector<HTMLElement>('[data-row="b2"]')!.getBoundingClientRect();
   while (y < target.top + 4) {
     y += 12;
-    pointer("pointermove", document, x, y);
-    await nextFrame();
+    await pointer(_fixture, "pointermove", document, x, y);
   }
-  pointer("pointerup", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointerup", document, x, y);
+
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "g1" })],
     into("b"),
@@ -264,23 +279,22 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
   moveThreadsToSection.mockClear();
   // A is collapsed, so only its header is left to drop on.
   await renderView(_fixture, vi.fn(), { collapsed: ["a"] });
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
   const start = row.getBoundingClientRect();
   const x = start.left + 20;
   let y = start.top + start.height / 2;
-  pointer("pointerdown", row, x, y);
+  await pointer(_fixture, "pointerdown", row, x, y);
   const header = headerOf("a").getBoundingClientRect();
   while (y > header.top + header.height * 0.75) {
     y -= 12;
-    pointer("pointermove", document, x, y);
-    await nextFrame();
+    await pointer(_fixture, "pointermove", document, x, y);
   }
   // The header stays put and highlights: the drop goes into A, not the
   // section above it.
   expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
-  pointer("pointerup", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointerup", document, x, y);
+
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "b2" })],
     into("a"),
@@ -308,7 +322,7 @@ it.each([
     );
     reorderActiveThread.mockClear();
     await renderView(_fixture, vi.fn());
-    await nextFrame();
+
     const row = document.querySelector<HTMLElement>(`[data-row="${source}"]`)!;
     const start = row.getBoundingClientRect();
     const last = document.querySelector<HTMLElement>('[data-row="a3"]')!;
@@ -316,18 +330,23 @@ it.each([
     const x = start.left + 20;
     // Placement follows the pointer regardless of where the row was picked up.
     const pickupY = pickup === "top" ? start.top + 4 : start.bottom - 4;
-    pointer("pointerdown", row, x, pickupY);
+    await pointer(_fixture, "pointerdown", row, x, pickupY);
     const y = target.bottom - 4;
-    pointer("pointermove", document, x, pickupY - 8);
-    await nextFrame();
-    pointer("pointermove", document, x, y);
-    await nextFrame();
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await pointer(_fixture, "pointermove", document, x, pickupY - 8);
+
+    await pointer(_fixture, "pointermove", document, x, y);
+
+    const landingTop =
+      last.getBoundingClientRect().top -
+      new DOMMatrixReadOnly(getComputedStyle(last).transform).m42 +
+      new DOMMatrixReadOnly(last.style.transform).m42;
+    await vi.waitFor(() => expect(last.getBoundingClientRect().top).toBeCloseTo(landingTop, 0));
     const previewTop = last.getBoundingClientRect().top;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    _fixture.cleanup.use(fakeTimers());
+    await act(() => vi.advanceTimersByTimeAsync(250));
     expect(last.getBoundingClientRect().top).toBeCloseTo(previewTop, 0);
-    pointer("pointerup", document, x, y);
-    await nextFrame();
+    await pointer(_fixture, "pointerup", document, x, y);
+
     expect(moveThreadsToSection).toHaveBeenCalledWith(
       [expect.objectContaining({ threadId: source })],
       into("a"),
@@ -345,7 +364,6 @@ it.each([
     ];
     expect(ref.threadId).toBe(source);
     expect(key > "m").toBe(true);
-    await nextFrame();
   },
 );
 
@@ -356,20 +374,20 @@ it("changes insertion side within the same row before committing", async () => {
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
   const start = row.getBoundingClientRect();
   const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 12);
-  await nextFrame();
-  pointer("pointermove", document, x, target.top + 4);
-  await nextFrame();
-  pointer("pointermove", document, x, target.bottom - 4);
-  await nextFrame();
-  pointer("pointerup", document, x, target.bottom - 4);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
+  await pointer(_fixture, "pointermove", document, x, target.top + 4);
+
+  await pointer(_fixture, "pointermove", document, x, target.bottom - 4);
+
+  await pointer(_fixture, "pointerup", document, x, target.bottom - 4);
+
   expect(reorderActiveThread).toHaveBeenCalledTimes(1);
   const [, key] = reorderActiveThread.mock.calls[0]! as unknown as [unknown, string];
   expect(key > "g" && key < "m").toBe(true);
@@ -382,18 +400,18 @@ it("reorders to the end within a section without changing membership", async () 
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="a1"]')!;
   const start = row.getBoundingClientRect();
   const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 12);
-  await nextFrame();
-  pointer("pointermove", document, x, target.bottom - 4);
-  await nextFrame();
-  pointer("pointerup", document, x, target.bottom - 4);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
+  await pointer(_fixture, "pointermove", document, x, target.bottom - 4);
+
+  await pointer(_fixture, "pointerup", document, x, target.bottom - 4);
+
   expect(moveThreadsToSection).not.toHaveBeenCalled();
   expect(reorderActiveThread).toHaveBeenCalledTimes(1);
   const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
@@ -411,20 +429,22 @@ it("cancels an end-slot preview without writing membership or order", async () =
   moveThreadsToSection.mockClear();
   reorderActiveThread.mockClear();
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
   const start = row.getBoundingClientRect();
   const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 12);
-  await nextFrame();
-  pointer("pointermove", document, x, target.bottom - 4);
-  await nextFrame();
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
-  );
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
+  await pointer(_fixture, "pointermove", document, x, target.bottom - 4);
+
+  await act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+    );
+  });
+
   expect(moveThreadsToSection).not.toHaveBeenCalled();
   expect(reorderActiveThread).not.toHaveBeenCalled();
 });
@@ -434,24 +454,26 @@ it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", 
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + grab);
-  pointer("pointermove", document, x, start.top + grab + 8);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + grab);
+  await pointer(_fixture, "pointermove", document, x, start.top + grab + 8);
+
   for (const offset of [150, 241, 387, 180]) {
     const y = _fixture.host!.getBoundingClientRect().top + offset;
-    pointer("pointermove", document, x + 40, y);
-    await nextFrame();
+    await pointer(_fixture, "pointermove", document, x + 40, y);
+
     expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
     expect(Math.abs(row.getBoundingClientRect().left - start.left)).toBeLessThan(1);
   }
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
-  );
-  await nextFrame();
+  await act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+    );
+  });
+
   await vi.waitFor(() =>
     expect(Math.abs(row.getBoundingClientRect().top - start.top)).toBeLessThan(1),
   );
@@ -465,36 +487,40 @@ it("switches from a section overlay to direct conversation tracking", async () =
 
   const onReorderSections = vi.fn();
   await renderView(_fixture, onReorderSections);
-  await nextFrame();
+
   const handle = headerOf("a").querySelector<HTMLElement>("button[aria-expanded]")!;
   const header = handle.getBoundingClientRect();
   const x = header.left + 20;
   const headerY = header.top + header.height / 2;
-  pointer("pointerdown", handle, x, headerY);
-  pointer("pointermove", document, x, headerY + 12);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", handle, x, headerY);
+  await pointer(_fixture, "pointermove", document, x, headerY + 12);
+
   expect(
     [...document.querySelectorAll<HTMLElement>("div")].some(
       (node) => getComputedStyle(node).position === "fixed" && node.textContent?.trim() === "A",
     ),
   ).toBe(true);
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
-  );
-  await nextFrame();
+  await act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+    );
+  });
+
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 12);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
   const y = _fixture.host!.getBoundingClientRect().top + 180;
-  pointer("pointermove", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointermove", document, x, y);
+
   expect(Math.abs(row.getBoundingClientRect().top + 4 - y)).toBeLessThan(1);
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
-  );
-  await nextFrame();
+  await act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+    );
+  });
+
   expect(onReorderSections).not.toHaveBeenCalled();
   expect(reorderActiveThread).not.toHaveBeenCalled();
 });
@@ -506,27 +532,29 @@ it("keeps pointer attachment when its scrollable list scrolls", async () => {
   await renderView(_fixture, vi.fn());
   _fixture.host!.style.height = "300px";
   _fixture.host!.style.overflow = "auto";
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
   const start = row.getBoundingClientRect();
   const grab = 24;
   const x = start.left + 20;
   const y = _fixture.host!.getBoundingClientRect().top + 180;
-  pointer("pointerdown", row, x, start.top + grab);
-  pointer("pointermove", document, x, start.top + grab + 8);
-  await nextFrame();
-  pointer("pointermove", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + grab);
+  await pointer(_fixture, "pointermove", document, x, start.top + grab + 8);
+
+  await pointer(_fixture, "pointermove", document, x, y);
+
   expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
   _fixture.host!.scrollTop = 60;
   await vi.waitFor(() => {
     expect(_fixture.host!.scrollTop).toBe(60);
     expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
   });
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
-  );
-  await nextFrame();
+  await act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+    );
+  });
+
   expect(reorderActiveThread).not.toHaveBeenCalled();
   expect(moveThreadsToSection).not.toHaveBeenCalled();
 });
@@ -536,7 +564,6 @@ it("sets section names 4px low, nearer their own threads, without growing the he
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await renderView(_fixture, () => {});
-  await nextFrame();
 
   for (const groupId of [GENERAL_SECTION_GROUP_ID, "a"]) {
     const header = headerOf(groupId).getBoundingClientRect();
@@ -553,7 +580,7 @@ it("points the chevron where the section is, showing it on hover while open", as
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await renderView(_fixture, () => {}, { collapsed: ["b"] });
-  await nextFrame();
+
   const chevronOf = (groupId: string) =>
     headerOf(groupId).querySelector<SVGElement>("button[aria-expanded] svg")!;
   const actionsOf = (groupId: string) =>
@@ -574,8 +601,7 @@ it("points the chevron where the section is, showing it on hover while open", as
   expect(rotated(chevronOf("a"))).toBe(true);
   expect(opacity(chevronOf("a"))).toBe("0");
   await userEvent.hover(headerOf("a"));
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  expect(opacity(chevronOf("a"))).toBe("1");
+  await vi.waitFor(() => expect(opacity(chevronOf("a"))).toBe("1"));
 });
 
 it("drops the rule entirely when less than 24px would be left beside the name", async () => {
@@ -585,7 +611,7 @@ it("drops the rule entirely when less than 24px would be left beside the name", 
   await renderView(_fixture, () => {}, {
     names: ["A", "A section name long enough to fill the whole header row", "C"],
   });
-  await nextFrame();
+
   const ruleOf = (groupId: string) => {
     const button = headerOf(groupId).querySelector<HTMLElement>("button[aria-expanded]")!;
     const rule = button.lastElementChild!.getBoundingClientRect();
@@ -605,9 +631,14 @@ it("capitalizes a section name as it is typed, keeping the caret in place", asyn
 
   const onRename = vi.fn();
   await renderView(_fixture, () => {}, { renaming: "a", onRename });
-  await nextFrame();
+
   const input = document.querySelector<HTMLInputElement>('input[aria-label="Section name"]')!;
   // The field opens with the name selected; typing replaces it.
+  await vi.waitFor(() => {
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+  });
   await userEvent.keyboard("research notes");
   expect(input.value).toBe("Research notes");
   expect(input.selectionStart).toBe("Research notes".length);
@@ -620,33 +651,33 @@ it("slides a header as soon as the pointer crosses its midpoint and commits the 
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await renderView(_fixture, vi.fn());
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
   const start = row.getBoundingClientRect();
   const header = headerOf("a").getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 16);
-  await nextFrame();
-  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
-  await nextFrame();
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 16);
+
+  await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 + 2);
+
   expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
-  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 - 2);
   await vi.waitFor(() =>
     expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
   );
-  await nextFrame();
+
   expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
-  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
+  await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 + 2);
   await vi.waitFor(() =>
     expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0),
   );
-  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 - 2);
   await vi.waitFor(() =>
     expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
   );
-  pointer("pointerup", document, x, header.top + header.height / 2 - 2);
-  await nextFrame();
+  await pointer(_fixture, "pointerup", document, x, header.top + header.height / 2 - 2);
+
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "b2" })],
     null,
@@ -660,25 +691,25 @@ it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, g
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
     await renderView(_fixture, vi.fn());
-    await nextFrame();
+
     document.querySelector<HTMLElement>('[data-row="g2"]')!.style.height = `${height}px`;
-    await nextFrame();
+
     const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
     const start = row.getBoundingClientRect();
     const header = headerOf("a").getBoundingClientRect();
     const x = start.left + 20;
     const midpoint = header.top + header.height / 2;
-    pointer("pointerdown", row, x, start.top + grab);
-    pointer("pointermove", document, x, start.top + grab - 8);
-    await nextFrame();
-    pointer("pointermove", document, x, midpoint + 2);
-    await nextFrame();
+    await pointer(_fixture, "pointerdown", row, x, start.top + grab);
+    await pointer(_fixture, "pointermove", document, x, start.top + grab - 8);
+
+    await pointer(_fixture, "pointermove", document, x, midpoint + 2);
+
     expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
-    pointer("pointermove", document, x, midpoint - 2);
+    await pointer(_fixture, "pointermove", document, x, midpoint - 2);
     await vi.waitFor(() =>
       expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
     );
-    await nextFrame();
+
     expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
     expect(Math.abs(row.getBoundingClientRect().top + grab - (midpoint - 2))).toBeLessThan(1);
     await userEvent.keyboard("{Escape}");
@@ -701,17 +732,17 @@ it.each([false, true])(
         }),
     );
     await renderView(_fixture, vi.fn());
-    await nextFrame();
+
     const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
     const start = row.getBoundingClientRect();
     const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
     const x = start.left + 20;
-    pointer("pointerdown", row, x, start.top + 4);
-    pointer("pointermove", document, x, start.top + 12);
-    await nextFrame();
-    pointer("pointermove", document, x, target.bottom - 4);
-    await nextFrame();
-    pointer("pointerup", document, x, target.bottom - 4);
+    await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+    await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
+    await pointer(_fixture, "pointermove", document, x, target.bottom - 4);
+
+    await pointer(_fixture, "pointerup", document, x, target.bottom - 4);
     await vi.waitFor(() =>
       expect(moveThreadsToSection).toHaveBeenCalledWith(
         [expect.objectContaining({ threadId: "b2" })],
@@ -741,7 +772,7 @@ it("refuses to drop a thread into another environment's section", async () => {
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await renderView(_fixture, vi.fn(), { foreignThread: true });
-  await nextFrame();
+
   // Its section id names a section only on the test environment: it shows in General.
   const general = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
     (node) => node.dataset.row,
@@ -751,17 +782,16 @@ it("refuses to drop a thread into another environment's section", async () => {
   const start = row.getBoundingClientRect();
   const x = start.left + 20;
   let y = start.top + start.height / 2;
-  pointer("pointerdown", row, x, y);
+  await pointer(_fixture, "pointerdown", row, x, y);
   const target = document.querySelector<HTMLElement>('[data-row="b2"]')!.getBoundingClientRect();
   while (y < target.top + 4) {
     y += 12;
-    pointer("pointermove", document, x, y);
-    await nextFrame();
+    await pointer(_fixture, "pointermove", document, x, y);
   }
   // B never reads as a destination.
   expect(headerOf("b").firstElementChild!.className).not.toContain("text-primary");
-  pointer("pointerup", document, x, y);
-  await nextFrame();
+  await pointer(_fixture, "pointerup", document, x, y);
+
   expect(moveThreadsToSection).not.toHaveBeenCalled();
   expect(reorderActiveThread).not.toHaveBeenCalled();
 });
@@ -774,7 +804,7 @@ it("marks each section's machine with its icon when sections from several machin
     environmentMachines: new Map([["env", { label: "Lab server", kind: "server" }]]),
     names: ["A long section name that fills the narrow sidebar", "B", "C"],
   });
-  await nextFrame();
+
   const machine = headerOf("a").querySelector('[role="img"][aria-label="Lab server"]');
   expect(machine).not.toBeNull();
   // The icon replaces the name, so the section's name keeps the width.
@@ -790,17 +820,17 @@ it("keeps a manual drop in the promoted display without saving unrelated automat
 
   const onManualPlacement = vi.fn();
   await renderView(_fixture, vi.fn(), { promoted: true, onManualPlacement });
-  await nextFrame();
+
   const row = document.querySelector<HTMLElement>('[data-row="a2"]')!;
   const start = row.getBoundingClientRect();
   const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
   const x = start.left + 20;
-  pointer("pointerdown", row, x, start.top + 4);
-  pointer("pointermove", document, x, start.top + 12);
-  await nextFrame();
-  pointer("pointermove", document, x, target.bottom - 4);
-  await nextFrame();
-  pointer("pointerup", document, x, target.bottom - 4);
+  await pointer(_fixture, "pointerdown", row, x, start.top + 4);
+  await pointer(_fixture, "pointermove", document, x, start.top + 12);
+
+  await pointer(_fixture, "pointermove", document, x, target.bottom - 4);
+
+  await pointer(_fixture, "pointerup", document, x, target.bottom - 4);
   await vi.waitFor(() => expect(onManualPlacement).toHaveBeenCalledTimes(1));
   expect(onManualPlacement.mock.calls[0]!.slice(0, 3)).toEqual([
     groupKey("a"),
@@ -822,6 +852,8 @@ function _createFixture() {
   return {
     host: undefined! as HTMLDivElement | undefined,
     stack,
+    pickup: undefined as { y: number } | undefined,
+    interacting: false,
     cleanup,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {

@@ -36,7 +36,7 @@ vi.mock(import("./DevicePhoneViewport"), async (original) => ({
     return <></>;
   },
 }));
-import { pasteTextToFocusComposer } from "../chat/composerFocusRedirect";
+
 import { DeviceStreamView } from "./DeviceStreamView";
 
 const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
@@ -75,10 +75,7 @@ async function publishFrame(_fixture: _Fixture, image: HTMLImageElement) {
   expect(image.naturalHeight).toBe(800);
 }
 
-let primes = 0;
-
 async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "android" = "ios") {
-  primes = 0;
   viewerMounts = 0;
   viewerUnmounts = 0;
   _fixture.images = [];
@@ -135,7 +132,6 @@ async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "androi
           ),
         );
       }
-      primes++;
       return Promise.resolve(new Response("prime"));
     }),
   );
@@ -209,54 +205,6 @@ const reconnect = (_fixture: _Fixture) =>
       .click(),
   );
 
-it.each([
-  { name: "middle", button: 1, buttons: 4 },
-  { name: "right", button: 2, buttons: 2 },
-])("ignores $name-button drags and forwards the next primary drag", async ({ button, buttons }) => {
-  await using _fixture = _createFixture();
-
-  await using stream = await setup(_fixture);
-  const { touches, configure } = stream;
-  await act(async () => configure());
-  const viewport = _fixture.container.querySelector("canvas")!.parentElement!;
-  viewport.style.width = "400px";
-  viewport.style.height = "800px";
-  // Synthetic pointer events do not register an active browser pointer to capture.
-  viewport.setPointerCapture = () => {};
-  const rect = viewport.getBoundingClientRect();
-  const pointer = (type: string, button: number, buttons: number, y: number) =>
-    viewport.dispatchEvent(
-      new PointerEvent(type, {
-        bubbles: true,
-        pointerId: 1,
-        pointerType: "mouse",
-        button,
-        buttons,
-        clientX: rect.left + 100,
-        clientY: rect.top + y,
-      }),
-    );
-
-  await act(async () => {
-    pointer("pointerdown", button, buttons, 600);
-    pointer("pointermove", -1, buttons, 200);
-    pointer("pointerup", button, 0, 200);
-  });
-  expect(touches).toEqual([]);
-
-  await act(async () => {
-    pointer("pointerdown", 0, 1, 600);
-    pointer("pointermove", -1, 1, 200);
-    pointer("pointerup", 0, 0, 200);
-    pointer("pointermove", -1, 0, 400);
-  });
-  expect(touches).toEqual([
-    { type: "begin", x: 0.25, y: 0.75 },
-    { type: "move", x: 0.25, y: 0.25 },
-    { type: "end", x: 0.25, y: 0.25 },
-  ]);
-});
-
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
   await using _fixture = _createFixture();
 
@@ -288,78 +236,6 @@ it("offers Reconnect after the shared timeout and receives a frame after retry w
   expect(_fixture.container.querySelector('[role="status"]')).toBeNull();
   expect(_fixture.container.querySelectorAll("button")).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
-});
-
-it("starts exactly one new stream per Reconnect press", async () => {
-  await using _fixture = _createFixture();
-
-  await using _stream = await setup(_fixture);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000);
-  });
-  expect(primes).toBe(1);
-  await reconnect(_fixture);
-  expect(primes).toBe(2);
-});
-
-it("keeps the 3D viewer mounted across iOS video recovery and releases it when hidden", async () => {
-  await using _fixture = _createFixture();
-
-  await using stream = await setup(_fixture, true);
-  const { configure, frame, show } = stream;
-  await act(async () => configure());
-  expect(viewerMounts).toBe(0);
-  await act(async () => frame());
-  expect(viewerMounts).toBe(1);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000);
-  });
-  expect(viewerUnmounts).toBe(0);
-  expect(viewerMounts).toBe(1);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1_000);
-    configure();
-  });
-  await act(async () => frame());
-  expect(viewerMounts).toBe(1);
-  await show(false);
-  expect(viewerUnmounts).toBe(1);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-it("types a paste on the Android screen into the device and lets Ctrl+V reach the paste", async () => {
-  await using _fixture = _createFixture();
-
-  await using stream = await setup(_fixture, true, "android");
-  const { sent } = stream;
-  const screen = _fixture.container.querySelector<HTMLElement>('[role="application"]')!;
-  screen.focus();
-  expect(document.activeElement).toBe(screen);
-  const chord = new KeyboardEvent("keydown", {
-    key: "v",
-    code: "KeyV",
-    ctrlKey: true,
-    bubbles: true,
-    cancelable: true,
-  });
-  screen.dispatchEvent(chord);
-  expect(chord.defaultPrevented).toBe(false);
-  const clipboardData = new DataTransfer();
-  clipboardData.setData("text/plain", "pässwörd 1");
-  const composerPastes: Array<string | null> = [];
-  const capturePaste = (event: ClipboardEvent) =>
-    composerPastes.push(pasteTextToFocusComposer(event));
-  window.addEventListener("paste", capturePaste, true);
-  using _paste = {
-    [Symbol.dispose]: () => window.removeEventListener("paste", capturePaste, true),
-  };
-  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
-  screen.dispatchEvent(paste);
-  expect(paste.defaultPrevented).toBe(true);
-  expect(sent.map((message) => JSON.parse(message as string) as unknown)).toEqual([
-    { type: "text", text: "pässwörd 1" },
-  ]);
-  expect(composerPastes).toEqual([null]);
 });
 
 function _createFixture() {

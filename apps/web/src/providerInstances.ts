@@ -283,17 +283,3 @@ export function resolveDefaultModelSettingsSelection(
     stored !== null && providers.length > 0 && resolved?.instanceId !== stored.instanceId;
   return { selection: storedUnavailable ? stored : resolved, storedUnavailable };
 }
-
-/**
- * Resolve an open model-selection routing key back to its driver kind.
- * Custom instance ids are not themselves driver-kind slugs, but the composer
- * still needs the owning driver kind for capabilities, options, icons, and
- * turn dispatch metadata.
- */
-export function resolveProviderDriverKindForInstanceSelection(
-  entries: ReadonlyArray<ProviderInstanceEntry>,
-  _providers: ReadonlyArray<ServerProvider>,
-  selection: ProviderInstanceId | ProviderDriverKind | null | undefined,
-): ProviderDriverKind | undefined {
-  return entries.find((entry) => entry.instanceId === selection)?.driverKind;
-}

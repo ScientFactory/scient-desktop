@@ -3,6 +3,7 @@ import {
   type Screen,
   stubGlobal as _fixtureStubGlobal,
   act,
+  fakeTimers,
 } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
@@ -273,12 +274,13 @@ describe("mounted controlled document host", () => {
       });
     });
     expect(mocks.renderHtmlPdf).toHaveBeenCalledTimes(1);
+    using _clock = fakeTimers();
     await act(async () => {
       await _fixture.root0!.unmount();
     });
     _fixture.root0 = undefined;
     // IdleTTL zero finalizes the atom when React releases its lifetime mount.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await act(() => vi.advanceTimersByTimeAsync(0));
     await act(async () => {
       finish!(artifact);
     });

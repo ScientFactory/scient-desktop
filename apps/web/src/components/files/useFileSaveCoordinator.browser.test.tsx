@@ -101,13 +101,14 @@ const props: FileSaveOptions = {
 };
 const key = projectFileOperationKey(props);
 async function setup() {
-  const timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const timers = fakeTimers();
   runtime.canWrite = true;
   runtime.projectedSource = "A";
   runtime.pending = false;
   runtime.kind = "transient";
   runtime.read = async () => ({ revision: "rA" });
   runtime.resolve = async (review) => ({ revision: review.currentRevision });
+  const sessionKeys = new Set([key]);
   let screen: Awaited<ReturnType<typeof render>> | null = null;
   let latestActions: FileSaveSessionActions | null = null;
   function Surface(input: FileSaveOptions) {
@@ -124,6 +125,7 @@ async function setup() {
   );
   const actions = () => latestActions!;
   async function mount(input = props) {
+    sessionKeys.add(projectFileOperationKey(input));
     screen = await render(ui(input), { router: false });
     await act(async () => {
       expect(await actions().ready()).toBe(true);
@@ -140,13 +142,22 @@ async function setup() {
     actions,
     mount,
     reconstruct,
-    rerender: (input: FileSaveOptions) => screen!.rerender(ui(input)),
+    rerender: (input: FileSaveOptions) => {
+      sessionKeys.add(projectFileOperationKey(input));
+      return screen!.rerender(ui(input));
+    },
+    unmount: async () => {
+      await screen?.[Symbol.asyncDispose]();
+      screen = null;
+    },
     async [Symbol.asyncDispose]() {
       try {
         await screen?.[Symbol.asyncDispose]();
         clearWorkspaceFileSessionsForTests();
-        const copy = await indexedDbMarkdownDrafts.read(key);
-        if (copy) await indexedDbMarkdownDrafts.replace(key, copy.token, undefined);
+        for (const sessionKey of sessionKeys) {
+          const copy = await indexedDbMarkdownDrafts.read(sessionKey);
+          if (copy) await indexedDbMarkdownDrafts.replace(sessionKey, copy.token, undefined);
+        }
       } finally {
         timers[Symbol.dispose]();
       }
@@ -323,4 +334,63 @@ it.each([
     expect(await actions().flush()).toBe(true);
   });
   expect(writes).toEqual(["old file edit", "new file edit"]);
+});
+
+it.each([false, true])(
+  "retains input when permission is revoked before React updates, unmount=%s",
+  async (unmount) => {
+    await using fixture = await setup();
+    const { actions, mount } = fixture;
+    const write = vi.fn(async () => AsyncResult.success({ revision: "rB" }));
+    runtime.write = write;
+    await mount();
+    await act(async () => {
+      runtime.projectedSource = "B";
+      actions().change("B");
+      runtime.canWrite = false;
+      expect(await actions().flush()).toBe(false);
+    });
+    if (unmount) await fixture.unmount();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(write).not.toHaveBeenCalled();
+    expect(runtime.pending).toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({ draftSource: "B" });
+    runtime.canWrite = true;
+    if (unmount) {
+      runtime.projectedSource = "A";
+      await fixture.reconstruct();
+      expect(runtime.projectedSource).toBe("B");
+    }
+    await act(async () => {
+      expect(await actions().flush()).toBe(true);
+    });
+    expect(write).toHaveBeenCalledOnce();
+    expect(runtime.pending).toBe(false);
+  },
+);
+
+it("flushes on unmount and ignores the released editor callback", async () => {
+  await using fixture = await setup();
+  const completed = Promise.withResolvers<void>();
+  const writes = vi.fn(async (_request: Request) => AsyncResult.success({ revision: "rB" }));
+  runtime.write = writes;
+  await fixture.mount({
+    ...props,
+    onPendingChange: (_path, pending) => {
+      runtime.pending = pending;
+      if (!pending) completed.resolve();
+    },
+  });
+  const retired = fixture.actions().change;
+  await act(async () => {
+    runtime.projectedSource = "B";
+    retired("B");
+  });
+  await fixture.unmount();
+  retired("stale editor contents");
+  await completed.promise;
+  await fixture.mount({ ...props, initialSource: "B", revision: "rB" });
+  await act(async () => expect(await fixture.actions().flush()).toBe(true));
+  expect(writes).toHaveBeenCalledOnce();
+  expect(writes.mock.calls[0]?.[0].input.contents).toBe("B");
 });

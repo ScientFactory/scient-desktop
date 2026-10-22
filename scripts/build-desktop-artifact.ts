@@ -50,11 +50,16 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
+import { windowsSystemTar } from "./lib/windows-tar.ts";
 import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
-import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
+import {
+  analyzeWindowsPayloadInventory,
+  windowsNativeIgnoreGlobs,
+  WINDOWS_VOICE_FILES,
+} from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -1070,6 +1075,119 @@ interface StagePackageJson {
     readonly electron: string;
   };
 }
+
+export const WINDOWS_NATIVE_RESOURCE_FILES = [
+  "file-exchange/scient-file-publication.exe",
+  "file-exchange/publication-artifact.json",
+  ...WINDOWS_VOICE_FILES.map((file) => `whisper-runtime/${file}`),
+] as const;
+
+class WindowsNativeResourceError extends Schema.TaggedError<WindowsNativeResourceError>()(
+  "WindowsNativeResourceError",
+  { message: Schema.String },
+) {}
+
+const WindowsNativeResourceReceipt = Schema.fromJsonString(
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    platform: Schema.Literal("win32"),
+    arch: Schema.Literals(["x64", "arm64"]),
+    sourceSha: Schema.String,
+    files: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+
+/** Consume exact-source target-native prerequisites; never run Windows compilers on Linux. */
+export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindowsNativeResources")(
+  function* (input: {
+    readonly sourceDir: string;
+    readonly stageResourcesDir: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly sourceCommit: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const receipt = yield* fs
+      .readFileString(path.join(input.sourceDir, "receipt.json"))
+      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(WindowsNativeResourceReceipt)));
+    if (
+      receipt.arch !== input.arch ||
+      !/^[a-f0-9]{40}$/.test(receipt.sourceSha) ||
+      input.sourceCommit.length < 12 ||
+      !receipt.sourceSha.startsWith(input.sourceCommit)
+    )
+      return yield* Effect.fail(
+        new WindowsNativeResourceError({
+          message: "Windows native prerequisites do not match the target/source commit.",
+        }),
+      );
+    const expected = [...WINDOWS_NATIVE_RESOURCE_FILES].sort();
+    if (Object.keys(receipt.files).sort().join("\n") !== expected.join("\n"))
+      return yield* Effect.fail(
+        new WindowsNativeResourceError({
+          message: "Windows native prerequisite receipt has an unexpected inventory.",
+        }),
+      );
+    for (const file of expected) {
+      const source = path.join(input.sourceDir, file);
+      const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
+      const parent = yield* Effect.tryPromise(() => NodeFSP.lstat(path.dirname(source)));
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        !parent.isDirectory() ||
+        parent.isSymbolicLink()
+      )
+        return yield* Effect.fail(
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite is not a regular file: ${file}`,
+          }),
+        );
+      const bytes = yield* fs.readFile(source);
+      if (NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== receipt.files[file])
+        return yield* Effect.fail(
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite SHA-256 mismatch: ${file}`,
+          }),
+        );
+      if (/\.(exe|dll)$/.test(file)) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const pe = bytes.length >= 64 ? view.getUint32(0x3c, true) : bytes.length;
+        if (
+          bytes[0] !== 0x4d ||
+          bytes[1] !== 0x5a ||
+          pe + 6 > bytes.length ||
+          view.getUint32(pe, true) !== 0x00004550 ||
+          view.getUint16(pe + 4, true) !== (input.arch === "x64" ? 0x8664 : 0xaa64)
+        )
+          return yield* Effect.fail(
+            new WindowsNativeResourceError({
+              message: `Windows native prerequisite has the wrong PE architecture: ${file}`,
+            }),
+          );
+      }
+    }
+    // Stale host helpers cannot leak into the target's exact loose inventories.
+    for (const directory of ["file-exchange", "whisper-runtime"]) {
+      const destination = path.join(input.stageResourcesDir, directory);
+      yield* fs.remove(destination, { recursive: true, force: true });
+      yield* fs.makeDirectory(destination, { recursive: true });
+    }
+    for (const file of expected)
+      yield* fs.copyFile(
+        path.join(input.sourceDir, file),
+        path.join(input.stageResourcesDir, file),
+      );
+  },
+  Effect.mapError(
+    (cause) =>
+      new BuildCommandFailedError({
+        command: "stage exact-source Windows native prerequisites",
+        exitCode: 1,
+        stderrTail: String(cause),
+      }),
+  ),
+);
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
@@ -2492,7 +2610,7 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
   },
 );
 
-const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
+export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly asarPath: string; readonly verbose: boolean }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -3340,8 +3458,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // packaged executable with Electron's stock icon.
       signAndEditExecutable: true,
     };
-    if (signed) {
+    if (signed && (yield* HostProcess.Platform) === "win32") {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
+    } else if (signed) {
+      const path = yield* Path.Path;
+      const { publisherName } = yield* AzureTrustedSigningOptionsConfig;
+      winConfig.signtoolOptions = {
+        sign: yield* path.fromFileUrl(new URL("./lib/windows-jsign.ts", import.meta.url)),
+        signingHashAlgorithms: ["sha256"],
+        publisherName: [publisherName],
+      };
     }
     buildConfig.win = winConfig;
   }
@@ -3406,10 +3532,15 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
   const tarTarget = wslRuntimeArchiveTarTarget(path.relative(input.sourceDir, input.archivePath));
+  const hostPlatform = yield* HostProcess.Platform;
   yield* runCommand(
-    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(tarTarget), {
-      cwd: input.sourceDir,
-    }),
+    ChildProcess.make(
+      hostPlatform === "win32" ? windowsSystemTar() : "tar",
+      buildWslRuntimeArchiveArgs(tarTarget),
+      {
+        cwd: input.sourceDir,
+      },
+    ),
     { label: "tar WSL runtime", verbose: false },
   );
   const hash = NodeCrypto.createHash("sha256");
@@ -3856,10 +3987,38 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   );
 });
 
+/**
+ * The fff probe needs a host of the target's platform and architecture; the
+ * bundle self-check needs a Windows host. A cross build defers both to
+ * scripts/verify-windows-desktop-artifact.ts.
+ */
+export const verifyWindowsPackagedRuntime = Effect.fn(
+  "desktopArtifact.verifyWindowsPackagedRuntime",
+)(function* (input: {
+  readonly packagedAppDir: string;
+  readonly appExecutableName: string;
+  readonly targetArch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const path = yield* Path.Path;
+  const asarPath = path.join(input.packagedAppDir, "resources", WINDOWS_SERVER_ASAR_RESOURCE);
+  yield* verifyWindowsPrimaryFffNativeLoad({ ...input, asarPath });
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArch = yield* HostProcess.Architecture;
+  if (hostPlatform !== "win32" || hostArch !== input.targetArch) {
+    yield* Effect.log(
+      `[desktop-artifact] Skipped the bundle self-check on a ${hostPlatform}/${hostArch} host for win32/${input.targetArch}.`,
+    );
+    return;
+  }
+  yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose });
+});
+
 export const validateWindowsPackagedPayload = Effect.fn(
   "desktopArtifact.validateWindowsPackagedPayload",
 )(function* (input: {
   readonly stageDistDir: string;
+  readonly packagedAppDir?: string;
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
@@ -3876,9 +4035,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
       Effect.orElseSucceed(() => false),
     );
   const stageEntries = yield* fs.readDirectory(input.stageDistDir);
-  let packagedAppDir: string | undefined;
+  let packagedAppDir: string | undefined = input.packagedAppDir;
 
-  for (const entry of stageEntries) {
+  for (const entry of packagedAppDir === undefined ? stageEntries : []) {
     if (!entry.endsWith("-unpacked")) continue;
     const candidate = path.join(input.stageDistDir, entry);
     const stat = yield* fs.stat(candidate).pipe(Effect.orElseSucceed(() => null));
@@ -4042,13 +4201,18 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
 
+    const hostPlatform = yield* HostProcess.Platform;
     const listing = yield* spawnAndCollectOutput(
-      ChildProcess.make("tar", ["-tzf", WSL_RUNTIME_ARCHIVE_NAME], {
-        cwd: resourcesDir,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
+      ChildProcess.make(
+        hostPlatform === "win32" ? windowsSystemTar() : "tar",
+        ["-tzf", WSL_RUNTIME_ARCHIVE_NAME],
+        {
+          cwd: resourcesDir,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ),
     ).pipe(Effect.mapError(invalidWslRuntime));
     if (listing.exitCode !== 0) {
       return yield* invalidWslRuntime(
@@ -4121,16 +4285,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
     });
   }
 
-  yield* verifyWindowsPrimaryFffNativeLoad({
+  yield* verifyWindowsPackagedRuntime({
     packagedAppDir,
-    asarPath,
     appExecutableName: input.appExecutableName,
     targetArch: input.targetArch,
-    verbose: input.verbose ?? false,
-  });
-
-  yield* verifyPackagedBundleIsSelfContained({
-    asarPath,
     verbose: input.verbose ?? false,
   });
 
@@ -4147,6 +4305,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  const hostArch = yield* HostProcess.Architecture;
   if (hostPlatform === "linux" && options.platform === "linux") {
     yield* preflightLinuxDesktopBuild(options.arch);
   }
@@ -4353,50 +4512,60 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
-  yield* Effect.tryPromise({
-    try: () =>
-      stageFileExchangeForDesktopBuild({
-        repoRoot,
-        stageResourcesDir,
-        platform: options.platform,
-        arch: options.arch,
-      }),
-    catch: (cause) =>
-      new BuildCommandFailedError({
-        command: `stage file exchange (${options.platform}/${options.arch})`,
-        exitCode: 1,
-        stderrTail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
-  yield* runCommand(
-    ChildProcess.make(
-      process.execPath,
-      [
-        path.join(repoRoot, "scripts/stage-file-exchange.ts"),
-        `--platform=${options.platform === "mac" ? "darwin" : options.platform === "win" ? "win32" : "linux"}`,
-        `--arch=${options.arch === "universal" && options.platform !== "mac" ? "x64" : options.arch}`,
-        `--destination=${path.join(stageResourcesDir, "file-exchange")}`,
-      ],
-      { cwd: repoRoot },
-    ),
-    { label: "stage native file publication", verbose: options.verbose },
-  );
-  yield* Effect.tryPromise({
-    try: () =>
-      stageScientVoiceRuntimeForDesktopBuild({
-        repoRoot,
-        stageResourcesDir,
-        platform: options.platform,
-        arch: options.arch,
-        verbose: options.verbose,
-      }),
-    catch: (cause) =>
-      new BuildCommandFailedError({
-        command: `stage whisper.cpp (${options.platform}/${options.arch})`,
-        exitCode: 1,
-        stderrTail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  if (options.platform === "win" && (hostPlatform !== "win32" || hostArch !== options.arch)) {
+    const sourceDir = yield* Config.String("SCIENT_WINDOWS_NATIVE_RESOURCES");
+    yield* stageWindowsNativeResources({
+      sourceDir,
+      stageResourcesDir,
+      arch: options.arch,
+      sourceCommit: commitHash,
+    });
+  } else {
+    yield* Effect.tryPromise({
+      try: () =>
+        stageFileExchangeForDesktopBuild({
+          repoRoot,
+          stageResourcesDir,
+          platform: options.platform,
+          arch: options.arch,
+        }),
+      catch: (cause) =>
+        new BuildCommandFailedError({
+          command: `stage file exchange (${options.platform}/${options.arch})`,
+          exitCode: 1,
+          stderrTail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+    yield* runCommand(
+      ChildProcess.make(
+        process.execPath,
+        [
+          path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+          `--platform=${options.platform === "mac" ? "darwin" : options.platform === "win" ? "win32" : "linux"}`,
+          `--arch=${options.arch === "universal" && options.platform !== "mac" ? "x64" : options.arch}`,
+          `--destination=${path.join(stageResourcesDir, "file-exchange")}`,
+        ],
+        { cwd: repoRoot },
+      ),
+      { label: "stage native file publication", verbose: options.verbose },
+    );
+    yield* Effect.tryPromise({
+      try: () =>
+        stageScientVoiceRuntimeForDesktopBuild({
+          repoRoot,
+          stageResourcesDir,
+          platform: options.platform,
+          arch: options.arch,
+          verbose: options.verbose,
+        }),
+      catch: (cause) =>
+        new BuildCommandFailedError({
+          command: `stage whisper.cpp (${options.platform}/${options.arch})`,
+          exitCode: 1,
+          stderrTail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+  }
   yield* Effect.tryPromise({
     try: () =>
       stageScientSyncTexRuntimeForDesktopBuild({
@@ -4693,6 +4862,18 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     if (value === "") {
       delete buildEnv[key];
     }
+  }
+  if (options.platform === "linux") {
+    // fpm compresses the .deb with the system xz through tar. Threaded mode
+    // takes seconds on a many-core runner instead of about two minutes.
+    buildEnv.XZ_DEFAULTS = "-T0";
+  }
+  if (options.platform === "win") {
+    // Windows signs only through Azure Trusted Signing. Off Windows,
+    // electron-builder's signtool manager would read CSC_LINK (the macOS
+    // certificate) as a Windows certificate.
+    delete buildEnv.CSC_LINK;
+    delete buildEnv.CSC_KEY_PASSWORD;
   }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";

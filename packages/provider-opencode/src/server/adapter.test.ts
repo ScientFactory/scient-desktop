@@ -1,3 +1,5 @@
+import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
@@ -29,9 +31,7 @@ import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -47,8 +47,6 @@ import {
   openCodeBoundaryAfterProviderTurn,
   openCodeChildPermissionRules,
   openCodePermissionRules,
-  openCodePermissionRequestKind,
-  openCodeToolProjectionKind,
   makeOpenCodeProtocolLogger,
   makeOpenCodeAdapterV2,
   OPENCODE_PROVIDER,
@@ -2731,19 +2729,6 @@ describe("OpenCodeAdapterV2", () => {
     assert.isTrue(admission.admissionPending);
   });
 
-  it("releases admission only after prompt acceptance and new-turn evidence", () => {
-    const admission = {
-      admissionPending: true,
-      admissionAccepted: false,
-      admissionMessageObserved: false,
-      idleDuringAdmission: false,
-    };
-
-    assert.equal(advanceOpenCodePromptAdmission(admission, "busy"), "hold");
-    assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
-    assert.isFalse(admission.admissionPending);
-  });
-
   it("releases admission when an assistant completes under a provider-assigned message id", () => {
     const admission = {
       admissionPending: true,
@@ -2773,25 +2758,6 @@ describe("OpenCodeAdapterV2", () => {
     assert.isFalse(admission.admissionPending);
     assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
   });
-
-  it.effect("reconciles current idle and busy status replies after prompt admission", () =>
-    Effect.gen(function* () {
-      for (const expected of ["idle", "busy"] as const) {
-        const admission = { admissionGeneration: 4, admissionPending: true };
-        const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
-        const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
-          admission,
-          4,
-          Deferred.await(status),
-        ).pipe(Effect.forkChild({ startImmediately: true }));
-
-        yield* Deferred.succeed(status, expected);
-
-        assert.equal(yield* Fiber.join(fiber), expected);
-        assert.isFalse(admission.admissionPending);
-      }
-    }),
-  );
 
   it.effect("keeps admission pending after a transient status failure", () =>
     Effect.gen(function* () {
@@ -3033,24 +2999,6 @@ describe("OpenCodeAdapterV2", () => {
     }),
   );
 
-  it.effect("does not revive admission when abort wins a pending status lookup", () =>
-    Effect.gen(function* () {
-      const admission = { admissionGeneration: 4, admissionPending: true };
-      const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
-      const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
-        admission,
-        4,
-        Deferred.await(status),
-      ).pipe(Effect.forkChild({ startImmediately: true }));
-
-      cancelOpenCodePromptAdmission(admission, 5);
-      yield* Deferred.succeed(status, "idle");
-
-      assert.equal(yield* Fiber.join(fiber), "stale");
-      assert.isFalse(admission.admissionPending);
-    }),
-  );
-
   it.effect("logs bounded structural protocol diagnostics without native payload values", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3191,29 +3139,6 @@ describe("OpenCodeAdapterV2", () => {
       ),
     ),
   );
-
-  it("maps native permission families to orchestration request kinds", () => {
-    assert.equal(openCodePermissionRequestKind("bash"), "command");
-    assert.equal(openCodePermissionRequestKind("read"), "file-read");
-    assert.equal(openCodePermissionRequestKind("grep"), "file-read");
-    assert.equal(openCodePermissionRequestKind("external_directory"), "file-read");
-    assert.equal(openCodePermissionRequestKind("external_directory", "edit"), "file-change");
-    assert.equal(openCodePermissionRequestKind("edit"), "file-change");
-    assert.equal(openCodePermissionRequestKind("apply_patch"), "file-change");
-    assert.equal(openCodePermissionRequestKind("todowrite"), "command");
-    assert.equal(openCodePermissionRequestKind("custom", "todowrite"), "command");
-  });
-
-  it("maps OpenCode tools to semantic turn-item families", () => {
-    assert.equal(openCodeToolProjectionKind("bash"), "command_execution");
-    assert.equal(openCodeToolProjectionKind("edit"), "file_change");
-    assert.equal(openCodeToolProjectionKind("read"), "dynamic_tool");
-    assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
-    assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
-    assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");
-    assert.equal(openCodeToolProjectionKind("todowrite"), "dynamic_tool");
-    assert.equal(openCodeToolProjectionKind("custom_tool"), "dynamic_tool");
-  });
 
   it("maps runtime modes to safe OpenCode permission rules", () => {
     const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));

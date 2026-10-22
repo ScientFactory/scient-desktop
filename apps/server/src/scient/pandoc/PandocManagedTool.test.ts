@@ -7,7 +7,6 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
+import { observeManagedInstall } from "../managedInstall.testkit.ts";
 import { managedPandocPaths } from "./managedPandocInstall.ts";
 import {
   PandocArchiveUnpackError,
@@ -165,6 +165,7 @@ const makeHarness = (input: {
     const paths = managedPandocPaths({ stateDir, join: NodePath.join });
     input.before?.(paths);
     const seen = yield* Ref.make<ReadonlyArray<PandocArchiveUnpackInput>>([]);
+    const completion = yield* observeManagedInstall("PandocManagedTool.runInstall");
     const serviceLayer = Layer.effect(PandocManagedTool, makeManagedTool).pipe(
       Layer.provide(
         unpackerLayer({
@@ -178,18 +179,19 @@ const makeHarness = (input: {
       Layer.provide(Layer.succeed(HostProcess.Platform, input.platform ?? HOST_PLATFORM)),
       Layer.provide(Layer.succeed(HostProcess.Architecture, input.arch ?? HOST_ARCH)),
       Layer.provide(Layer.succeed(PandocManifestRef, input.manifest)),
+      Layer.provideMerge(completion.layer),
     );
-    return { serviceLayer, paths, seen, baseDir };
-  });
-
-const awaitInstall = (tool: PandocManagedTool["Service"]) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const status = yield* tool.status;
-      if (status.install.state === "ready" || status.install.state === "failed") return status;
-      yield* Effect.sleep(Duration.millis(5));
-    }
-    return yield* tool.status;
+    const awaitInstall = Effect.fn("PandocManagedTool.test.awaitInstall")(function* () {
+      const tool = yield* PandocManagedTool;
+      while (true) {
+        const status = yield* tool.status;
+        if (status.install.state === "ready" || status.install.state === "failed") return status;
+        if (status.install.state === "idle")
+          return yield* Effect.die("No Pandoc install was requested.");
+        yield* completion.awaitCompletion;
+      }
+    });
+    return { serviceLayer, awaitInstall, paths, seen, baseDir };
   });
 
 const listFiles = (root: string): Array<string> =>
@@ -219,7 +221,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
 
         const begun = yield* tool.install;
         expect(begun.install.state).toBe("downloading");
-        const finished = yield* awaitInstall(tool);
+        const finished = yield* harness.awaitInstall();
         expect(finished.install.state).toBe("ready");
         expect(finished.installed).toBe(true);
 
@@ -248,7 +250,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
       yield* Effect.gen(function* () {
         const tool = yield* PandocManagedTool;
         yield* tool.install;
-        yield* awaitInstall(tool);
+        yield* harness.awaitInstall();
         const broken = yield* tool.command;
         expect(broken).not.toBeNull();
 
@@ -264,7 +266,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
         expect(NodeFS.existsSync(harness.paths.statePath)).toBe(false);
 
         yield* tool.install;
-        const reinstalled = yield* awaitInstall(tool);
+        const reinstalled = yield* harness.awaitInstall();
         expect(reinstalled.install.state).toBe("ready");
         expect(reinstalled.installed).toBe(true);
         expect(reinstalled.reinstallRequired).toBeUndefined();
@@ -282,7 +284,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
       yield* Effect.gen(function* () {
         const tool = yield* PandocManagedTool;
         yield* tool.install;
-        const finished = yield* awaitInstall(tool);
+        const finished = yield* harness.awaitInstall();
         expect(finished.install.state).toBe("failed");
         expect(finished.install.failureReason).toBe("checksum-mismatch");
         expect(finished.installed).toBe(false);
@@ -300,7 +302,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
       yield* Effect.gen(function* () {
         const tool = yield* PandocManagedTool;
         yield* tool.install;
-        const finished = yield* awaitInstall(tool);
+        const finished = yield* harness.awaitInstall();
         expect(finished.install.failureReason).toBe("download-failed");
         expect(NodeFS.existsSync(harness.paths.statePath)).toBe(false);
       }).pipe(Effect.provide(harness.serviceLayer));
@@ -317,7 +319,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
       yield* Effect.gen(function* () {
         const tool = yield* PandocManagedTool;
         yield* tool.install;
-        const finished = yield* awaitInstall(tool);
+        const finished = yield* harness.awaitInstall();
         expect(finished.install.failureReason).toBe("unpack-failed");
         expect(yield* tool.command).toBeNull();
         expect(NodeFS.existsSync(harness.paths.statePath)).toBe(false);
@@ -344,13 +346,13 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
       yield* Effect.gen(function* () {
         const tool = yield* PandocManagedTool;
         yield* tool.install;
-        const failed = yield* awaitInstall(tool);
+        const failed = yield* harness.awaitInstall();
         expect(failed.install.state).toBe("failed");
         expect(failed.install.failureReason).toBe("download-failed");
         expect(failed.installed).toBe(false);
 
         yield* tool.install;
-        const finished = yield* awaitInstall(tool);
+        const finished = yield* harness.awaitInstall();
         expect(finished.install.state).toBe("ready");
         expect(finished.installed).toBe(true);
         expect(NodeFS.readdirSync(harness.paths.stagingRoot)).toEqual([]);
@@ -369,7 +371,7 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
         expect(first.install.state).toBe("downloading");
         expect(second.install.updatedAtEpochMs).toBe(first.install.updatedAtEpochMs);
         server.handle.release();
-        expect((yield* awaitInstall(tool)).install.state).toBe("ready");
+        expect((yield* harness.awaitInstall()).install.state).toBe("ready");
         expect(server.handle.requests()).toBe(1);
         expect(yield* Ref.get(harness.seen)).toHaveLength(1);
       }).pipe(Effect.provide(harness.serviceLayer));

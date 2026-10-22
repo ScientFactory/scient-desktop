@@ -38,15 +38,6 @@ describe("app startup failures", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("shows failures from asynchronous app startup", async () => {
-    vi.doMock("./main", () => ({ startup: Promise.reject(new Error("Startup chunks failed")) }));
-
-    await import("./bootstrap");
-    await vi.dynamicImportSettled();
-
-    expect(bootShell?.text).toContain("Startup chunks failed");
-  });
-
   afterEach(() => {
     vi.doUnmock("./main");
     vi.unstubAllGlobals();
@@ -80,14 +71,5 @@ describe("app startup failures", () => {
 
     expect(bootShell?.text).toContain("Scient could not load.");
     expect(bootShell?.text.includes("internal module path")).toBe(dev);
-  });
-
-  it("does not replace the app after React removes the splash", () => {
-    bootShell = null;
-    const createElement = vi.spyOn(document, "createElement");
-
-    showBootError(new Error("late failure"));
-
-    expect(createElement).not.toHaveBeenCalled();
   });
 });

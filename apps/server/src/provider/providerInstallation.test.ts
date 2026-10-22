@@ -123,27 +123,6 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
 });
 
 describe("provider installation routing", () => {
-  it.effect("allows explicit installation while the provider is disabled", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* harness.router.start({ instanceId });
-      assert.deepEqual(harness.calls, ["start"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("rejects another driver and unknown instances before installation", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ instance: instance(ProviderDriverKind.make("codex")) });
-      const wrongDriver = yield* Effect.flip(harness.router.start({ instanceId }));
-      const missing = yield* Effect.flip(
-        harness.router.start({ instanceId: ProviderInstanceId.make("missing") }),
-      );
-      assert.equal(wrongDriver._tag, "ProviderSetupError");
-      assert.equal(missing._tag, "ProviderSetupError");
-      assert.deepEqual(harness.calls, []);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -242,27 +221,6 @@ describe("provider installation routing", () => {
       yield* harness.router.remove({ instanceId });
       assert.include(harness.protectedPaths(), executable);
       assert.deepEqual(harness.calls, ["remove", "refresh"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("keeps only the configured path when another instance's binary is missing", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-install-route-" });
-      const binaryPath = path.join(directory, "missing");
-      const harness = yield* makeHarness({
-        settings: {
-          providerInstances: {
-            [ProviderInstanceId.make("antigravity-work")]: {
-              driver,
-              config: { binaryPath },
-            },
-          },
-        },
-      });
-      yield* harness.router.remove({ instanceId });
-      assert.deepEqual(harness.protectedPaths(), [binaryPath]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

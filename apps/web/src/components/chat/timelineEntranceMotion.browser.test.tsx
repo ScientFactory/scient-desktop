@@ -1,4 +1,9 @@
-import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
+import {
+  fakeTimers,
+  act as _fixtureAct,
+  render as _fixtureRender,
+  type Screen,
+} from "../../../test/render";
 import "../../index.css";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
@@ -37,10 +42,9 @@ function reply(index: number, text: string, streaming: boolean) {
   };
 }
 
-const frames = async (count = 4) => {
-  for (let i = 0; i < count; i++)
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-};
+async function advanceClock(ms = 64) {
+  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+}
 async function render(
   _fixture: _Fixture,
   key: string,
@@ -51,9 +55,11 @@ async function render(
     _fixture.host = document.createElement("div");
     Object.assign(_fixture.host.style, { width: "720px", height: "600px" });
     document.body.append(_fixture.host);
+    // No routed controls are exercised in this measured viewport fixture.
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
+    if (!vi.isFakeTimers()) _fixture.cleanup.use(fakeTimers());
   }
   await _fixtureAct(
     async () =>
@@ -70,10 +76,9 @@ async function render(
 }
 // The answer reveal reads `motionClock`; every frame here advances it by 16ms.
 const realNow = motionClock.now;
-let clock = 0;
+
 async function _setupFixture0(_fixture: _Fixture) {
-  clock = 0;
-  motionClock.now = () => clock;
+  motionClock.now = () => vi.getMockedSystemTime()?.getTime() ?? 0;
 }
 async function _cleanupFixture1(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
@@ -84,18 +89,20 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 /** Plays `ms` of motion, a 16ms frame at a time. */
 async function play(ms: number) {
-  for (let elapsed = 0; elapsed < ms; elapsed += 16) {
-    clock += 16;
-    await frames(1);
-  }
+  await advanceClock(ms);
 }
-/** Plays frames until `done` holds (at most `ms` of motion). */
+/** Drives only the controlled motion clock until the observed milestone. */
 async function playUntil(done: () => boolean, ms = 6000) {
-  for (let elapsed = 0; elapsed < ms && !done(); elapsed += 16) {
-    clock += 16;
-    await frames(1);
-  }
-  expect(done()).toBe(true);
+  const motionDeadline = motionClock.now() + ms;
+  await vi.waitFor(
+    async () => {
+      if (!done() && motionClock.now() < motionDeadline) {
+        await _fixtureAct(() => vi.advanceTimersByTimeAsync(16));
+      }
+      expect(done()).toBe(true);
+    },
+    { interval: 0 },
+  );
 }
 
 const animationsOf = (element: Element | null | undefined) =>
@@ -121,7 +128,9 @@ it("marks the working header with its dot while the turn works, the sweep stayin
   await render(_fixture, "motion:working", [prompt], working);
   const dot = () =>
     _fixture.host!.querySelector('[data-timeline-row-kind="working"] .live-activity-dot');
-  await expect.poll(() => dot()).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(dot()).not.toBeNull();
+  });
   // One sweep, on the current activity (chat/liveActivity.tsx), and no one-time entrance on the label.
   expect(
     _fixture.host!.querySelector('[data-timeline-row-kind="working"] .live-activity-focus'),
@@ -145,20 +154,26 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   });
   const bubble = (id: string) =>
     _fixture.host!.querySelector(`[data-message-id="${id}"] .group.flex.flex-col.items-end`);
-  await expect.poll(() => bubble(first.message.id)).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(bubble(first.message.id)).not.toBeNull();
+  });
   expect(animationsOf(bubble(first.message.id))).toHaveLength(1);
   // Its row remounts while it is still being placed: no replay.
   await render(_fixture, "motion:elsewhere", [entry(60, "Elsewhere")]);
-  await frames(4);
+  await advanceClock(64);
   await render(_fixture, "motion:first", [first], {
     anchorMessageId: first.message.id,
     timelinePositioningPending: true,
   });
-  await expect.poll(() => bubble(first.message.id)).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(bubble(first.message.id)).not.toBeNull();
+  });
   expect(animationsOf(bubble(first.message.id))).toHaveLength(0);
   const later = entry(2, "Later question");
   await render(_fixture, "motion:first", [first, later], { anchorMessageId: first.message.id });
-  await expect.poll(() => bubble(later.message.id)).not.toBeNull();
+  await vi.waitFor(() => {
+    expect(bubble(later.message.id)).not.toBeNull();
+  });
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
 });
 
@@ -304,8 +319,10 @@ it("closes a finished turn's working header gradually, so the answer slides up",
         (animation) =>
           !(animation instanceof CSSTransition) && !(animation instanceof CSSAnimation),
       );
-  await expect.poll(() => header()).not.toBeNull();
-  await frames(8);
+  await vi.waitFor(() => {
+    expect(header()).not.toBeNull();
+  });
+  await advanceClock(128);
   const before = answerTop();
   await render(_fixture, "motion:exit", [prompt, answer(false)], {
     isWorking: false,
@@ -315,14 +332,16 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   const animation = exit()!;
   animation.pause();
   animation.currentTime = 160;
-  await frames(4);
+  await advanceClock(64);
   expect(header()).not.toBeNull();
   const midway = answerTop();
   expect(midway).toBeLessThan(before - 2);
   // Its end removes it, and the answer rests where it would without it.
   animation.finish();
-  await expect.poll(() => header()).toBeNull();
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(header()).toBeNull();
+  });
+  await advanceClock(96);
   const after = answerTop();
   expect(midway).toBeGreaterThan(after + 2);
   expect(before - after).toBeGreaterThan(20);
@@ -338,8 +357,10 @@ it("cancels a header's exit when the next run's header takes its place", async (
   const header = () =>
     _fixture.host!.querySelector<HTMLElement>('[data-timeline-row-kind="working"]');
   const root = () => header()?.querySelector<HTMLElement>(".border-b");
-  await expect.poll(() => header()).not.toBeNull();
-  await frames(8);
+  await vi.waitFor(() => {
+    expect(header()).not.toBeNull();
+  });
+  await advanceClock(128);
   const height = root()!.getBoundingClientRect().height;
   await render(_fixture, "motion:exit-reuse", [prompt, reply(2, "The answer.", false)], {
     isWorking: false,
@@ -356,7 +377,7 @@ it("cancels a header's exit when the next run's header takes its place", async (
     [prompt, reply(2, "The answer.", false), next],
     working,
   );
-  await frames(4);
+  await advanceClock(64);
   expect(animation.playState).toBe("idle");
   expect(
     root()!
@@ -452,9 +473,13 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
   disclosure()!.focus();
   expect(document.activeElement).toBe(disclosure());
   await userEvent.keyboard("{Enter}");
-  await expect.poll(() => disclosure()?.getAttribute("aria-expanded")).toBe("true");
+  await vi.waitFor(() => {
+    expect(disclosure()?.getAttribute("aria-expanded")).toBe("true");
+  });
   await userEvent.keyboard("{Enter}");
-  await expect.poll(() => disclosure()?.getAttribute("aria-expanded")).toBe("false");
+  await vi.waitFor(() => {
+    expect(disclosure()?.getAttribute("aria-expanded")).toBe("false");
+  });
 });
 
 it("crosses the blank space between paragraphs without pausing", async () => {
@@ -476,11 +501,11 @@ it("crosses the blank space between paragraphs without pausing", async () => {
   const lineHeight = Number.parseFloat(getComputedStyle(root()!).lineHeight);
   const front = () => Number.parseFloat(root()!.style.getPropertyValue("--reveal-front") || "0");
   await playUntil(() => front() >= gapStart);
-  const entered = clock;
+  const entered = motionClock.now();
   await playUntil(() => front() >= gapEnd);
   // In motion time: at the line pace the gap would take (gap / 4 lines a
   // second); it takes far less.
-  const crossed = clock - entered;
+  const crossed = motionClock.now() - entered;
   const atLinePace = ((gapEnd - gapStart) / lineHeight) * 250;
   expect(crossed).toBeLessThan(Math.max(80, atLinePace / 2));
 });

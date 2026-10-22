@@ -84,6 +84,12 @@ function externalCss(css: string, blocked: string[]): boolean {
   return unresolved || external.length > 0;
 }
 
+export function blockedCssResources(css: string): readonly string[] {
+  const blocked: string[] = [];
+  externalCss(css, blocked);
+  return blocked;
+}
+
 /** Drops each declaration that loads from outside; false when the result is still unsafe. */
 function stripDeclarations(style: CSSStyleDeclaration, blocked: string[]): boolean {
   for (const property of Array.from(style)) {

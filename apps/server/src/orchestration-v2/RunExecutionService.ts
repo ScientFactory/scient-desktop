@@ -68,7 +68,6 @@ import {
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
   ownedFailedStartReceipt,
-  retryLostRunFinalWrite,
 } from "./scient-fork/RunExecutionFinalization.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
@@ -364,7 +363,7 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   return events;
 });
 
-export function finalProviderThreadStatus(
+function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
 ): OrchestrationV2ProviderThread["status"] {
   return disposition === "broken" ? "error" : "idle";

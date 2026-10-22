@@ -96,10 +96,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import {
-  ThreadCommandExecutor,
-  layer as threadCommandExecutorLayer,
-} from "./ThreadCommandExecutor.ts";
+import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";

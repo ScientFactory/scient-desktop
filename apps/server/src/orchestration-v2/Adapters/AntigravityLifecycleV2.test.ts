@@ -76,6 +76,12 @@ const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const reply = (message, result) => send({ jsonrpc: "2.0", id: message.id, result });
 const update = (update) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "watcher-session", update } });
 fs.appendFileSync(process.env.PID_LOG, JSON.stringify({ kind: "peer", pid: process.pid }) + "\\n");
+let watcher;
+let stopping = false;
+process.on("SIGTERM", () => {
+  stopping = true;
+  if (watcher === undefined) process.exit(0);
+});
 let model = "gemini-test-low";
 let mode = "default";
 const configOptions = () => [
@@ -98,8 +104,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       reply(message, { configOptions: configOptions() }); break;
     case "session/prompt":
       if (message.params.prompt.some(part => part.text?.includes("Start a watcher"))) {
-        const watcher = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        watcher = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
         fs.appendFileSync(process.env.PID_LOG, JSON.stringify({ kind: "watcher", pid: watcher.pid }) + "\\n");
+        watcher.once("exit", () => {
+          fs.appendFileSync(process.env.PID_LOG, JSON.stringify({ kind: "watcher-exit", pid: watcher.pid }) + "\\n");
+          if (stopping) process.exit(0);
+        });
         update({ sessionUpdate: "tool_call", toolCallId: "watcher-1", kind: "execute", status: "in_progress", title: "Terminal", rawInput: { command: "tail -f synthetic.log" } });
       } else if (message.params.prompt.some(part => part.text?.includes("Short command"))) {
         update({ sessionUpdate: "tool_call", toolCallId: "short-1", kind: "execute", status: "in_progress", title: "Terminal", rawInput: { command: "echo synthetic" } });
@@ -152,14 +162,6 @@ const alive = (pid: number) => {
     throw error;
   }
 };
-const assertDead = (pids: ReadonlyArray<{ readonly pid: number }>) =>
-  Effect.gen(function* () {
-    yield* Effect.sleep("10 millis").pipe(
-      Effect.repeat({ until: () => pids.every(({ pid }) => !alive(pid)) }),
-      Effect.timeout("3 seconds"),
-    );
-    assert.isTrue(pids.every(({ pid }) => !alive(pid)));
-  });
 
 const harness = Effect.fnUntraced(function* (options?: {
   readonly blockPromptWrite?: boolean;
@@ -170,6 +172,20 @@ const harness = Effect.fnUntraced(function* (options?: {
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const processExits = yield* Queue.unbounded<number>();
+  const observedSpawner = ChildProcessSpawner.make((command) =>
+    childProcessSpawner.spawn(command).pipe(
+      Effect.flatMap((handle) =>
+        Effect.gen(function* () {
+          yield* handle.exitCode.pipe(
+            Effect.andThen(Queue.offer(processExits, Number(handle.pid))),
+            Effect.forkScoped,
+          );
+          return handle;
+        }),
+      ),
+    ),
+  );
   const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-antigravity-peer-" });
   const requestLog = path.join(cwd, "requests.ndjson");
   const mockAgentPath = yield* path.fromFileUrl(
@@ -227,7 +243,7 @@ await import(${encodeString(mockAgentPath)});`,
     makeRuntime: (input) =>
       makeAntigravityAcpRuntime({
         ...input,
-        childProcessSpawner,
+        childProcessSpawner: observedSpawner,
         ...(options?.blockPromptWrite
           ? {
               requestLogger: (event) =>
@@ -324,8 +340,30 @@ await import(${encodeString(mockAgentPath)});`,
       runtimePolicy: policy,
     });
   });
+  const assertDead = (owned: ReadonlyArray<{ readonly kind: string; readonly pid: number }>) =>
+    Effect.gen(function* () {
+      const peers = owned.filter(({ kind }) => kind === "peer");
+      const exited = new Set<number>();
+      yield* Queue.take(processExits).pipe(
+        Effect.repeat({
+          until: (pid) => {
+            exited.add(pid);
+            return peers.every((peer) => exited.has(peer.pid));
+          },
+        }),
+        Effect.timeout("3 seconds"),
+      );
+      const entries = pids();
+      for (const watcher of owned.filter(({ kind }) => kind === "watcher")) {
+        assert.isTrue(
+          entries.some(({ kind, pid }) => kind === "watcher-exit" && pid === watcher.pid),
+        );
+      }
+      assert.isTrue(owned.every(({ pid }) => !alive(pid)));
+    });
   return {
     adapter,
+    assertDead,
     writeBlocked,
     releaseWrite,
     heldSettlement,
@@ -635,9 +673,9 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
           assert.isUndefined(
             receipt?.type === "provider_turn.updated" ? receipt.providerTurn.acceptedAt : undefined,
           );
-          yield* assertDead(h.pids());
+          yield* h.assertDead(h.pids());
           yield* Deferred.succeed(h.releaseWrite, undefined);
-          yield* Effect.sleep("20 millis");
+          // interruptTurn completed cancelAndAwaitPrompt, which interrupts an unwritten prompt.
           assert.isFalse(h.readLog().some((request) => request.method === "session/prompt"));
           yield* h.send(session, providerThread, 2);
           const recovered = yield* c.wait((event) => event.type === "turn.terminal");
@@ -709,7 +747,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             terminal.type === "turn.terminal" ? terminal.status : undefined,
             "interrupted",
           );
-          yield* assertDead(owned);
+          yield* h.assertDead(owned);
           const command = c.events.findLast(
             (event) =>
               event.type === "turn_item.updated" && event.turnItem.type === "command_execution",

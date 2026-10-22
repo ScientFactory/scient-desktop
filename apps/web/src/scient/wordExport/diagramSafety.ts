@@ -1,35 +1,17 @@
 /**
- * A second line of defence for Word diagram capture, behind the network
- * isolation of `diagrams/isolatedMermaid.ts`: diagrams whose styles or settings refer
- * to an outside resource are refused before they are drawn at all.
+ * Word capture refuses authored styles/settings outside its supported subset.
+ * The shared Pele renderer separately disables resources and sanitizes its SVG.
  *
  * Only CSS-bearing constructs are read — `style`, `classDef`, `linkStyle`,
- * and `cssClass` statements, and the configuration Mermaid parsed from front
+ * and `cssClass` statements, and configuration decoded from front
  * matter and `%%{init}%%` — so label text that mentions `url(` or a web
  * address exports normally.
  */
 
 import { fetchesInCss } from "../diagrams/cssResources";
-
-const STYLE_STATEMENT = /^\s*(?:style|classDef|linkStyle|cssClass)\b/iu;
-/** A CSS declaration (`background: …`) that a `;` inside a style list introduced. */
-const CSS_DECLARATION = /^\s*-?[a-z][a-z0-9-]*\s*:(?!:)/iu;
-
-/** A line's statements: split at each `;` that is not inside a double-quoted string. */
-function statementsOf(line: string): string[] {
-  const statements: string[] = [];
-  let quoted = false;
-  let start = 0;
-  for (let at = 0; at < line.length; at += 1) {
-    if (line[at] === '"') quoted = !quoted;
-    else if (line[at] === ";" && !quoted) {
-      statements.push(line.slice(start, at));
-      start = at + 1;
-    }
-  }
-  statements.push(line.slice(start));
-  return statements;
-}
+import { mermaidCssStatements } from "../diagrams/mermaidStyles";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
+import * as Schema from "effect/Schema";
 
 /**
  * Why the diagram's styling statements could fetch a resource, or null when
@@ -39,19 +21,9 @@ function statementsOf(line: string): string[] {
  * later statements are not inspected.
  */
 export function mermaidStyleFetchRisk(source: string): string | null {
-  for (const line of source.split(/\r\n?|\n/u)) {
-    const statements = statementsOf(line);
-    for (const [index, statement] of statements.entries()) {
-      if (!STYLE_STATEMENT.test(statement)) continue;
-      let css = statement;
-      for (const next of statements.slice(index + 1)) {
-        if (!CSS_DECLARATION.test(next) || STYLE_STATEMENT.test(next)) break;
-        css += `;${next}`;
-      }
-      if (fetchesInCss(css)) return "the diagram's styles refer to an outside resource";
-    }
-  }
-  return null;
+  return mermaidCssStatements(source).some(fetchesInCss)
+    ? "the diagram's styles refer to an outside resource"
+    : null;
 }
 
 /**
@@ -121,4 +93,29 @@ export function mermaidConfigFetchRisk(config: unknown): string | null {
     if (risk !== null) return risk;
   }
   return null;
+}
+
+const decodeYaml = Schema.decodeUnknownSync(fromYaml(Schema.Unknown));
+
+/** Inspect each authored config independently so a later override cannot hide an unsafe value. */
+export function mermaidSourceConfigFetchRisk(source: string): string | null {
+  try {
+    const frontmatter = /^\s*---[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*---(?=\s|$)/u.exec(source);
+    if (frontmatter) {
+      const parsed = decodeYaml(frontmatter[1]);
+      if (parsed !== null && typeof parsed === "object" && "config" in parsed) {
+        const risk = mermaidConfigFetchRisk(parsed.config);
+        if (risk !== null) return risk;
+      }
+    }
+    for (const directive of source.matchAll(/%%\{\s*(init|initialize)\s*:\s*([\s\S]*?)\}%%/giu)) {
+      // Pele accepts JSON directives with single quotes as well as double quotes.
+      const config: unknown = JSON.parse(directive[2]!.replaceAll("'", '"'));
+      const risk = mermaidConfigFetchRisk(config);
+      if (risk !== null) return risk;
+    }
+    return null;
+  } catch {
+    return "the diagram's settings could not be checked";
+  }
 }

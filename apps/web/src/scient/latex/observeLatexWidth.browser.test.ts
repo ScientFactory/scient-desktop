@@ -1,13 +1,21 @@
-import { stubGlobal as _fixtureStubGlobal } from "../../../test/render";
+import { fakeTimers, stubGlobal as _fixtureStubGlobal } from "../../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { observeResize } from "~/lib/observeResize";
 import { observeLatexWidth } from "./observeLatexWidth";
 
-const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-const settle = async () => {
-  await frame();
-  await frame();
-  await frame();
-};
+async function resizeDelivered(element: HTMLElement, change: () => void) {
+  let deliver!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    deliver = resolve;
+  });
+  const stop = observeResize(element, deliver);
+  try {
+    change();
+    await delivered;
+  } finally {
+    stop();
+  }
+}
 const nativeClientWidth = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!.get!;
 
 describe("observed LaTeX layout width", () => {
@@ -57,8 +65,9 @@ describe("observed LaTeX layout width", () => {
     const widths: number[] = [];
     _fixture.dispose = observeLatexWidth(_fixture.panel, (width) => widths.push(width));
     await expect.poll(() => widths.length).toBe(1);
-    _fixture.panel.style.display = "none";
-    await settle();
+    await resizeDelivered(_fixture.panel, () => {
+      _fixture.panel.style.display = "none";
+    });
     expect(widths.length).toBe(1);
     _fixture.panel.style.width = "275px";
     _fixture.panel.style.display = "block";
@@ -66,8 +75,9 @@ describe("observed LaTeX layout width", () => {
     const count = widths.length;
     _fixture.dispose();
     _fixture.dispose = undefined;
-    _fixture.panel.style.width = "350px";
-    await settle();
+    await resizeDelivered(_fixture.panel, () => {
+      _fixture.panel.style.width = "350px";
+    });
     expect(widths.length).toBe(count);
   });
 
@@ -77,15 +87,17 @@ describe("observed LaTeX layout width", () => {
     await _setupFixture0(_fixture);
 
     _fixture.stack.use(_fixtureStubGlobal("ResizeObserver", undefined));
+    using _timers = fakeTimers();
     const reads = vi.spyOn(_fixture.panel, "clientWidth", "get");
     const widths: number[] = [];
     _fixture.dispose = observeLatexWidth(_fixture.panel, (width) => widths.push(width));
     expect(reads).not.toHaveBeenCalled();
-    await expect.poll(() => widths.at(-1)).toBe(nativeClientWidth.call(_fixture.panel));
+    await vi.advanceTimersByTimeAsync(48);
+    expect(widths.at(-1)).toBe(nativeClientWidth.call(_fixture.panel));
     expect(reads).toHaveBeenCalledTimes(1);
     const cancelled = vi.fn();
     observeLatexWidth(_fixture.panel, cancelled)();
-    await settle();
+    await vi.advanceTimersByTimeAsync(48);
     expect(cancelled).not.toHaveBeenCalled();
     expect(reads).toHaveBeenCalledTimes(1);
   });

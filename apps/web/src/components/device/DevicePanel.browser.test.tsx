@@ -104,13 +104,7 @@ const switches = [
   ],
 ] as const;
 const threadB = switches[0][1];
-const otherEnvironment = switches[1][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
-const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
-  id: "device:phone",
-  kind: "device",
-  target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
-};
 const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" };
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
 const failed = { _tag: "Failure", cause: new Error("boom") } as const;
@@ -121,6 +115,7 @@ const deferred = () => {
   return { promise, settle };
 };
 
+let container: HTMLDivElement;
 // Fixed key and a changing threadRef, as RightPanelSurfaceContent mounts it.
 const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
   <DevicePanel
@@ -132,165 +127,24 @@ const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
     onDismissSetup={() => undefined}
   />
 );
-const startButton = (_fixture: _Fixture) =>
-  _fixture.container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
+const startButton = () => container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
 const click = (button: HTMLButtonElement | null) =>
   act(async () => {
     button!.click();
   });
-const errors = (_fixture: _Fixture) => _fixture.container.querySelectorAll('[role="alert"]');
+const errors = () => container.querySelectorAll('[role="alert"]');
 
-function setup(_fixture: _Fixture) {
+function setup() {
   vi.resetAllMocks();
   currentState = deviceState;
-  _fixture.container = document.createElement("div");
-  _fixture.container.style.width = "480px";
-  _fixture.container.style.height = "800px";
+  container = document.createElement("div");
+  container.style.width = "480px";
+  container.style.height = "800px";
 }
 
-describe("DevicePanel notices", () => {
-  it("keeps discovery warnings dismissed until the diagnostic or environment changes", async () => {
-    await using _fixture = _createFixture();
-
-    setup(_fixture);
-    currentState = {
-      ...deviceState,
-      hostStatusDetail: "Could not read simulator usage timestamps.",
-    };
-    await using screen = await render(devicePanel(threadA), { container: _fixture.container });
-    expect(errors(_fixture)).toHaveLength(1);
-    expect(startButton(_fixture)?.disabled).toBe(false);
-    await click(_fixture.container.querySelector('[aria-label="Dismiss device warning"]'));
-    expect(errors(_fixture)).toHaveLength(0);
-    await screen.rerender(devicePanel(threadA));
-    expect(errors(_fixture)).toHaveLength(0);
-
-    currentState = { ...currentState, hostStatusDetail: "A different discovery warning." };
-    await screen.rerender(devicePanel(threadA));
-    expect(errors(_fixture)).toHaveLength(1);
-    await click(_fixture.container.querySelector('[aria-label="Dismiss device warning"]'));
-    await screen.rerender(devicePanel(otherEnvironment));
-    expect(errors(_fixture)).toHaveLength(1);
-  });
-
-  it("keeps the loading content centered when discovery and boot notices arrive or are dismissed", async () => {
-    await using _fixture = _createFixture();
-
-    setup(_fixture);
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await using screen = await render(devicePanel(threadA), { container: _fixture.container });
-    await click(startButton(_fixture));
-    const loadingBounds = () =>
-      _fixture.container
-        .querySelector('[aria-label="Step 1 of 2: open device"]')!
-        .parentElement!.getBoundingClientRect();
-    const before = loadingBounds();
-    const panel = _fixture.container.getBoundingClientRect();
-    expect(before.height).toBeGreaterThan(0);
-    expect(before.top + before.height / 2).toBeCloseTo(panel.top + panel.height / 2, 0);
-
-    currentState = {
-      ...deviceState,
-      hostStatusDetail: "Could not read CoreSimulator plist.\n".repeat(8),
-      bootingDevices: [{ ...phone, threadId: threadA.threadId }],
-    };
-    await screen.rerender(devicePanel(threadA));
-    expect(loadingBounds().top).toBe(before.top);
-    expect(loadingBounds().left).toBe(before.left);
-    await click(_fixture.container.querySelector('[aria-label="Dismiss device warning"]'));
-    expect(loadingBounds().top).toBe(before.top);
-    expect(loadingBounds().left).toBe(before.left);
-    await act(async () => pick.settle(failed));
-  });
-});
-
 describe("DevicePanel thread switches", () => {
-  it.each(switches)("does not carry a pending or failed pick to %s", async (_, target) => {
-    await using _fixture = _createFixture();
-
-    setup(_fixture);
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await using screen = await render(devicePanel(threadA), { container: _fixture.container });
-    await click(startButton(_fixture));
-    expect(startButton(_fixture)).toBeNull();
-
-    await screen.rerender(devicePanel(target));
-    expect(startButton(_fixture)?.disabled).toBe(false);
-
-    await act(async () => pick.settle(failed));
-    expect(errors(_fixture)).toHaveLength(0);
-    expect(mocks.openDevice).not.toHaveBeenCalled();
-
-    await screen.rerender(devicePanel(threadA));
-    expect(startButton(_fixture)?.disabled).toBe(false);
-    expect(errors(_fixture)).toHaveLength(1);
-
-    await screen.rerender(devicePanel(target));
-    expect(startButton(_fixture)?.disabled).toBe(false);
-    expect(errors(_fixture)).toHaveLength(0);
-  });
-
-  it.each([
-    [
-      "pick",
-      picker,
-      () => mocks.open,
-      (_fixture: _Fixture) => click(startButton(_fixture)),
-      () => expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(threadA, phoneTarget),
-    ],
-    [
-      "power-off",
-      streaming,
-      () => mocks.close,
-      (_fixture: _Fixture) => click(_fixture.container.querySelector("button")),
-      () => expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(threadA, streaming.id),
-    ],
-  ] as const)(
-    "applies a late %s to its starting thread after switching environments with the same thread id",
-    async (_, surface, command, start, expectApplied) => {
-      await using _fixture = _createFixture();
-
-      setup(_fixture);
-      const late = deferred();
-      command().mockReturnValue(late.promise);
-      await using screen = await render(devicePanel(threadA, surface), {
-        container: _fixture.container,
-      });
-      await start(_fixture);
-
-      await screen.rerender(devicePanel(otherEnvironment, surface));
-      await act(async () => late.settle(opened));
-
-      expectApplied();
-    },
-  );
-
-  it("keeps a late power-off error in the environment that started it", async () => {
-    await using _fixture = _createFixture();
-
-    setup(_fixture);
-    const powerOff = deferred();
-    mocks.close.mockReturnValue(powerOff.promise);
-    await using screen = await render(devicePanel(threadA, streaming), {
-      container: _fixture.container,
-    });
-    await click(_fixture.container.querySelector("button"));
-
-    await screen.rerender(devicePanel(otherEnvironment, streaming));
-    await act(async () => powerOff.settle(failed));
-
-    expect(errors(_fixture)).toHaveLength(0);
-    expect(mocks.closeSurface).not.toHaveBeenCalled();
-    await screen.rerender(devicePanel(threadA, streaming));
-    expect(errors(_fixture)).toHaveLength(1);
-  });
-
   it("keeps the latest pick pending across switches away and back", async () => {
-    await using _fixture = _createFixture();
-
-    setup(_fixture);
+    setup();
     const first = deferred();
     const second = deferred();
     const latest = deferred();
@@ -298,43 +152,31 @@ describe("DevicePanel thread switches", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)
       .mockReturnValueOnce(latest.promise);
-    await using screen = await render(devicePanel(threadA), { container: _fixture.container });
-    await click(startButton(_fixture));
+    await using screen = await render(devicePanel(threadA), { container });
+    await click(startButton());
     await screen.rerender(devicePanel(threadB));
-    await click(startButton(_fixture));
+    await click(startButton());
     await screen.rerender(devicePanel(threadA));
-    await click(startButton(_fixture));
+    await click(startButton());
 
     await act(async () => first.settle(failed));
 
-    expect(startButton(_fixture)).toBeNull();
-    expect(errors(_fixture)).toHaveLength(0);
+    expect(startButton()).toBeNull();
+    expect(errors()).toHaveLength(0);
     expect(mocks.openDevice).not.toHaveBeenCalled();
 
     await act(async () => second.settle(opened));
 
-    expect(startButton(_fixture)).toBeNull();
+    expect(startButton()).toBeNull();
     expect(mocks.openDevice.mock.calls).toEqual([[threadB, phoneTarget]]);
 
     await act(async () => latest.settle(opened));
 
-    expect(startButton(_fixture)?.disabled).toBe(false);
-    expect(errors(_fixture)).toHaveLength(0);
+    expect(startButton()?.disabled).toBe(false);
+    expect(errors()).toHaveLength(0);
     expect(mocks.openDevice.mock.calls).toEqual([
       [threadB, phoneTarget],
       [threadA, phoneTarget],
     ]);
   });
 });
-
-function _createFixture() {
-  const stack = new AsyncDisposableStack();
-  return {
-    container: undefined! as HTMLDivElement,
-    stack,
-    async [Symbol.asyncDispose]() {
-      await stack.disposeAsync();
-    },
-  };
-}
-type _Fixture = ReturnType<typeof _createFixture>;

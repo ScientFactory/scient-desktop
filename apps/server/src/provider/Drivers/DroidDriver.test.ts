@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -340,45 +341,59 @@ it.effect("starts every Droid process with the agent environment contract", () =
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.live(
-  "checks Droid periodically without starting Droid sessions",
-  () =>
-    Effect.gen(function* () {
-      const directory = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "scient-droid-periodic-"),
-      );
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
-      );
-      const instance = yield* DroidDriver.create({
-        instanceId: ProviderInstanceId.make("droid_periodic"),
-        displayName: undefined,
-        environment: [],
-        enabled: true,
-        config: decodeDroidSettings({ enabled: true, binaryPath: makeRecordingDroid(directory) }),
-      });
-      // Spawns still starting may not have written their arguments yet.
-      const spawnArgs = () =>
-        NodeFS.readdirSync(directory)
-          .filter((name) => name.endsWith(".args"))
-          .map((name) => NodeFS.readFileSync(NodePath.join(directory, name), "utf8"));
-      const acpSpawns = () => spawnArgs().filter((args) => args.includes("acp")).length;
-      const versionSpawns = () => spawnArgs().filter((args) => args.startsWith("--version")).length;
-      // The startup probe is a full probe: one ACP session.
-      while ((yield* instance.snapshot.getSnapshot).status !== "ready")
-        yield* Effect.sleep("20 millis");
-      const afterProbe = { acp: acpSpawns(), version: versionSpawns() };
-      expect(afterProbe.acp).toBe(1);
-      // Several periodic checks at the configured interval.
-      yield* Effect.sleep("1200 millis");
-      expect(acpSpawns()).toBe(afterProbe.acp);
-      expect(versionSpawns()).toBeGreaterThan(afterProbe.version);
-      expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(makeTestLayer({ providerHealthRefreshInterval: Duration.millis(200) })),
-    ),
-  20_000,
+it.live("checks Droid periodically without starting Droid sessions", () =>
+  Effect.gen(function* () {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-droid-periodic-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+    );
+    const instance = yield* DroidDriver.create({
+      instanceId: ProviderInstanceId.make("droid_periodic"),
+      displayName: undefined,
+      environment: [],
+      enabled: true,
+      config: decodeDroidSettings({ enabled: true, binaryPath: makeRecordingDroid(directory) }),
+    });
+    // Spawns still starting may not have written their arguments yet.
+    const spawnArgs = () =>
+      NodeFS.readdirSync(directory)
+        .filter((name) => name.endsWith(".args"))
+        .map((name) => NodeFS.readFileSync(NodePath.join(directory, name), "utf8"));
+    const acpSpawns = () => spawnArgs().filter((args) => args.includes("acp")).length;
+    const versionSpawns = () => spawnArgs().filter((args) => args.startsWith("--version")).length;
+    // The startup probe is a full probe: one ACP session. Subscribe to
+    // snapshot changes before reading the current snapshot so a ready
+    // transition in between cannot be missed.
+    const ready = yield* Deferred.make<void>();
+    yield* instance.snapshot.streamChanges.pipe(
+      Stream.runForEach((snapshot) =>
+        snapshot.status === "ready"
+          ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
+      Effect.forkChild,
+    );
+    if ((yield* instance.snapshot.getSnapshot).status !== "ready") yield* Deferred.await(ready);
+    const afterProbe = { acp: acpSpawns(), version: versionSpawns() };
+    expect(afterProbe.acp).toBe(1);
+    // Each periodic check spawns the recording binary for `--version`; three
+    // more version spawns are the receipt of several checks at the interval.
+    yield* Effect.callback<void, Error>((resume) => {
+      const check = () => {
+        if (versionSpawns() >= afterProbe.version + 3) resume(Effect.void);
+      };
+      const watcher = NodeFS.watch(directory, check);
+      watcher.on("error", (error) => resume(Effect.fail(error)));
+      check();
+      return Effect.sync(() => watcher.close());
+    });
+    expect(acpSpawns()).toBe(afterProbe.acp);
+    expect(versionSpawns()).toBeGreaterThan(afterProbe.version);
+    expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(makeTestLayer({ providerHealthRefreshInterval: Duration.millis(200) })),
+  ),
 );
 
 it.effect("gives no Droid process a custom-model key, on any spawn path", () =>

@@ -236,12 +236,12 @@ describe("ScientMarkdownFileSurface", () => {
     return anchor;
   }
 
-  function openLink(target: string, anchor: HTMLElement): void {
+  function openLink(target: string, anchor: HTMLElement): Promise<void> | void {
     const callback = mocks.workspaceProps?.onOpenLink as
-      | ((target: string, anchor: HTMLElement) => void)
+      | ((target: string, anchor: HTMLElement) => Promise<void> | void)
       | undefined;
     expect(callback).toBeTypeOf("function");
-    callback?.(target, anchor);
+    return callback?.(target, anchor);
   }
 
   function openWikiLink(target: string, anchor: HTMLElement): void {
@@ -632,13 +632,12 @@ describe("ScientMarkdownFileSurface", () => {
               mocks.resolveFileLink.mockReturnValue(pending.promise);
               const { onOpenFile, root } = await mount(_fixture);
 
-              openLink(target, attachedAnchor(_fixture));
+              const opening = openLink(target, attachedAnchor(_fixture));
               await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
               await act(async () => await root.unmount());
               _fixture.root0.splice(_fixture.root0.indexOf(root), 1);
               pending.resolve(recovered);
-              await pending.promise;
-              await new Promise((resolve) => setTimeout(resolve, 0));
+              await opening;
               expect(onOpenFile).not.toHaveBeenCalled();
               expect(mocks.anchoredAdd).not.toHaveBeenCalled();
             },
@@ -652,12 +651,11 @@ describe("ScientMarkdownFileSurface", () => {
               const { onOpenFile } = await mount(_fixture);
               const anchor = attachedAnchor(_fixture);
 
-              openLink(target, anchor);
+              const opening = openLink(target, anchor);
               await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
               anchor.remove();
               pending.resolve(recovered);
-              await pending.promise;
-              await new Promise((resolve) => setTimeout(resolve, 0));
+              await opening;
               expect(onOpenFile).not.toHaveBeenCalled();
               expect(mocks.anchoredAdd).not.toHaveBeenCalled();
             },
@@ -671,14 +669,13 @@ describe("ScientMarkdownFileSurface", () => {
               const { onOpenFile } = await mount(_fixture);
               const anchor = attachedAnchor(_fixture);
 
-              openLink(target, anchor);
+              const opening = openLink(target, anchor);
               await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
               // The reader clicks another link, which opens at once.
               openLink("/outside.md", anchor);
               expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("/outside.md");
               pending.resolve(recovered);
-              await pending.promise;
-              await new Promise((resolve) => setTimeout(resolve, 0));
+              await opening;
               expect(onOpenFile).toHaveBeenCalledOnce();
             },
           },
@@ -725,12 +722,11 @@ describe("ScientMarkdownFileSurface", () => {
     const { onOpenFile, root } = await mount(_fixture);
     const anchor = attachedAnchor(_fixture);
 
-    openLink("other.md", anchor);
+    const opening = openLink("other.md", anchor);
     await act(async () => await root.unmount());
     _fixture.root0.splice(_fixture.root0.indexOf(root), 1);
     pending.resolve(success());
-    await pending.promise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await opening;
 
     expect(onOpenFile).not.toHaveBeenCalled();
     expect(mocks.anchoredAdd).not.toHaveBeenCalled();
@@ -748,13 +744,12 @@ describe("ScientMarkdownFileSurface", () => {
     const firstAnchor = attachedAnchor(_fixture);
     const secondAnchor = attachedAnchor(_fixture);
 
-    openLink("first.md", firstAnchor);
+    const opening = openLink("first.md", firstAnchor);
     openLink("second.md", secondAnchor);
     second.resolve(success({ kind: "file", name: "second.md", relativePath: "notes/second.md" }));
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("notes/second.md"));
     first.resolve(success());
-    await first.promise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await opening;
 
     expect(onOpenFile).toHaveBeenCalledOnce();
     expect(mocks.anchoredAdd).not.toHaveBeenCalled();
@@ -770,11 +765,10 @@ describe("ScientMarkdownFileSurface", () => {
     const { onOpenFile } = await mount(_fixture);
     const anchor = attachedAnchor(_fixture);
 
-    openLink("other.md", anchor);
+    const opening = openLink("other.md", anchor);
     localHeadingOpened();
     pending.resolve(success({ kind: "file", name: "other.md", relativePath: "notes/other.md" }));
-    await pending.promise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await opening;
 
     expect(onOpenFile).not.toHaveBeenCalled();
     expect(mocks.anchoredAdd).not.toHaveBeenCalled();

@@ -1,11 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- gated integration uses a selected MATLAB install.
 import * as NodeProcess from "node:process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
   ComputeExecutionId,
   ComputeLanguageId,
+  type ComputeManagedRuntimeStatus,
+  type ComputeOperationError,
   type ComputeSessionGeneration,
   ComputeSessionId,
   DEFAULT_SERVER_SETTINGS,
@@ -17,6 +21,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
@@ -41,27 +47,53 @@ const TEST_MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
 const TEST_HELPER = NodeProcess.env.SCIENT_TEST_MATLAB_HELPER === "1";
 const MATLAB = ComputeLanguageId.make("matlab");
 
+const awaitPidWritten = (file: string) =>
+  Effect.callback<void>((resume) => {
+    const inspect = () => {
+      try {
+        const pid = Number(NodeFS.readFileSync(file, "utf8"));
+        if (Number.isSafeInteger(pid) && pid > 0) finish(Effect.void);
+      } catch (cause) {
+        if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+          finish(Effect.die(cause));
+      }
+    };
+    const watcher = NodeFS.watch(NodePath.dirname(file), (_event, name) => {
+      if (name === NodePath.basename(file)) inspect();
+    });
+    const finish = (effect: Effect.Effect<void>) => {
+      watcher.close();
+      resume(effect);
+    };
+    watcher.on("error", (cause) => finish(Effect.die(cause)));
+    inspect();
+    return Effect.sync(() => watcher.close());
+  });
+
 const waitForTerminal = Effect.fn("MatlabCompute.waitForTerminal")(function* (
   gateway: ReturnType<typeof makeComputeRpcGateway>,
   cwd: string,
   sessionId: ComputeSessionId,
   executionId: ComputeExecutionId,
 ) {
-  for (let attempt = 0; attempt < 6_000; attempt += 1) {
-    const execution = (yield* gateway.listExecutions({ cwd, sessionId, limit: 100 })).find(
-      (candidate) => candidate.request.executionId === executionId,
-    );
-    if (
-      execution !== undefined &&
-      execution.result !== null &&
-      TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
-    ) {
-      return execution.result.status;
-    }
-    yield* Effect.sleep("10 millis");
-  }
-  return yield* Effect.die(new Error(`MATLAB execution '${executionId}' did not finish.`));
-});
+  const changes = yield* gateway.subscribeSessions({ cwd });
+  const found = yield* changes.pipe(
+    Stream.mapEffect(() => gateway.listExecutions({ cwd, sessionId, limit: 100 })),
+    Stream.map((executions) => {
+      const result = executions.find(
+        (candidate) => candidate.request.executionId === executionId,
+      )?.result;
+      return result && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)
+        ? result.status
+        : null;
+    }),
+    Stream.filter((status) => status !== null),
+    Stream.runHead,
+  );
+  if (Option.isNone(found))
+    return yield* Effect.die(`MATLAB execution receipt stream ended: ${executionId}`);
+  return found.value;
+}, Effect.scoped);
 
 const submit = Effect.fn("MatlabCompute.submit")(function* (
   gateway: ReturnType<typeof makeComputeRpcGateway>,
@@ -88,15 +120,16 @@ const waitForBusy = Effect.fn("MatlabCompute.waitForBusy")(function* (
   cwd: string,
   sessionId: ComputeSessionId,
 ) {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const session = (yield* gateway.listSessions({ cwd })).find(
-      (candidate) => candidate.sessionId === sessionId,
-    );
-    if (session?.activity === "busy") return;
-    yield* Effect.sleep("10 millis");
-  }
-  return yield* Effect.die(new Error("MATLAB session did not become busy."));
-});
+  const changes = yield* gateway.subscribeSessions({ cwd });
+  const busy = yield* changes.pipe(
+    Stream.mapEffect(() => gateway.listSessions({ cwd })),
+    Stream.filter((sessions) =>
+      sessions.some((session) => session.sessionId === sessionId && session.activity === "busy"),
+    ),
+    Stream.runHead,
+  );
+  if (Option.isNone(busy)) return yield* Effect.die("MATLAB session receipt stream ended.");
+}, Effect.scoped);
 
 describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
   it.live(
@@ -113,8 +146,16 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
         });
         yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
 
+        let settle: Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError> = Effect.die(
+          "The MATLAB helper has no local operation completion signal.",
+        );
         const computeLayer = ComputeSessionService.layerWithRuntimeBindings(
-          matlabRuntimeBinding.pipe(Effect.map((binding) => [binding])),
+          matlabRuntimeBinding.pipe(
+            Effect.map((binding) => {
+              settle = binding.managedRuntime?.awaitSettled() ?? settle;
+              return [binding];
+            }),
+          ),
         ).pipe(
           Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
           Layer.provide(
@@ -178,16 +219,12 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
 
           if (TEST_HELPER) {
             yield* gateway.manageRuntime({ languageId: MATLAB, action: "install" });
-            for (;;) {
-              const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
-              if (status.operation === null) {
-                expect(status.failureMessage).toBeNull();
-                expect(status.installed).toBe(true);
-                expect(status.selection).toBe("managed");
-                break;
-              }
-              yield* Effect.sleep("100 millis");
-            }
+            yield* settle;
+            const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
+            expect(status.operation).toBeNull();
+            expect(status.failureMessage).toBeNull();
+            expect(status.installed).toBe(true);
+            expect(status.selection).toBe("managed");
           }
           const inspection = yield* gateway.inspectRuntimes({ cwd: projectRoot, refresh: true });
           const runtime = inspection.languages
@@ -731,9 +768,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             expect(fresh.lifetime).toBe("fresh");
             if (index === 2) {
               yield* waitForBusy(gateway, projectRoot, freshId);
-              for (let attempt = 0; attempt < 1_200 && !(yield* fs.exists(pidPath)); attempt += 1) {
-                yield* Effect.sleep("50 millis");
-              }
+              yield* awaitPidWritten(pidPath);
               expect(yield* fs.exists(pidPath)).toBe(true);
               yield* gateway.stopSession({
                 cwd: projectRoot,
@@ -745,13 +780,18 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
               index === 0 ? "succeeded" : index === 1 ? "failed" : "cancelled",
             );
             const closed = yield* Effect.gen(function* () {
-              for (let attempt = 0; attempt < 1_200; attempt += 1) {
-                const record = yield* gateway.getSession({ cwd: projectRoot, sessionId: freshId });
-                if (record?.status === "stopped") return record;
-                yield* Effect.sleep("50 millis");
-              }
-              return yield* Effect.die("Fresh MATLAB Engine did not close.");
-            });
+              const changes = yield* gateway.subscribeSessions({ cwd: projectRoot });
+              const stopped = yield* changes.pipe(
+                Stream.mapEffect(() =>
+                  gateway.getSession({ cwd: projectRoot, sessionId: freshId }),
+                ),
+                Stream.filter((record) => record?.status === "stopped"),
+                Stream.runHead,
+              );
+              if (Option.isNone(stopped))
+                return yield* Effect.die("Fresh MATLAB receipt stream ended.");
+              return stopped.value!;
+            }).pipe(Effect.scoped);
             expect(closed.identity?.transportProcessId).toBeTypeOf("number");
             expect(processExists(closed.identity!.transportProcessId!)).toBe(false);
             // Independently capture the native PID inside the actual runtime, so
@@ -814,15 +854,11 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
           ).toBe("stopped");
           if (TEST_HELPER) {
             yield* gateway.manageRuntime({ languageId: MATLAB, action: "remove" });
-            for (;;) {
-              const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
-              if (status.operation === null) {
-                expect(status.failureMessage).toBeNull();
-                expect(status.installed).toBe(false);
-                break;
-              }
-              yield* Effect.sleep("100 millis");
-            }
+            yield* settle;
+            const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
+            expect(status.operation).toBeNull();
+            expect(status.failureMessage).toBeNull();
+            expect(status.installed).toBe(false);
           }
         }).pipe(Effect.provide(Layer.merge(computeLayer, workspaceLayer)), Effect.scoped);
       }).pipe(

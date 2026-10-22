@@ -306,9 +306,11 @@ The contract between staging and the importer is the header of
   128 MiB) once, compares its canonical form with the JSON structurally, and hashes the canonical
   text as it writes it. A ready import keeps only its preview facts and attachment list in memory;
   its snapshot waits in the staging area byte for byte and is read back, digest checked, when it
-  is confirmed. The opt-in benchmark
-  (`SCIENT_IMPORT_BENCH=1`, `ConversationImportBenchmark.test.ts`) validates a 122 MiB snapshot in
-  about half a second, with the process growing by about 0.6 GB while it runs (macOS arm64).
+  is confirmed. The explicit benchmark lane (`vp run test:performance` from `apps/server`,
+  `ConversationImportBenchmark.bench.ts`) retains the near-limit snapshot fixture.
+  Historical macOS arm64 measurements validated a 122 MiB snapshot in about half a
+  second, with the process growing by about 0.6 GB while it ran; these are not a
+  qualification of another machine or revision.
 - **Record limit.** One import writes at most 5,000 records (messages, reasoning, work-log entries,
   plans, and answers) in its single `thread.conversation.import` transaction; a larger file is
   refused at preview with a message that suggests exporting again with the work log and reasoning

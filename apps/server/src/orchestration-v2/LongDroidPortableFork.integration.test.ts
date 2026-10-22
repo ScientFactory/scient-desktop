@@ -505,6 +505,5 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
           }).pipe(Effect.provide(runtime));
         }),
       ),
-    { timeout: 30_000 },
   );
 });

@@ -62,9 +62,11 @@ const send = vi.fn();
 function RepairEditorFixture({
   initialDraft,
   editor,
+  scheduleFocus,
 }: {
   initialDraft: string;
   editor: RefObject<ComposerPromptEditorHandle | null>;
+  scheduleFocus: (callback: FrameRequestCallback) => void;
 }) {
   const [draft, setDraft] = useState(initialDraft);
   const draftRef = useRef(draft);
@@ -84,14 +86,14 @@ function RepairEditorFixture({
             (draftRef.current ? " " : "") +
             formatAssistantCitationForComposer(citation, citation.comment);
           setPrompt(next);
-          requestAnimationFrame(() => {
+          scheduleFocus(() => {
             if (draftRef.current === next) editor.current?.focusAtEnd();
           });
           return true;
         },
         focusAtEnd: () => editor.current?.focusAtEnd(),
       }) as NonNullable<ComposerHandleRef["current"]>,
-    [editor, setPrompt],
+    [editor, setPrompt, scheduleFocus],
   );
   return (
     <ComposerHandleContext value={handle}>
@@ -178,7 +180,13 @@ describe("Mermaid repair with the real composer editor", () => {
       await act(
         async () =>
           await _fixture.root0.rerender(
-            <RepairEditorFixture initialDraft={initialDraft} editor={editor} />,
+            <RepairEditorFixture
+              initialDraft={initialDraft}
+              editor={editor}
+              scheduleFocus={(callback) => {
+                _fixture.queuedFrames.set(++_fixture.frameId, callback);
+              }}
+            />,
           ),
       );
       const ask = _fixture.container.querySelector<HTMLButtonElement>(

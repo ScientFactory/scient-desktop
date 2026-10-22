@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds and executes real dev bundles on disk.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,11 +7,11 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 import react from "@vitejs/plugin-react";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { createLogger, createServer } from "vite-plus";
-import { expect, it } from "vite-plus/test";
-
-import { tailwindPlugins } from "../vite/tailwind";
-import { warmLazyEntries } from "../vite/warmBundledDev";
+import { expect, it, vi } from "vite-plus/test";
+import { warmBundledDevPlugin } from "../vite/warmBundledDev";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -123,144 +122,113 @@ console.log("App started with React refresh ready.");`,
   }
 });
 
-it("hot updates Tailwind classes when a source file changes in bundled dev", async () => {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-tailwind-"));
-  const events = new NodeEvents.EventEmitter();
-  let server: Awaited<ReturnType<typeof createServer>> | undefined;
-  let socket: WebSocket | undefined;
-  let css = "";
-
-  try {
-    await NodeFSP.writeFile(
-      NodePath.join(root, "index.html"),
-      '<html><body><script type="module" src="/main.ts"></script></body></html>',
-    );
-    const source =
-      'import "./style.css"; export const margin = "m-[13px]"; import.meta.hot?.accept();';
-    await NodeFSP.writeFile(NodePath.join(root, "main.ts"), source);
-    await NodeFSP.writeFile(
-      NodePath.join(root, "style.css"),
-      '@import "tailwindcss" source(none); @source "./main.ts";',
-    );
-    const logger = createLogger("silent");
-    logger.error = (message) => events.emit("error", new Error(message));
-    const connected = NodeEvents.EventEmitter.once(events, "connected");
-    const ready = NodeEvents.EventEmitter.once(events, "ready");
-    server = await createServer({
-      configFile: false,
-      root,
-      customLogger: logger,
-      resolve: {
-        alias: {
-          tailwindcss: NodeURL.fileURLToPath(
-            new URL("../node_modules/tailwindcss/index.css", import.meta.url),
-          ),
+it("warms the wanted lazy chunk chain and nothing else", async () => {
+  const root = "/synthetic-startup";
+  const main = `${root}/src/main.tsx?rolldown-lazy`;
+  const route = `${root}/src/routes/_chat.tsx?rolldown-lazy`;
+  const unrelated = `${root}/src/rare.ts?rolldown-lazy`;
+  const warmed: string[] = [];
+  let listening: (() => void) | undefined;
+  const removeClient = vi.fn(async () => undefined);
+  const plugin = warmBundledDevPlugin();
+  const configure = plugin.configureServer;
+  if (typeof configure !== "function") throw new Error("Expected a configureServer hook");
+  Reflect.apply(configure, {}, [
+    {
+      config: {
+        root,
+        experimental: { bundledDev: true },
+        logger: { info: vi.fn(), warn: vi.fn() },
+      },
+      httpServer: {
+        once: (_event: string, callback: () => void) => {
+          listening = callback;
         },
       },
-      experimental: { bundledDev: true },
-      plugins: [
-        ...tailwindPlugins(true),
-        {
-          name: "observe-tailwind-output",
-          enforce: "pre",
-          transform(code, id) {
-            if (id.endsWith("/style.css")) css = code;
-          },
-          async generateBundle() {
-            // Keep the build pending until the socket can receive Vite's ready message.
-            await connected;
+      environments: {
+        client: {
+          bundledDev: {
+            waitForInitialBuildFinish: async () => undefined,
+            triggerLazyBundling: async (id: string) => {
+              warmed.push(id);
+              return { filename: id };
+            },
+            markPayloadDelivered: vi.fn(),
+            devEngine: {
+              removeClient,
+              moduleGraph: {
+                getModuleIds: () => ["bootstrap", ...(warmed.includes(main) ? ["main"] : [])],
+                getModuleInfo: (id: string) => ({
+                  dynamicallyImportedIds: id === "bootstrap" ? [main, unrelated] : [route],
+                }),
+              },
+            },
           },
         },
-      ],
-      server: { host: "127.0.0.1", port: 0 },
-    });
-    await server.listen();
-    const address = server.httpServer?.address();
-    if (!address || typeof address === "string") throw new Error("Vite did not bind a port");
+      },
+    },
+  ]);
+  expect(warmed).toEqual([]);
+  expect(listening).toBeDefined();
+  listening!();
+  await vi.waitFor(() => expect(removeClient).toHaveBeenCalledOnce());
+  expect(warmed).toEqual([main, route]);
+  expect(removeClient).toHaveBeenCalledWith("t3code-startup-warmup");
+});
 
-    server.ws.on("vite:client-connected", () => events.emit("connected"));
-    socket = new WebSocket(
-      `ws://127.0.0.1:${address.port}/?token=${server.config.webSocketToken}`,
-      "vite-hmr",
+effectIt.live("warms the wanted lazy chunk chain through the real Vite private APIs", () =>
+  Effect.gen(function* () {
+    const directory = yield* Effect.acquireRelease(
+      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-warm-"))),
+      (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
     );
-    socket.addEventListener("open", () => {
-      socket?.send(
-        JSON.stringify({
-          type: "custom",
-          event: "vite:client-connected",
-          data: { clientId: "tailwind-test" },
-        }),
+    const root = yield* Effect.promise(() => NodeFSP.realpath(directory));
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(NodePath.join(root, "src/routes"), { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(root, "index.html"),
+        '<html><body><script type="module" src="/src/bootstrap.ts"></script></body></html>',
       );
+      await NodeFSP.writeFile(NodePath.join(root, "src/bootstrap.ts"), 'void import("./main");');
+      await NodeFSP.writeFile(
+        NodePath.join(root, "src/main.tsx"),
+        'export const route = () => import("./routes/_chat"); export const rare = () => import("./rare");',
+      );
+      await NodeFSP.writeFile(
+        NodePath.join(root, "src/routes/_chat.tsx"),
+        "export const route = 1;",
+      );
+      await NodeFSP.writeFile(NodePath.join(root, "src/rare.ts"), "export const rare = 1;");
     });
-    socket.addEventListener("message", ({ data }) => {
-      const message: unknown = JSON.parse(String(data));
-      if (message !== null && typeof message === "object" && "type" in message) {
-        // generateBundle runs before Vite stores the files for HTTP requests.
-        if (
-          message.type === "full-reload" &&
-          "ifFallback" in message &&
-          message.ifFallback === true
-        ) {
-          events.emit("ready");
-        } else if (message.type === "bundled-dev-update") {
-          events.emit("updated");
-        }
-      }
-    });
-    await connected;
-    await ready;
-    const entry = await fetch(`http://127.0.0.1:${address.port}/assets/index.js`);
-    expect(entry.headers.get("content-type")).toContain("javascript");
-    await entry.text();
-
-    const updated = NodeEvents.EventEmitter.once(events, "updated");
-    await NodeFSP.writeFile(NodePath.join(root, "main.ts"), source.replace("13px", "137px"));
-    await updated;
-    expect(css).toContain("margin: 137px");
-  } finally {
-    socket?.close();
-    await server?.close();
-    await NodeFSP.rm(root, { recursive: true, force: true });
-  }
-});
-
-it("warms the wanted lazy chunk chain and nothing else", async () => {
-  const root = await NodeFSP.realpath(
-    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-warm-")),
-  );
-  let server: Awaited<ReturnType<typeof createServer>> | undefined;
-
-  try {
-    await NodeFSP.mkdir(NodePath.join(root, "src/routes"), { recursive: true });
-    await NodeFSP.writeFile(
-      NodePath.join(root, "index.html"),
-      '<html><body><script type="module" src="/src/bootstrap.ts"></script></body></html>',
+    const completed = Promise.withResolvers<string>();
+    const logger = createLogger("silent");
+    logger.info = (message) => {
+      if (message.startsWith("[t3code] pre-bundled ")) completed.resolve(message);
+    };
+    logger.warn = (message) => completed.reject(new Error(message));
+    const server = yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        createServer({
+          configFile: false,
+          root,
+          customLogger: logger,
+          experimental: { bundledDev: true },
+          plugins: [warmBundledDevPlugin()],
+          server: { host: "127.0.0.1", port: 0 },
+        }),
+      ),
+      (running) => Effect.promise(() => running.close()),
     );
-    await NodeFSP.writeFile(NodePath.join(root, "src/bootstrap.ts"), 'void import("./main");');
-    await NodeFSP.writeFile(
-      NodePath.join(root, "src/main.tsx"),
-      'export const route = () => import("./routes/_chat"); export const rare = () => import("./rare");',
+    const bundledDev = server.environments.client.bundledDev as unknown as {
+      triggerLazyBundling(moduleId: string, clientId: string): Promise<unknown>;
+    };
+    using trigger = vi.spyOn(bundledDev, "triggerLazyBundling");
+    yield* Effect.promise(() => server.listen());
+    expect(yield* Effect.promise(() => completed.promise)).toMatch(
+      /^\[t3code\] pre-bundled 2 startup chunks in /,
     );
-    await NodeFSP.writeFile(NodePath.join(root, "src/routes/_chat.tsx"), "export const route = 1;");
-    await NodeFSP.writeFile(NodePath.join(root, "src/rare.ts"), "export const rare = 1;");
-
-    server = await createServer({
-      configFile: false,
-      root,
-      logLevel: "silent",
-      experimental: { bundledDev: true },
-      server: { host: "127.0.0.1", port: 0 },
-    });
-    await server.listen();
-
-    // The route is only discoverable after main compiles, so this also covers the pass walk.
-    const warmed = await warmLazyEntries(server);
-    expect(warmed.map((id) => NodePath.relative(root, id.split("?")[0] ?? id))).toEqual([
-      "src/main.tsx",
-      "src/routes/_chat.tsx",
-    ]);
-  } finally {
-    await server?.close();
-    await NodeFSP.rm(root, { recursive: true, force: true });
-  }
-});
+    expect(
+      trigger.mock.calls.map(([id]) => NodePath.relative(root, id.split("?")[0] ?? id)),
+    ).toEqual(["src/main.tsx", "src/routes/_chat.tsx"]);
+  }),
+);

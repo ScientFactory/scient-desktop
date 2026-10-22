@@ -33,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { AcpProtocolLogEvent } from "effect-acp/protocol";
@@ -431,19 +432,13 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   Object.assign(locks, { withLock: observeWithLock });
   const orchestrator = Context.get(services, OrchestratorV2);
   const rawWorker = Context.get(services, OrchestrationEffectWorkerV2);
-  // Outbox deadlines are wall-clock (Date.now) instants, but timers run on the event
-  // loop's monotonic clock and can wake before the deadline (libuv/libuv#4773), so a
-  // drain after one sleep may claim nothing. Re-read the deadline until it has passed.
-  // Returns false when no pending effect remains to wait for.
   const awaitClaimable = Effect.gen(function* () {
-    while (true) {
-      const deadline = yield* rawWorker.nextClaimableAt;
-      if (Option.isNone(deadline)) return false;
-      const wait =
-        DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
-      if (wait <= 0) return true;
-      yield* Effect.sleep(wait);
-    }
+    const deadline = yield* rawWorker.nextClaimableAt;
+    if (Option.isNone(deadline)) return false;
+    const wait =
+      DateTime.toEpochMillis(deadline.value) - DateTime.toEpochMillis(yield* DateTime.now);
+    if (wait > 0) yield* TestClock.adjust(wait);
+    return true;
   });
   const worker = {
     ...rawWorker,
@@ -777,7 +772,7 @@ const heldOwner = (
   );
 };
 
-it.live(
+it.effect(
   "holds explicit native Droid Steer through current tool completion without cancelling live work",
   () =>
     Effect.scoped(
@@ -827,7 +822,7 @@ it.live(
     ).pipe(Effect.provide(outer)),
 );
 
-it.live(
+it.effect(
   "keeps native Droid Steer held across old-complete and next-active in one decoded child write",
   () =>
     Effect.scoped(
@@ -897,7 +892,7 @@ it.live(
     ).pipe(Effect.provide(outer)),
 );
 
-it.live(
+it.effect(
   "replaces only the newest held native Droid Steer while retaining two canonical FIFO messages",
   () =>
     Effect.scoped(
@@ -1030,7 +1025,7 @@ const nativeCase = <E, R>(
     ),
   );
 
-it.live(
+it.effect(
   "blocks a ready SQL snapshot while the real decoded-array reader is parked before its first member",
   () =>
     nativeCase("batch-reader", "normal", (h) =>
@@ -1074,7 +1069,7 @@ it.live(
     ),
 );
 
-it.live.each(
+it.effect.each(
   (["probe", "pre-admission"] as const).map((window) => ({
     caseTitle: `retains the original native owner when new work invalidates Droid readiness at ${window}`,
     window,
@@ -1135,7 +1130,7 @@ it.live.each(
   ),
 );
 
-it.live.each(
+it.effect.each(
   (["completed", "failed", "stopped"] as const).map((outcome) => ({
     caseTitle: `releases held Droid input on actual prompt return without cancel; the replacement is ${outcome}`,
     outcome,
@@ -1197,7 +1192,7 @@ it.live.each(
   ),
 );
 
-it.live.each(
+it.effect.each(
   (["old-live", "late", "reannounce", "foreground-task"] as const).map((variant) => ({
     caseTitle: `resets native Droid prompt safety after ${variant} and does not resurrect that prompt's tool in its replacement`,
     variant,
@@ -1279,7 +1274,7 @@ it.live.each(
   ),
 );
 
-it.live(
+it.effect(
   "keeps native Task launch, running checks, unknown tasks and another session from releasing the held Droid intent",
   () =>
     nativeCase("background", "background", (h) =>
@@ -1336,7 +1331,7 @@ it.live(
     ),
 );
 
-it.live.each(
+it.effect.each(
   (["held", "probe", "pre-admission"] as const).map((window) => ({
     caseTitle: `lets canonical Stop win at ${window} without delivering the held native Droid prompt`,
     window,
@@ -1391,7 +1386,7 @@ it.live.each(
   ),
 );
 
-it.live(
+it.effect(
   "finalizes typed native startup failure when held Steer commits after its outside no-hold probe",
   () =>
     nativeCase("finalization-registration-race", "normal", (h) =>
@@ -1563,7 +1558,7 @@ it.live(
     ),
 );
 
-it.live("drops held Droid input on actual native failure before old finalization", () =>
+it.effect("drops held Droid input on actual native failure before old finalization", () =>
   nativeCase("source-failure", "normal", (h) =>
     Effect.gen(function* () {
       const initial = yield* h.start();
@@ -1579,7 +1574,7 @@ it.live("drops held Droid input on actual native failure before old finalization
   ),
 );
 
-it.live.each(
+it.effect.each(
   (["registration", "claim"] as const).map((phase) => ({
     caseTitle: `keeps canonical native ownership and offers no Droid input when SQL rejects ${phase}`,
     phase,
@@ -1624,7 +1619,7 @@ it.live.each(
   ),
 );
 
-it.live(
+it.effect(
   "does not replay a persisted Droid held intent after process-bound reconciliation or into a fresh native session",
   () =>
     nativeCase("replay", "normal", (h) =>
@@ -1672,7 +1667,7 @@ it.live(
 );
 
 for (const oldReturn of ["completed", "aborted"] as const)
-  it.live.each(
+  it.effect.each(
     (["adoption", "replacement-result"] as const).map((releaseOldAfter) => ({
       caseTitle: `preserves actual subparagraph old-answer identity when its ${oldReturn} native return callback resumes after ${releaseOldAfter}`,
       releaseOldAfter,
@@ -1755,7 +1750,7 @@ for (const oldReturn of ["completed", "aborted"] as const)
     ),
   );
 
-it.live(
+it.effect(
   "admits the captured Droid instance, model, modes, workspace and exact submitted input despite later defaults",
   () =>
     nativeCase("policy", "normal", (h) =>
@@ -2021,7 +2016,7 @@ it.live(
     ),
 );
 
-it.live.each(
+it.effect.each(
   (["probe", "pre-admission"] as const).map((window) => ({
     caseTitle: `invalidates an older native reservation at ${window} while retaining and then executing both FIFO payloads`,
     window,
@@ -2140,7 +2135,7 @@ it.live.each(
   }),
 );
 
-it.live.each(
+it.effect.each(
   (["cancel-write", "cancel-settled"] as const).map((window) => ({
     caseTitle: `lets Stop invalidate a consumed Droid admission at ${window} without writing the replacement`,
     window,
@@ -2185,7 +2180,7 @@ it.live.each(
   ),
 );
 
-it.live(
+it.effect(
   "does not retry an actual native cancel after uncertain admission and lets Stop resolve the retained owner",
   () =>
     nativeCase("uncertain", "normal", (h) =>
@@ -2219,7 +2214,7 @@ it.live(
     ),
 );
 
-it.live(
+it.effect(
   "rolls back SQL replacement after native consumption without replaying cancel or offering input",
   () =>
     nativeCase("sql-complete", "normal", (h) =>

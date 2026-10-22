@@ -11,6 +11,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -457,6 +458,13 @@ export interface OmpCustomModelsTiming {
   readonly connectionsCheckingIntervalMs?: number | undefined;
 }
 
+/** Passive observation of a long-poll's subscribed generation. */
+export interface OmpCustomModelsWaitSnapshot {
+  readonly request: NodeHttp.IncomingMessage;
+  readonly after: number;
+  readonly generation: number;
+}
+
 const OMP_MODELS_REFRESH_TIMEOUT_MS = 5_000;
 const OMP_MODELS_WAIT_HOLD_MS = 25_000;
 const OMP_MODELS_REQUEST_TIMEOUT_MS = 5_000;
@@ -525,6 +533,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
     stateDir: string,
     makeProcess: OmpProcessFactory = makeOmpRpcProcess,
     timing: OmpCustomModelsTiming = {},
+    waitSnapshots?: Queue.Enqueue<OmpCustomModelsWaitSnapshot>,
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -741,6 +750,16 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           response.once("close", () => abandoned.abort());
           void run(
             SubscriptionRef.changes(barrier).pipe(
+              Stream.tap((state) =>
+                Effect.sync(() => {
+                  if (waitSnapshots)
+                    Queue.offerUnsafe(waitSnapshots, {
+                      request,
+                      after,
+                      generation: state.generation,
+                    });
+                }),
+              ),
               Stream.filter((state) => state.retired || state.generation > after),
               Stream.runHead,
               Effect.timeoutOption(Duration.millis(waitHoldMs)),

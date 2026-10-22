@@ -118,6 +118,11 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
+    latestRunStopRequested:
+      latestRun != null &&
+      projection.turnItems.some(
+        (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
+      ),
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({
       activeRun,

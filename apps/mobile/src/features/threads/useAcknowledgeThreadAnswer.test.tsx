@@ -82,6 +82,7 @@ afterEach(async () => {
   await act(() => root.unmount());
   expect(native.listeners.size).toBe(0);
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 it("waits for the exact completed answer before publishing its server watermark", async () => {
   await act(() => root.render(<Probe rows={[]} />));
@@ -218,3 +219,71 @@ it("resets answer dedupe across an answerless conversation without remounting", 
   await act(() => root.render(<Probe />));
   expect(native.visit).toHaveBeenCalledTimes(2);
 });
+
+it("acknowledges a scheduled wake without a server update or an answer", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-04T12:00:00.000Z"));
+  const snoozedUntil = "2026-10-04T12:00:01.000Z";
+  const value = {
+    ...thread(),
+    latestRun: null,
+    latestCompletedAnswer: null,
+    lastVisitedAt: thread().updatedAt,
+    snoozedAt: "2026-10-04T11:00:00.000Z",
+    snoozedUntil,
+  };
+  await act(() => root.render(<Probe value={value} rows={[]} />));
+  expect(native.visit).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1_050));
+  expect(native.visit).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "local",
+    input: { threadId: value.id, visitedAt: snoozedUntil },
+  });
+});
+
+it("acknowledges an early failure wake at its event time, not newer metadata", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-04T12:00:00.000Z"));
+  const wokeAt = "2026-10-04T11:00:00.000Z";
+  const value = {
+    ...thread(),
+    latestCompletedAnswer: null,
+    latestRun: {
+      runId: RunId.make("failed"),
+      status: "failed" as const,
+      requestedAt: "2026-10-04T08:00:00.000Z",
+      startedAt: "2026-10-04T08:00:00.000Z",
+      completedAt: wokeAt,
+      assistantMessageId: null,
+    },
+    runtime: {
+      status: "failed" as const,
+      activeRunId: null,
+      providerInstanceId: thread().providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: wokeAt,
+    },
+    snoozedAt: "2026-10-04T10:00:00.000Z",
+    snoozedUntil: "2026-10-05T12:00:00.000Z",
+  };
+  await act(() => root.render(<Probe value={value} rows={[]} />));
+  expect(native.visit).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "local",
+    input: { threadId: value.id, visitedAt: wokeAt },
+  });
+});
+
+it.each([{ rows: [] }, { rows: feed("") }, { rows: feed("Still streaming", true) }])(
+  "does not use a wake to acknowledge an unloaded or unsettled answer",
+  async ({ rows }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-04T12:00:00.000Z"));
+    await act(() =>
+      root.render(
+        <Probe rows={rows} value={{ ...thread(), snoozedUntil: "2026-10-04T11:00:00.000Z" }} />,
+      ),
+    );
+    expect(native.visit).not.toHaveBeenCalled();
+  },
+);

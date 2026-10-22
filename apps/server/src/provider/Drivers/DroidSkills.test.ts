@@ -5,9 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { it } from "@effect/vitest";
+import { ProcessTransport } from "@factory/droid-sdk/node";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 
 import {
   discoverDroidSkills,
@@ -288,8 +290,40 @@ it.live("reports a Droid that stops reading at startup as a failure, not an unca
     );
     // Closes its input at once, so the first request written to it fails with EPIPE.
     const binaryPath = NodePath.join(directory, "droid");
-    NodeFS.writeFileSync(binaryPath, "#!/bin/sh\nexec 0<&-\nsleep 1\nexit 3\n");
+    const agentPath = NodePath.join(directory, "closed-input.mjs");
+    NodeFS.writeFileSync(
+      agentPath,
+      `import * as fs from "node:fs";
+import * as net from "node:net";
+fs.closeSync(0);
+const server = net.createServer();
+server.listen(0, "127.0.0.1", () => process.stderr.write("INPUT_CLOSED\\n"));
+process.on("SIGTERM", () => server.close(() => process.exit(3)));
+`,
+    );
+    NodeFS.writeFileSync(
+      binaryPath,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)}\n`,
+    );
     NodeFS.chmodSync(binaryPath, 0o755);
+    const closed = Promise.withResolvers<void>();
+    const connect = ProcessTransport.prototype.connect;
+    const nativeConnect = vi
+      .spyOn(ProcessTransport.prototype, "connect")
+      .mockImplementation(async function (this: ProcessTransport) {
+        await connect.call(this);
+        const child = this.getManagedProcess()?.childProcess;
+        if (!child?.stderr) throw new Error("Missing native discovery child");
+        child.once("close", () => closed.resolve());
+        await new Promise<void>((resolve) => {
+          let stderr = "";
+          child.stderr!.on("data", (chunk) => {
+            stderr += String(chunk);
+            if (stderr.includes("INPUT_CLOSED\n")) resolve();
+          });
+        });
+      });
+    yield* Effect.addFinalizer(() => Effect.sync(() => nativeConnect.mockRestore()));
     const uncaught: Array<unknown> = [];
     const record = (error: unknown) => uncaught.push(error);
     process.on("uncaughtException", record);
@@ -300,8 +334,8 @@ it.live("reports a Droid that stops reading at startup as a failure, not an unca
     const exit = yield* Effect.exit(
       discoverDroidSkills({ binaryPath, cwd: directory, environment: process.env }),
     );
-    // The stream reports the failed write after the request was rejected.
-    yield* Effect.sleep("200 millis");
+    // Close follows native exit and stdio teardown, including any failed-write error.
+    yield* Effect.promise(() => closed.promise);
 
     NodeAssert.equal(Exit.isFailure(exit), true);
     NodeAssert.deepEqual(uncaught, []);

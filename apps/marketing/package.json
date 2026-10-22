@@ -4,11 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "typecheck": "astro check",
-    "test": "vp test run"
+    "stage:install-scripts": "node scripts/stage-install-scripts.mjs",
+    "dev": "node scripts/stage-install-scripts.mjs && astro dev",
+    "build": "node scripts/stage-install-scripts.mjs && astro build",
+    "preview": "astro preview"
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",

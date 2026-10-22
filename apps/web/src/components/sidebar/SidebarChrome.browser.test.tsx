@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import "../../index.css";
 
 import { EnvironmentId, type DesktopUpdateState } from "@t3tools/contracts";
@@ -312,7 +312,7 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
             updatesProviders: false,
             server: alvinServer,
             handedOffVersion: null,
-            startedAt: Date.now(),
+            startedAt: 0,
             result: null,
             failure: null,
             providerFailure: null,
@@ -644,17 +644,24 @@ it("asks above the pill before a pass that downloads this app stops running thre
   // A question ends when Update stops running the pass, and does not come back on its own.
   await pill.click();
   await expect.element(cancel).toBeVisible();
-  setUpdateEverythingRun(() => ({
-    localVersion: null,
-    phase: "providers",
-    restartAt: null,
-    machines: [],
-  }));
-  await expect.poll(() => document.querySelector("[data-update-ask]")).toBeNull();
-  setUpdateEverythingRun(() => null);
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  expect(document.querySelector("[data-update-ask]")).toBeNull();
-  expect(run).not.toHaveBeenCalled();
+  {
+    using _clock = fakeTimers();
+    await act(() =>
+      setUpdateEverythingRun(() => ({
+        localVersion: null,
+        phase: "providers",
+        restartAt: null,
+        machines: [],
+      })),
+    );
+    await vi.waitFor(() => expect(document.querySelector("[data-update-ask]")).toBeNull());
+    await act(async () => {
+      setUpdateEverythingRun(() => null);
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(document.querySelector("[data-update-ask]")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  }
 
   await pill.click();
   await update.click();

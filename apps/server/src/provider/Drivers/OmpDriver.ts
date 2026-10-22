@@ -1,10 +1,5 @@
 import { ompProcessEnvironment } from "../omp/OmpEnvironment.ts";
-import {
-  OmpSettings,
-  type ServerProvider,
-  type ServerProviderVersionAdvisory,
-  type ServerSettings,
-} from "@t3tools/contracts";
+import { OmpSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";

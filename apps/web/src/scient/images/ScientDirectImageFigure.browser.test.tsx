@@ -50,6 +50,7 @@ describe("direct file image figures", () => {
     const image = host.querySelector<HTMLImageElement>("img")!;
     expect(image.crossOrigin).toBe(null);
     expect(image.alt).toBe("");
+    await vi.waitFor(() => expect(image.naturalWidth).toBe(16));
     await image.decode();
     await expect.poll(() => host.textContent).not.toContain("Loading image…");
     await render("Updated caption");
@@ -89,6 +90,7 @@ describe("direct file image figures", () => {
       host.style.display = "";
       return replacement;
     });
+    await vi.waitFor(() => expect(replacement.naturalWidth).toBe(16));
     await replacement.decode();
     await expect.poll(() => host.textContent).not.toContain("Loading image…");
     expect(host.querySelector("[data-markdown-copy]")?.getAttribute("data-markdown-copy")).toBe(

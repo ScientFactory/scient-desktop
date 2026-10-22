@@ -64,7 +64,7 @@ const resolver = {
   useResolve: () => ({
     _tag: "Success" as const,
     url: "https://example.invalid/test.pdf",
-    expiresAt: Date.now() + 3600000,
+    expiresAt: Date.parse("2100-01-01T00:00:00.000Z"),
     refresh: () => {},
   }),
 };

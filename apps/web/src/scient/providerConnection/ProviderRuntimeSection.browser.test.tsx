@@ -299,7 +299,9 @@ describe("ProviderRuntimeSection", () => {
           runtime: { ...runtime, qualifiedVersion: "1.1.17", catalog },
         },
       });
-      const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+      const now = Date.parse("2026-10-20T12:00:00.000Z");
+      using _now = vi.spyOn(Date, "now").mockReturnValue(now);
+      const checkedAt = new Date(now - 5 * 60_000).toISOString();
       expect(
         await render(_fixture, {
           provider: withCatalog({ checkedAt, failure: null, checksDisabled: false }),
@@ -309,7 +311,7 @@ describe("ProviderRuntimeSection", () => {
       const failed = await render(_fixture, {
         provider: withCatalog({
           checkedAt,
-          failure: { at: new Date().toISOString(), message: "The check timed out." },
+          failure: { at: new Date(now).toISOString(), message: "The check timed out." },
           checksDisabled: false,
         }),
         presentation: "row",

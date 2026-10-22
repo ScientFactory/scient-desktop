@@ -290,7 +290,9 @@ export const makeSpawnProbe = Effect.fn("PythonComputeRuntime.makeSpawnProbe")(f
  * found on disk and the probe needs the process port.
  */
 export const pythonRuntimeBinding: Effect.Effect<
-  ComputeRuntimeBinding,
+  ComputeRuntimeBinding & {
+    readonly managedRuntime?: ReturnType<typeof makeManagedPythonRuntimeController>;
+  },
   ComputeRuntimeError,
   | DuplexProcess
   | ExecutionProcess

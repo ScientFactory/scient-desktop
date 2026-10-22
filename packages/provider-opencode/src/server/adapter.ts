@@ -86,8 +86,6 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import { openCodeToolTurnItem } from "./toolItems.ts";
 
-export { openCodeToolProjectionKind } from "./toolItems.ts";
-
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
@@ -3885,6 +3883,11 @@ export const makeOpenCodeAdapterV2Driver = (
   ),
 });
 
+/**
+ * Default native OpenCode adapter for hosts without application-owned instruction policy.
+ *
+ * @public
+ */
 export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   OpenCodeSettings,
   OpenCodeAdapterV2DriverEnv

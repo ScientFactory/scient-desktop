@@ -458,26 +458,6 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.deepEqual(writeFailed.commands, []);
     });
   });
-
-  it.effect("continues to xdg-mime when the desktop MIME cache refresh stalls", () =>
-    Effect.gen(function* () {
-      const recorded = emptyRecording();
-      const started = yield* Deferred.make<void>();
-      const registration = yield* runRegister(recorded, {
-        updateDesktopDatabaseStalled: true,
-        updateDesktopDatabaseStarted: started,
-      }).pipe(Effect.forkChild);
-
-      yield* Deferred.await(started);
-      yield* TestClock.adjust("5 seconds");
-      yield* Fiber.join(registration);
-
-      assert.deepEqual(
-        recorded.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
-      );
-    }),
-  );
 });
 
 interface ThemeIconRun {
@@ -767,6 +747,25 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
         ],
       );
     }).pipe(Effect.scoped),
+  );
+  it.effect("continues to xdg-mime when the desktop MIME cache refresh stalls", () =>
+    Effect.gen(function* () {
+      const recorded = emptyRecording();
+      const started = yield* Deferred.make<void>();
+      const registration = yield* runRegister(recorded, {
+        updateDesktopDatabaseStalled: true,
+        updateDesktopDatabaseStarted: started,
+      }).pipe(Effect.forkChild);
+
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(registration);
+
+      assert.deepEqual(
+        recorded.commands.map(({ command }) => command),
+        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+      );
+    }),
   );
 
   it.effect("continues to xdg-mime when the icon cache refresh stalls", () =>

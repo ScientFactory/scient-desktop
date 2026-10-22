@@ -14,6 +14,7 @@ const discovery = vi.hoisted(() => ({
   listeners: new Set<() => void>(),
   register: vi.fn(),
   localEnvironmentOff: false,
+  cloudEnabled: false,
 }));
 
 vi.mock(import("@clerk/react"), async (original) => ({
@@ -51,7 +52,12 @@ vi.mock(import("../localEnvironment"), async (original) => ({
 }));
 
 import { hasCloudPublicConfig, resolveCloudPublicConfig } from "~/cloud/publicConfig";
-import { HostedEmptyState, T3ConnectSteps } from "./HostedEmptyState";
+import { HostedEmptyState } from "./HostedEmptyState";
+
+vi.mock(import("~/cloud/publicConfig"), async (original) => ({
+  ...(await original()),
+  hasCloudPublicConfig: () => discovery.cloudEnabled,
+}));
 
 const laptopId = EnvironmentId.make("laptop");
 const desktopId = EnvironmentId.make("desktop");
@@ -90,6 +96,7 @@ const registeredIds = () =>
   discovery.register.mock.calls.map(([registration]) => registration.target.environmentId);
 
 function setup() {
+  discovery.cloudEnabled = false;
   discovery.localEnvironmentOff = false;
   discovery.listeners.clear();
   discovery.state = {
@@ -105,7 +112,8 @@ function setup() {
 // registration has to start in the same pass, after all health checks finish.
 it("adds every linked computer only after discovery finishes checking them", async () => {
   setup();
-  await using screen = await render(<T3ConnectSteps />);
+  discovery.cloudEnabled = true;
+  await using screen = await render(<HostedEmptyState />);
   expect(screen.container.textContent).toContain("Start Scient on the computer with your code.");
   expect(screen.container.textContent).toContain("in that Scient installation");
   expect(screen.container.textContent).not.toMatch(/npx t3|T3 Code/);

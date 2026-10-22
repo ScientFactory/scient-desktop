@@ -1,7 +1,7 @@
 import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { MarkdownFindContext } from "~/components/chat/markdownFindContext";
 import {
   collectThreadFindRanges,
@@ -20,8 +20,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-const nextFrame = () =>
-  new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 const tex = "x_{browser_find}^2";
 
 it("reveals a selected formula source in Chromium while preserving KaTeX and one-copy semantics", async () => {
@@ -57,8 +55,12 @@ it("reveals a selected formula source in Chromium while preserving KaTeX and one
     );
   }
   await _fixture.root0.rerender(<Probe query="" />);
-  await nextFrame();
-  await nextFrame();
+  await vi.waitFor(() => expect(_fixture.host!.querySelector(".katex")).not.toBeNull());
+  await vi.waitFor(() =>
+    expect(_fixture.host!.querySelector(".katex")!.getBoundingClientRect().height).toBeGreaterThan(
+      0,
+    ),
+  );
   const formula = _fixture.host.querySelector(".katex");
   expect(formula).not.toBeNull();
   const source = _fixture.host.querySelector<HTMLElement>("[data-thread-find-canonical-source]")!;
@@ -66,8 +68,7 @@ it("reveals a selected formula source in Chromium while preserving KaTeX and one
 
   await _fixture.root0.rerender(<Probe query="browser_find" />);
   await expect.poll(() => source.hidden).toBe(false);
-  await nextFrame();
-  expect(source.getBoundingClientRect().height).toBeGreaterThan(0);
+  await vi.waitFor(() => expect(source.getBoundingClientRect().height).toBeGreaterThan(0));
   expect(_fixture.host.querySelector(".katex")).toBe(formula);
   expect(collectThreadFindRanges(_fixture.host, "browser_find")).toHaveLength(1);
   expect(source.getAttribute("aria-hidden")).toBe("true");

@@ -1,5 +1,10 @@
 # T3 upstream alignment, 2026-10-20 (through 81dea7821d)
 
+The original integration and qualification below describe `81dea7821d`, not
+the subsequent extension. The authorized extension to `21da3061aa` has bounded
+qualification only; see [the extension checkpoint](#extension-checkpoint-2026-10-21).
+Final qualification belongs to the composed main catch-up result.
+
 ## Integration state
 
 Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` receives the exact
@@ -309,3 +314,581 @@ upstream cursor. [PR #614](https://github.com/ScientFactory/scient-desktop/pull/
 is the authorized draft; its first hosted result and remaining qualification
 limits are recorded above. Do not extend the frozen
 official range during this pass or disturb the existing candidate.
+
+## Extension checkpoint, 2026-10-21
+
+This continues the same branch, worktree and PR #614. Its frozen official range
+is `81dea7821dca30b417182db6fa0cb99a0195bfd8` through
+`21da3061aa006fc852ea4bd84c31ec084a3afa26`: 133 commits, 2,308 incoming paths,
+774 same-path overlaps and 463 initially unmerged paths. The target describes
+as `v0.1.2-nightly.20261021.3457-70-g21da3061aa`. Later observed upstream commits
+are excluded.
+
+The literal merge began from `80436ae5bead92d3cde82b90a6aa5b137aefde6b`
+with the exact target in `MERGE_HEAD`. It is still in progress: no extension
+merge commit, accepted staged tree, pushed extension or extension-hosted result
+exists. `upstream-state.json` therefore still records the qualified `81dea7821d`
+boundary. The integrator alone owns the index; source handbacks are not staged
+acceptance.
+
+### Composed behavior and scoped evidence
+
+- Runtime composition retains the sole native V2 execution owner, provider-instance
+  routing, fresh MCP credentials, Stop delegation, durable writes and older-client
+  compatibility. Existing migration bodies remain immutable; the incoming webhook
+  migration occupies Scient slot 071. Server and shared-package semantic checks
+  have passed, but mandatory asynchronous-test lint repairs and full runtime
+  qualification remain incomplete. The four ordinary importer/capability suites
+  passed 82 cases. The skill benchmark's sample-ordering defect was repaired
+  using one initial measurement followed by 100 subsequent measurements;
+  all three entry-count cases passed. Exact-source independent review accepted
+  the repair and the 82-case correctness evidence. A recovered broker event
+  fixture passed 32 cases. The interrupted storage-write race passed its focused
+  case using real blocking operations instead of a delay; its other 29 cases
+  were filtered, not qualified by that focused run. The native file-opening
+  suite passed all 20 cases after replacing a delay with native callback receipts
+  and a controlled coalescing clock. Four opt-in native suites loaded without
+  errors, but their 18 cases were deliberately left skipped and are unqualified.
+- The current reader composition retains one position writer, the three-line/40px
+  reading-end rule, bounded send following and disabled list end-pinning. The
+  initial focused core run failed 52 cases. Five repaired core files then passed
+  245 cases. Reader clock/scroll-receipt repairs and document-readiness repairs
+  passed all 76 cases together. The queued-to-steer fixture now establishes
+  measured native layout before its single scroll request, without changing
+  production pinning policy. The complete core rerun passed 603 cases in
+  40 files and received exact-blob independent acceptance. The later uncached
+  web typecheck also passed. These remain scoped, not full-web qualification.
+- Scientific-browser qualification failed 159 of 617 cases across eight files.
+  The sidebar's activation receipt and focus/selection setup were repaired without
+  changing its production code; all 34 sidebar cases then passed. All 15 document
+  readiness cases passed within the reader/readiness lane. The second scientific
+  browser run passed 610 cases and failed seven. Native layout diagnosis found
+  that revealing the final blocks changed the scroll range. A second real
+  end-scroll now establishes the clamp baseline in that range; the original
+  geometry assertion remains unchanged. The complete scientific rerun passed
+  all 617 cases in 40 files with no source drift. Independent exact-source
+  condition review accepted the sidebar setup and LaTeX repairs and closed
+  both scientific-review findings.
+- The auxiliary web run initially passed 1,080 cases and failed one
+  permission/reconstruction condition. Its fixture now remounts outside the
+  unfinished React update and uses the existing reconstruction helper when
+  resetting the projected source. Independent review accepted that repair.
+  Complete requalification passed 1,081 cases: the 92 requested file filters
+  matched 93 files, including a separately source-bound three-case TSX sibling.
+  The subsequent exhaustive 1,599-condition audit of 130 paths found four
+  lost conditions despite that passing run. Corrections restore the real Vite
+  private-API guard, rendered manual-update installation matrix, undefined
+  pointer-type input and five exact Scient dark action/error colors.
+  Their focused rerun passes 57 cases with clean scoped lint, formatting and
+  owning web types. Independent re-review accepted all four corrections
+  against the exhaustive ledger; the other 126 paths remain unchanged.
+  Eight further settings, sidebar, onboarding and editor-readiness fixture files
+  passed all 91 cases after clock and completion-receipt repairs. Independent
+  review accepted the complete 18-path recovery batch, including those fixtures
+  and its scoped server, monitor and receipt changes.
+- The OMP model-barrier suite passed all eight cases after settings-handler
+  completion receipts and controlled acknowledgement/timeout-clock repairs.
+  Its subsequent native timing migration is recorded below.
+  Droid preparation and scheduling passed all nine cases after replacing two
+  sleeps with owned-process exit and initial-session-opening receipts. An
+  initial attempt waited at the wrong lifecycle boundary and timed out; the
+  corrected first-turn Stop case and complete rerun passed. The uncached server
+  typecheck passed again. Independent review accepted this four-path delta.
+- Managed-runtime completion now follows the controller's existing background
+  Promise and serialized command tail, including queued Toolkit batches.
+  Controller, MATLAB-helper and Python/MATLAB-adapter qualification passed
+  61 cases, including a new cancellation-isolation condition for settlement
+  waiters. The opt-in live recipe case was loaded but stayed skipped; no
+  provisioner or real MATLAB run is claimed. The uncached server typecheck
+  passed again. Independent exact-source review accepted this five-path delta.
+- Steering preservation passed all 33 cases with its Effect deadlines driven by
+  the controlled clock instead of wall-time polling. The workspace filesystem
+  owner passed all 44 cases after its trailing-space watch fixture acquired
+  actual native callback receipts and a local full controlled clock. Call-through
+  queue observation verifies that the unrelated named callback queues no changed
+  hint and that the selected named callback does; publication settlement cannot
+  hide a mistaken hint. An ESM-spy attempt and an overbroad queue-observation
+  attempt failed and remain recorded. The final uncached server typecheck passed.
+  Independent exact-source review accepted this three-path delta.
+- Managed LaTeX and Pandoc installer fixtures passed all 26 cases after replacing
+  sleep polling with receipts from their existing operation-completion spans.
+  The shared test observer delegates to the real tracer and owns its completion
+  queue; a new case verifies interruption isolation and successive completions.
+  The runtime installers and RPCs are unchanged. These fixtures serve local
+  archive stand-ins and do not qualify real vendor installers. The uncached
+  server typecheck passed. Independent exact-source review accepted this four-path delta.
+- Three unused upstream-only alternatives were retired: the extracted chat code
+  block, Mermaid code-block wrapper and eager thread-visit watermark. Each was
+  absent from the previous boundary and Scient head and exactly matched the
+  frozen incoming blob. Import analysis found no live consumers; Scient's code
+  block, diagram and eligible-reader owners are unchanged. The uncached web
+  typecheck passed, as did the unused-files/dependencies phase. Independent
+  review accepted these retirements and the receipt refresh.
+- Five unused module exports became local declarations without changing their
+  bodies or registry membership. The existing preview IPC methods and MCP
+  metadata tool remain registered; the font parser keeps its existing callers.
+  All 12 owning cases and uncached server, desktop and web typechecks passed.
+  The preview cases mock Electron, not a native desktop launch. Exact-source
+  independent review accepted this visibility-only delta.
+- Three unconsumed helpers were retired. The old lost-run retry wrapper is
+  superseded by the active upstream recovery, which still handles typed errors
+  and defects with bounded backoff, throttled warnings and current-owner fencing.
+  Its 89 root-run cases passed. Two highlight-cache helpers served only the
+  retired incoming code block; the retained Markdown owners passed 167 unit and
+  browser cases. No test or assertion changed, and uncached server and web
+  typechecks passed. Exact-source independent review accepted this retirement.
+- Eight unused web exports were localized or retired without changing retained
+  declaration bodies. The active route-bound revert dialog, multi-model dispatch
+  and input validation, native queue-edit sessions and instance-aware provider
+  selection remain unchanged. Fresh qualification passed 603 core, 167 Markdown
+  and 43 provider/queue-helper cases, plus the uncached web typecheck.
+  The first core run exposed a stale row measurement after changing text size.
+  A reproducing diagnostic found its scroll target 148px behind the measured
+  text end. The fixture now checks that the list recorded the actual row height
+  before calculating its target; all 18 original three-line comparisons and the
+  production reader are unchanged. The initial raw core-results JSON was
+  accidentally overwritten by the rerun; its failure receipt and the separate
+  reproducing diagnostic remain, with the collision disclosed in the author
+  evidence. Exact-source independent review accepted this web delta and the
+  stated evidence limitation.
+- Seven remaining unused-export findings described existing standalone provider
+  APIs. Cursor, OpenCode and Pi retain their frozen official server exports;
+  Grok retains its previously reviewed Scient server export and official adapter
+  declaration. Declaration-specific public API documentation preserves every
+  export binding and dependency evaluation order. Driver bodies, application
+  composition and check configuration are unchanged. All four owning uncached
+  typechecks and the complete unused-code gate passed. Exact-source independent
+  review accepted this classification as pre-existing package API documentation,
+  not a check waiver.
+- Plain workspace publication tests now await actual fence entry, blocked
+  ownership and mutation-ID claim receipts instead of eleven real sleeps.
+  All 72 original assertions across 20 cases and their guards remain unchanged.
+  Cancellation must finish while the fence is still held. The optional producer
+  receipt sink is synchronous and nonblocking; publication also succeeds with
+  that observer closed. All 78 affected cases across three files and the
+  uncached server typecheck passed. The shared fixture compiles the checked-in
+  C helper into private temporary state on this Mac; its Windows-like capability
+  mode does not qualify Windows. Exact-source independent review accepted this
+  migration without weakening its ownership or cancellation conditions.
+- The synthetic LaTeX build fixture now waits on existing build-loop completion
+  spans. Each concurrent document wait subscribes before reading its status, so
+  it cannot lose a completion or consume another waiter's only receipt.
+  All 372 original assertions across 71 cases remain unchanged and pass,
+  including four-document admission and the exact five-minute timeout.
+  The latter advances the full controlled clock once, then awaits completion.
+  Production build code is unchanged, and the uncached server typecheck passed.
+  This synthetic run is not native TeX compatibility evidence.
+  Exact-source independent review accepted this fixture
+  migration and its event-driven completion conditions.
+- The installed-engine LaTeX fixture now reuses the same accepted completion
+  observer instead of a separate status poll. All four complete test trees and
+  34 original assertions remain unchanged, including edits, math, text, pixels,
+  SyncTeX, recovery, saves and default-driver checks. Server types pass, but
+  the native suite remains unrun: no engine/PATH probe, compilation or managed
+  installation was performed. Existing guards and 25-second budgets remain
+  unqualified and unwaived. Independent review accepted the static and semantic
+  source migration only; native execution acceptance remains withheld.
+- File-backed fork tests now await existing checkpoint-ownership recovery and
+  reconciliation spans instead of real-time cleanup polls. All 324 original
+  assertions across 43 cases remain unchanged and pass; recovery also explicitly
+  checks that its journal is empty. Fresh recovery observers cannot consume the
+  seeding runtime's earlier completion. The separate four-minute controlled
+  provisioning test is unchanged, as are both production checkpoint owners.
+  The uncached server typecheck passed. This uses private SQLite and Git state
+  and native protocol replay, not live providers or cross-platform acceptance.
+  Exact-source independent review accepted this fixture migration and its
+  event-driven completion conditions.
+- The MATLAB product fixture now joins its existing local operation owner before
+  checking real gateway status, instead of polling install/remove completion.
+  The concrete MATLAB binding retains its existing controller type, without
+  changing the generic backend interface or RPC. All 65 original assertions,
+  three runtime-management payloads, opt-in gates and deadlines remain unchanged;
+  two explicit operation-null checks
+  preserve the old loop conditions. The surrounding 146 mocked controller and
+  service cases and uncached server types pass. The opted-in MATLAB integration
+  remains unrun, with no helper or vendor installation and no native compatibility
+  claim. Exact-source independent review accepted this fixture migration and
+  its existing-owner completion conditions.
+- The shared Pele diagram renderer, sanitization, resource refusal, recovery,
+  citations and Word/PDF capture paths passed 418 cases in 25 files. Independent
+  review accepted the exact scoped source after resource-model and actual-node
+  callback repairs. This does not establish Electron or visual acceptance.
+- Markdown focused unit and browser lanes passed 49 and 128 cases respectively.
+  Independent review validated 79 retained Scient conditions and 49 official-only
+  retirements, then accepted the sole subsequent delta, an unused-helper removal.
+  The earlier runtime evidence remains representative, not exact-source evidence
+  for that removal.
+- The maintained native browser/unit benchmark lane passed all 13 cases with its
+  strict budgets. Ordinary correctness cases remain ordinary tests. Independent
+  review accepted this scoped migration; hosted runner performance is unqualified.
+- OMP's two native Node timing cases now use the maintained benchmark lane;
+  all six original barrier correctness cases remain ordinary tests. Uncached
+  server types, 37 focused correctness cases and both native benchmark cases
+  pass. All nine original native assertions and their limits remain, including
+  socket measurements beginning before connection, all eight idle sockets,
+  authenticated availability, the wrong-token refusal, the full long-poll hold
+  and prompt generation wakeup. The 30 ms readiness sleep is replaced by the
+  server's actual subscribed generation and distinct request identity. Closing
+  the passive receipt queue before the change also proves it cannot gate wakeup.
+  Each native sequence is measured once, with no warmup or speedup claim.
+  Exact-source independent review accepted this migration without findings.
+  This is private loopback Node qualification with an inert OMP peer, not
+  native-provider or platform-wide qualification.
+- Fork measurements now use the same explicit benchmark lane, preserving their
+  existing opt-in gate. Both original and migrated runs passed all three cases,
+  including 2,500 forks, unique names/counts, a 50,000-tool history, concurrent
+  SQL progress and the strict sub-second maximum-read condition. All 23
+  correctness conditions remain; the options result is bound before its same
+  availability assertion. Each measured operation runs exactly once, without
+  warmup or repeated mutations; chronological first/last-100 summaries remain.
+  The SQL reader now offers continuous load instead of sleeping between reads.
+  This changes measurement scheduling and does not establish a performance
+  improvement. Private native SQL/orchestration and an inert provider were used.
+  Server types, complete unused-code checks and formatting pass. Independent
+  review accepted this migration. A subsequent shared-adapter relocation passed
+  the same three native cases again, not three additional cases or evidence of a
+  performance improvement. Independent review accepted its scoped reuse with
+  the Python migration. Generated shard weights still need maintained regeneration.
+- The opt-in managed-Python fixture now uses the explicit benchmark lane for
+  cold-install and all eight ordered Toolkit-update measurements. Its 20 original
+  assertions, four status predicates, gateway payloads, retained-kernel checks,
+  live output observer and existing outer deadlines remain. Status checks join
+  the actual controller's cold completion effect before reading gateway status;
+  no status poll, retry, RPC or controller implementation was added. The concrete
+  binding refinement emits identical production JavaScript. The accepted
+  single-sample measurement adapter is shared rather than duplicated, preserving
+  its tracing identity and retirement join. Uncached server types and 160 mocked
+  cases pass; complete unused-code checks also pass. Independent review accepted
+  the migration and corrected native CI consumers. The first review rejected
+  a stale workflow consumer; the corrected job requires both recipe correctness
+  and the product benchmark. Three workflow regressions and six pure detector
+  cases pass, alongside scripts types. This is not hosted-job qualification.
+  At that migration checkpoint, the real provisioning benchmark was not run:
+  it would download pinned interpreter/packages. Native compatibility and
+  performance remain unqualified, not waived.
+- The ordinary Python-kernel disappearance wait now uses a passive native
+  observer armed while each actual bridge or kernel PID is alive. A native
+  exit notification alone does not establish disappearance: the original
+  `processExists(pid) === false` predicate and ten-second ceiling remain.
+  Observer processes belong to the suite scope, which outlives the inner
+  bridge scope; both restart sites arm the actual replacement kernel.
+  The shared layer excludes test services and retains the original real clock.
+  All ten original case bodies, 51 matcher calls and deadlines are conserved
+  after only the declared observer instrumentation and layer registration.
+  The user-authorized Homebrew Python passes eight dependency-supported native
+  cases, including bridge loss, kernel death, restarts, output flooding and
+  interrupt storms. Three synthetic Darwin probes distinguish a held zombie
+  from reaping and verify cancellation does not signal the observed target.
+  Owning server types, scoped lint and formatting pass. Independent source
+  review accepted the exact observer migration without findings, including
+  its resource ownership and original-condition conservation. At that checkpoint,
+  no Python package was installed; two scientific-output
+  cases were blocked by absent pandas/matplotlib dependencies. Linux/Windows native
+  behavior remains unqualified. Later isolated managed provisioning is recorded below.
+- The connected extracted-intent fixture retains all six cases and 116 deciding
+  assertions. Its private release wait now observes actual filesystem changes,
+  and owned leader retirement observes exit receipts with the original ten-second
+  escalation and thirteen-second failure ceiling. The dedicated project timeout
+  remains unchanged. An independent review rejected the first scope migration:
+  asynchronous acquisitions could finish after cancellation closed their scope.
+  The correction owns each acquisition atomically with release; all 14 helper
+  cases, including held-acquisition cancellation, and owning web types pass.
+  Exact idle action labels follow the current composer owner. The obsolete
+  literal attachment prefix is replaced by the actual destination thread prefix,
+  retaining retry identity, promotion, bytes and context checks.
+  The next connected checkpoint passed five cases. Its remaining assertion
+  exposed an omitted source-plan field in the thin launch RPC, despite the
+  existing contract, client, intake and orchestration support. A narrow marked
+  forwarding correction passes a new real-RPC regression that first failed at
+  that exact omission, and uncached server types pass. The new regression's first
+  attempt lacked its HTTP test layer and is retained separately from that
+  reproduction. All six connected cases now pass, with no source drift and the
+  owned process group gone. Independent re-review accepted the exact five-file
+  correction without findings and resolved the acquisition-ownership finding.
+  The complete server router file also passes 253 cases with one existing skip.
+  No real provider or live profile was used.
+- Full mobile mocked qualification passed 211 files and 2,319 cases, alongside its
+  owning typecheck. This is not device qualification. Packaging passed 117 cases.
+  Six desktop quality ports passed 62 cases with one pre-existing declared
+  Windows-only skip, plus an uncached owning-package typecheck. Independent
+  review accepted that exact-blob darwin evidence and still withholds native
+  Windows/Linux acceptance.
+- Toolchain composition and the generated lockfile passed scoped independent
+  review. The frozen lockfile remained unchanged by a lockfile-only validation.
+  Known peer conflicts remain reported, not suppressed. Uncached web and server
+  Vite typechecks passed after the recovered compiler and browser-fixture repairs.
+  Four real-stdio monitor smoke-harness cases also passed; these do not qualify
+  a shipped native monitor binary.
+  The complete recursive Vite typecheck checkpoint passed all 49 tasks with caching
+  disabled and four tasks at a time. Its first attempt exposed a missing
+  `Duration` import in the Pi adapter test. Restoring only that import leaves
+  every test body and assertion unchanged; all 91 adapter cases also pass.
+
+All extension lanes above used synthetic state. External lane runners additionally
+used synthetic HOME and removed provider credential variables; the repository's
+`runTool` helper alone does not provide those two protections. Source fingerprints
+and failed-attempt logs are retained separately. Counts are scoped checkpoints,
+not a passing extension aggregate.
+
+### Unclosed boundaries
+
+Complete tests, build, desktop smoke, actual-index
+seams and provenance remain required.
+The complete formatting checkpoint passed all 9,337 files after mechanical corrections to
+35 files. Their source, rendered Markdown and CSS syntax trees match the exact
+before-copies. Exact-source independent review accepted this formatting delta
+and the one-import Pi test repair.
+The renewed complete formatting gate, including the connected-fixture helpers
+and RPC correction, passes all 9,339 files.
+The latest complete lint gate passes with zero errors and 573 warnings,
+following the earlier one-error/574-warning checkpoint and initial 49-error
+checkpoint. It includes the auxiliary-condition corrections and native
+Python disappearance observer. The complete recursive uncached Vite typecheck
+also passes all 49 tasks again.
+These renewed checks capture 9,594 code/config, explicit formatting,
+native C/header and Python-observer paths with no source drift.
+The earlier 9,593-path catalog predates the new Python helper.
+The earlier 9,581-path snapshots
+did not bind the five C/header fixture inputs; the affected publication rerun
+uses the expanded snapshot.
+The renewed complete unused-code gate passes both its files/dependencies and
+broader exports phases.
+The current branding gate passes across all 4,695 product-surface files.
+The first complete web run passed 12,669 cases and failed four across three
+of its 1,066 files, with no source drift. Two structural guards still read old
+monolithic locations after row and table extraction. They now follow the actual
+owners and additionally require their imports and mounts. The two native image
+decode failures did not reproduce in the narrow unchanged run; their cause is
+not claimed established. Both cases now observe actual native image dimensions
+before the same decode calls, without changing their sources or original checks.
+All 175 original assertions and fixture trees are conserved after those declared
+locator and readiness additions. The affected files and related real Markdown,
+table and image-control siblings pass 138 cases; owning web types, scoped lint
+and formatting pass. The complete gate checkpoints above predate these three
+test-only corrections. Independent review accepted those corrections without
+findings. The second complete web run passes all four former failure cases,
+but fails two other native LaTeX selection/reading-position cases, with 12,671
+passing cases and no source drift. Those two files pass all 57 cases unchanged
+in isolation; that is not a diagnosis or repair. The third complete diagnostic
+still failed reading persistence and also timed out in an existing clamp case.
+Independent review identified a separate unconditional scroll-event wait that
+cannot finish when a native clamp leaves both offsets unchanged. A real native
+regression times out with the original helper and passes with the actual-offset
+guard; both original bottom requests and all later assertions remain.
+A second native regression places the viewport edge in a measured gap between
+three real pages. Its trusted scroll reaches the actual persistence callback,
+which hits the blank editor root and incorrectly remembers block zero instead
+of the independently resolved visible block two. Persistence now shares the
+anchor's existing stateless visible-content resolver in the geometry owner,
+without another map, cache, retry or position writer. Exact inverse proofs
+conserve the original anchor and persistence behavior outside that substitution,
+and all original test bytes after only the guard and two added cases.
+With temporary diagnostics removed, both affected files pass all 59 cases;
+owning uncached types, scoped lint and formatting pass. The fourth complete web
+run passes 12,674 cases and fails one, with no source drift. Both new regressions,
+the original clamp and remembered-position cases pass. Another existing typing,
+splitting and joining case measures 39.92 pixels of movement against its unchanged
+one-pixel limit; that failure remains under investigation. Independent source
+review accepts the reading repair without findings. The fifth complete traced
+replay reproduces the same failure. Its native measurements locate the movement
+in the split paragraph while the block above, viewport and scroll offset stay
+fixed; no native scroll events or JavaScript scroll writes are recorded.
+The sixth complete run passes 12,675 cases with that additional passive trace;
+instrumented source is not clean acceptance. A separate focused native case
+reproduces a planned negative paragraph offset disappearing on Enter, with
+14.17 pixels of movement and no application scroll writes. The existing Scient
+presentation owner now preserves that offset on the retained paragraph through
+splits and joins, without another planner, position writer, cache, timer or retry.
+The unchanged native diagnostic passes with 0.021 pixels of movement after this
+single-owner repair. All temporary traces are removed. The clean stability suite
+passes all 34 cases, including native interaction, exact-source undo, and mapping
+coverage that rejects transferring the offset to a replacement paragraph.
+The original stability cases are byte-conserved outside the two added imports
+and cases. The seventh, diagnostic-free complete web run passes 12,676 cases
+and fails one native Hebrew proof-word selection case, with zero pending cases,
+an exact initial source catalog and no source drift. The source-reveal callback
+returns one letter instead of the complete word; all layout cases pass.
+The next full run passes all 12,677 cases with broad native getter tracing, but
+that observation can affect timing and does not explain the failure or qualify
+clean source. A lighter, post-calculation receipt reproduces the proof-word
+failure: 12,675 cases pass, one fails, and a separate dynamic-import failure
+prevents the scheduled-task-link suite's one case from being collected.
+The actual reveal range contains one letter while native and model selections
+are collapsed at the document start by the callback. This identifies the
+point-range fallback, not the writer that lost the word selection; callback
+observations are not evidence of the original capture getter's return value.
+The later native-selection, scroll and pane-handoff assertions in the failed
+case are not reached. Both runs bind their declared source catalog with no
+source drift. The import failure and selection loss remain unresolved.
+All 12,677 assertions pass in a later writer-instrumented run, but the process
+exits with failure because deferred pagination work throws an unhandled error
+while reading the final physical sheet's geometry. The suite associates the
+error with Hebrew-template rendering; that association does not establish its
+cause. The selection trace remains healthy and therefore does not explain the
+earlier loss. All temporary selection instrumentation is removed byte-for-byte;
+direct pagination observation does not reproduce either invalid sheets or
+native-selection loss in the next full run. Its 12,677 assertions pass with
+process status zero and no unhandled error, but neither earlier failure is
+diagnosed. All remaining product and test observations are removed byte-for-byte;
+the complete source catalog matches the preceding diagnostic-free candidate.
+Clean complete web qualification remains blocked. Native selection and source
+mapping are under observation without forced selection, new waits or changed
+assertions. ResizeObserver-loop diagnostics remain unclassified. The earlier
+bold-selection failure still lacks a failing-path diagnosis. Complete root gates
+above predate these later browser and shared-resolver changes.
+The maintained unsharded server run fails: 11,296 assertions pass, 61 fail,
+164 are skipped and three remain pending. Five additional files have failed
+suite status without failed assertion rows. The maintained shard generator exits zero despite its test
+child exiting one. Its generated weights are preserved as rejected output,
+not accepted calibration. At that rejection checkpoint, all 9,593 other catalog
+paths remain byte-exact and the frozen merge boundary is unchanged.
+Twenty-five failures name three
+fixtures deliberately pruned upstream. The Codex source/fork transcript still
+serves 23 Scient-specific cases; its exact immutable bytes now belong to
+Scient's fixture directory rather than restoring the retired upstream path.
+Only those consumers' fixture URLs change; all 27 affected and sibling cases
+pass, alongside owning formatting, lint and uncached server types.
+A normal-reporter diagnostic identifies five empty suite blocks, not lifecycle
+errors. Removing those blocks removes no tests. Cache cases now expect the
+adopted version 8, reject version 9 and additionally cover migration from
+version 7. The native promise-timer case retains its full 25-millisecond
+deadline, unref option and refusal of lower-priority work through the established
+mock-module boundary. Its initial mock import fails collection; the direct
+mocking import corrects that failure. All eight files pass 198 runnable cases
+with one existing platform skip. Formatting, lint and uncached server types
+pass; scoped lint retains three warnings.
+The Claude SDK failure is another missing upstream-pruned fixture. Its exact
+2,097-byte synthetic peer and original executable mode now belong to Scient's
+test namespace; only one fixture URL changes. All four SDK boundary cases and
+owning static checks pass, without live-provider qualification.
+The native TLS fixture depends on two crypto-tool defaults. System LibreSSL
+signs the server certificate with SHA-1 and explicitly encodes EC parameters;
+current Node rejects both. Homebrew OpenSSL's defaults mask those failures.
+The existing test helper now pins SHA-256 and named-curve encoding, retaining
+prime256v1, the original CA recipe and every certificate-verification, trust,
+proxy and refusal assertion. No production TLS policy changes. The initial
+digest-only correction still fails the trusted request and remains rejected.
+The minimal complete correction passes all 32 broker cases.
+A composed 15-file check under the original pinned-Node/system-tool environment
+passes 261 cases with one existing platform skip, no failed suites, no unhandled
+errors and no drift across its 9,598-path catalog. This qualifies only the
+bounded runtime corrections. The TLS owner's formatting, lint and uncached
+server types pass, with non-blocking type suggestions and zero TLS lint warnings.
+Three independent reuse, quality and efficiency reviews find no actionable
+source issues across the 19 bounded test and fixture paths.
+The ACP hard-teardown test separately asserts and consumes its held callback's
+entry receipt before collecting the three later stale-callback receipts. This
+adds one positive assertion and preserves every original quarantine and native
+response check, without changing the adapter. All 67 owning cases, formatting,
+lint and uncached server types pass. Three existing polling-loop lint warnings
+outside this one-line correction remain unchanged.
+The voice filesystem spy uses the native-ESM mock-module boundary while delegating
+to the real filesystem. Its held-copy, removal ordering, checksum and final
+absence checks remain intact. All 78 owning cases and static checks pass.
+Contracts removes 28 testless callbacks without removing registered tests,
+assertions or hooks. Its 479 owning cases and static checks pass; 26 pre-existing
+lint warnings and 18 non-blocking type suggestions remain, without waivers.
+Another 22 testless callbacks across nine files in five workspace owners are
+removed with the same coverage conservation. All five complete owners pass
+3,036 cases with three existing skips. Their formatting and lint pass with zero
+warnings; uncached types pass with 70 non-blocking suggestions.
+The managed-runtime download cancellation spy uses the same native-ESM boundary,
+delegates to the actual timer and clears earlier call history before observing
+the current retry. Its real 500-millisecond timer, body-release and retry-start
+receipts, abort settlement, single-request assertion and all host, redirect,
+checksum and retry-budget checks remain unchanged. All 332 runnable owning cases
+and static checks pass; two existing Cursor live opt-ins remain skipped.
+The literal upstream deletion of marketing's sole test also retires its obsolete
+test script. No pass-on-empty flag or selector exclusion is added. Formatting
+and its retained Astro typecheck pass.
+The fresh remaining-workspace gate verifies all 44 actual tasks: 11,016 cases
+pass, with 49 skips. Its 49-package inventory accounts for 46 test scripts.
+The 44-task gate excludes server and web, whose qualification remains open.
+Marketing, provider-testing and source-control-testing have no test script.
+The source guard now covers 9,770
+paths, adding 172 existing, unchanged relay and lint-plugin files. This
+strengthens the fresh run's evidence, not prior runs' frozen-source coverage.
+Earlier failed workspace attempts remain failed.
+The retained single-fork merge-back recordings now live in the existing Scient
+fixture owner, byte-identical to the pinned official base with their MIT notice
+and deterministic import documented. Only that scenario's private fixture path
+changes. Its native-history harness expects the single-fork prompt instead of
+the sibling-only list; sibling expectations remain unchanged. All four original
+case bodies, commands, assertions and deadlines are byte-exact. A clean run passes
+all four cases, and formatting, lint and uncached server types pass. Lint has zero
+warnings; type suggestions remain non-blocking. Temporary diagnostics are removed.
+The extracted replay drivers now reuse the existing Scient Codex owner-reload
+selector and legacy OpenCode permission materializer. The shared runner passes
+its workspace to the existing root-checkpoint rollback path; provider adapters
+remain separate. A complete run of all eight drivers, the retained custom runner
+and the helper tests passes 298 cases. All 291 original cases are conserved,
+with seven new selector guards. Formatting, lint and uncached server types pass;
+three independent reviews of the six-path migration find no actionable issues.
+This is bounded replay qualification, not a fresh full-server aggregate.
+The native OMP lifecycle and redaction tests also pass all 18 original cases
+after correcting their observation channels. Lock absence, actual final-log
+delivery, child-before-parent ordering and all original assertions and deadlines
+remain enforced. Formatting, lint, uncached server types and three independent
+reviews pass; the temporary lock-event diagnostic is removed.
+The producer-work and provider-switch suites pass all 86 original cases after
+using work-ID drop receipts and restoring the retained compact-fallback
+continuation. A combined four-suite run also conserves the 18 native OMP cases,
+for 104 passes. Three independent reviews find no actionable issues. Formatting
+and uncached types pass; lint passes with one unchanged inline-schema warning.
+The Droid suite passes all 87 original cases after its custom-model fixture
+observes native cleanup rather than the crash callback. PID disappearance,
+typed refusal and recovery assertions remain intact; the four crash-callback
+consumers are unchanged. Its unused runtime capture is removed. Scoped formatting,
+uncached types and lint pass, with one unchanged unused-parameter lint warning.
+These are test-only corrections. Independent review of the Droid correction
+finds no actionable issues. The subsequent aggregate attempt has no recoverable
+terminal or raw result and does not qualify the extension. With owner approval,
+shard weights retain the exact official `21da3061aa` table instead of rejected
+local measurements. They balance runners, not test inclusion or assertions.
+Final aggregate qualification follows the main catch-up: covered gates run in
+CI, while focused regressions and uncovered macOS/build checks remain local.
+Known browser failures remain blockers; no correctness gate is waived.
+The first Python review attempt stopped because its model provider was
+unreachable; it produced no acceptance or findings. The successful re-review
+independently conserved the original 51 native and 175 browser assertions.
+Several workers stopped at their model usage limit. Their partial changes and
+receipts are not accepted handbacks; unfinished reviews and repairs continue
+under the integrator.
+Under separate explicit authorization, the maintained managed-Python recipe
+correctness test and scientific product benchmark now pass in isolated temporary
+state. The benchmark covers cold installation and all eight ordered toolkit
+combinations, actual scientific execution, retained generations and private
+removal. Each phase is measured once, without warmup or a speedup claim.
+Both lanes finish with no source drift. An isolated scanner trace establishes
+that its migrated restart wait observes the wrong process: the bridge protocol
+replaces its kernel and keeps the transport. The test correction retains the
+original old-kernel disappearance condition and the bridge-exit check after stop,
+and adds explicit same-bridge identity and native liveness checks across restart.
+It changes no runtime owner, scan, payload or deadline. Scoped formatting, lint
+and uncached server types pass. A fresh locked native environment passes all
+14 cases across the four workflows: ten ordinary kernel cases, service
+verification, both Run fresh cases and the scanner. The scanner completes in
+6.17 seconds. The generation lease releases, private removal succeeds and the
+private environment's absence is verified. These runs do not qualify other
+operating systems or hosted jobs.
+Electron 44.9.3's first pinned installation timed out. A subsequent installation
+succeeded using bundled checksum verification, and native ARM64 runtime paths,
+version and framework aliases pass preflight. No unverified download fallback
+was run. Isolated build, desktop smoke and exact-head app/visual review remain
+pending. Windows, Linux, mobile-device, release signing, notarization and
+live-provider compatibility are unqualified.
+
+The existing candidate and live data remain untouched. This extension still
+authorizes draft delivery only, never main merge, auto-merge, release, release
+signing, notarization, publication or service activation. The separate native
+setup authorization permits only isolated locked Python provisioning and the
+local smoke launcher's ad-hoc signing and macOS registration, not system-Python
+changes or existing-candidate operations. Cursor advancement must follow a committed,
+provenance-accepted literal merge, not this checkpoint.
+
+Further sequential extensions to official upstream are authorized after each
+batch is qualified, clean and pushed. Capture one new immutable target at each
+such boundary, on this same branch and draft PR, integrate all advancements,
+then review and qualify the whole batch before pushing and capturing the next.
+This does not authorize replacing an active merge target, skipping qualification,
+merging main or releasing.

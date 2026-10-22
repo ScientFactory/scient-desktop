@@ -116,89 +116,7 @@ describe("DesktopPreReadyPlatform", () => {
       }
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
-    );
-  });
-
-  it.effect.each(["darwin", "win32"] as const)("leaves device scaling alone on %s", (platform) => {
-    readFileSyncMock.mockReturnValue("1.75");
-    hasSwitchMock.mockImplementation((name: string) => name === "force-device-scale-factor");
-    getSwitchValueMock.mockReturnValue("2");
-
-    return Effect.gen(function* () {
-      yield* DesktopPreReadyPlatform.make;
-      assert.deepEqual(readFileSyncMock.mock.calls, []);
-      assert.deepEqual(writeFileSyncMock.mock.calls, []);
-      assert.deepEqual(appendSwitchMock.mock.calls, []);
-    }).pipe(Effect.provideService(HostProcess.Platform, platform));
-  });
-
-  it.effect("preserves an explicit Linux password-store switch", () => {
-    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
-    getSwitchValueMock.mockReturnValue(" basic ");
-
-    return Effect.gen(function* () {
-      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
-
-      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
-      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
-    }).pipe(
-      Effect.provide(
-        DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-          Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
-        ),
-      ),
-    );
-  });
-
-  it.effect.each([
-    {
-      label: "merges the color-manager fallback into disabled features on Hyprland 0.48.1",
-      switches: { "ozone-platform": "wayland", "disable-features": "Vulkan" },
-      hyprlandVersion: "0.48.1",
-      hyprlandCommit: "29e2e59fdbab8ed2cc23a20e3c6043d5decb5cdc",
-      expected: [["disable-features", "Vulkan,WaylandWpColorManagerV1"]],
-    },
-    {
-      label: "preserves color management on Hyprland 0.51.0",
-      switches: { "ozone-platform": "wayland", "disable-features": "Vulkan" },
-      hyprlandVersion: "0.51.0",
-      hyprlandCommit: "0123456789abcdef0123456789abcdef01234567",
-      expected: [],
-    },
-    {
-      label: "preserves color management when Electron resolved X11",
-      switches: { "ozone-platform": "x11", "disable-features": "Vulkan" },
-      hyprlandVersion: "0.48.1",
-      hyprlandCommit: "29e2e59fdbab8ed2cc23a20e3c6043d5decb5cdc",
-      expected: [],
-    },
-  ])("$label", ({ switches, hyprlandVersion, hyprlandCommit, expected }) => {
-    vi.stubEnv("XDG_CURRENT_DESKTOP", "Hyprland");
-    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
-    const commandLine = new Map<string, string>(Object.entries(switches));
-    hasSwitchMock.mockImplementation((switchName: string) => commandLine.has(switchName));
-    getSwitchValueMock.mockImplementation(
-      (switchName: string) => commandLine.get(switchName) ?? "",
-    );
-    execFileSyncMock.mockReturnValue(
-      JSON.stringify({
-        commit: hyprlandCommit,
-        version: hyprlandVersion,
-        dirty: false,
-        tag: `v${hyprlandVersion}`,
-      }),
-    );
-
-    return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.map(() => {
-        const featureSwitches = appendSwitchMock.mock.calls.filter(([name]) =>
-          ["disable-features", "enable-features", "ozone-platform"].includes(name),
-        );
-        assert.deepEqual(featureSwitches, expected);
-      }),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
     );
   });
@@ -336,4 +254,70 @@ describe("DesktopPreReadyPlatform", () => {
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
+
+  it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
+    vi.stubEnv("SCIENT_NEXT_HOME", "/isolated");
+    vi.stubEnv("T3CODE_HOME", "/foreign-profile");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    const settingsPath = "/isolated/userdata/desktop-settings.json";
+    const files = new Map([[settingsPath, "{}"]]);
+    const commandLine = new Map<string, string>();
+    readFileSyncMock.mockImplementation((path: string) => {
+      const contents = files.get(path);
+      if (contents === undefined) throw new Error("ENOENT");
+      return contents;
+    });
+    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
+      files.set(path, contents);
+    });
+    hasSwitchMock.mockImplementation((name: string) => commandLine.has(name));
+    getSwitchValueMock.mockImplementation((name: string) => commandLine.get(name) ?? "");
+    appendSwitchMock.mockImplementation((name: string, value: string) => {
+      commandLine.set(name, value);
+    });
+    const launch = Effect.gen(function* () {
+      const startup = Promise.resolve().then(() => commandLine.get("force-device-scale-factor"));
+      yield* DesktopPreReadyPlatform.make;
+      return yield* Effect.promise(() => startup);
+    });
+
+    return Effect.gen(function* () {
+      for (const explicitScale of ["1.75", "1"]) {
+        commandLine.clear();
+        commandLine.set("force-device-scale-factor", explicitScale);
+        appendSwitchMock.mockClear();
+        assert.equal(yield* launch, explicitScale);
+        assert.isFalse(
+          appendSwitchMock.mock.calls.some(([name]) => name === "force-device-scale-factor"),
+        );
+
+        // The settings service discards fields it does not own when rewriting its document.
+        files.set(settingsPath, JSON.stringify({ linuxPasswordStore: "basic" }));
+        commandLine.clear();
+        assert.equal(yield* launch, explicitScale);
+      }
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
+  it.effect("preserves an explicit Linux password-store switch", () => {
+    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
+    getSwitchValueMock.mockReturnValue(" basic ");
+
+    return Effect.gen(function* () {
+      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+
+      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
+      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
+    }).pipe(
+      Effect.provide(
+        DesktopPreReadyPlatform.layer.pipe(
+          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
+        ),
+      ),
+    );
+  });
 });

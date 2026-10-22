@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
 
 import type { Editor } from "@tiptap/core";
@@ -32,10 +32,20 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host?.remove();
   clearVisualDraft(key);
 }
-const frames = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
+async function editAndLayout(editor: Editor, edit: () => void) {
+  let complete!: () => void;
+  const completed = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  editor.view.dom.addEventListener("scient-latex-layout", complete, { once: true });
+  try {
+    await act(edit);
+    await completed;
+    await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
+  } finally {
+    editor.view.dom.removeEventListener("scient-latex-layout", complete);
+  }
+}
 async function mount(_fixture: _Fixture, source: string, name: string) {
   await page.viewport(1250, 950);
   key = `paging-${name}`;
@@ -97,7 +107,6 @@ async function mount(_fixture: _Fixture, source: string, name: string) {
       { timeout: 25000 },
     )
     .toBe(true);
-  await frames();
   await expect.poll(() => pagedLayoutSettled(editor()!.view), { timeout: 25000 }).toBe(true);
   return editor()!;
 }
@@ -135,14 +144,24 @@ it.each([
       const spacer = document.createElement("div");
       spacer.style.height = "700px";
       scroll.append(spacer);
-      await frames();
+      await vi.waitFor(() =>
+        expect(scroll.clientHeight).toBeCloseTo(
+          _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
+            20,
+          0,
+        ),
+      );
       for (let number = 1; number <= pages; number++) {
         const sheet = _fixture.host.querySelector<HTMLElement>(
           `.scient-latex-page-sheet[data-page="${number}"]`,
         )!;
         scroll.scrollTop +=
           sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
-        await frames();
+        await vi.waitFor(() =>
+          expect(
+            Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
+          ).toBeLessThan(2),
+        );
         await page.screenshot({
           path: `${screenshotDirectory}/${name}-visual-${number}.png`,
           element: scroll,
@@ -151,7 +170,6 @@ it.each([
       spacer.remove();
     }
   },
-  60000,
 );
 
 it("template 15 repeats furniture at the next printable origin and preserves every editable row", async () => {
@@ -217,15 +235,16 @@ ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
   for (const part of state.geometry.filter((part) => part.column === 1).slice(0, 3)) {
     const rect = editor.view.coordsAtPos(part.from + 1);
     scroll.scrollTop += rect.top - scroll.getBoundingClientRect().top - 100;
-    await frames();
-    const visible = editor.view.coordsAtPos(part.from + 1);
-    const position = pagedPositionAtPoint(
-      editor.view,
-      visible.left + 1,
-      (visible.top + visible.bottom) / 2,
-    );
-    expect(position).toBeGreaterThanOrEqual(part.from);
-    expect(position).toBeLessThan(part.to);
+    await vi.waitFor(() => {
+      const visible = editor.view.coordsAtPos(part.from + 1);
+      const position = pagedPositionAtPoint(
+        editor.view,
+        visible.left + 1,
+        (visible.top + visible.bottom) / 2,
+      );
+      expect(position).toBeGreaterThanOrEqual(part.from);
+      expect(position).toBeLessThan(part.to);
+    });
   }
   expect(published).toBe(source);
   const target = state.geometry.find((part) => part.column === 1)!;
@@ -361,12 +380,11 @@ The second page starts here.
   editor.state.doc.forEach((node, offset) => {
     if (node.textContent.startsWith("Alpha")) end = offset + node.nodeSize - 1;
   });
-  editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, () =>
+    editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end)),
+  );
   inOrder();
-}, 60000);
+});
 
 it("breaks a word across lines or columns only once, at a hyphen", async () => {
   await using _fixture = _createFixture();
@@ -384,7 +402,7 @@ it("breaks a word across lines or columns only once, at a hyphen", async () => {
   expect(cut).toBe(true);
   expectWholeWords(editor);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen").length).toBeGreaterThan(0);
-}, 120000);
+});
 
 /** Whether a column or page cut falls between two letters of one word. */
 function cutsInsideWord(editor: Editor) {
@@ -455,10 +473,7 @@ async function insertAtArticleStart(editor: Editor, text: string) {
     return at < 0;
   });
   expect(at).toBeGreaterThan(0);
-  editor.view.dispatch(editor.state.tr.insertText(text, at));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, () => editor.view.dispatch(editor.state.tr.insertText(text, at)));
 }
 
 it("finds the first letter of a line that follows a hyphenation break", async () => {
@@ -518,7 +533,7 @@ it("sets a two-column article's title across both columns, above the body", asyn
   for (const paragraph of body)
     expect(paragraph.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom - 1);
   expect(published).toBe(twoColumnArticle);
-}, 60000);
+});
 
 it("draws no hyphen at line ends that stay in their column", async () => {
   await using _fixture = _createFixture();
@@ -554,10 +569,9 @@ it("lays out an edit next to a drawn hyphen as a fresh opening of the result doe
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
   const paragraph = editor.state.doc.resolve(at).start();
-  editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, () =>
+    editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph)),
+  );
   await expect.poll(() => published).toContain("Inserted words shift the wrap.");
   const layout = (current: Editor) =>
     latexPagedKey
@@ -574,7 +588,7 @@ it("lays out an edit next to a drawn hyphen as a fresh opening of the result doe
   editor = await mount(_fixture, source, "hyphen-edit-fresh");
   expect(layout(editor)).toEqual(edited.layout);
   expect(hyphens(editor)).toEqual(edited.hyphens);
-}, 90000);
+});
 
 it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async () => {
   await using _fixture = _createFixture();
@@ -586,10 +600,9 @@ it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh 
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
-  editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, () =>
+    editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1)),
+  );
   await expect.poll(() => published).toContain("-");
   const hyphens = (current: Editor) =>
     [...current.view.dom.querySelectorAll(".scient-paged-hyphen")].map((element) =>
@@ -601,7 +614,7 @@ it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh 
   _fixture.host.remove();
   editor = await mount(_fixture, source, "hyphen-replaced-fresh");
   expect(hyphens(editor)).toEqual(edited);
-}, 120000);
+});
 
 it("draws no hyphen where Han text continues in the next column", async () => {
   await using _fixture = _createFixture();
@@ -622,7 +635,7 @@ ${han.repeat(240)}
   // fallback font metrics; short paragraphs can all end at column boundaries.
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
-}, 60000);
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

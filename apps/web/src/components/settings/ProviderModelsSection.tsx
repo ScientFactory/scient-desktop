@@ -1,5 +1,3 @@
-"use client";
-
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import {
   getDroidModelSection,
@@ -89,7 +87,7 @@ export function groupModelsForDisplay<
   ];
 }
 
-export function nextHiddenModelsForBulkToggle(
+function nextHiddenModelsForBulkToggle(
   models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "isCustom">>,
   hiddenModels: ReadonlyArray<string>,
 ): string[] {

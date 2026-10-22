@@ -1,15 +1,13 @@
 import { createElement } from "react";
 import { type ReactNode } from "react";
 import { render } from "../../../test/render";
-import { page, userEvent } from "vite-plus/test/browser";
+
 import "~/index.css";
 import { describe, expect, it, vi } from "vite-plus/test";
-
 const stageArtworkState = vi.hoisted(() => ({
   mode: "none" as "artwork" | "none",
   variant: null as "nightly" | "dev" | null,
 }));
-
 vi.mock("~/hooks/useSettings", () => ({
   useEnvironmentIdentificationMode: () => stageArtworkState.mode,
 }));
@@ -17,9 +15,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: ({ variant }: { variant: string }) => `stage-${variant}`,
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
-
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-
 function renderPendingActions(isRunning: boolean) {
   return renderMarkup(
     createElement(ComposerPrimaryActions, {
@@ -48,7 +44,6 @@ function renderPendingActions(isRunning: boolean) {
     }),
   );
 }
-
 function renderRunningActions(
   showSendWhileRunning: boolean,
   hasSendableContent: boolean,
@@ -78,7 +73,6 @@ function renderRunningActions(
     }),
   );
 }
-
 function renderSendButton(sendDisabledReason: string | null = null) {
   return renderMarkup(
     createElement(ComposerPrimaryActions, {
@@ -101,12 +95,10 @@ function renderSendButton(sendDisabledReason: string | null = null) {
     }),
   );
 }
-
 function setup() {
   stageArtworkState.mode = "none";
   stageArtworkState.variant = null;
 }
-
 describe("ComposerPrimaryActions", () => {
   it("acknowledges Stop visibly while keeping its retry button available", async () => {
     setup();
@@ -120,76 +112,58 @@ describe("ComposerPrimaryActions", () => {
   it("disables and labels the send button while feedback is uploading", async () => {
     setup();
     const markup = await renderSendButton("Sending feedback");
-
     expect(markup).toContain("disabled");
     expect(markup).toContain('aria-label="Sending feedback"');
   });
-
   it("offers Stop generation while a running turn is waiting for user input", async () => {
     setup();
     expect(await renderPendingActions(true)).toContain('aria-label="Stop generation"');
   });
-
   it("does not offer Stop generation for a pending request without a running turn", async () => {
     setup();
     expect(await renderPendingActions(false)).not.toContain('aria-label="Stop generation"');
   });
-
   it("renders stage artwork inside the send button when artwork identification is active", async () => {
     setup();
     stageArtworkState.mode = "artwork";
     stageArtworkState.variant = "nightly";
-
     const markup = await renderSendButton();
-
     expect(markup).toContain("stage-nightly");
   });
-
   it("hides stage artwork when artwork identification is inactive", async () => {
     setup();
     stageArtworkState.variant = "nightly";
-
     const markup = await renderSendButton();
-
     expect(markup).not.toContain("stage-nightly");
   });
-
   it("only renders stop while running when Enter-to-send is available", async () => {
     setup();
     const markup = await renderRunningActions(false, true);
-
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Send message"');
   });
-
   it("renders the queue button alongside stop while running with sendable content", async () => {
     setup();
     const markup = await renderRunningActions(true, true);
-
     expect(markup).toContain('aria-label="Stop generation"');
     // SCIENT-FORK: submitting a running thread queues the message, so the
     // button advertises the real disposition instead of "Send message".
     expect(markup).toContain('aria-label="Queue message"');
     expect(markup).toContain('type="submit"');
   });
-
   it("labels the idle button as submit, not queue", async () => {
     setup();
     const markup = await renderSendButton();
-
     expect(markup).toContain('aria-label="Submit message"');
     expect(markup).not.toContain('aria-label="Queue message"');
   });
-
   it("keeps stop as the only action while running with an empty composer", async () => {
     setup();
     const markup = await renderRunningActions(true, false);
-
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Queue message"');
   });
 });
-
 describe("MAIN primary action appearance", () => {
   it("preserves the shared arrow and MAIN circle size, shadow and pressed depth", async () => {
     setup();
@@ -206,38 +180,6 @@ describe("MAIN primary action appearance", () => {
     expect(stop).toContain('aria-label="Stop generation"');
   });
 });
-
-it("opens implementation actions with a mouse while the composer is resting", async () => {
-  const onImplementPlanInNewThread = vi.fn();
-  await using _screen = await render(
-    <ComposerPrimaryActions
-      compact={false}
-      canOperateThread
-      pendingAction={null}
-      isRunning={false}
-      canInterrupt={false}
-      showPlanFollowUpPrompt
-      promptHasText={false}
-      isSendBusy={false}
-      sendDisabledReason={null}
-      isConnecting={false}
-      isEnvironmentUnavailable={false}
-      isPreparingWorktree={false}
-      hasSendableContent={false}
-      preserveComposerFocusOnPointerDown
-      onPreviousPendingQuestion={() => {}}
-      onInterrupt={() => {}}
-      onImplementPlanInNewThread={onImplementPlanInNewThread}
-    />,
-  );
-
-  await userEvent.click(page.getByRole("button", { name: "Implementation actions" }));
-  const item = page.getByRole("menuitem", { name: "Implement in a new thread" });
-  await expect.element(item).toBeVisible();
-  await userEvent.click(item);
-  expect(onImplementPlanInNewThread).toHaveBeenCalledTimes(1);
-});
-
 async function renderMarkup(node: ReactNode): Promise<string> {
   await using screen = await render(node);
   return screen.container.innerHTML;

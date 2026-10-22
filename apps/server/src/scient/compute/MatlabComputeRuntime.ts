@@ -294,7 +294,9 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
 });
 
 export const matlabRuntimeBinding: Effect.Effect<
-  ComputeRuntimeBinding,
+  ComputeRuntimeBinding & {
+    readonly managedRuntime?: ReturnType<typeof makeMatlabConnectionHelper>["controller"];
+  },
   ComputeRuntimeError,
   | DuplexProcess
   | ExecutionProcess

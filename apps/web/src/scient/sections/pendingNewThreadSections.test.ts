@@ -1,5 +1,5 @@
 import { EnvironmentId, ThreadId, ThreadSectionId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const storage = new Map<string, unknown>();
 vi.mock("../../hooks/useLocalStorage", () => ({
@@ -22,13 +22,17 @@ const thread = (
   environmentId: onEnvironment,
   sectionId,
 });
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = () => vi.runAllTimersAsync();
+const epoch = Date.parse("2026-10-20T12:00:00.000Z");
 
 describe("pending new-thread sections", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(epoch);
     // Clear any entries a previous test left.
     for (const id of ["t1", "t2"]) forgetSectionForNewThread(id);
   });
+  afterEach(() => vi.useRealTimers());
 
   it("files the new thread into the remembered section of its environment", async () => {
     rememberSectionForNewThread("t1", research);
@@ -121,7 +125,7 @@ describe("pending new-thread sections", () => {
   it("files an entry saved before sections named their environment on the thread's own", async () => {
     vi.resetModules();
     storage.set("scient:sidebar:pending-new-thread-sections", {
-      t9: { sectionId: "research", rememberedAt: Date.now() },
+      t9: { sectionId: "research", rememberedAt: epoch },
     });
     const legacy = await import("./pendingNewThreadSections");
     const apply = vi.fn(async () => true);

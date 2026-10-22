@@ -111,13 +111,19 @@ Terminology: `docs/internals/glossary.md`.
 
 Use the versions declared in `package.json` and the committed lockfile.
 `vp i` installs dependencies; `vp run dev` starts server and web.
+If worktree setup is already running, wait for its completion marker instead of
+starting a second install.
 For persistent desktop candidates, use `docs/operations/local-dev-app.md`.
 Other commands and platform prerequisites: `docs/operations/development.md`.
 
 ### Verification
 
 Run focused tests, formatting, lint, and affected-package type checks while
-iterating. Final qualification uses the applicable focused checks plus:
+iterating. Use `vp run typecheck` in the affected package so its Vite task runs,
+including packages without a `typecheck` npm script. Run snippets from the owning
+package, where its dependencies resolve. Check unused files, exports and
+dependencies with `pnpm run knip:check` when changing those surfaces.
+Final qualification uses the applicable focused checks plus:
 
 ```sh
 pnpm exec vp fmt --check
@@ -149,6 +155,11 @@ An interim review can precede full qualification; identify remaining checks.
 
 Use orchestration receipts and worker completion signals in asynchronous tests.
 Use controlled clocks when testing time-dependent behavior.
+Do not add per-test timeouts or retries, wall-clock duration assertions, sleep or
+yield polling loops, or browser frame/transition waits. Browser assertions use
+`expect.element` or `vi.waitFor`; timed behavior uses the full controlled clock.
+Skipped tests need a tracking issue and reason. Mock factories must not spread
+real modules that load Shiki or diff workers.
 
 Web component tests are `*.browser.test.tsx` and render through
 `apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
@@ -157,6 +168,10 @@ so disposal restores them even on failure; avoid module-level screens and
 `setup()` call at the start of each test. `t3code/require-disposable-render`
 enforces this lifecycle. Test meaningful behavior rather than static markup
 that only repeats props or callback wiring.
+Acquire timers and spies driven after mounting after the render, so they dispose
+before unmounting. A render helper that waits or interacts must own its screen in
+an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
+element. The router is enabled by default; explain any `router: false` fixture.
 
 Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.

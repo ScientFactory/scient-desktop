@@ -88,6 +88,7 @@ export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_K
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
+// SCIENT-FORK: retained Grok access-mode/session replacement integration consumes these capabilities.
 export const GrokProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
   sessions: {
@@ -508,6 +509,11 @@ export const makeGrokAdapterV2ForInstance = Effect.fn("makeGrokAdapterV2ForInsta
     ),
 );
 
+/**
+ * Default native Grok adapter for hosts without an application bridge.
+ *
+ * @public
+ */
 export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapterV2DriverEnv> = {
   driverKind: GROK_DRIVER_KIND,
   configSchema: GrokSettings,

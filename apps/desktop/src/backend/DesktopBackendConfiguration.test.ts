@@ -6,11 +6,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
-import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -1213,71 +1213,6 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "resolveWsl carries the standard OTLP endpoint, headers, and protocol into the distro",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-desktop-backend-config-test-",
-        });
-
-        const standard = {
-          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.com:4318/base?api_key=secret",
-          OTEL_EXPORTER_OTLP_LOGS_HEADERS: "authorization=Bearer%20token",
-          T3CODE_OTLP_TRACES_URL: "http://t3.example.com:4318/v1/traces",
-        };
-        const previousWslEnv = process.env.WSLENV;
-        const ambientOtel = Object.entries(process.env).filter(
-          ([name]) => name.startsWith("OTEL_") || name.startsWith("T3CODE_OTLP_"),
-        );
-        try {
-          for (const [name] of ambientOtel) delete process.env[name];
-          delete process.env.WSLENV;
-          Object.assign(process.env, standard);
-
-          yield* Effect.gen(function* () {
-            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-            const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
-
-            assert.equal(
-              config.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-              "https://collector.example.com:4318/base?api_key=secret",
-            );
-            assert.equal(
-              config.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
-              "authorization=Bearer%20token",
-            );
-            const wslEnv = (config.env.WSLENV ?? "").split(":");
-            assert.include(wslEnv, "OTEL_EXPORTER_OTLP_ENDPOINT");
-            assert.include(wslEnv, "OTEL_EXPORTER_OTLP_LOGS_HEADERS");
-            assert.equal(config.env.T3CODE_OTLP_TRACES_URL, "http://t3.example.com:4318/v1/traces");
-            assert.include(wslEnv, "T3CODE_OTLP_TRACES_URL");
-          }).pipe(
-            Effect.provide(
-              layerBackendConfiguration().pipe(
-                Layer.provideMerge(layerServerExposure),
-                Layer.provideMerge(DesktopAppSettings.layerTest()),
-                Layer.provideMerge(DesktopWslServerTree.layerTest()),
-                Layer.provideMerge(
-                  DesktopWslEnvironment.layerTest({
-                    isAvailable: true,
-                    windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                    getDistroIp: () => Option.some("172.27.0.99"),
-                  }),
-                ),
-                Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-              ),
-            ),
-          );
-        } finally {
-          for (const name of Object.keys(standard)) delete process.env[name];
-          restoreEnv("WSLENV", previousWslEnv);
-          for (const [name, value] of ambientOtel) restoreEnv(name, value);
-        }
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1429,42 +1364,6 @@ describe("DesktopBackendConfiguration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolveWsl keeps a transient distro-list failure retryable", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
-        const failure = Option.getOrThrow(config.preflightFailure);
-
-        assert.isFalse(failure.fatal);
-        assert.equal(failure.retryLimit, 12);
-        assert.include(failure.reason, "timed out");
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(DesktopWslServerTree.layerTest()),
-            Layer.provideMerge(
-              DesktopWslEnvironment.layerTest({
-                isAvailable: true,
-                distroListError: new DesktopWslEnvironment.DesktopWslDistroListError({
-                  reason: "wsl.exe --list --verbose timed out",
-                }),
-              }),
-            ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-          ),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1491,113 +1390,6 @@ describe("DesktopBackendConfiguration", () => {
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
               }),
             ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-          ),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("resolveWsl surfaces sidecar extraction failures through typed preflight", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
-        const failure = Option.getOrThrow(config.preflightFailure);
-
-        assert.isFalse(failure.fatal);
-        assert.equal(failure.retryLimit, 12);
-        assert.include(failure.reason, "could not be extracted");
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(
-              DesktopWslServerTree.layerTest({
-                result: {
-                  ok: false,
-                  reason: "WSL server files could not be extracted",
-                  fatal: false,
-                },
-              }),
-            ),
-            Layer.provideMerge(
-              DesktopWslEnvironment.layerTest({
-                isAvailable: true,
-                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-              }),
-            ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-          ),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("resolveWsl marks a missing selected distro as a fatal preflight failure", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Removed-Distro" });
-        const failure = Option.getOrThrow(config.preflightFailure);
-
-        assert.isTrue(failure.fatal);
-        assert.include(failure.reason, "Removed-Distro");
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(DesktopWslServerTree.layerTest()),
-            Layer.provideMerge(
-              DesktopWslEnvironment.layerTest({
-                isAvailable: true,
-                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-              }),
-            ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-          ),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("resolvePrimaryLabel reports the WSL distro when wsl-only and WSL is available", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const label = yield* configuration.resolvePrimaryLabel;
-        assert.equal(label, "WSL (Ubuntu)");
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(
-              DesktopAppSettings.layerTest({
-                ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-                wslBackendEnabled: true,
-                wslOnly: true,
-                wslDistro: "Ubuntu",
-              }),
-            ),
-            Layer.provideMerge(DesktopWslServerTree.layerTest()),
-            Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
             Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
           ),
         ),

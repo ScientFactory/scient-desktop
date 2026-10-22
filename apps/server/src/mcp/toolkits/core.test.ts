@@ -1,8 +1,19 @@
+import { WorktreeToolkit } from "./worktree/tools.ts";
+import { ThreadToolkit } from "./thread/tools.ts";
+import { AttachmentToolkit } from "./attachment/tools.ts";
+import { ProjectToolkit } from "./project/tools.ts";
+import { DeviceToolkit } from "./device/tools.ts";
+import { PullRequestsToolkit } from "./pullRequests/tools.ts";
+import { HtmlToolkit } from "./html/tools.ts";
+import { Tool } from "effect/ai";
+import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolPresentation } from "@t3tools/shared/t3McpToolPresentation";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
+import * as Deferred from "effect/Deferred";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
@@ -19,14 +30,13 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
-import { McpSchema, McpServer, Tool } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 
 import {
@@ -60,12 +70,7 @@ import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
-import { ProjectToolkit } from "./project/tools.ts";
-import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
-import { ThreadToolkit } from "./thread/tools.ts";
-import { WorktreeToolkit } from "./worktree/tools.ts";
-import { DeviceToolkit } from "./device/tools.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -78,13 +83,6 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
-import { PullRequestsToolkit } from "./pullRequests/tools.ts";
-import { HtmlToolkit } from "./html/tools.ts";
-import {
-  resolveT3McpToolDefinition,
-  resolveT3McpToolPresentation,
-  resolveT3McpToolSummaryAction,
-} from "@t3tools/shared/t3McpToolPresentation";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
@@ -125,7 +123,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
       ).toBe(true);
       for (const name of [tool.name, `mcp__t3-code__${tool.name}`, `T3-code.${tool.name}`]) {
         expect(resolveT3McpToolPresentation(name)?.logo, name).toBe("scient");
-        expect(resolveT3McpToolSummaryAction(name), name).not.toBeNull();
+        expect(resolveT3McpToolDefinition(name)?.summaryAction, name).toBeTruthy();
       }
     }
   }

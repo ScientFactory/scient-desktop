@@ -1,3 +1,4 @@
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -27,7 +28,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";

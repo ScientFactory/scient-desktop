@@ -32,7 +32,6 @@ import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
-import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";

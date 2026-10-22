@@ -1,4 +1,5 @@
 import { collapseAbsoluteFilePath } from "@t3tools/shared/path";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -67,16 +68,26 @@ function normalizeRelativePath(value: string): string | null {
   return segments.length > 0 ? segments.join("/") : null;
 }
 
+export function resolveFileLinkPath(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): string | null {
+  if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    if (!workspaceRoot) return null;
+    const expanded = resolvePathLinkTarget(targetPath, workspaceRoot);
+    return isAbsolutePath(expanded) ? expanded : null;
+  }
+  return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,
 ): string | null {
-  if (!isAbsolutePath(targetPath)) {
-    if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
-      return null;
-    }
-    return normalizeRelativePath(targetPath);
-  }
+  const resolved = resolveFileLinkPath(workspaceRoot, targetPath);
+  if (resolved === null) return null;
+  targetPath = resolved;
+  if (!isAbsolutePath(targetPath)) return targetPath;
   if (!workspaceRoot) {
     return null;
   }
@@ -118,12 +129,15 @@ export function resolveHostFilePath(
  * Where a file link opens: the workspace file it names (editable), or the host
  * file it names when it lies outside the workspace (read-only). A path that
  * leaves and re-enters the workspace is a workspace file. Null when the link
- * cannot be placed at all, such as a home-relative path.
+ * cannot be placed on the remote host, such as a home link without a known root.
  */
 export function resolveFileLinkTarget(
   workspaceRoot: string | null | undefined,
   targetPath: string,
 ): { readonly kind: "workspace" | "host"; readonly path: string } | null {
+  // SCIENT-FORK:START — expand inherited home links without losing host traversal.
+  targetPath = resolveFileLinkPath(workspaceRoot, targetPath) ?? targetPath;
+  // SCIENT-FORK:END
   const workspacePath = resolveWorkspaceRelativeFilePath(workspaceRoot, targetPath);
   if (workspacePath !== null) return { kind: "workspace", path: workspacePath };
   const hostPath = resolveHostFilePath(workspaceRoot, targetPath);

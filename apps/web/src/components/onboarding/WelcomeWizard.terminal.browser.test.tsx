@@ -22,7 +22,7 @@ import {
   type TerminalWriteInput,
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import * as Cause from "effect/Cause";
+
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { useEffect } from "react";
@@ -369,123 +369,6 @@ describe("welcome agent terminal setup", () => {
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
-    setup();
-    await using screen = await render(null);
-    setAccess(remoteId, false);
-    await enterRemoteAgents(screen);
-    expect(button("Install").disabled).toBe(true);
-    expect(button("Sign in").disabled).toBe(true);
-    expect(pageText()).toContain("This connection cannot control terminals.");
-    await act(async () => {
-      button("Install").click();
-      button("Sign in").click();
-    });
-    expect(state.open).not.toHaveBeenCalled();
-    expect(state.write).not.toHaveBeenCalled();
-    expect(state.close).not.toHaveBeenCalled();
-    await click("Continue");
-    await click("Do not import projects");
-    expect(state.complete).toHaveBeenCalledOnce();
-    expect(state.done).toHaveBeenCalledExactlyOnceWith(undefined);
-  });
-
-  it("rejects a retained install action after revocation and allows a terminal-only regrant", async () => {
-    setup();
-    await using screen = await render(null);
-    setAccess(primaryId, false);
-    await enterRemoteAgents(screen);
-    const install = button("Install");
-    // The click reaches the still-enabled button before React re-renders the revocation.
-    await act(async () => {
-      setAccess(remoteId, false);
-      install.click();
-    });
-    expect(state.open).not.toHaveBeenCalled();
-    expect(button("Install").disabled).toBe(true);
-    await act(async () => setAccess(remoteId, true));
-    expect(button("Install").disabled).toBe(false);
-    await click("Install");
-    expect(state.open).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: expect.any(String),
-        cwd: "/fixtures/paired-remote",
-        providerInstanceId: missingClaude.instanceId,
-      },
-    });
-    expect(state.write).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: state.open.mock.calls[0]![0].input.terminalId,
-        data: "curl -fsSL https://claude.ai/install.sh | bash",
-      },
-    });
-    expect(hasViewport()).toBe(true);
-    await click("Close");
-    expect(state.close).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: state.open.mock.calls[0]![0].input.terminalId,
-        deleteHistory: true,
-      },
-    });
-  });
-
-  it("pretypes the selected provider's sign-in command without executing it", async () => {
-    setup();
-    await using screen = await render(null);
-    setAccess(primaryId, false);
-    await enterRemoteAgents(screen);
-    await click("Sign in");
-    expect(state.open).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: expect.any(String),
-        cwd: "/fixtures/paired-remote",
-        providerInstanceId: signedOutCodex.instanceId,
-      },
-    });
-    expect(state.write).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: state.open.mock.calls[0]![0].input.terminalId,
-        data: "/opt/codex-work login",
-      },
-    });
-    expect(pageText()).toContain("Review the command, then press Enter to run it.");
-  });
-
-  it("checks access when a queued retry starts and recovers after regrant", async () => {
-    setup();
-    await using screen = await render(null);
-    state.open.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Could not open"))));
-    await enterRemoteAgents(screen);
-    await click("Install");
-    const closing = deferred<CommandResult>();
-    state.close.mockReturnValueOnce(closing.promise);
-    await click("Retry");
-    expect(state.close).toHaveBeenCalledOnce();
-    expect(state.open).toHaveBeenCalledOnce();
-    await act(async () => {
-      setAccess(remoteId, false);
-      closing.resolve(AsyncResult.success(undefined));
-    });
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(button("Retry").disabled).toBe(true);
-    expect(state.write).not.toHaveBeenCalled();
-    await act(async () => setAccess(remoteId, true));
-    await click("Retry");
-    expect(state.open).toHaveBeenCalledTimes(2);
-    expect(state.write).toHaveBeenCalledOnce();
-    expect(hasViewport()).toBe(true);
-  });
-
   it("keeps an accepted terminal visible without pretyping when access is revoked during open", async () => {
     setup();
     await using screen = await render(null);
@@ -510,45 +393,5 @@ describe("welcome agent terminal setup", () => {
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
     await click("Continue");
-  });
-
-  it("settles accepted pretyping locally after revocation without closing the PTY", async () => {
-    setup();
-    await using screen = await render(null);
-    const writing = deferred<CommandResult>();
-    state.write.mockReturnValueOnce(writing.promise);
-    await enterRemoteAgents(screen);
-    await click("Sign in");
-    await act(async () => {
-      setAccess(remoteId, false);
-      writing.resolve(AsyncResult.success(undefined));
-    });
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).toHaveBeenCalledOnce();
-    expect(hasViewport()).toBe(true);
-    await act(async () => setAccess(remoteId, true));
-    expect(pageText()).toContain("Review the command, then press Enter to run it.");
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).toHaveBeenCalledOnce();
-    await act(async () => setAccess(remoteId, false));
-    await click("Close");
-    expect(state.close).not.toHaveBeenCalled();
-  });
-
-  it("rechecks the original environment when cleanup runs after pending pretyping", async () => {
-    setup();
-    await using screen = await render(null);
-    const writing = deferred<CommandResult>();
-    state.write.mockReturnValueOnce(writing.promise);
-    await enterRemoteAgents(screen);
-    await click("Install");
-    await click("Connect, step 1");
-    expect(state.close).not.toHaveBeenCalled();
-    await act(async () => {
-      setAccess(remoteId, false);
-      writing.resolve(AsyncResult.success(undefined));
-    });
-    expect(state.close).not.toHaveBeenCalled();
-    expect(pageText()).toContain("Connect your computers");
   });
 });

@@ -1,4 +1,5 @@
 import type { EditorView } from "@tiptap/pm/view";
+import { readLatexVisibleReadingTarget } from "./latexPagedGeometry";
 
 /** Where each recently read document was, for this session: its first visible
  * top-level block and that block's offset from the top of the reading area. */
@@ -20,18 +21,13 @@ export function rememberLatexReadingPosition(key: string, view: EditorView): voi
   if (!scroll || scroll.clientHeight <= 0) return;
   const box = scroll.getBoundingClientRect();
   const paper = view.dom.getBoundingClientRect();
-  const hit = view.dom.ownerDocument.elementFromPoint(
-    paper.left + paper.width / 2,
-    Math.max(box.top, paper.top) + 1,
-  );
-  if (!hit || hit === view.dom || !view.dom.contains(hit)) return;
-  let block: Element = hit;
-  while (block.parentElement !== view.dom) block = block.parentElement!;
+  const target = readLatexVisibleReadingTarget(view, box, paper);
+  if (!target) return;
   let index: number;
   let start: number;
   try {
     const { doc } = view.state;
-    const $position = doc.resolve(Math.min(view.posAtDOM(block, 0), doc.content.size));
+    const $position = doc.resolve(Math.min(view.posAtDOM(target.block, 0), doc.content.size));
     index = $position.index(0);
     // Inside a block, or at a widget just before one.
     start = $position.depth > 0 ? $position.before(1) : $position.pos;

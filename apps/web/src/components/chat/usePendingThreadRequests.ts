@@ -12,10 +12,7 @@ import {
   derivePendingThreadRequests,
   seedUserInputDraftAnswers,
 } from "@t3tools/client-runtime/state/thread-requests";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { create } from "zustand";
 import {
   useLayoutEffect,

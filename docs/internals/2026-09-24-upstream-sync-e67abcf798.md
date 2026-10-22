@@ -172,7 +172,7 @@ and full-workspace gates were rerun on the catch-up candidate.
 Performed on the composed candidate and the review-corrected working tree:
 
 - `pnpm alignment:seams:check --base 66650fd93196b635ba56c3a4130fad5fb6d5a82d
---upstream-ref e67abcf798f8c4d8458755e3b4dde02c2c1f628b --snapshot index` —
+  --upstream-ref e67abcf798f8c4d8458755e3b4dde02c2c1f628b --snapshot index` —
   onboarding, skills, analysis, and LaTeX checks all **passed**; no reference
   snapshots.
 - `pnpm exec vp fmt --check` — passed.

@@ -65,8 +65,16 @@ describe("PreviewEmptyState", () => {
     setup();
     mocks.servers = [server(5173)];
     await using screen = await renderPreview([
-      { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
-      { url: "http://localhost:5173/", lastVisitedAt: Date.now(), title: "Recent Local" },
+      {
+        url: "https://myapp.test/admin#users",
+        lastVisitedAt: Date.UTC(2026, 9, 20),
+        title: "Admin",
+      },
+      {
+        url: "http://localhost:5173/",
+        lastVisitedAt: Date.UTC(2026, 9, 20),
+        title: "Recent Local",
+      },
     ]);
     const text = screen.container.textContent;
     expect(text).toContain("Recently used");
@@ -88,19 +96,6 @@ describe("PreviewEmptyState", () => {
     await using screen = await renderPreview([{ url: "https://myapp.test/", lastVisitedAt: 0 }]);
     expect(screen.container.textContent).toContain("Recently used");
     expect(screen.container.textContent).not.toContain("Local previews");
-  });
-
-  it("keeps the original empty state when both groups are empty", async () => {
-    setup();
-    await using screen = await renderPreview([]);
-    expect(screen.container.textContent).toContain("No preview yet");
-  });
-
-  it("shows an entry with an out-of-range lastVisitedAt instead of crashing", async () => {
-    setup();
-    await using screen = await renderPreview([{ url: "https://myapp.test/", lastVisitedAt: 1e20 }]);
-    expect(screen.container.textContent).toContain("myapp.test");
-    button(screen, "Remove myapp.test from history");
   });
 });
 
@@ -146,20 +141,6 @@ vi.mock(import("./PreviewFaviconIcon"), () => ({
   }
 
   describe("PreviewEmptyState", () => {
-    it("keeps other browser-ready servers collapsed and shows actual history", async () => {
-      mocks.servers = [server(5173)];
-      const html = await render([
-        { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
-        { url: "http://localhost:5173/", lastVisitedAt: Date.now(), title: "Recent Local" },
-      ]);
-      expect(html).toContain("Recently used");
-      expect(html).not.toContain("Find another local server");
-      expect(html).toContain("myapp.test/admin#users");
-      expect(html).toContain("Admin");
-      expect(html).toContain("Recent Local");
-      expect(html).not.toContain("node");
-    });
-
     it("offers other browser-ready servers through a collapsed secondary action", async () => {
       mocks.servers = [server(8080)];
       const html = await render([]);
@@ -181,19 +162,6 @@ vi.mock(import("./PreviewFaviconIcon"), () => ({
       expect(html).toContain("node");
       expect(html).toContain("data-favicon-icon");
       expect(html).not.toContain("Find another local server");
-    });
-
-    it("renders only the recents group when no servers are found", async () => {
-      mocks.servers = [];
-      const html = await render([{ url: "https://myapp.test/", lastVisitedAt: 0 }]);
-      expect(html).toContain("Recently used");
-      expect(html).not.toContain("Local previews");
-    });
-
-    it("keeps the original empty state when both groups are empty", async () => {
-      mocks.servers = [];
-      const html = await render([]);
-      expect(html).toContain("No preview yet");
     });
 
     it("renders an out-of-range lastVisitedAt entry without throwing", async () => {

@@ -47,7 +47,7 @@ it.live(
               "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
             );
           }
-          yield* Effect.sleep("300 millis");
+          yield* h.awaitProcessExit(originalPid);
           yield* h.worker.drain(12);
           const settled = yield* h.observe("C032-failure-settled-before-cleanup");
           assert.lengthOf(
@@ -241,7 +241,7 @@ it.live(
           yield* h.releasePreparation;
           yield* h.worker.drain(12);
           yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
-          yield* Effect.sleep("300 millis");
+          yield* h.initialOpenSettled;
           yield* h.worker.drain(12);
           const final = yield* h.observe("C064-first-settings-released-before-cleanup");
           assert.equal(final.projection.runs[0]!.id, owner.id);

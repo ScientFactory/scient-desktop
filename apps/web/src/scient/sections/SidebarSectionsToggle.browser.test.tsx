@@ -1,7 +1,7 @@
 import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 import { SidebarProvider } from "../../components/ui/sidebar";
@@ -13,9 +13,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.root0 = undefined;
   _fixture.host = undefined;
 }
-
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
 /** The computed color of a sidebar token, read off a probe element. */
 function tokenColor(_fixture: _Fixture, className: string): string {
@@ -41,7 +38,9 @@ it("marks the on state with a small gray inset that the white hover surrounds", 
       <SidebarSectionsToggle active onActiveChange={() => {}} />
     </SidebarProvider>,
   );
-  await nextFrame();
+  await vi.waitFor(() =>
+    expect(_fixture.host!.querySelector('[data-testid="sidebar-sections-toggle"]')).not.toBeNull(),
+  );
 
   const button = _fixture.host.querySelector<HTMLElement>(
     '[data-testid="sidebar-sections-toggle"]',

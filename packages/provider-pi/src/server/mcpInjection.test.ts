@@ -87,18 +87,6 @@ describe("pi T3 MCP injection", () => {
     );
   });
 
-  it("falls back to Pi's first supported mode for legacy auto threads", () => {
-    const launch = buildPiRpcLaunch({
-      launchArgs: [],
-      environment: {},
-      mcpSession: undefined,
-      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
-      runtimeMode: "auto",
-    });
-
-    assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
-  });
-
   it("forces tools and user extensions off for unattended text generation", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: [

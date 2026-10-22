@@ -477,8 +477,9 @@ git diff --check
 ```
 
 `pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
-continues past failures and prints the receipt table; typecheck there reports every failing
-package in one run ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
+continues past failures and prints the receipt table. Its typecheck includes workspace Vite
+tasks, but a failed aggregate can leave packages unscheduled; record task coverage and qualify
+missing packages separately ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
 where the repository-wide aggregate is not yet a supported local lane, record the test row as
 "not run — hosted test qualification pending" and cite the hosted result for the pushed
 candidate; that result does not establish Windows-wide test compatibility.

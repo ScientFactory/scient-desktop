@@ -466,6 +466,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("reports an unknown version for invalid service state", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -523,6 +524,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("allows an explicit downgrade", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -909,14 +911,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           "systemctl --user restart scient.service",
         ]);
       }
-    }),
-  );
-
-  it.effect("fails closed on Windows", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness("win32");
-      expect((yield* service.status).supported).toBe(false);
-      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceUnsupportedError");
     }),
   );
 

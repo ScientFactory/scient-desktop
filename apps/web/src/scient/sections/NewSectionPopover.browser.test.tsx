@@ -14,18 +14,13 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.root0 = undefined;
   _fixture.host = undefined;
 }
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
-
-async function settledBounds(popup: HTMLElement) {
-  // One frame can still catch the popup's scale and position transitions.
-  await expect.poll(() => popup.hasAttribute("data-starting-style")).toBe(false);
-  await Promise.all(
-    (popup.parentElement ?? popup)
-      .getAnimations({ subtree: true })
-      .map((animation) => animation.finished),
-  );
-  return popup.getBoundingClientRect();
+async function openForm() {
+  await userEvent.click(document.querySelector("button")!);
+  await vi.waitFor(() => {
+    const input = document.querySelector<HTMLInputElement>('input[placeholder="Section name"]');
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
 }
 
 const MACHINES = [
@@ -96,27 +91,26 @@ it.each([false, true])(
 
     const submit = vi.fn(async () => true);
     await renderForm(_fixture, submit, native);
-    await nextFrame();
-    await userEvent.click(document.querySelector("button")!);
-    await nextFrame();
+    await openForm();
     const popup = document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Section name"]')!;
-    const rect = await settledBounds(popup);
-    expect(rect.width).toBeLessThanOrEqual(260);
-    expect(rect.height).toBeLessThan(180);
-    expect(rect.left).toBeGreaterThanOrEqual(130);
-    // A point anchor aligns with the transform origin, which Base UI insets
-    // from the rounded corner. An element anchor aligns with the popup's top.
-    const originOffset = native
-      ? Number.parseFloat(getComputedStyle(popup).transformOrigin.split(" ")[1]!)
-      : 0;
-    expect(Math.abs(rect.top + originOffset - 80)).toBeLessThan(1);
+    await vi.waitFor(() => {
+      const rect = popup.getBoundingClientRect();
+      expect(rect.width).toBeLessThanOrEqual(260);
+      expect(rect.height).toBeLessThan(180);
+      expect(rect.left).toBeGreaterThanOrEqual(130);
+      // A point anchor aligns with the transform origin, which Base UI insets
+      // from the rounded corner. An element anchor aligns with the popup's top.
+      const originOffset = native
+        ? Number.parseFloat(getComputedStyle(popup).transformOrigin.split(" ")[1]!)
+        : 0;
+      expect(Math.abs(rect.top + originOffset - 80)).toBeLessThan(1);
+    });
     expect(document.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(document.activeElement).toBe(input);
     await userEvent.keyboard("research");
     await userEvent.keyboard("{Enter}");
-    await nextFrame();
-    expect(submit).toHaveBeenCalledExactlyOnceWith("Research");
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("Research"));
     await vi.waitFor(() =>
       expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull(),
     );
@@ -129,12 +123,9 @@ it("dismisses by outside click without submitting", async () => {
 
   const submit = vi.fn(async () => true);
   await renderForm(_fixture, submit);
-  await nextFrame();
-  await userEvent.click(document.querySelector("button")!);
-  await nextFrame();
+  await openForm();
   await userEvent.keyboard("draft");
   await userEvent.click(document.querySelector('[data-testid="outside"]')!);
-  await nextFrame();
   expect(submit).not.toHaveBeenCalled();
   await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull());
 });
@@ -146,9 +137,7 @@ it("names the machine an empty section goes to, and keeps the form open while ch
   const submit = vi.fn(async () => true);
   const onMachine = vi.fn();
   await renderForm(_fixture, submit, false, onMachine);
-  await nextFrame();
-  await userEvent.click(document.querySelector("button")!);
-  await nextFrame();
+  await openForm();
   const trigger = document.querySelector<HTMLElement>('[aria-label="Machine"]')!;
   expect(trigger.textContent).toContain("On Lab server");
   await userEvent.click(trigger);
@@ -160,16 +149,14 @@ it("names the machine an empty section goes to, and keeps the form open while ch
     return option!;
   });
   await userEvent.click(laptop);
-  await nextFrame();
-  expect(onMachine).toHaveBeenCalledExactlyOnceWith("laptop");
+  await vi.waitFor(() => expect(onMachine).toHaveBeenCalledExactlyOnceWith("laptop"));
   // Choosing inside the nested list does not dismiss the form.
   expect(document.querySelector('[data-slot="popover-popup"]')).not.toBeNull();
   expect(document.querySelector('[aria-label="Machine"]')!.textContent).toContain("On Laptop");
   await userEvent.click(document.querySelector<HTMLInputElement>("input")!);
   await userEvent.keyboard("later");
   await userEvent.keyboard("{Enter}");
-  await nextFrame();
-  expect(submit).toHaveBeenCalledExactlyOnceWith("Later");
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("Later"));
 });
 
 it("keeps a failed name for retry and closes with Escape", async () => {
@@ -178,16 +165,14 @@ it("keeps a failed name for retry and closes with Escape", async () => {
 
   const submit = vi.fn(async () => false);
   await renderForm(_fixture, submit);
-  await nextFrame();
-  await userEvent.click(document.querySelector("button")!);
-  await nextFrame();
+  await openForm();
   await userEvent.keyboard("design");
   await userEvent.keyboard("{Enter}");
-  await nextFrame();
-  expect(document.querySelector("input")?.value).toBe("Design");
-  expect(document.body.textContent).toContain("could not be saved");
+  await vi.waitFor(() => {
+    expect(document.querySelector("input")?.value).toBe("Design");
+    expect(document.body.textContent).toContain("could not be saved");
+  });
   await userEvent.keyboard("{Escape}");
-  await nextFrame();
   await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull());
   expect(document.activeElement).toBe(document.querySelector("button"));
 });

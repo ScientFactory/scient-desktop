@@ -17,9 +17,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
-
 /** The sidebar's top: T3's header (search, toggles) and Scient's New thread row. */
 async function mountSidebarTop(_fixture: _Fixture, onNewThread: () => void) {
   _fixture.host = document.createElement("div");
@@ -59,7 +56,9 @@ async function mountSidebarTop(_fixture: _Fixture, onNewThread: () => void) {
       </div>
     </SidebarProvider>,
   );
-  await nextFrame();
+  await vi.waitFor(() =>
+    expect(_fixture.host!.querySelector('[data-testid="sidebar-new-thread-row"]')).not.toBeNull(),
+  );
   return _fixture.host;
 }
 

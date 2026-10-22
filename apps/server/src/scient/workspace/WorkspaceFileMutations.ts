@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import type * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import {
@@ -230,6 +231,10 @@ const isRevisionConflict = Schema.is(WorkspaceFileRevisionConflictError);
 const keyFor = (id: string) =>
   `mutation-${NodeCrypto.createHash("sha256").update(id).digest("hex")}`;
 
+export type WorkspacePublicationEvent =
+  | { readonly _tag: "Claimed"; readonly mutationId: string; readonly holders: number }
+  | { readonly _tag: "Waiting"; readonly root: string };
+
 export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -241,6 +246,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
   readonly retainedHooks?: RetainedMutationHooks;
+  /** Passive receipts never delay ownership or make publication depend on an observer. */
+  readonly publicationEvents?: Queue.Enqueue<WorkspacePublicationEvent>;
   /**
    * The host's write denial for Git's own folders, checked at every resolution, including the
    * one under the mutation lock, so a link swapped in after authorization cannot reach them.
@@ -1026,6 +1033,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const held = plainClaims.get(id) ?? { fingerprint, holders: 0 };
     held.holders += 1;
     plainClaims.set(id, held);
+    if (deps.publicationEvents)
+      Queue.offerUnsafe(deps.publicationEvents, {
+        _tag: "Claimed",
+        mutationId: id,
+        holders: held.holders,
+      });
     let released = false;
     return () => {
       if (released) return;
@@ -3308,6 +3321,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         signal.addEventListener("abort", abandon, { once: true });
         waiting.push(waiter);
         pump();
+        if (deps.publicationEvents && waiting.includes(waiter))
+          Queue.offerUnsafe(deps.publicationEvents, { _tag: "Waiting", root });
       });
       try {
         return await run();

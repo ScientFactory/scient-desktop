@@ -2,10 +2,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import {
-  describeReadinessCause,
-  waitForHttpReady as waitForHttpReadyShared,
-} from "@t3tools/shared/httpReadiness";
+import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
   SCIENT_SERVER_PACKAGE_NAME,
@@ -283,9 +280,7 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export { describeReadinessCause };
-
-export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
 const filePath = process.argv[2] ?? "";
 const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
@@ -978,6 +973,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
+// SCIENT-FORK: retained consumers verify the pinned runner and remote Scient-home boundaries.
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     // Only the archive ships the `__ssh-helper` subcommands; the other modes
@@ -1191,7 +1187,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = (input: {
+const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;

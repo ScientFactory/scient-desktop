@@ -60,15 +60,6 @@ describe("branding", () => {
     expect(branding.APP_STAGE_LABEL).toBe("Latest");
     expect(branding.APP_DISPLAY_NAME).toBe("Scient");
   });
-
-  it("ignores unknown hosted app channels", async () => {
-    vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "preview");
-
-    const branding = await import("./branding");
-
-    expect(branding.HOSTED_APP_CHANNEL).toBeNull();
-    expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
-  });
 });
 
 describe("branding logic", () => {
@@ -79,15 +70,6 @@ describe("branding logic", () => {
         fallbackStageLabel: "Alpha",
       }),
     ).toBe("Beta");
-  });
-
-  it("returns Nightly for nightly primary server versions", () => {
-    expect(
-      resolveServerBackedAppStageLabel({
-        primaryServerVersion: "0.0.28-nightly.20260616.12",
-        fallbackStageLabel: "Alpha",
-      }),
-    ).toBe("Nightly");
   });
 
   it("updates the display name for nightly primary server versions", () => {

@@ -79,7 +79,7 @@ const open = vi.fn<(url: string) => Promise<void>>();
 let storage: MemoryStorage;
 
 let clock = 0;
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const settle = () => vi.runAllTimersAsync();
 
 /**
  * The server, as the connection manager runs it: `current` is its operation for
@@ -193,16 +193,19 @@ function reloadWith(session: MemoryStorage) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   vi.resetAllMocks();
   open.mockResolvedValue(undefined);
   storage = new MemoryStorage();
   vi.stubGlobal("window", { sessionStorage: storage });
-  clock = Date.now();
+  clock = Date.parse("2026-10-20T12:00:00.000Z");
+  vi.setSystemTime(clock);
   server = makeServer();
   resetProviderSignInForTests({ open, now: () => clock, claim: server.claim });
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -345,17 +348,20 @@ describe("provider sign-in page opening", () => {
 
   it("opens once when two starts from this client join one operation", async () => {
     let first: string | undefined;
-    const reply = new Promise<ProviderConnectionOperation>((resolve) =>
-      setTimeout(() => resolve(operation({ signInRequestId: first! })), 0),
-    );
+    let answer!: (value: ProviderConnectionOperation) => void;
+    const reply = new Promise<ProviderConnectionOperation>((resolve) => {
+      answer = resolve;
+    });
     // As the command's single flight does: the second caller shares the first reply.
-    await Promise.all([
+    const started = Promise.all([
       start((id) => {
         first = id;
         return reply;
       }),
       start(() => reply),
     ]);
+    answer(operation({ signInRequestId: first! }));
+    await started;
     expect(open).toHaveBeenCalledTimes(1);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
   });

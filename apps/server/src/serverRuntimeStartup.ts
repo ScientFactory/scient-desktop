@@ -196,7 +196,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   yield* analytics.record("server.boot.heartbeat");
 });
 
-export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
+const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
   instanceId: ProviderInstanceId.make("codex"),
   model: DEFAULT_MODEL,
 });
@@ -268,7 +268,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   );
 });
 
-export const resolveWelcomeBase = Effect.gen(function* () {
+const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
   const projectName = segments[segments.length - 1] ?? "project";
@@ -460,6 +460,7 @@ export const startEffectWorkerWithRelay = Effect.fn(
   );
 });
 
+// SCIENT-FORK: retained legacy-recovery acceptance consumer exercises command-readiness ordering.
 export const runOrderedV2StartupPhases = Effect.fn(
   "serverRuntimeStartup.runOrderedV2StartupPhases",
 )(function* <

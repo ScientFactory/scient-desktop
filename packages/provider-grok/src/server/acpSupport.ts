@@ -78,6 +78,7 @@ export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<strin
   }
 }
 
+// SCIENT-FORK: retained host-presentation/credential-spawn boundary tests consume this factory.
 export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
@@ -113,7 +114,7 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
-export function grokAcpRuntimeProcessOwnership(
+function grokAcpRuntimeProcessOwnership(
   processGroupPlatform: NodeJS.Platform,
 ): Pick<
   AcpSessionRuntime.AcpSessionRuntimeOptions,

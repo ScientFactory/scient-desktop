@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-const mermaidSvgToPngBlob = vi.fn();
-const parse = vi.fn();
-const render = vi.fn();
-const close = vi.fn();
-const openIsolatedMermaid = vi.fn();
-vi.mock("../diagrams/isolatedMermaid", () => ({ openIsolatedMermaid }));
+const { mermaidSvgToPngBlob, renderMermaidDiagram } = vi.hoisted(() => ({
+  mermaidSvgToPngBlob: vi.fn(),
+  renderMermaidDiagram: vi.fn(),
+}));
+vi.mock("../diagrams/mermaidRuntime", () => ({
+  MAX_MERMAID_SOURCE_LENGTH: 50_000,
+  renderMermaidDiagram,
+}));
 vi.mock("../diagrams/mermaidExport", () => ({ mermaidSvgToPngBlob }));
 
 const { captureWordDiagrams } = await import("./captureDiagrams");
@@ -17,29 +19,35 @@ const planOf = (...sources: ReadonlyArray<string>) => ({
 });
 const png = (bytes = 3) => new Blob([new Uint8Array(bytes).fill(1)], { type: "image/png" });
 
-beforeEach(() => {
+function setup() {
   mermaidSvgToPngBlob.mockReset().mockResolvedValue(png());
-  parse.mockReset().mockResolvedValue({ config: {} });
-  render.mockReset().mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2", refused: 0 });
-  close.mockReset();
-  openIsolatedMermaid.mockReset().mockResolvedValue({ parse, render, close, window: {} as Window });
-});
+  renderMermaidDiagram
+    .mockReset()
+    .mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2" });
+}
 
 const tags = async (...sources: ReadonlyArray<string>) =>
   (await captureWordDiagrams(planOf(...sources))).diagrams.map((entry) => entry.result._tag);
 
 describe("Word Mermaid capture", () => {
-  it("captures PNG bytes drawn in the isolated frame, and closes it", async () => {
+  it("returns an empty plan unchanged without loading a renderer", async () => {
+    setup();
+    expect(await captureWordDiagrams(planOf())).toEqual({ sourceDigest: digest, diagrams: [] });
+    expect(renderMermaidDiagram).not.toHaveBeenCalled();
+  });
+
+  it("captures PNG bytes from the shared renderer without changing source identity", async () => {
+    setup();
     expect(await captureWordDiagrams(planOf("flowchart LR\nA --> B"))).toEqual({
       sourceDigest: digest,
       diagrams: [{ id: idOf(0), result: { _tag: "png", base64: "AQEB" } }],
     });
-    expect(render).toHaveBeenCalledWith("flowchart LR\nA --> B");
-    expect(openIsolatedMermaid).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(renderMermaidDiagram).toHaveBeenCalledWith("flowchart LR\nA --> B", "light");
+    expect(renderMermaidDiagram).toHaveBeenCalledTimes(1);
   });
 
   it("renders label text that mentions url( or web addresses", async () => {
+    setup();
     const labels = [
       'flowchart LR\nA["https://example.org/url(report)"] --> B',
       'flowchart LR\nA["mentions url(x), image(y) and @import"] --> B',
@@ -49,8 +57,13 @@ describe("Word Mermaid capture", () => {
     expect(await tags(...labels)).toEqual(labels.map(() => "png"));
   });
 
-  it("falls back when the frame refused a load while drawing", async () => {
-    render.mockResolvedValueOnce({ svg: "<svg/>", diagramType: "sequence", refused: 1 });
+  it("falls back when the shared renderer reports an omitted resource", async () => {
+    setup();
+    renderMermaidDiagram.mockResolvedValueOnce({
+      svg: "<svg/>",
+      diagramType: "sequence",
+      blocked: ["https://example.invalid/pixel.png"],
+    });
     const joined =
       'sequenceDiagram\nparticipant A;properties A: {"icon":"https://example.invalid/pixel.png"}\nA->>A: hi';
     expect(await tags(joined, "flowchart LR\nA --> B")).toEqual(["render-failed", "png"]);
@@ -58,40 +71,41 @@ describe("Word Mermaid capture", () => {
   });
 
   it("refuses styles and settings that name an outside resource without drawing", async () => {
-    parse
-      .mockResolvedValueOnce({ config: {} })
-      .mockResolvedValueOnce({ config: {} })
-      .mockResolvedValueOnce({ config: { themeCSS: ".node rect { fill: red }" } })
-      .mockResolvedValueOnce({ config: { themeVariables: { primaryColor: "url(x)" } } })
-      .mockResolvedValueOnce({
-        config: { theme: "base", themeVariables: { primaryColor: "#f00" } },
-      });
+    setup();
     expect(
       await tags(
         "stateDiagram-v2\nclassDef c background-image:url(https://example.invalid/p)",
         "flowchart LR\nA --> B;classDef c background:u\\72l(//example.invalid/p)",
-        "%%{init: {}}%%\nflowchart LR\nA --> B",
-        "%%{init: {}}%%\nflowchart LR\nA --> B",
-        "%%{init: {}}%%\nflowchart LR\nA --> B",
+        '%%{init: {"themeCSS": ".node rect { fill: red }"}}%%\nflowchart LR\nA --> B',
+        '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(x)"}}}%%\nflowchart LR\nA --> B',
+        '%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#f00"}}}%%\nflowchart LR\nA --> B',
       ),
     ).toEqual(["render-failed", "render-failed", "render-failed", "render-failed", "png"]);
-    expect(render).toHaveBeenCalledTimes(1);
+    expect(renderMermaidDiagram).toHaveBeenCalledTimes(1);
   });
 
-  it("draws the repaired copy after a syntax error, and falls back when nothing parses", async () => {
-    parse.mockResolvedValueOnce(null).mockResolvedValueOnce({ config: {} });
-    expect(await tags("flowchart LR\nA[Plot (log)] --> B")).toEqual(["png"]);
-    expect(render).toHaveBeenCalledWith(
-      expect.not.stringMatching(/^flowchart LR\nA\[Plot \(log\)\]/u),
-    );
-    parse.mockReset().mockResolvedValue(null);
+  it("delegates original-first recovery exactly once and never rewrites the plan source", async () => {
+    setup();
+    const source = "flowchart LR\nA[Plot (log)] --> B";
+    const plan = planOf(source);
+    renderMermaidDiagram.mockResolvedValueOnce({
+      svg: "<svg>Recovered</svg>",
+      diagramType: "flowchart-v2",
+      recovery: { originalSource: source, source: 'flowchart LR\nA["Plot (log)"] --> B' },
+    });
+    expect((await captureWordDiagrams(plan)).diagrams[0]?.result._tag).toBe("png");
+    expect(renderMermaidDiagram).toHaveBeenCalledExactlyOnceWith(source, "light");
+    expect(mermaidSvgToPngBlob).toHaveBeenCalledWith("<svg>Recovered</svg>", "light");
+    expect(plan.diagrams[0]?.source).toBe(source);
+    renderMermaidDiagram.mockRejectedValueOnce(new Error("No diagram type detected"));
     expect(await tags("not a diagram at all")).toEqual(["render-failed"]);
   });
 
-  it("never fails the export: frame, draw, rasterise, and size failures fall back", async () => {
-    render
+  it("never fails the export: load, draw, rasterise, and size failures fall back", async () => {
+    setup();
+    renderMermaidDiagram
       .mockRejectedValueOnce(new Error("Parse error"))
-      .mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2", refused: 0 });
+      .mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2", blocked: [] });
     mermaidSvgToPngBlob
       .mockResolvedValueOnce(png())
       .mockRejectedValueOnce(new Error("The diagram contains an external resource"))
@@ -109,15 +123,15 @@ describe("Word Mermaid capture", () => {
       "render-failed",
       "png",
     ]);
-    openIsolatedMermaid.mockRejectedValueOnce(new Error("Mermaid did not load for Word export."));
+    renderMermaidDiagram.mockRejectedValue(new Error("The diagram renderer failed to load."));
     expect(await tags("flowchart LR\nA --> B", "flowchart LR\nC --> D")).toEqual([
       "render-failed",
       "render-failed",
     ]);
   });
 
-  it("falls back for a diagram over chat's size limit instead of drawing Mermaid's stand-in", async () => {
-    // Few edges, one long label: Mermaid parses it, then draws a stand-in over maxTextSize.
+  it("falls back for a diagram over chat's size limit before loading the renderer", async () => {
+    setup();
     const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
     expect(oversized.length).toBeGreaterThan(50_000);
     expect(await tags(oversized, "   ", "flowchart LR\nA --> B")).toEqual([
@@ -125,19 +139,44 @@ describe("Word Mermaid capture", () => {
       "render-failed",
       "png",
     ]);
-    expect(parse).toHaveBeenCalledTimes(1);
-    expect(render).toHaveBeenCalledTimes(1);
+    expect(renderMermaidDiagram).toHaveBeenCalledTimes(1);
   });
 
   it("falls back when Mermaid drew its own error diagram", async () => {
-    render.mockResolvedValueOnce({ svg: "<svg/>", diagramType: "error", refused: 0 });
+    setup();
+    renderMermaidDiagram.mockResolvedValueOnce({
+      svg: "<svg/>",
+      diagramType: "error",
+      blocked: [],
+    });
     expect(await tags("flowchart LR\nA --> B")).toEqual(["render-failed"]);
     expect(mermaidSvgToPngBlob).not.toHaveBeenCalled();
   });
 
   it("stops embedding once the diagrams' total PNG budget is spent", async () => {
+    setup();
     mermaidSvgToPngBlob.mockResolvedValue(png(2 * 1024 * 1024));
     const sources = Array.from({ length: 5 }, (_, index) => `flowchart LR\nA${index} --> B`);
     expect(await tags(...sources)).toEqual(["png", "png", "png", "png", "render-failed"]);
+  });
+
+  it("refuses an unsafe recovered projection before rasterization", async () => {
+    setup();
+    renderMermaidDiagram.mockResolvedValueOnce({
+      svg: "<svg/>",
+      diagramType: "flowchart-v2",
+      recovery: { source: "flowchart LR\nA\nstyle A fill:url(remote.svg)" },
+    });
+    expect(await tags("flowchart LR\nA[Plot (log)]")).toEqual(["render-failed"]);
+    expect(mermaidSvgToPngBlob).not.toHaveBeenCalled();
+  });
+
+  it("charges the aggregate budget only for bytes that were successfully encoded", async () => {
+    setup();
+    const unreadable = png(2 * 1024 * 1024);
+    using _read = vi.spyOn(unreadable, "arrayBuffer").mockRejectedValue(new Error("Read failed"));
+    mermaidSvgToPngBlob.mockResolvedValueOnce(unreadable).mockResolvedValue(png(2 * 1024 * 1024));
+    const sources = Array.from({ length: 5 }, (_, index) => `flowchart LR\nA${index} --> B`);
+    expect(await tags(...sources)).toEqual(["render-failed", "png", "png", "png", "png"]);
   });
 });

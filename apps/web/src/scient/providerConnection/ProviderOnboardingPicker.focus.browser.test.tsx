@@ -9,11 +9,9 @@ import { useState } from "react";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
-import {
-  isInsideComposerFloatingLayer,
-  isInsideRestingComposerControlScope,
-} from "../../components/chat/composerEventScope";
+import { isInsideRestingComposerControlScope } from "../../components/chat/composerEventScope";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderOnboardingPicker, readyProviderModelSelection } from "./ProviderOnboardingPicker";
 import { shouldShowProviderLifecycleSetupInComposer } from "./providerConnectionPresentation";
@@ -60,6 +58,7 @@ it("keeps search, provider selection and install controls inside the composer fo
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
+  const onOpenChange = vi.fn();
 
   await act(
     async () =>
@@ -68,6 +67,7 @@ it("keeps search, provider selection and install controls inside the composer fo
           environmentId={EnvironmentId.make("local")}
           instanceEntries={deriveProviderInstanceEntries([provider])}
           onInstanceModelChange={vi.fn()}
+          onOpenChange={onOpenChange}
           open
         />,
       ),
@@ -82,21 +82,27 @@ it("keeps search, provider selection and install controls inside the composer fo
     expect(control).not.toBeNull();
     await act(() => control.focus());
     expect(document.activeElement).toBe(control);
-    expect(isInsideComposerFloatingLayer(document.activeElement)).toBe(true);
+    expect(popup!.contains(document.activeElement)).toBe(true);
     expect(isInsideRestingComposerControlScope(document.activeElement)).toBe(true);
   }
-  await act(() => railButton.click());
+  await userEvent.click(search);
+  await userEvent.keyboard("Antigravity");
+  expect(search.value).toBe("Antigravity");
+  expect(document.activeElement).toBe(search);
+  await userEvent.click(railButton);
   const install = [...popup!.querySelectorAll("button")].find(
     (button) => button.textContent === "Install provider",
   )!;
   expect(install).toBeDefined();
   await act(() => install.focus());
   expect(document.activeElement).toBe(install);
-  expect(isInsideComposerFloatingLayer(document.activeElement)).toBe(true);
+  expect(popup!.contains(document.activeElement)).toBe(true);
   expect(isInsideRestingComposerControlScope(document.activeElement)).toBe(true);
 
-  expect(isInsideComposerFloatingLayer(_fixture.host)).toBe(false);
+  expect(popup!.contains(_fixture.host)).toBe(false);
   expect(isInsideRestingComposerControlScope(_fixture.host)).toBe(false);
+  await userEvent.keyboard("{Escape}");
+  expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
 const ready: ServerProvider = {

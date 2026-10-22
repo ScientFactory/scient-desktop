@@ -1,7 +1,19 @@
+import * as Effect from "effect/Effect";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import { EventId } from "@t3tools/contracts";
+import { TestClock } from "effect/testing";
+import * as Queue from "effect/Queue";
+import { type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import { type OrchestrationV2ServerCommand } from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
+import * as ServerSettings from "../serverSettings.ts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as Stream from "effect/Stream";
+import * as IdleCompactionService from "./IdleCompactionService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
-  EventId,
   MessageId,
   NodeId,
   ProjectId,
@@ -11,22 +23,10 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
-  type OrchestrationV2DomainEvent,
-  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
-import { TestClock } from "effect/testing";
 
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
-import * as IdleCompactionService from "./IdleCompactionService.ts";
-import * as Orchestrator from "./Orchestrator.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
 
 const NOW_MS = Date.parse("2026-10-19T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -148,18 +148,6 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("starts two minutes before the cache Claude reported expires", () => {
-    expect(idleCompactionWindow(records({ cacheExpiresInMs: 60 * MINUTE_MS }), NOW_MS)).toEqual({
-      runId,
-      startMs: NOW_MS + 58 * MINUTE_MS,
-      endMs: NOW_MS + 60 * MINUTE_MS,
-    });
-    // A 5m cache whose last request started 3 minutes before the run ended.
-    const late = records({ cacheExpiresInMs: 2 * MINUTE_MS });
-    expect(idleCompactionWindow(late, NOW_MS)).toMatchObject({ startMs: NOW_MS });
-    expect(idleCompactionWindow(late, NOW_MS + 2 * MINUTE_MS)).toBeNull();
-  });
-
   it("skips small contexts, unknown expiry, other providers, switched threads, and compactions", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();

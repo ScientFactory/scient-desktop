@@ -84,6 +84,10 @@ function serializeCodeBlockToMarkdown(source: string, language: string | null): 
   return `${fence}${language ?? ""}\n${code}\n${fence}\n\n`;
 }
 
+// SCIENT-FORK:START — the shared Mermaid renderer copies canonical fenced source.
+export { serializeCodeBlockToMarkdown };
+// SCIENT-FORK:END
+
 function serializeCodeBlock(pre: Element): string {
   return serializeCodeBlockToMarkdown(pre.textContent ?? "", resolveCodeBlockLanguage(pre));
 }

@@ -1,4 +1,5 @@
 import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { observeLatexSelectionPresentation } from "./latexSelectionPresentation.testkit";
 import { useState, type ReactNode } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
@@ -23,13 +24,9 @@ import "./scient-latex.css";
 let source = "";
 let edits = 0;
 const draftKey = "synthetic-nested-selection-qualification";
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-const selectScope = async () => {
+const selectScope = async (_fixture: _Fixture) => {
   await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
 };
 
 async function _cleanupFixture0(_fixture: _Fixture) {
@@ -38,7 +35,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.root0 = undefined;
   _fixture.host = undefined;
   clearVisualDraft(draftKey);
-  await frame();
 }
 
 async function mount(_fixture: _Fixture, body: string) {
@@ -76,16 +72,19 @@ async function mount(_fixture: _Fixture, body: string) {
       />
     );
   }
+  _fixture.selectionPresentation = _fixture.stack.use(
+    observeLatexSelectionPresentation(_fixture.host),
+  );
   await _fixture.root0.rerender(<Harness />);
   await expect.poll(() => _fixture.host!.querySelector(".scient-latex-math-preview")).toBeTruthy();
   await userEvent.click(_fixture.host.querySelector<HTMLElement>(".scient-latex-mathfield")!);
   await expect.poll(() => _fixture.host!.querySelector("math-field")).toBeTruthy();
   const math = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await userEvent.click(math);
   await expect.poll(() => math.matches(":focus-within")).toBe(true);
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   return math;
 }
 
@@ -113,13 +112,13 @@ After.`,
   );
   const original = source;
   math.position = offset(math, "m");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   const scopes = mathEditingScopes(math);
   for (const scope of scopes) {
-    await selectScope();
+    await selectScope(_fixture);
     expect(math.selection.ranges).toEqual([[...scope.range]]);
   }
-  await selectScope();
+  await selectScope(_fixture);
   await expect.poll(() => window.getSelection()?.toString()).toContain("Before.");
   expect(window.getSelection()?.toString()).toContain("After.");
   expect(source).toBe(original);
@@ -132,17 +131,19 @@ it("real Math menu retains bold selection, Escape restores focus, next Ctrl+A se
   const math = await mount(_fixture, String.raw`\[\underbrace{1+\cdots+1}_{n\ \textbf{times}}=\]`);
   const original = source;
   math.position = offset(math, "m");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   const scopes = mathEditingScopes(math);
-  await selectScope();
+  await selectScope(_fixture);
   await page.getByRole("button", { name: "Math", exact: true }).click();
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   expect(math.selection.ranges).toEqual([[...scopes[0]!.range]]);
-  expect(document.querySelectorAll(".scient-latex-retained-selection")).toHaveLength(1);
+  await vi.waitFor(() =>
+    expect(document.querySelectorAll(".scient-latex-retained-selection")).toHaveLength(1),
+  );
   await userEvent.keyboard("{Escape}");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await expect.poll(() => math.matches(":focus-within")).toBe(true);
-  await selectScope();
+  await selectScope(_fixture);
   expect(math.selection.ranges).toEqual([[...scopes[1]!.range]]);
   expect(source).toBe(original);
 });
@@ -161,23 +162,23 @@ it.each([String.raw`\[\mathbf{h}_{i}=z\]`, String.raw`\(\mathbf{h}_{i}=z\)`])(
       [h - 1, h],
     ] as const) {
       math.selection = { ranges: [[...range]] };
-      await frame();
+      await _fixture.selectionPresentation!.wait();
       await page.getByRole("button", { name: "Insert", exact: true }).click();
-      await frame();
+      await _fixture.selectionPresentation!.wait();
       expect(math.selection.ranges).toEqual([[...range]]);
       if (range[0] === range[1]) {
         expect(_fixture.host!.querySelector(".scient-latex-retained-selection")).toBeNull();
         expect(_fixture.host!.querySelector(".scient-latex-range-selection")).toBeNull();
       }
       await page.getByRole("button", { name: "Math", exact: true }).click();
-      await frame();
+      await _fixture.selectionPresentation!.wait();
       expect(math.selection.ranges).toEqual([[...range]]);
       await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
       const match = page.getByRole("switch", { name: "Match brackets", exact: true });
       await expect.element(match).toBeChecked();
       await match.click();
       await expect.element(match).not.toBeChecked();
-      await frame();
+      await _fixture.selectionPresentation!.wait();
       expect(math.selection.ranges).toEqual([[...range]]);
       await userEvent.keyboard("{Escape}");
       await userEvent.keyboard("{Escape}");
@@ -197,22 +198,22 @@ it.each([String.raw`\[\mathbf{h}_{i}=\]`, String.raw`\(\mathbf{h}_{i}=\)`])(
     const math = await mount(_fixture, body);
     math.position = math.lastOffset;
     const before = math.position;
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     await page.getByRole("button", { name: "Math", exact: true }).click();
     await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
     await page.getByRole("combobox", { name: "Left bracket", exact: true }).click();
     await page.getByRole("option", { name: "⟨", exact: true }).click();
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     expect(math.selection.ranges).toEqual([[before, before]]);
     expect(_fixture.host!.querySelector(".scient-latex-retained-selection")).toBeNull();
     await page.getByRole("menuitem", { name: "Insert", exact: true }).click();
     await expect.poll(() => math.matches(":focus-within")).toBe(true);
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     expect(math.selectionIsCollapsed).toBe(true);
     expect(_fixture.host!.querySelector(".scient-latex-range-selection")).toBeNull();
     expect(_fixture.host!.querySelector(".scient-latex-retained-selection")).toBeNull();
     await userEvent.keyboard("x");
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     expect(math.getValue("latex-without-placeholders")).toMatch(
       /\\left\\langle\s*x\s*\\right\\rangle/u,
     );
@@ -230,8 +231,8 @@ it.each([String.raw`\[\mathbf{h}_{i}\]`, String.raw`\(\mathbf{h}_{i}\)`])(
     await document.fonts.ready;
     for (const position of [offset(math, "h"), offset(math, "i"), 0, math.lastOffset]) {
       math.position = position;
-      await frame();
-      await frame();
+      await _fixture.selectionPresentation!.wait();
+      await _fixture.selectionPresentation!.wait();
       const guide = _fixture.host!.querySelector<HTMLElement>(
         ".scient-latex-scope-outline:not([data-guide])",
       );
@@ -252,7 +253,7 @@ it.each([String.raw`\[\mathbf{h}_{i}\]`, String.raw`\(\mathbf{h}_{i}\)`])(
       }
     }
     await page.getByRole("button", { name: "Math", exact: true }).click();
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     expect(
       _fixture.host!.querySelector(".scient-latex-scope-outline:not([data-guide])"),
     ).toBeTruthy();
@@ -284,14 +285,14 @@ it("real Visual editor expands bracket/exponent boundaries and paints the comple
     inputs.push(`${(e as InputEvent).inputType}: ${math.getValue()}`),
   );
   math.selection = { ranges: [[offset(math, "x"), offset(math, "2")]] };
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   expect(math.getValue(math.selection, "latex-without-placeholders")).toContain("x");
   expect(math.getValue(math.selection, "latex-without-placeholders")).toContain("^2");
   math.position = offset(math, "m");
-  await frame();
-  await selectScope();
-  await selectScope();
-  await selectScope();
+  await _fixture.selectionPresentation!.wait();
+  await selectScope(_fixture);
+  await selectScope(_fixture);
+  await selectScope(_fixture);
   expect(math.getValue(math.selection, "latex-without-placeholders")).toContain("underbrace");
   expect(
     document.querySelectorAll(".scient-latex-range-selection,.scient-latex-cell-selection"),
@@ -316,18 +317,18 @@ After.`,
   );
   const original = source;
   math.position = offset(math, "m");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   for (const scope of mathEditingScopes(math)) {
-    await selectScope();
+    await selectScope(_fixture);
     expect(math.selection.ranges).toEqual([[...scope.range]]);
   }
   // The inline prose editor also contributes its enclosing text flow.
   for (let step = 0; step < 4 && !_fixture.host!.querySelector("[data-cell-selection]"); step++)
-    await selectScope();
+    await selectScope(_fixture);
   expect(_fixture.host!.querySelectorAll("[data-cell-selection]")).toHaveLength(1);
-  await selectScope();
+  await selectScope(_fixture);
   expect(_fixture.host!.querySelectorAll("[data-cell-selection]")).toHaveLength(2);
-  await selectScope();
+  await selectScope(_fixture);
   expect(window.getSelection()?.toString()).toContain("Before.");
   expect(window.getSelection()?.toString()).toContain("After.");
   expect(source).toBe(original);
@@ -339,6 +340,9 @@ function _createFixture() {
   return {
     host: undefined! as HTMLDivElement | undefined,
     stack,
+    selectionPresentation: undefined as
+      | ReturnType<typeof observeLatexSelectionPresentation>
+      | undefined,
     cleanup,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {

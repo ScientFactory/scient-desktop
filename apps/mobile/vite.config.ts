@@ -3,13 +3,10 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/components/ui/Dialog.android.test.tsx",
-  "src/features/home/home-route-visibility.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/threads/ThreadSettingsSheet.runtime.test.tsx",
   "src/features/threads/useAcknowledgeThreadAnswer.test.tsx",
-  "src/features/threads/use-visible-second-clock.test.tsx",
-  "src/features/threads/useThreadHeaderOptions.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/native/EnrichedMarkdownText.test.tsx",
   "src/state/composer-attachment-uploads.test.tsx",
@@ -30,7 +27,10 @@ export default defineConfig({
           name: "unit",
           include: ["**/*.test.{ts,tsx,mjs}"],
           exclude: ["**/node_modules/**", ...reactTests],
-          setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
+          setupFiles: [
+            "../../packages/shared/src/testing/longTempDir.ts",
+            "../../packages/shared/src/testing/providerEnv.ts",
+          ],
         },
       },
       {
@@ -40,6 +40,7 @@ export default defineConfig({
           include: reactTests,
           // Native components mock React Native and render through react-dom in these tests.
           environment: "jsdom",
+          setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
         },
       },
     ],

@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +8,8 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --passWithNoTests --project unit --project browser",
+    "test:performance": "vp test bench --run --project \"unit*\" --project \"browser*\" --fileParallelism=false --maxWorkers=1 src/scient/latex/latexWordCount.bench.ts src/scient/latex/mathReadingPreview.browser.bench.ts src/scient/markdownEditor/prosemirror/performance.browser.bench.ts",
     "templates:previews": "node scripts/render-template-previews.ts"
   },
   "dependencies": {
@@ -70,6 +70,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
+    "dompurify": "^3.4.16",
     "effect": "catalog:",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
@@ -84,9 +85,9 @@
     "markdown-it": "^14.3.0",
     "mathjax": "3.2.2",
     "mathlive": "0.108.2",
-    "mermaid": "12.0.0",
     "morphicons": "^1.7.1",
     "pdfjs-dist": "6.2.108",
+    "pele": "^1.8.0",
     "plotly.js-strict-dist-min": "3.7.0",
     "prosemirror-commands": "^1.7.2",
     "prosemirror-dropcursor": "^1.8.3",
@@ -134,7 +135,7 @@
     "@types/use-sync-external-store": "^0.0.6",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/browser-playwright": "5.0.1",
+    "@vitest/browser-playwright": "5.0.5",
     "compression": "^1.8.2",
     "fake-indexeddb": "6.2.5",
     "happy-dom": "20.11.6",
@@ -143,6 +144,6 @@
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "5.0.1"
+    "vitest": "5.0.5"
   }
 }

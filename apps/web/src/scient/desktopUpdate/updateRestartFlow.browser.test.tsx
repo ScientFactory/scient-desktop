@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
@@ -186,26 +186,21 @@ describe("update restart flow", () => {
     await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
   });
 
-  it(
-    "the notice steps aside after 5 seconds, leaving Restart in the footer",
-    async () => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  it("the notice steps aside after 5 seconds, leaving Restart in the footer", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      await mount(_fixture);
-      await downloadThroughFooter(_fixture);
-      expect(anchoredNotice()).not.toBeNull();
+    await mount(_fixture);
+    using _clock = fakeTimers();
+    await downloadThroughFooter(_fixture);
+    expect(anchoredNotice()).not.toBeNull();
 
-      await vi.waitFor(() => expect(anchoredNotice()).toBeNull(), {
-        timeout: SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS + 3_000,
-        interval: 100,
-      });
-      expect(footerButton(_fixture).textContent).toBe("Restart");
-      expect(bridge.installUpdate).not.toHaveBeenCalled();
-    },
-    SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS + 10_000,
-  );
+    await act(() => vi.advanceTimersByTimeAsync(SCIENT_UPDATE_READY_NOTICE_TIMEOUT_MS));
+    await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
+    expect(footerButton(_fixture).textContent).toBe("Restart");
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+  });
 
   it("closing the notice leaves Restart in the footer without installing", async () => {
     await using _fixture = _createFixture();
@@ -322,6 +317,7 @@ describe("update restart flow", () => {
       return result(done);
     });
     const elsewhere = document.createElement("button");
+    _fixture.cleanup.defer(() => elsewhere.remove());
     elsewhere.textContent = "Elsewhere";
     document.body.prepend(elsewhere);
     await mount(_fixture);
@@ -336,15 +332,14 @@ describe("update restart flow", () => {
     await vi.waitFor(() => expect(popover()).toBeNull());
     expect(document.activeElement).toBe(elsewhere);
 
+    using _clock = fakeTimers();
     await userEvent.unhover(footerButton(_fixture));
     // Leaving starts the trigger's 150 ms hover-close timer, and an imperative open does not
     // cancel it. Focus later, as a person would, or that timer closes the focus-opened popover.
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await act(() => vi.advanceTimersByTimeAsync(300));
     await userEvent.tab();
     expect(document.activeElement).toBe(footerButton(_fixture));
-    // Under 12x CPU throttling the focus-opened popover appears after the default
-    // second but always appears; a loaded runner needs the same allowance.
-    await vi.waitFor(() => expect(popover()).not.toBeNull(), { timeout: 5_000 });
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
     elsewhere.remove();
   });
 

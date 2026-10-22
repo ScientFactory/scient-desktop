@@ -59,10 +59,7 @@ const isProviderRunInterruptError = Schema.is(ProviderTurnControlService.Provide
  * "is not active" would drop the outbox item without ever starting the
  * replacement turn.
  */
-export function isNonRetryableProviderTurnControlFailure(
-  effectType: string,
-  errorText: string,
-): boolean {
+function isNonRetryableProviderTurnControlFailure(effectType: string, errorText: string): boolean {
   if (effectType !== "provider-turn.interrupt") {
     return false;
   }

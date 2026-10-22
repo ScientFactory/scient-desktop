@@ -1,11 +1,9 @@
 import { expect, it, vi } from "vite-plus/test";
+import { fakeTimers } from "../../../test/render";
 import { registerLatexSelection } from "./latexSelectionSession";
 import "./scient-latex.css";
 
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
+const frame = () => vi.advanceTimersByTimeAsync(32);
 
 async function _setupFixture0(_fixture: _Fixture) {
   _fixture.workspace = document.createElement("div");
@@ -31,6 +29,7 @@ async function _setupFixture0(_fixture: _Fixture) {
   _fixture.surface.focus();
   document.getSelection()!.removeAllRanges();
   document.getSelection()!.addRange(_fixture.range.cloneRange());
+  _fixture.stack.use(fakeTimers());
   _fixture.registration = registerLatexSelection({
     element: _fixture.surface,
     command: () => false,

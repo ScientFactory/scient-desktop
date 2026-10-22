@@ -515,7 +515,6 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
           expect(yield* h.registry.getInstance(first)).toBe(h.target);
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),
-    20_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -551,7 +550,6 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
           );
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),
-    20_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -589,7 +587,6 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
         expect(fresh.instanceId).toBe(first);
         expect(fresh.providerSession.cwd).toBe(h.root);
       }).pipe(Effect.scoped),
-    20_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -635,7 +632,6 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
         );
         expect(fresh.instanceId).toBe(first);
       }).pipe(Effect.scoped),
-    20_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -688,7 +684,6 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
         }),
       );
     },
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "refuses native opening after caller or configured instance retirement",
@@ -731,6 +726,5 @@ it.layer(testLayer)("Droid factory native shutdown", (it) => {
         for (const launch of h.launches.filter((launch) => launch.instanceId === second))
           expect(yield* launch.handle.isRunning).toBe(true);
       }).pipe(Effect.scoped),
-    20_000,
   );
 });

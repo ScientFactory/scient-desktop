@@ -696,7 +696,10 @@ it.live(
         const name = "native-clone-history-failure";
         const cwd = yield* checkpointWorkspace(name);
         const recorded = yield* readProviderReplayTranscript(
-          new URL("./testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+          new URL(
+            "./scient-fork/fixtures/thread_fork_native/codex_transcript.ndjson",
+            import.meta.url,
+          ),
         );
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(recorded, cwd),

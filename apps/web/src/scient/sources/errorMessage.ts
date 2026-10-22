@@ -1,16 +1,13 @@
-import { RemoteEnvironmentAuthInvalidJsonError } from "@t3tools/client-runtime/rpc";
-
 const INVALID_RESPONSE_PREFIX = "Remote environment endpoint returned an invalid response";
 const ENDPOINT_PREFIX = "Remote environment endpoint";
 const FETCH_PREFIX = "Failed to fetch remote environment endpoint";
 
 export function scientSourcesErrorMessage(error: unknown, development: boolean): string {
   if (
-    error instanceof RemoteEnvironmentAuthInvalidJsonError ||
-    (typeof error === "object" &&
-      error !== null &&
-      "_tag" in error &&
-      error._tag === "RemoteEnvironmentAuthInvalidJsonError")
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "RemoteEnvironmentAuthInvalidJsonError"
   ) {
     return development
       ? "This Scient (Dev) app and its local server are out of sync. Restart this candidate, then try again."

@@ -107,9 +107,9 @@ async function renderPage(
       />,
     );
   });
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await vi.waitFor(() =>
+    expect(container.querySelector('[data-scient-diagram="pending"]')).toBeNull(),
+  );
   return { article: container.querySelector<HTMLElement>("article")!, tracker };
 }
 

@@ -38,7 +38,7 @@ import {
   type ResolvedAsset,
 } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
-import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
+import { statMediaFile, streamMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   storeAttachmentUpload,
@@ -309,7 +309,7 @@ export const layerBrowserApiCors = Layer.unwrap(
   }),
 );
 
-export function isLoopbackHostname(hostname: string): boolean {
+function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname
     .trim()
     .toLowerCase()
@@ -317,7 +317,7 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizedHostname);
 }
 
-export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
+function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   const redirectUrl = new URL(devUrl.toString());
   redirectUrl.pathname = requestUrl.pathname;
   redirectUrl.search = requestUrl.search;

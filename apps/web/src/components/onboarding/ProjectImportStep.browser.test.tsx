@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import { EnvironmentId, ProjectId, type AgentSessionProjectCandidate } from "@t3tools/contracts";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -48,7 +48,7 @@ const candidate = (path: string): AgentSessionProjectCandidate => ({
   sources: ["codex"],
   threadCount: 3,
   git: { remoteKey: null, repository: null },
-  lastActiveAt: new Date(Date.now() - 1_000).toISOString(),
+  lastActiveAt: "2026-10-20T11:59:59.000Z",
   alreadyImported: false,
 });
 async function render(_fixture: _Fixture, environmentId = local) {
@@ -91,6 +91,8 @@ async function _setupFixture0(_fixture: _Fixture) {
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.container, router: false }),
   );
+  _fixture.cleanup.use(fakeTimers());
+  vi.setSystemTime(new Date("2026-10-20T12:00:00.000Z"));
 }
 async function _cleanupFixture1(_fixture: _Fixture) {
   await act(async () => await _fixture.root0.unmount());

@@ -1,11 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Tool } from "effect/ai";
 
-import { ScheduleTaskTool, ThreadUpdateTool } from "./tools.ts";
+import { OrchestratorToolkit } from "./tools.ts";
 
 describe("orchestrator MCP tool schemas", () => {
   it("publishes an actionable schedule schema and compatibility string branch", () => {
-    const schema = Tool.getJsonSchema(ScheduleTaskTool) as {
+    const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.schedule_task) as {
       readonly type?: unknown;
       readonly properties?: Readonly<
         Record<string, { readonly description?: unknown; readonly anyOf?: ReadonlyArray<unknown> }>
@@ -18,7 +18,7 @@ describe("orchestrator MCP tool schemas", () => {
   });
 
   it("publishes thread metadata actions from an object-root schema", () => {
-    const schema = Tool.getJsonSchema(ThreadUpdateTool) as {
+    const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.scient_thread_update) as {
       readonly type?: unknown;
       readonly properties?: Readonly<Record<string, unknown>>;
     };

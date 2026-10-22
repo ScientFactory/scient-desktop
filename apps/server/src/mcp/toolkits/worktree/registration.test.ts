@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import * as Schema from "effect/Schema";
@@ -134,22 +135,27 @@ it.effect.each(
 )("$caseTitle", ({ includeThreadRead }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const routes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
+      const layerEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-scratch")),
+      });
+      const registryContext = yield* Layer.build(
+        McpSessionRegistry.layer.pipe(Layer.provide(layerEnvironment)),
+      );
+      const registry = Context.get(registryContext, McpSessionRegistry.McpSessionRegistry);
+      const routes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+      );
       yield* HttpRouter.serve(routes, {
         disableListenLog: true,
         disableLogger: true,
       }).pipe(
-        Layer.provide(
-          Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-scratch")),
-          }),
-        ),
+        Layer.provide(layerEnvironment),
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(StubServicesLive),
         Layer.build,
       );
 
-      const registry = McpSessionRegistry.issueActiveMcpCredential({
+      const credential = yield* registry.issue({
         threadId: ThreadId.make("thread-scratch"),
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         capabilities: new Set([
@@ -159,7 +165,6 @@ it.effect.each(
           ...(includeThreadRead ? ["threads:read" as const] : []),
         ]),
       });
-      const credential = yield* registry;
       expect(credential).toBeDefined();
 
       const httpClient = yield* HttpClient.HttpClient;

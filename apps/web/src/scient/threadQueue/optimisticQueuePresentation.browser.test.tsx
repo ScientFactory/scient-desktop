@@ -18,7 +18,6 @@ import { useState } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
-import { STATUS_MIN_VISIBLE_MS } from "@t3tools/client-runtime/delayed-status";
 import { QUEUE_ADMISSION_STATUS_DELAY_MS, ThreadQueueStrip } from "./ThreadQueueStrip";
 import {
   deriveQueueAcknowledgedUserMessages,
@@ -29,7 +28,6 @@ import {
 } from "./optimisticQueuePresentation";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
-  vi.useRealTimers();
   await _fixture.root0?.unmount();
   _fixture.host?.remove();
   _fixture.root0 = undefined;
@@ -249,7 +247,8 @@ it("says Queuing… only when admission is slow, and never Queued", async () => 
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  _fixture.stack.use(_fixtureFakeTimers());
+  await render(_fixture, []);
+  using _clock = _fixtureFakeTimers();
   const status = () =>
     _fixture.host!.querySelector('[data-testid="thread-queue-pending-pending"] [role="status"]')
       ?.textContent ?? null;
@@ -264,7 +263,8 @@ it("says Queuing… only when admission is slow, and never Queued", async () => 
   // Acceptance clears it after a short hold instead of swapping in "Queued".
   await render(_fixture, settleQueueAdmissionPreview([message], message.id, true));
   expect(status()).toBe("Queuing…");
-  await advance(STATUS_MIN_VISIBLE_MS);
+  // The accepted label must retire within its 400ms visible hold.
+  await advance(400);
   expect(status()).toBeNull();
   expect(
     _fixture.host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent,
@@ -275,7 +275,7 @@ it("says Queuing… only when admission is slow, and never Queued", async () => 
   await render(_fixture, [fast]);
   await advance(QUEUE_ADMISSION_STATUS_DELAY_MS - 1);
   await render(_fixture, settleQueueAdmissionPreview([fast], fast.id, true));
-  await advance(QUEUE_ADMISSION_STATUS_DELAY_MS + STATUS_MIN_VISIBLE_MS);
+  await advance(400);
   expect(
     _fixture.host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent,
   ).not.toMatch(/Queuing…|Queued/);

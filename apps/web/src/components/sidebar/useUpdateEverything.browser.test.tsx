@@ -475,11 +475,20 @@ async function retryFromCircle(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ) {
+  const started: string[] = [];
   await act(async () => {
     for (const id of ids) {
-      retryUpdateRunServer(EnvironmentId.make(id), run.useQualifiedUpdateRunServers(), update);
+      if (retryUpdateRunServer(EnvironmentId.make(id), run.useQualifiedUpdateRunServers(), update))
+        started.push(id);
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await vi.waitFor(() => {
+    for (const id of started) {
+      expect(
+        run.useUpdateEverythingRun()?.machines.find((machine) => machine.environmentId === id)
+          ?.result,
+      ).not.toBe(null);
+    }
   });
 }
 

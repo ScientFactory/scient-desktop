@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -22,7 +22,11 @@ import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
 import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { stubLatexReadingFonts, useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  readMountedLatexVisualTestEditor,
+  stubLatexReadingFonts,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -72,10 +76,23 @@ describe("recovering unsaved work", () => {
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
+  const writeReceipts = new Set<() => void>();
+  const nextWriteReceipt = () => {
+    let accepted = false;
+    writeReceipts.add(() => {
+      accepted = true;
+    });
+    return () => vi.waitFor(() => expect(accepted).toBe(true));
+  };
+  const publishWriteReceipt = () => {
+    for (const resolve of writeReceipts) resolve();
+    writeReceipts.clear();
+  };
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
+    writeReceipts.clear();
     singleFileDocument = true;
     save = "completes";
     publicationGate = null;
@@ -99,8 +116,7 @@ describe("recovering unsaved work", () => {
     vi.unstubAllGlobals();
   }
 
-  const settle = async (ms = 20) =>
-    await act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
+  const settle = async (ms = 20) => await act(() => vi.advanceTimersByTimeAsync(ms));
   const acknowledged = async () => await settle(SAVE_DELAY + 60);
   async function mount(_fixture: _Fixture, source: string, revision: number) {
     disk = { source, revision };
@@ -151,15 +167,20 @@ describe("recovering unsaved work", () => {
             writes(request.edit.source, next);
             show({ source: next, revision: shown.revision });
             coordinator.change(next);
+            publishWriteReceipt();
             return outcome;
           }}
         />
       );
     }
-    await act(async () => {
-      await _fixture.root0.rerender(<Harness />);
+    await coordinator.ready();
+    await _fixture.root0.rerender(<Harness />);
+    await vi.waitFor(() => {
+      const mounted = readMountedLatexVisualTestEditor(_fixture.container);
+      expect(mounted).not.toBeNull();
+      expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
     });
-    await settle();
+    _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
   }
   /** Something else wrote the file; the host adopts it. */
   const changeOutside = async (source: string) =>
@@ -175,6 +196,8 @@ describe("recovering unsaved work", () => {
       coordinator.change(source);
     });
   async function reopen(_fixture: _Fixture) {
+    _fixture.clock?.[Symbol.dispose]();
+    _fixture.clock = undefined;
     await act(async () => await _fixture.root0.unmount());
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.container, router: false }),
@@ -590,7 +613,10 @@ describe("recovering unsaved work", () => {
     storeSourceDraft(MONDAY, "r1");
     await mount(_fixture, AGENT, 2);
     expect(editable(_fixture)).toBe(true);
+    const published = nextWriteReceipt();
     await type(_fixture, 12, " kept writing");
+    await settle(300);
+    await published();
     await settle(300);
     expect(disk.source).toContain("kept writing");
     expect(parked()).toMatchObject({ source: MONDAY, baseRevision: "r1" });
@@ -650,7 +676,9 @@ describe("recovering unsaved work", () => {
 
     const base = tex("Old base");
     storeTypingDraft(base, [paragraph("Old base plus typed")]);
+    const published = nextWriteReceipt();
     await mount(_fixture, base, 1);
+    await published();
     await settle(400);
     expect(bar(_fixture)).toBeNull();
     expect(page(_fixture)).toContain("Old base plus typed");
@@ -684,8 +712,10 @@ describe("recovering unsaved work", () => {
       content: { type: "doc", content: [paragraph("Written in the other view")] },
     });
     const spy = storeAfterOpeningRead(theirs);
+    const published = nextWriteReceipt();
     await mount(_fixture, base, 1);
     spy.mockRestore();
+    await published();
     await settle(400);
     // Ours was put back, converted and published; theirs is still stored.
     expect(shown.source).toBe(tex("Old base plus typed"));
@@ -1104,6 +1134,8 @@ describe("recovering unsaved work", () => {
       noRoomToPark(_fixture);
       await mount(_fixture, AGENT, 2);
       expect(editable(_fixture)).toBe(false);
+      _fixture.clock?.[Symbol.dispose]();
+      _fixture.clock = undefined;
       await act(async () => await _fixture.root0.unmount());
       expect(checkpoint()).toEqual({ source: MONDAY, baseRevision: "r1" });
       _fixture.root0 = _fixture.stack.use(
@@ -1243,6 +1275,7 @@ function _createFixture() {
     container: undefined! as HTMLDivElement,
     stack,
     cleanup,
+    clock: undefined as Disposable | undefined,
     root0: undefined! as Screen,
     async [Symbol.asyncDispose]() {
       try {

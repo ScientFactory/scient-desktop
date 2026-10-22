@@ -14,7 +14,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -40,6 +39,10 @@ import { LatexToolchain, layer as toolchainLayer } from "./LatexToolchain.ts";
 import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
+import {
+  awaitLatexBuildTerminal as awaitTerminal,
+  observeLatexBuilds,
+} from "./latexBuildCompletion.testkit.ts";
 
 const publicationHelper = await filePublicationTestHelper();
 
@@ -66,8 +69,6 @@ const serverEnvironment = Layer.succeed(
     getDescriptor: Effect.die("unused environment descriptor"),
   }),
 );
-
-const TERMINAL_STATES: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"]);
 
 /** Every service is the real one here; only the state root is disposable. */
 const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: string) =>
@@ -100,6 +101,7 @@ const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: st
         }),
       );
     }
+    const completionLayer = yield* observeLatexBuilds();
     const generatedStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
     return {
       workspaceRoot,
@@ -131,18 +133,9 @@ const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: st
           }),
         ),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(completionLayer),
       ),
     };
-  });
-
-const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildInput) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < COMPILE_TIMEOUT_MS / 50; attempt += 1) {
-      const snapshot = yield* service.status(input);
-      if (TERMINAL_STATES.has(snapshot.state)) return snapshot;
-      yield* Effect.sleep(Duration.millis(50));
-    }
-    return yield* service.status(input);
   });
 
 const expectPublishedPdf = (
@@ -243,110 +236,106 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
 describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
   "edited-source real-engine round trip",
   () => {
-    it.live(
-      "rebuilds edited prose, preserves math and recovers from a failed compile",
-      () =>
-        Effect.gen(function* () {
-          const original =
-            "\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\nProtected mathematics: $x^2 + y^2 = z^2$.\n\\end{document}\n";
-          const harness = yield* makeWorkspace({ "main.tex": original });
-          yield* Effect.gen(function* () {
-            const service = yield* LatexBuildService;
-            const store = yield* GeneratedDocumentStore;
-            const sync = yield* LatexSyncTex;
-            const fs = yield* FileSystem.FileSystem;
-            const input = { workspaceRoot: harness.workspaceRoot, relativePath: "main.tex" };
-            let source = original;
-            let lastRevision: string | null = null;
-            let initialPixels: string | null = null;
-            for (const replacement of [
-              null,
-              null,
-              "Hello from Science.",
-              "Hello from Science: 50% & counting.",
-              "A completely revised sentence.",
-            ]) {
-              if (replacement !== null) {
-                const sentence = source.split("\n")[2]!;
-                source = source.replace(
-                  sentence,
-                  replacement.replace(/[%&]/gu, (character) => `\\${character}`),
-                );
-                yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
-              }
-              yield* service.requestBuild(input);
-              const finished = yield* awaitTerminal(service, input);
-              expect(finished.state).toBe("succeeded");
-              const sourceRevision = `sha256:${NodeCrypto.createHash("sha256").update(source).digest("hex")}`;
-              expect(finished.visualSourceRevisions?.["main.tex"]).toBe(sourceRevision);
-              const descriptor = finished.descriptor;
-              if (descriptor?._tag !== "generated-pdf") return yield* Effect.die("missing PDF");
-              if (replacement !== null) expect(descriptor.revisionId).not.toBe(lastRevision);
-              lastRevision = descriptor.revisionId;
-              const published = yield* store.resolveRevision({
-                authority: descriptor.authority,
-                artifactId: descriptor.artifactId,
-                revisionId: descriptor.revisionId,
-              });
-              const text = NodeChildProcess.execFileSync("pdftotext", [published.path, "-"], {
-                encoding: "utf8",
-              });
-              expect(text).toContain(replacement ?? "Hello from Scient.");
-              if (replacement === null && resolvesOnPath("pdftoppm -v")) {
-                const pixels = NodeChildProcess.execFileSync(
-                  "pdftoppm",
-                  ["-singlefile", "-r", "72", published.path],
-                  { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
-                );
-                const digest = NodeCrypto.createHash("sha256").update(pixels).digest("hex");
-                if (initialPixels !== null) expect(digest).toBe(initialPixels);
-                initialPixels = digest;
-              }
-              expect(source).toContain("$x^2 + y^2 = z^2$");
-              const revision = {
-                workspaceRoot: harness.workspaceRoot,
-                rootRelativePath: "main.tex",
-                artifactId: descriptor.artifactId,
-                revisionId: descriptor.revisionId,
-              };
-              const forward = yield* sync.forward({
-                ...revision,
-                sourceRelativePath: "main.tex",
-                sourceRevision,
-                line: 3,
-              });
-              expect(
-                forward._tag,
-                forward._tag === "unavailable" ? forward.message : undefined,
-              ).toBe("found");
-              if (forward._tag === "found") {
-                const inverse = yield* sync.inverse({
-                  ...revision,
-                  page: forward.page,
-                  x: forward.x,
-                  y: forward.y,
-                });
-                expect(inverse).toMatchObject({ _tag: "found", relativePath: "main.tex" });
-              }
+    it.live("rebuilds edited prose, preserves math and recovers from a failed compile", () =>
+      Effect.gen(function* () {
+        const original =
+          "\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\nProtected mathematics: $x^2 + y^2 = z^2$.\n\\end{document}\n";
+        const harness = yield* makeWorkspace({ "main.tex": original });
+        yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          const store = yield* GeneratedDocumentStore;
+          const sync = yield* LatexSyncTex;
+          const fs = yield* FileSystem.FileSystem;
+          const input = { workspaceRoot: harness.workspaceRoot, relativePath: "main.tex" };
+          let source = original;
+          let lastRevision: string | null = null;
+          let initialPixels: string | null = null;
+          for (const replacement of [
+            null,
+            null,
+            "Hello from Science.",
+            "Hello from Science: 50% & counting.",
+            "A completely revised sentence.",
+          ]) {
+            if (replacement !== null) {
+              const sentence = source.split("\n")[2]!;
+              source = source.replace(
+                sentence,
+                replacement.replace(/[%&]/gu, (character) => `\\${character}`),
+              );
+              yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
             }
-            yield* fs.writeFileString(
-              `${harness.workspaceRoot}/main.tex`,
-              source.replace("\\end{document}", "\\UndefinedVisualTest\n\\end{document}"),
-            );
             yield* service.requestBuild(input);
-            const failed = yield* awaitTerminal(service, input);
-            expect(failed.state).toBe("failed");
-            expect(failed.visualSourceRevisions).toBeUndefined();
-            expect(failed.descriptor).toMatchObject({
-              revisionId: lastRevision,
-              bindingStatus: "stale",
+            const finished = yield* awaitTerminal(service, input);
+            expect(finished.state).toBe("succeeded");
+            const sourceRevision = `sha256:${NodeCrypto.createHash("sha256").update(source).digest("hex")}`;
+            expect(finished.visualSourceRevisions?.["main.tex"]).toBe(sourceRevision);
+            const descriptor = finished.descriptor;
+            if (descriptor?._tag !== "generated-pdf") return yield* Effect.die("missing PDF");
+            if (replacement !== null) expect(descriptor.revisionId).not.toBe(lastRevision);
+            lastRevision = descriptor.revisionId;
+            const published = yield* store.resolveRevision({
+              authority: descriptor.authority,
+              artifactId: descriptor.artifactId,
+              revisionId: descriptor.revisionId,
             });
-            yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
-            yield* service.requestBuild(input);
-            expect((yield* awaitTerminal(service, input)).state).toBe("succeeded");
-          }).pipe(Effect.provide(harness.serviceLayer));
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-      60_000,
+            const text = NodeChildProcess.execFileSync("pdftotext", [published.path, "-"], {
+              encoding: "utf8",
+            });
+            expect(text).toContain(replacement ?? "Hello from Scient.");
+            if (replacement === null && resolvesOnPath("pdftoppm -v")) {
+              const pixels = NodeChildProcess.execFileSync(
+                "pdftoppm",
+                ["-singlefile", "-r", "72", published.path],
+                { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
+              );
+              const digest = NodeCrypto.createHash("sha256").update(pixels).digest("hex");
+              if (initialPixels !== null) expect(digest).toBe(initialPixels);
+              initialPixels = digest;
+            }
+            expect(source).toContain("$x^2 + y^2 = z^2$");
+            const revision = {
+              workspaceRoot: harness.workspaceRoot,
+              rootRelativePath: "main.tex",
+              artifactId: descriptor.artifactId,
+              revisionId: descriptor.revisionId,
+            };
+            const forward = yield* sync.forward({
+              ...revision,
+              sourceRelativePath: "main.tex",
+              sourceRevision,
+              line: 3,
+            });
+            expect(forward._tag, forward._tag === "unavailable" ? forward.message : undefined).toBe(
+              "found",
+            );
+            if (forward._tag === "found") {
+              const inverse = yield* sync.inverse({
+                ...revision,
+                page: forward.page,
+                x: forward.x,
+                y: forward.y,
+              });
+              expect(inverse).toMatchObject({ _tag: "found", relativePath: "main.tex" });
+            }
+          }
+          yield* fs.writeFileString(
+            `${harness.workspaceRoot}/main.tex`,
+            source.replace("\\end{document}", "\\UndefinedVisualTest\n\\end{document}"),
+          );
+          yield* service.requestBuild(input);
+          const failed = yield* awaitTerminal(service, input);
+          expect(failed.state).toBe("failed");
+          expect(failed.visualSourceRevisions).toBeUndefined();
+          expect(failed.descriptor).toMatchObject({
+            revisionId: lastRevision,
+            bindingStatus: "stale",
+          });
+          yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
+          yield* service.requestBuild(input);
+          expect((yield* awaitTerminal(service, input)).state).toBe("succeeded");
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
   },
 );
@@ -403,7 +392,6 @@ describe.skipIf(installedManagedRoot === undefined)(
             expect(defaultAfter.executable).toBe(defaultBefore.executable);
           }).pipe(Effect.provide(h.serviceLayer));
         }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-      60_000,
     );
   },
 );

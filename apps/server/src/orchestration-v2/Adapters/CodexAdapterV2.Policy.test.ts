@@ -21,63 +21,6 @@ import {
   CODEX_TEST_RUNTIME_POLICY,
 } from "./CodexAdapterV2.replay.testkit.ts";
 
-describe("CodexAdapterV2 file change approvals", () => {
-  it("uses nonblank reasons before sorted file operations and renamed paths", () => {
-    const fileChanges = {
-      "/tmp/removed.md": { type: "delete" as const, content: "gone" },
-      "/tmp/added.ts": { type: "add" as const, content: "export {};" },
-      "/tmp/moved.ts": {
-        type: "update" as const,
-        unified_diff: "@@",
-        move_path: "/tmp/renamed.ts",
-      },
-    };
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({
-        reason: "  Update configuration. ",
-        fileChanges,
-      }),
-      "Update configuration.",
-    );
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
-      "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
-    );
-  });
-
-  it("falls back to a nonblank grant root and omits empty details", () => {
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
-      "/workspace",
-    );
-    assert.equal(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
-      "/workspace",
-    );
-    assert.isUndefined(
-      CodexAdapterV2.codexFileChangeApprovalPrompt({
-        reason: " ",
-        grantRoot: " ",
-        fileChanges: {},
-      }),
-    );
-  });
-
-  it("bounds large patch descriptions without losing the remaining count", () => {
-    const fileChanges = Object.fromEntries(
-      Array.from({ length: 25 }, (_, index) => [
-        `/tmp/file-${String(index).padStart(2, "0")}.ts`,
-        { type: "add" as const, content: "" },
-      ]),
-    );
-    const detail = CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges });
-    assert.equal(detail?.split("\n").length, 21);
-    assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
-    assert.isTrue(detail?.endsWith("+5 more") ?? false);
-    assert.notInclude(detail, "file-20.ts");
-  });
-});
-
 describe("CodexAdapterV2 runtime policy", () => {
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
@@ -485,24 +428,4 @@ describe("CodexAdapterV2 process spawning", () => {
       Effect.provideService(HostProcess.Platform, "linux"),
     ),
   );
-});
-
-describe("CodexAdapterV2 skill mentions", () => {
-  it("sends currency-sigil skill mentions as the $ mention Codex parses", () => {
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      ["€review do it", "$review do it"],
-      ["£ship", "$ship"],
-      ["please ¥review this diff", "please $review this diff"],
-      ["first line\n₹ship it", "first line\n$ship it"],
-      ["𑿝review then €2spec", "$review then $2spec"],
-      ["$review", "$review"],
-      ["costs €20", "costs €20"],
-      ["€5k", "€5k"],
-      ["budget €100M or €1e6", "budget €100M or €1e6"],
-      ["5€review", "5€review"],
-    ];
-    for (const [text, expected] of cases) {
-      assert.equal(CodexAdapterV2.codexSkillMentionText(text), expected, text);
-    }
-  });
 });

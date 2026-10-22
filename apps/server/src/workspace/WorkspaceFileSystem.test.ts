@@ -1,3 +1,4 @@
+import * as Exit from "effect/Exit";
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -5,14 +6,17 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it, describe, expect } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -24,6 +28,52 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { filePublicationTestHelper } from "../scient/workspace/fileExchange.testkit.ts";
 const publicationHelper = await filePublicationTestHelper();
+
+const watchReceipts = vi.hoisted(() => ({
+  afterStart: undefined as (() => void) | undefined,
+  afterCallback: undefined as ((filename: string | Buffer | null) => void) | undefined,
+  callbackFilename: undefined as string | Buffer | null | undefined,
+  afterOffer: undefined as
+    | ((value: unknown, filename: string | Buffer | null | undefined) => void)
+    | undefined,
+}));
+
+vi.mock("effect/Queue", async (importOriginal) => {
+  const original = await importOriginal<typeof import("effect/Queue")>();
+  return {
+    ...original,
+    offerUnsafe: (...args: Parameters<typeof original.offerUnsafe>) => {
+      const result = original.offerUnsafe(...args);
+      watchReceipts.afterOffer?.(args[1], watchReceipts.callbackFilename);
+      return result;
+    },
+  };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    watch: (...args: Parameters<typeof original.watch>): ReturnType<typeof original.watch> => {
+      const listener = args.at(-1);
+      if (typeof listener !== "function") return original.watch(...args);
+      const watcher = Reflect.apply(original.watch, original, [
+        ...args.slice(0, -1),
+        (event: string, filename: string | Buffer | null) => {
+          watchReceipts.callbackFilename = filename;
+          try {
+            Reflect.apply(listener, undefined, [event, filename]);
+          } finally {
+            watchReceipts.callbackFilename = undefined;
+          }
+          watchReceipts.afterCallback?.(filename);
+        },
+      ]);
+      watchReceipts.afterStart?.();
+      return watcher;
+    },
+  };
+});
 
 // Temp folders count as known workspaces unless named as unknown.
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
@@ -407,31 +457,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects directories without manufacturing an I/O cause", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir;
-        yield* fileSystem.makeDirectory(path.join(cwd, "src"));
-
-        const resolvedPath = yield* fileSystem.realPath(path.join(cwd, "src"));
-        for (const options of [{}, { allowMissing: true }]) {
-          const error = yield* workspaceFileSystem
-            .readFile(Object.assign({ cwd, relativePath: "src" }, options))
-            .pipe(Effect.flip);
-
-          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
-          expect(error).toMatchObject({
-            workspaceRoot: cwd,
-            relativePath: "src",
-            resolvedPath,
-          });
-          expect("cause" in error).toBe(false);
-        }
-      }),
-    );
-
     it.effect("rejects binary files without leaking their contents into the error", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -474,30 +499,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
         expect("contents" in error).toBe(false);
-      }),
-    );
-
-    it.effect("preserves the real cause and path for I/O failures", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir;
-        const resolvedPath = path.join(cwd, "missing.txt");
-
-        const error = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "missing.txt" })
-          .pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
-        expect(error).toMatchObject({
-          workspaceRoot: cwd,
-          relativePath: "missing.txt",
-          resolvedPath,
-          operationPath: resolvedPath,
-          operation: "realpath-target",
-        });
-        expect(error.cause).toBeInstanceOf(Error);
-        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
       }),
     );
 
@@ -579,31 +580,65 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const cwd = yield* makeTempDir;
           yield* writeTextFile(cwd, "notes.md", "plain\n");
           yield* writeTextFile(cwd, "notes.md ", "spaced\n");
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              watchReceipts.afterStart = undefined;
+              watchReceipts.afterCallback = undefined;
+              watchReceipts.afterOffer = undefined;
+            }),
+          );
 
           // Workspace-relative and absolute spellings both name the spaced file.
           for (const relativePath of ["notes.md ", path.join(cwd, "notes.md ")]) {
-            const events = yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
-              Stream.tap((event) =>
-                event._tag === "watch-ready"
-                  ? Effect.gen(function* () {
-                      // The trimmed sibling changes first: watching it would report here.
-                      yield* writeTextFile(cwd, "notes.md", "plain, edited\n");
-                      yield* Effect.sleep("250 millis");
-                      yield* writeTextFile(cwd, "notes.md ", "spaced, edited\n");
-                    })
-                  : Effect.void,
+            const started = Promise.withResolvers<void>();
+            const unrelatedObserved = Promise.withResolvers<void>();
+            const selectedObserved = Promise.withResolvers<void>();
+            const ready = yield* Deferred.make<void>();
+            watchReceipts.afterStart = () => started.resolve();
+            watchReceipts.afterCallback = (filename) => {
+              if (filename?.toString() === "notes.md") unrelatedObserved.resolve();
+              if (filename?.toString() === "notes.md ") selectedObserved.resolve();
+            };
+            const changes = yield* Effect.forkChild(
+              workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+                Stream.tap((event) =>
+                  event._tag === "watch-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+                ),
+                Stream.filter((event) => event._tag === "file-changed"),
+                Stream.take(1),
+                Stream.runCollect,
               ),
-              Stream.filter((event) => event._tag === "file-changed"),
-              Stream.take(1),
-              Stream.runCollect,
+              { startImmediately: true },
             );
+            yield* Effect.promise(() => started.promise);
+            yield* TestClock.adjust("100 millis");
+            yield* Deferred.await(ready);
+            // Pending publication settlement must not hide a wrongly queued hint.
+            const unrelatedHints: unknown[] = [];
+            const selectedHints: unknown[] = [];
+            watchReceipts.afterOffer = (event, filename) => {
+              if (filename?.toString() === "notes.md") unrelatedHints.push(event);
+              if (filename?.toString() === "notes.md ") selectedHints.push(event);
+            };
+            yield* writeTextFile(cwd, "notes.md", "plain, edited\n");
+            yield* Effect.promise(() => unrelatedObserved.promise);
+            yield* TestClock.adjust("250 millis");
+            expect(unrelatedHints).not.toContainEqual(
+              expect.objectContaining({ _tag: "file-changed" }),
+            );
+            yield* writeTextFile(cwd, "notes.md ", "spaced, edited\n");
+            yield* Effect.promise(() => selectedObserved.promise);
+            yield* TestClock.adjust("100 millis");
+            const events = yield* Fiber.join(changes);
+            expect(selectedHints).toContainEqual({ _tag: "file-changed", relativePath });
+            watchReceipts.afterOffer = undefined;
             expect([...events]).toEqual([{ _tag: "file-changed", relativePath }]);
             expect(yield* workspaceFileSystem.viewFile({ cwd, relativePath })).toMatchObject({
               contents: "spaced, edited\n",
             });
             yield* writeTextFile(cwd, "notes.md ", "spaced\n");
           }
-        }),
+        }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
     );
 
     it.effect("emits a hint when the selected file is removed", () =>

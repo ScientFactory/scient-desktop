@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics preferSchemaOverJson:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
@@ -31,10 +32,21 @@ const dependencies = Layer.mergeAll(
     Layer.provide(NodeServices.layer),
   ),
 );
-const waitUntil = (predicate: () => boolean) =>
-  Effect.gen(function* () {
-    while (!predicate()) yield* Effect.sleep("20 millis");
-  }).pipe(Effect.timeout("15 seconds"));
+const awaitFile = Effect.fn("test.awaitFile")(function* (path: string, nonEmpty = false) {
+  yield* Effect.callback<void, Error>((resume) => {
+    const check = () => {
+      if (
+        NodeFS.existsSync(path) &&
+        (!nonEmpty || NodeFS.readFileSync(path, "utf8").trim().length > 0)
+      )
+        resume(Effect.void);
+    };
+    const watcher = NodeFS.watch(NodePath.dirname(path), check);
+    watcher.on("error", (error) => resume(Effect.fail(error)));
+    check();
+    return Effect.sync(() => watcher.close());
+  });
+});
 
 /** Actual async shell jobs run under the native worker; SQL owns every visible run/result. */
 describe.runIf(ompQualifyBinary)("installed native OMP background continuation", () => {
@@ -64,6 +76,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
             baseEnv: { PATH: process.env.PATH ?? "" },
           });
           const releaseFile = NodePath.join(root, "release");
+          NodeChildProcess.execFileSync("mkfifo", [releaseFile]);
           const pidFile = NodePath.join(root, "job-pid");
           const doneFile = NodePath.join(root, "job-done");
           let calls = 0;
@@ -74,6 +87,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
           const answerGate = new Promise<void>((resolve) => {
             openAnswer = resolve;
           });
+          const thirdRequest = Promise.withResolvers<void>();
           const server = NodeHttp.createServer((request, response) => {
             let body = "";
             request.setEncoding("utf8");
@@ -83,6 +97,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
             request.on("end", () => {
               requests.push(body);
               calls++;
+              if (calls >= 3) thirdRequest.resolve();
               const delta = (value: unknown, finish: string | null = null) =>
                 response.write(
                   `data: ${JSON.stringify({ id: "stub", object: "chat.completion.chunk", created: 1, model: "background", choices: [{ index: 0, delta: value, finish_reason: finish }] })}\n\n`,
@@ -99,7 +114,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
                       function: {
                         name: "bash",
                         arguments: JSON.stringify({
-                          command: `echo $$ > '${pidFile}'; while [ ! -f '${releaseFile}' ]; do sleep 0.1; done; printf 'BACKGROUND_RESULT'; : > '${doneFile}'`,
+                          command: `echo $$ > '${pidFile}'; read -r release < '${releaseFile}'; printf 'BACKGROUND_RESULT'; : > '${doneFile}'`,
                           async: true,
                           timeout: 60,
                         }),
@@ -140,7 +155,8 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
             () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
           );
           const address = server.address();
-          if (!address || typeof address === "string") throw new Error("Stub did not listen");
+          if (!address || typeof address === "string")
+            return yield* Effect.die(new Error("Stub did not listen"));
           const instanceId = ProviderInstanceId.make("omp-background-live");
           const connection: ResolvedModelConnection = {
             id: "stub",
@@ -213,7 +229,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
               );
               const parentId = parent.runs[0]!.id;
               expect(calls).toBe(2);
-              yield* waitUntil(() => NodeFS.existsSync(pidFile));
+              yield* awaitFile(pidFile, true);
               const jobPid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
               expect(Number.isSafeInteger(jobPid) && jobPid > 1).toBe(true);
               expect(() => process.kill(jobPid, 0)).not.toThrow();
@@ -252,12 +268,29 @@ describe.runIf(ompQualifyBinary)("installed native OMP background continuation",
                 );
                 userRunId = answering.runs[1]!.id;
                 expect(userRunId).not.toBe(parentId);
-                yield* waitUntil(() => calls >= 3);
+                yield* Effect.promise(() => thirdRequest.promise);
                 expect(calls).toBe(3);
                 expect(requests[2]).toContain("What is the answer?");
               }
-              NodeFS.writeFileSync(releaseFile, "done");
-              yield* waitUntil(() => NodeFS.existsSync(doneFile));
+              // The release FIFO blocks a writer until the job reads; a child
+              // process performs the write and its exit is the release receipt.
+              yield* Effect.callback<void>((resume) => {
+                const release = NodeChildProcess.spawn(
+                  "sh",
+                  ["-c", `printf 'done\\n' > ${JSON.stringify(releaseFile)}`],
+                  { stdio: "ignore" },
+                );
+                release.once("error", (error) => resume(Effect.die(error)));
+                release.once("exit", (code) =>
+                  resume(
+                    code === 0
+                      ? Effect.void
+                      : Effect.die(new Error(`release writer exited with ${code}`)),
+                  ),
+                );
+                return Effect.sync(() => release.kill());
+              });
+              yield* awaitFile(doneFile);
               // The owned job has actually finished while the user's model response remains held.
               if (mode === "message") openAnswer();
               const settled = yield* waitFor(

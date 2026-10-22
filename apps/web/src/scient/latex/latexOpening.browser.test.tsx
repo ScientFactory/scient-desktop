@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, render as _fixtureRender, type Screen } from "../../../test/render";
 import { lazy, useEffect, useState, type ReactNode } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
@@ -86,6 +86,13 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
         resolveModule = done;
       }),
   );
+  let projectMounted = false;
+  function ProjectWithReceipt(props: Parameters<typeof LatexProjectVisualEditor>[0]) {
+    useEffect(() => {
+      projectMounted = true;
+    }, []);
+    return <LatexProjectVisualEditor {...props} />;
+  }
   let change!: (phase: "file" | "module" | "root" | "layout") => void;
   function Pipeline() {
     const [phase, setPhase] = useState<"file" | "module" | "root" | "layout">("file");
@@ -128,10 +135,11 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
   const face = new FontFace("KaTeX_OpeningPresentationFixture", 'local("Arial")');
   const load = vi.spyOn(face, "load").mockImplementation(() => new Promise<FontFace>(() => {}));
   document.fonts.add(face);
-  let sampling = true;
+  let sampling = false;
   let samples = 0;
   const failures: string[] = [];
   let center: number | undefined;
+  const observedLabels = new WeakSet<HTMLElement>();
   const sample = () => {
     if (!sampling || !_fixture.container) return;
     if (!_fixture.container.querySelector(".scient-latex-visual-document")) {
@@ -148,6 +156,10 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
       )
         failures.push("Expected one opening spinner");
       if (label) {
+        if (!observedLabels.has(label)) {
+          observedLabels.add(label);
+          resize.observe(label);
+        }
         if (label.textContent !== LATEX_DOCUMENT_PREPARATION_LABEL)
           failures.push("Message changed");
         const rect = label.getBoundingClientRect();
@@ -158,22 +170,36 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
       }
       samples++;
     }
-    requestAnimationFrame(sample);
   };
+  // Observe actual DOM commits and native geometry delivery, including each replacement
+  // of the preparation label. A phase cannot advance before its own sample below.
+  const resize = new ResizeObserver(sample);
+  const mutations = new MutationObserver(sample);
+  resize.observe(_fixture.container);
+  mutations.observe(_fixture.container, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+  });
   try {
     await _fixture.root0.rerender(<Pipeline />);
     await expect
       .poll(() => _fixture.container!.textContent)
       .toContain(LATEX_DOCUMENT_PREPARATION_LABEL);
-    requestAnimationFrame(sample);
-    change("module");
+    sampling = true;
+    sample();
+    await act(() => change("module"));
     await expect.poll(() => resolveModule).toBeTypeOf("function");
-    await new Promise((done) => requestAnimationFrame(done));
-    resolveModule({ default: LatexProjectVisualEditor });
-    change("root");
-    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    sample();
+    await act(() => {
+      resolveModule({ default: ProjectWithReceipt });
+      change("root");
+    });
+    await vi.waitFor(() => expect(projectMounted).toBe(true));
+    sample();
     expect(_fixture.container.textContent).not.toContain("Finding the document");
-    change("layout");
+    await act(() => change("layout"));
     await expect
       .poll(() => _fixture.container!.querySelector(".scient-latex-visual-document"), {
         timeout: 15000,
@@ -201,11 +227,13 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     expect(onEdit).not.toHaveBeenCalled();
   } finally {
     sampling = false;
+    mutations.disconnect();
+    resize.disconnect();
     load.mockRestore();
     document.fonts.delete(face);
     clearVisualDraft(draftKey);
   }
-}, 30000);
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

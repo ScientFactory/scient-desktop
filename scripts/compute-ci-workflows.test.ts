@@ -57,4 +57,21 @@ describe("Compute CI suite selection", () => {
       },
     });
   });
+
+  it("qualifies recipes and the opted-in managed product in their respective lanes", () => {
+    expect(workflow("scient-compute-python-kernel.yml")).toMatchObject({
+      jobs: {
+        managed_python: {
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              name: "Qualify base, every toolkit combination, and retained kernels",
+              "working-directory": "apps/server",
+              env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
+              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 && vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1",
+            }),
+          ]),
+        },
+      },
+    });
+  });
 });

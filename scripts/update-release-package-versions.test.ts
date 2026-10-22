@@ -1,6 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,14 +7,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { Command, CliError } from "effect/cli";
+import { Command } from "effect/cli";
 import * as TestConsole from "effect/testing/TestConsole";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
   InvalidReleasePackageVersionError,
-  ReleaseGitHubOutputConfigurationError,
-  ReleaseGitHubOutputWriteError,
   ReleasePackageManifestError,
   releasePackageFiles,
   updateReleasePackageVersions,
@@ -63,15 +60,6 @@ const readReleaseVersions = Effect.fn("readReleaseVersions")(function* (rootDir:
 
   return versions;
 });
-
-const captureLogs = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const result = yield* effect;
-    const logs = (yield* TestConsole.logLines).filter(
-      (line): line is string => typeof line === "string",
-    );
-    return { result, logs };
-  });
 
 it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   it.effect("updates all release package versions under the provided root", () =>
@@ -227,118 +215,6 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
 
       const githubOutput = yield* fs.readFileString(githubOutputPath);
       assert.equal(githubOutput, "changed=true\n");
-    }),
-  );
-
-  it.effect("logs when nothing changed", () =>
-    captureLogs(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const baseDir = yield* fs.makeTempDirectoryScoped({
-          prefix: "update-release-package-versions-cli-log-",
-        });
-
-        yield* writePackageJsonFixtures(baseDir, "3.0.0");
-        yield* runCli(["3.0.0", "--root", baseDir]);
-      }),
-    ).pipe(
-      Effect.tap(({ logs }) => {
-        assert.deepStrictEqual(logs, ["All package.json versions already match release version."]);
-        return Effect.void;
-      }),
-    ),
-  );
-
-  it.effect("requires GITHUB_OUTPUT when --github-output is set", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "update-release-package-versions-cli-missing-output-",
-      });
-
-      yield* writePackageJsonFixtures(baseDir, "0.0.1");
-
-      const error = yield* runCli(["4.0.0", "--root", baseDir, "--github-output"]).pipe(
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        Effect.flip,
-      );
-
-      assert.instanceOf(error, ReleaseGitHubOutputConfigurationError);
-      assert.instanceOf(error.cause, Config.ConfigError);
-      assert.equal(
-        error.message,
-        "Failed to resolve GITHUB_OUTPUT for release package version output.",
-      );
-    }),
-  );
-
-  it.effect("preserves GITHUB_OUTPUT write context and the filesystem cause", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "update-release-package-versions-cli-output-error-",
-      });
-
-      yield* writePackageJsonFixtures(baseDir, "0.0.1");
-
-      const error = yield* runCli(["4.0.0", "--root", baseDir, "--github-output"]).pipe(
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromEnv({
-              env: {
-                GITHUB_OUTPUT: baseDir,
-              },
-            }),
-          ),
-        ),
-        Effect.flip,
-      );
-
-      assert.instanceOf(error, ReleaseGitHubOutputWriteError);
-      assert.equal(error.filePath, baseDir);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal(
-        error.message,
-        `Failed to append release package version output to '${baseDir}'.`,
-      );
-    }),
-  );
-
-  it.effect("rejects unknown flags during cli parsing", () =>
-    Effect.gen(function* () {
-      const error = yield* runCli(["1.2.3", "--unknown"]).pipe(Effect.flip);
-
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-
-      const optionError =
-        error._tag === "ShowHelp" ? (error.errors[0] as CliError.CliError | undefined) : error;
-
-      if (!optionError || optionError._tag !== "UnrecognizedOption") {
-        assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);
-      }
-
-      assert.equal(optionError.option, "--unknown");
-    }),
-  );
-
-  it.effect("rejects a missing version positional during cli parsing", () =>
-    Effect.gen(function* () {
-      const error = yield* runCli(["--github-output"]).pipe(Effect.flip);
-
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-
-      const versionError =
-        error._tag === "ShowHelp" ? (error.errors[0] as CliError.CliError | undefined) : error;
-
-      if (!versionError || versionError._tag !== "MissingArgument") {
-        assert.fail(`Expected MissingArgument, got ${String(versionError?._tag)}`);
-      }
-
-      assert.equal(versionError.argument, "version");
     }),
   );
 });

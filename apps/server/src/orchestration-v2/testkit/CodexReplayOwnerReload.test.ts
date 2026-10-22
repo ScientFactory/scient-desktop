@@ -1,6 +1,9 @@
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
+import {
+  materializeCodexFixtureOwnerReload,
+  materializeCodexOwnerReload,
+} from "./CodexReplayOwnerReload.ts";
 
 const transcript = {
   provider: "codex",
@@ -216,4 +219,23 @@ it("refuses a declared pre-turn boundary outside the owned creation and turn", (
       beforeEntryLabel: "missing-history-boundary",
     }),
   ).toThrow("no recorded insertion boundary");
+});
+
+it.each([
+  "subagent_continue",
+  "multi_turn",
+  "queued_turn",
+  "thread_rollback",
+  "thread_rollback_after_restart",
+  "thread_rollback_to_stopped_turn",
+])("shares the declared second-turn owner reload for %s", (fixtureName) => {
+  const original = structuredClone(transcript);
+  expect(materializeCodexFixtureOwnerReload(transcript, fixtureName)).toEqual(
+    materializeCodexOwnerReload(original, 2),
+  );
+  expect(transcript).toEqual(original);
+});
+
+it("leaves fixtures without a declared owner reload unchanged", () => {
+  expect(materializeCodexFixtureOwnerReload(transcript, "single_turn")).toBe(transcript);
 });

@@ -51,7 +51,9 @@ export const fixture = Effect.fnUntraced(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem,
           pathService = yield* Path.Path,
-          workspacePaths = yield* WorkspacePaths.make;
+          workspacePaths = yield* WorkspacePaths.WorkspacePaths.pipe(
+            Effect.provide(WorkspacePaths.layer),
+          );
         const entries = WorkspaceEntries.WorkspaceEntries.of({
           refresh: () => Effect.void,
           browse: () => Effect.die("unused"),

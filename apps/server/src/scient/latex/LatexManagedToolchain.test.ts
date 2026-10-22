@@ -6,8 +6,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -16,6 +16,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
+import { observeManagedInstall } from "../managedInstall.testkit.ts";
 import {
   LatexArchiveUnpackError,
   LatexArchiveUnpacker,
@@ -222,6 +223,7 @@ const makeHarness = (input: {
     const unpackedBytes = yield* Ref.make<string | null>(null);
     const packageRequests = yield* Ref.make<ReadonlyArray<LatexPackageInstallInput>>([]);
     const processRequests = yield* Ref.make<ReadonlyArray<ProcessRunner.ProcessRunInput>>([]);
+    const completion = yield* observeManagedInstall("LatexManagedToolchain.runInstall");
     const processRunnerLayer = yield* runnerLayer({
       seen: processRequests,
       ...(input.engineValidationCode === undefined
@@ -265,10 +267,22 @@ const makeHarness = (input: {
       Layer.provide(Layer.succeed(HostProcess.Platform, input.platform ?? "win32")),
       Layer.provide(Layer.succeed(HostProcess.Architecture, input.arch ?? "x64")),
       Layer.provide(Layer.succeed(TinyTexManifestRef, input.manifest)),
+      Layer.provideMerge(completion.layer),
     );
+
+    const awaitInstall = Effect.fn("LatexManagedToolchain.test.awaitInstall")(function* () {
+      const managed = yield* LatexManagedToolchain;
+      while (true) {
+        const state = yield* managed.status;
+        if (state.state === "ready" || state.state === "failed") return state;
+        if (state.state === "idle") return yield* Effect.die("No LaTeX install was requested.");
+        yield* completion.awaitCompletion;
+      }
+    });
 
     return {
       serviceLayer,
+      awaitInstall,
       paths,
       seen,
       unpackedBytes,
@@ -276,16 +290,6 @@ const makeHarness = (input: {
       packageRequests,
       processRequests,
     };
-  });
-
-const awaitInstall = (managed: LatexManagedToolchain["Service"]) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      const state = yield* managed.status;
-      if (state.state === "ready" || state.state === "failed") return state;
-      yield* Effect.sleep(Duration.millis(5));
-    }
-    return yield* managed.status;
   });
 
 const stagingEntries = (stagingRoot: string) =>
@@ -304,6 +308,34 @@ const currentInstallRoot = (statePath: string) =>
   });
 
 const forwardSlashes = (value: string) => value.replaceAll("\\", "/");
+
+it.effect("observes each install completion without cancelling its held work", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const completion = yield* observeManagedInstall("managedInstallFixture.run");
+    const operation = Effect.fn("managedInstallFixture.run")(function* () {
+      yield* Deferred.succeed(entered, undefined);
+      yield* Deferred.await(release);
+      return "installed";
+    });
+    const worker = yield* Effect.forkChild(operation().pipe(Effect.provide(completion.layer)), {
+      startImmediately: true,
+    });
+    yield* Deferred.await(entered);
+    const observer = yield* Effect.forkChild(completion.awaitCompletion, {
+      startImmediately: true,
+    });
+    expect(observer.pollUnsafe()).toBeUndefined();
+    yield* Fiber.interrupt(observer);
+    expect(worker.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(worker)).toBe("installed");
+    yield* completion.awaitCompletion;
+    expect(yield* operation().pipe(Effect.provide(completion.layer))).toBe("installed");
+    yield* completion.awaitCompletion;
+  }),
+);
 
 describe("artifactUrlRejection", () => {
   it("accepts the pinned release host and refuses anything else", () => {
@@ -391,7 +423,7 @@ describe("LatexManagedToolchain", () => {
         expect(begun.state).toBe("downloading");
         expect(begun.version).toBe(VERSION);
 
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
         expect(finished.state).toBe("ready");
         expect(finished.failureReason).toBeNull();
         expect(finished.version).toBe(VERSION);
@@ -423,11 +455,18 @@ describe("LatexManagedToolchain", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const hold = yield* Deferred.make<void>();
+      // The toolchain publishes `installing-packages` before it calls the
+      // installer, so the installer being entered is the receipt that the
+      // phase is the published state.
+      const entered = yield* Deferred.make<void>();
       const server = yield* startArtifactServer();
       const harness = yield* makeHarness({
         manifest: manifestFor({ url: server.handle.url }),
         installPackages: (request) =>
-          Deferred.await(hold).pipe(Effect.as({ installed: request.packages, failed: [] })),
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(hold)),
+            Effect.as({ installed: request.packages, failed: [] }),
+          ),
       });
 
       yield* Effect.gen(function* () {
@@ -435,11 +474,10 @@ describe("LatexManagedToolchain", () => {
         yield* managed.install;
 
         // The phase is reached only after the tree is in place and recorded,
-        // so everything from here on can only add to a working install.
-        for (let attempt = 0; attempt < 600; attempt += 1) {
-          if ((yield* managed.status).state === "installing-packages") break;
-          yield* Effect.sleep(Duration.millis(5));
-        }
+        // so everything from here on can only add to a working install. The
+        // installer is gated on `hold`, so the phase cannot have moved past
+        // `installing-packages` by the time its entry receipt arrives.
+        yield* Deferred.await(entered);
         const installing = yield* managed.status;
         expect(installing.state).toBe("installing-packages");
         expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(true);
@@ -462,7 +500,7 @@ describe("LatexManagedToolchain", () => {
         ]);
 
         yield* Deferred.succeed(hold, undefined);
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
         expect(finished.state).toBe("ready");
         expect(finished.packagesWarning).toBeUndefined();
       }).pipe(Effect.provide(harness.serviceLayer));
@@ -484,7 +522,7 @@ describe("LatexManagedToolchain", () => {
           const managed = yield* LatexManagedToolchain;
           expect(managed.canInstall).toBe(true);
           yield* managed.install;
-          expect((yield* awaitInstall(managed)).state).toBe("ready");
+          expect((yield* harness.awaitInstall()).state).toBe("ready");
 
           const validation = (yield* Ref.get(harness.processRequests)).find(
             (request) => request.args.length === 1 && request.args[0] === "-v",
@@ -510,7 +548,7 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
 
         expect(finished.state).toBe("failed");
         expect(finished.failureReason).toBe("unpack-failed");
@@ -532,7 +570,7 @@ describe("LatexManagedToolchain", () => {
         const managed = yield* LatexManagedToolchain;
         const toolchain = yield* LatexToolchain;
         yield* managed.install;
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
 
         // The engine works, and every build installs what it turns out to need,
         // so an unreachable repository is a note rather than a failed install.
@@ -558,7 +596,7 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
 
         expect(finished.state).toBe("ready");
         expect(finished.failureReason).toBeNull();
@@ -577,11 +615,11 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        expect((yield* harness.awaitInstall()).state).toBe("ready");
         const first = yield* currentInstallRoot(harness.paths.statePath);
 
         yield* managed.install;
-        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        expect((yield* harness.awaitInstall()).state).toBe("ready");
         const second = yield* currentInstallRoot(harness.paths.statePath);
 
         // Promoting the second install never reuses the first's path — removing
@@ -621,7 +659,7 @@ describe("LatexManagedToolchain", () => {
 
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        expect((yield* harness.awaitInstall()).state).toBe("ready");
         const current = yield* currentInstallRoot(harness.paths.statePath);
 
         // Both fakes are gone, and only the tree the state file now names is
@@ -649,7 +687,7 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
 
         expect(finished.state).toBe("failed");
         expect(finished.failureReason).toBe("checksum-mismatch");
@@ -676,7 +714,7 @@ describe("LatexManagedToolchain", () => {
         expect(second.updatedAtEpochMs).toBe(first.updatedAtEpochMs);
 
         server.handle.release();
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
         expect(finished.state).toBe("ready");
         // One install ran, so the artifact was fetched once.
         expect(server.handle.requests()).toBe(1);
@@ -744,7 +782,7 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         yield* managed.install;
-        const finished = yield* awaitInstall(managed);
+        const finished = yield* harness.awaitInstall();
 
         expect(finished.state).toBe("failed");
         expect(finished.failureReason).toBe("unsupported-archive");

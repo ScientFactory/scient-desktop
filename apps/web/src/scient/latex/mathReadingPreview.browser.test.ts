@@ -37,36 +37,6 @@ it("styles each formula from the same text without duplicating content or changi
   expect(first.content.textContent).toBe("x");
 });
 
-// A shared adopted stylesheet made every later style update cost time in
-// proportion to all formulas: 36 ms per update at 4,000 formulas.
-it("keeps adding a formula cheap in a document with thousands of them", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const container = document.createElement("div");
-  document.body.append(container);
-  try {
-    const add = () => {
-      const paragraph = document.createElement("p");
-      const host = document.createElement("span");
-      paragraph.append(host);
-      container.append(paragraph);
-      installMathReadingPreview(host).querySelector("[data-math-preview-content]")!.textContent =
-        "x";
-    };
-    for (let index = 0; index < 3000; index++) add();
-    void container.offsetHeight;
-    const started = performance.now();
-    for (let update = 0; update < 10; update++) {
-      add();
-      void container.offsetHeight;
-    }
-    expect((performance.now() - started) / 10).toBeLessThan(10);
-  } finally {
-    container.remove();
-  }
-});
-
 function _createFixture() {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();

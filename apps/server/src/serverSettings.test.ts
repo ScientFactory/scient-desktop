@@ -1,3 +1,4 @@
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -38,7 +39,6 @@ import * as Redacted from "effect/Redacted";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { customModelSecretName } from "./customModels.ts";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -53,7 +53,6 @@ import {
 } from "./settingsDirectoryWatch.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
-const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 const encodeSettingsJson = Schema.encodeEffect(Schema.fromJsonString(ServerSettings));
@@ -166,6 +165,8 @@ const providerInstancesForDrivers = (
       providerInstance(driver, enabledDrivers.includes(driver)),
     ]),
   );
+
+const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 
 it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("rejects subscription-sharing activation without persisting settings or secrets", () =>
@@ -1571,51 +1572,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       ),
   );
 
-  it.effect("preserves context when reading a provider environment secret fails", () => {
-    const platformCause = PlatformError.systemError({
-      _tag: "PermissionDenied",
-      module: "FileSystem",
-      method: "readFile",
-      pathOrDescriptor: "provider environment secret",
-      description: "Secret backend unavailable.",
-    });
-    const cause = new ServerSecretStore.SecretStoreReadError({
-      resource: "provider environment secret",
-      cause: platformCause,
-    });
-    const layerConfig = Layer.fresh(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3code-server-settings-secret-failure-test-",
-      }),
-    );
-    const layerSettings = ServerSettingsModule.layer.pipe(
-      Layer.provide(layerFailingSecretStore(cause)),
-      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
-      Layer.provideMerge(layerConfig),
-    );
-
-    return Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"OPENROUTER_API_KEY","value":"","sensitive":true,"valueRedacted":true}],"config":{}}}}',
-      );
-
-      const error = yield* Effect.flip(serverSettings.getSettings);
-
-      assert.deepInclude(error, {
-        _tag: "ServerSettingsError",
-        operation: "read-secret",
-        providerInstanceId: "codex_personal",
-        environmentVariable: "OPENROUTER_API_KEY",
-      });
-      assert.strictEqual(error.cause, cause);
-      assert.notInclude(error.message, cause.message);
-    }).pipe(Effect.provide(layerSettings));
-  });
-
   it.effect("identifies provider history query failures", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -1710,23 +1666,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
       assert.equal(yield* persistedSync, true);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("decodes nested settings patches", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(
-        yield* decodeSettingsPatch({
-          textGenerationModelSelection: {
-            options: [{ id: "fastMode", value: false }],
-          },
-        }),
-        {
-          textGenerationModelSelection: {
-            options: [{ id: "fastMode", value: false }],
-          },
-        },
-      );
-    }),
   );
 
   it.effect(

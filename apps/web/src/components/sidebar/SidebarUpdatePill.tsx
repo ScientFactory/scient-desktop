@@ -70,7 +70,7 @@ type SidebarUpdatePopoverChangeDetails = Parameters<
 >[1];
 type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
 
-export function shouldUseSidebarUpdateReleaseNotesPopover(
+function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
@@ -85,14 +85,14 @@ export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | n
   return state?.status === "error" && state.errorContext === "install";
 }
 
-export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
+function handleSidebarUpdateReleaseNotesPopoverOpenChange(
   _open: boolean,
   details: Pick<SidebarUpdatePopoverChangeDetails, "reason" | "cancel">,
 ): void {
   if (details.reason === "trigger-press") details.cancel();
 }
 
-export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
+function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
   event: { readonly key: string; readonly shiftKey: boolean },
   handle: Pick<SidebarUpdatePopoverHandle, "open">,
   triggerId: string,

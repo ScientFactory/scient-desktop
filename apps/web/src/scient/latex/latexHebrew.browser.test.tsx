@@ -140,7 +140,7 @@ it("renders every template 26 block with Hebrew direction, labels, figure and co
   );
   table.style.zoom = initialZoom;
   expect(source).toBe(template);
-}, 45000);
+});
 
 it("renders and edits Hebrew math text while preserving its authored command", async () => {
   await using _fixture = _createFixture();
@@ -180,7 +180,7 @@ it("renders and edits Hebrew math text while preserving its authored command", a
   expect(source).not.toContain("htmlData");
   editor.commands.undo();
   await expect.poll(() => source).toBe(original);
-}, 45000);
+});
 
 it("copies and pastes mixed prose in logical order, undoes it and reopens preserved source", async () => {
   await using _fixture = _createFixture();
@@ -217,7 +217,7 @@ it("copies and pastes mixed prose in logical order, undoes it and reopens preser
   const reopened = await mount(_fixture, source);
   expect(reopened.state.doc.textContent).toContain("שלום English 123 עולם.");
   expect(_fixture.host.querySelector('[data-latex-direction-mark="latexEnglish"]')).toBeTruthy();
-}, 45000);
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

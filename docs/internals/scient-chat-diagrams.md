@@ -5,8 +5,10 @@ canonical chat Markdown.
 
 ## Product and ownership boundary
 
-Scient owns `apps/web/src/scient/diagrams`: the lazy Mermaid runtime, inline
-card, expanded viewer, export helpers, styles, and tests. The inherited T3 host
+Scient owns `apps/web/src/scient/diagrams`: recovery and caching, the inline
+card, expanded viewer, export helpers, styles, and tests. Rendering uses the
+upstream Pele lazy loader and sanitized mount in
+`components/chat/MermaidDiagram.tsx`; there is no parallel Mermaid runtime. The inherited T3 host
 has one renderer branch in `ChatMarkdown.tsx`, inside a marked `SCIENT-FORK`
 region of the `pre` renderer: eligible rich fences pass through
 `scient/presentation/ScientRichFence.tsx` to their owned renderer, including
@@ -30,64 +32,72 @@ diagram card.
 
 ## Rendering pipeline
 
-The exact-pinned `mermaid` 12.0.0 package is locally bundled and loaded only
-when an eligible diagram enters a 400 px viewport margin, including a closed
-Mermaid fence during streaming. The initial chat bundle
-does not import Mermaid. Chat, Markdown previews and the editor draw in one
-long-lived hidden frame shared with Word export's renderer
-(`diagrams/isolatedMermaid.ts`): its Content Security Policy allows only
-Mermaid's standalone build, inline styles and `data:`/`blob:` images and fonts,
-so every load a diagram names is refused before a request is made, and an
-image Mermaid measures through `new Image()` gets a local stand-in so the draw
-completes. Before each draw the frame mirrors the page's root and body
-attributes and, whenever the page's set of stylesheets has changed (KaTeX's
-stylesheet arrives lazily, for example), its style rules minus any that would
-load. Font faces whose sources are the app's own bundled files are kept with
-absolute sources, the chat frame's policy allows fonts only from the app's own
-origin (`font-src 'self' data:`), and each face the page has already loaded is
-loaded in the frame too, so text, including math labels, measures exactly as it
-did in the page. The returned SVG then passes through
-`stripSvgExternalResources` (`diagrams/svgExternalResources.ts`), which removes
-outside images, icons, `href`s, animations that set a link, and CSS loads,
-wherever they appear: in stylesheets (rewritten through the CSS parser), in
-`style`, and in any other attribute whose value loads like CSS (`mask`,
-`filter`, `clip-path`, `fill`, `stroke`, markers, `cursor`, or one the browser
-does not know), with escapes decoded; only `#fragment`, `data:` and `blob:`
-targets stay. An ordinary diagram comes back byte for byte;
-the addresses it removed become the card's one-line "Outside content not
-loaded" note, whose web addresses open in the
-system browser. The PDF document page, which itself has no network access,
-draws in its own page (`renderMermaidDiagram(…, "page")`). Its policy lets the
-captured images load, so for the duration of each draw a picture Mermaid
-measures (`new Image()`) or links from an SVG `<image>` gets a local stand-in
-(`diagrams/measuredImages.ts`, whose measured-image stand-in the frame uses
-too); nothing is requested, the SVG is stripped as above, and each address
-becomes a PDF export note. The frame's first
-draw costs one load of the standalone build (about 0.6 s in the development
-server against about 0.2 s for the page's first import, measured in the
-Chromium test); later draws cost the same as in the page. Rendering is
-serialized because Mermaid configuration is process-global. Identical source/appearance renders
-are deduplicated in flight and cached in a bounded LRU (100 entries / 20 MiB).
-Scient explicitly retains `layout: dagre`, `look: classic`, and its light/dark
-themes instead of adopting Mermaid 12's new visual defaults. Authors can opt
-into supported layouts/looks in Mermaid frontmatter. Mermaid 12 targets modern
-ES2024 browsers; the desktop Electron runtime meets that requirement.
+Pele's `pele/lazy` entry loads its core and each diagram family separately.
+An eligible card starts rendering within a 400 px viewport margin, including
+a closed Mermaid fence during streaming. Chat, file previews, the editor,
+Word capture and the PDF document page all call
+`renderMermaidDiagram(source, theme)`. This uses the shared upstream
+`renderMermaidSvg` snapshot seam rather than a second engine or a hidden frame.
+Pele targets Mermaid syntax with its own layout and visual style; the old
+Mermaid `dagre`/`classic` rendering is not retained as a fallback.
 
-Cached SVG contains marker, mask, link, style, and accessibility ids. Every
-consumer receives a rebased copy with unique ids and rewritten fragment and
-ARIA references, so duplicate diagrams do not target one another's SVG
-definitions. The card uses `content-visibility` and an intrinsic placeholder
-to keep long conversations cheap.
+The upstream mount disables links, images and built-in zoom, and retains the
+author's direction. Pele escapes labels; DOMPurify additionally removes active
+elements, navigation/resource attributes, authored stylesheets and CSS-bearing
+attributes that can fetch. Math labels load KaTeX only when needed and use
+`trust: false`, MathML output, `maxSize: 20` and `maxExpand: 1000`.
+The MathML sanitizer admits the bounded presentation vocabulary, not image
+glyphs, annotations, script or resource-bearing attributes. Unsupported TeX
+remains readable as source. Its resolver caches at most 256 results and removes
+its measuring probe after use.
 
-The runtime accepts the full Mermaid package rather than a reduced grammar so
-scientific explanations can use flowcharts, sequence/state/entity diagrams,
-mindmaps, architecture diagrams, Gantt/timeline diagrams, and Mermaid's math
-labels. Source is capped at 50,000 characters and graphs at 500 edges. Mermaid
-runs with `startOnLoad: false`, strict mode, suppressed error diagrams, and the
-current light/dark appearance. The app inserts only Mermaid's sanitized SVG
-and deliberately does not call `bindFunctions`, so source-authored callbacks
-do not run. No remote renderer, CDN, custom icon pack, or remote asset loader is
-registered.
+Snapshot measurement uses a temporary offscreen host in the current document,
+waits for bundled fonts to settle, refreshes layout and then destroys the mount
+and removes the host. It does not change the page's image-loading APIs, mirror
+styles into a frame, register a startup scanner or execute diagram callbacks.
+No remote renderer, CDN or remote icon/asset loader is registered.
+Source is limited to 50,000 characters and graphs to 500 edges. Rendering remains
+serialized, with identical source/appearance work deduplicated in flight and
+successful SVG/provenance cached in a bounded LRU (100 entries / 20 MiB).
+Failures are not cached; failed core/diagram chunks can be retried.
+
+Pele can omit an image or style before emitting SVG. Consequently,
+`blockedMermaidResources` inspects authored HTML/CSS/configuration and the
+sanitized output. Image/icon notices come only from flowchart node data and
+sequence participant properties in the same already-loaded Pele parser's
+bounded model; label prose, suffix words and comments are not resource fields.
+Labels that merely mention `url(`, `image(` or a web address are not CSS.
+`stripSvgExternalResources` supplies another output
+check, including CSS escapes, presentation attributes and animations that can
+set a resource link. The card's "Outside content not loaded" note names omitted
+addresses; explicit web links in that note open separately with
+`noopener noreferrer`. Those links are not diagram-authored interactive SVG.
+Appearance values are frozen into the snapshot for the dialog and native
+image exports. Each consumer receives unique SVG IDs with rewritten fragment
+and ARIA references. Inline SVG scales with its container without changing
+source or export inputs; the card retains its intrinsic placeholder and
+`content-visibility` behavior for long conversations.
+
+The PDF page uses this same resource-disabled renderer, not a separate page
+mode. Omitted addresses become export warnings. Typed Pele syntax, unknown-family,
+semantic and size/edge-limit errors print the original labelled Mermaid source;
+unexpected renderer/chunk failures are fatal readiness errors and prevent printing.
+Only results for the current source and capture tracker can update the page or
+its diagnostics. Replaced work is released from readiness tracking, and current
+work finishes only after its rendered/fallback state commits.
+
+Word capture uses the same original-first recovery operation and native PNG
+exporter. Before drawing, its additional policy checks only authored style lists
+and decoded configuration from YAML frontmatter or JSON-style init directives.
+Supported theme/layout/per-family settings remain available; unsupported
+CSS-bearing keys, fetching values, excessive configuration nesting or settings
+that cannot be checked fall back to source. Each config is checked independently,
+so a later override cannot hide an unsafe value. A renderer-reported omitted
+resource, unsafe recovered projection, failed draw or rasterization also falls
+back independently to the original labelled source. PNGs are limited to 2 MiB
+each and 8 MiB total; failed encoding does not consume the aggregate budget.
+The capture keeps the server-selected diagram IDs and source digest, and
+publication still rechecks source identity.
 
 ## UX and recovery
 
@@ -159,8 +169,8 @@ the visible error and includes the full source in the comment instead. No source
 offsets are invented. Prefilled repair citations do not automatically open a comment popup.
 The existing 8,000-character quote/comment limits remain; oversized contexts are
 not silently truncated and can still be copied. **Copy error and source** provides
-the same request when no composer is available. Requests include the Mermaid source,
-package version and parser diagnostic (bounded to 8,000 characters, without its
+the same request when no composer is available. Requests include the original Mermaid source,
+Pele renderer version and parser diagnostic (bounded to 8,000 characters, without its
 stack); nested Markdown fences are escaped by the shared export helper.
 Only results matching the current source, theme and retry generation may be
 displayed or used for repair. Pending edits keep the error source editor mounted,
@@ -177,7 +187,7 @@ the same SVG/PNG export actions as the compact card. SVG download adds
 standalone namespaces and an appearance background. PNG copy/download
 rasterizes the same SVG at up to 2x, bounded to 8192 px per dimension.
 
-Export preparation parses Mermaid's sanitized HTML-compatible output in an inert
+Export preparation parses Pele's sanitized HTML-compatible output in an inert
 template and serializes it as XML. This preserves XHTML/MathML namespaces and
 HTML line breaks without changing the Mermaid source or on-screen rendering.
 PNG conversion assigns an intrinsic viewport and uses the shared
@@ -228,53 +238,59 @@ preservation, bounded output, and non-interactive image security. The test uses 
 temporary profile and captures output bytes without touching the user's clipboard.
 DOM mocks alone cannot establish these properties.
 
+`pnpm --dir apps/desktop test:mermaid-render` qualifies the actual shared Pele
+snapshot path in a hidden Electron window. It retains the manual corpus in both
+themes, exact immutable recovery projections, parsed shape/label/connectivity
+semantics, ambiguous-source refusal, concurrent cache consumers and native PNG
+signatures. It also checks resource refusal, inert callbacks, MathML and measuring
+host cleanup. Its Vite server and Electron profile use disposable state, provider
+credentials are not inherited, and outbound requests are denied and fail the
+gate. An already installed repository-version Electron binary is required; the
+gate does not repair runtimes or invoke candidate lifecycle operations.
+
 Co-located unit tests cover source bounds, declaration-first parsing with
 accessibility metadata, SVG id/reference rebasing, portable
 filenames, standalone export preparation, and Markdown round-tripping.
 `ChatMarkdown.browser.test.tsx` covers the actual rich-fence consumer, including
 metadata, rendered appearance, and Mermaid versus chart streaming behavior.
 Card interaction tests measure inline geometry and exercise the expanded
-dialog's source and image actions through the export boundaries; native Mermaid
-browser tests check effective startup/security configuration and inert authored
-callbacks. The Plotly runtime loader test controls the dynamic-module boundary
-to cover concurrent consumers, rejection, retry, and successful caching.
-Server tests assert the shared awareness contract,
-its capability gate, and every built-in provider delivery decision. The production build is the bundle
-gate: Mermaid must remain in lazy chunks rather than the entry bundle.
+dialog's source and image actions through the export boundaries. Real-Pele
+browser cases cover each resource-bearing construct, safe textual URLs,
+generated/hostile MathML, inert callbacks, both appearances and native PNG bytes.
+Word capture tests retain per-image/aggregate byte budgets, decoded configuration
+refusal, isolated per-diagram fallback and source identity. PDF diagram tests
+cover typed content-versus-execution failures, readiness and obsolete results.
+The Plotly loader and server awareness/provider-delivery tests retain their
+separate responsibilities. Production bundle qualification must verify the
+Pele core and per-family lazy chunks rather than an eagerly bundled renderer.
 `docs/fixtures/scient-chat-diagrams.md` is the manual light/dark corpus for the
 major diagram families, math labels, RTL/Unicode, duplicates, export, copy, and
 recovery states.
-Mounted interaction tests cover review-before-send, draft preservation, repeated
-clicks, missing composer/clipboard and stale asynchronous results. Run
-`pnpm --dir apps/desktop test:mermaid-render` for a hidden Chromium test of the
-actual renderer (the shared no-network frame, whose Mermaid it inspects), both
-themes, full diagnostics and 48 concurrent cache consumers.
-The same check exercises the recovery corpus, the user's mixed valid/broken
-regression corpus, combined fixes, refused ambiguous
-input, semantic label/value preservation, and bounded scanning; unit tests cover
-atomic rollback, source/theme cache separation, stale results, and original-source
-copy/editor ownership. Fixtures describe specific qualified cases, not a general
-guarantee that arbitrary malformed Mermaid can be repaired without guessing.
-It uses only the synthetic fixture corpus and a disposable profile, without
-visual automation or provider calls. On Linux, run it under `xvfb-run`.
+Mounted interaction tests cover review-before-send, draft preservation,
+repeated clicks, missing composer/clipboard and stale asynchronous results.
+The immutable recovery corpus protects exact family-specific source edits;
+real-Pele cases render all recovered fixtures, while transaction tests cover
+original-first acceptance, atomic rollback, non-syntax failures, concurrent
+consumers and source/theme cache separation. Fixtures establish specific
+qualified cases, not a guarantee that arbitrary malformed Mermaid can be
+repaired without guessing.
 
-Upgrade qualification also reproduced two **pre-existing export limitations**
-on 11.16.1 and 12.0.0: HTML line breaks can produce invalid standalone SVG XML,
-and PNG export of HTML-label (`foreignObject`) diagrams can fail with a tainted
-canvas. The smoke report lists these separately and detects changes from the
-pre-upgrade export baseline; a passing renderer check is not an export-success
-claim. Fix canonical SVG serialization and browser rasterization in a separate
-targeted export pass. Do not rewrite authors' Mermaid source to conceal these
-representation-layer failures.
+Run focused web tests from `apps/web`:
 
-When T3 changes `ChatMarkdown.tsx`, preserve only the narrow owned rich-fence
-import and branch, including the closed-Mermaid streaming boundary. Run the
-`ChatMarkdown.browser.test.tsx` diagram cases and the co-located diagram
-interaction/native-renderer tests rather than a source-text wiring audit.
-T3 has its own chat Mermaid renderer (`chat/MermaidDiagram.tsx`, #15067);
-Scient does not ship it, and the host routes eligible Mermaid fences to
-Scient's card. Scient's renderer is kept
-because it draws in the isolated no-network frame and adds export, syntax
-recovery and source repair, which T3's renderer does not have. Revisit the
-choice if T3's renderer gains an isolated frame and an export path that
-Scient's actions could build on.
+```sh
+pnpm exec vp test run --project unit src/scient/diagrams src/scient/wordExport/captureDiagrams.test.ts src/scient/wordExport/diagramSafety.test.ts
+pnpm exec vp test run --project browser src/scient/diagrams src/components/chat/MermaidDiagram.browser.test.tsx src/scient/wordExport/captureDiagrams.browser.test.ts src/scient/documentPage/ScientDocumentPage.diagrams.browser.test.tsx src/scient/documentPage/ScientDocumentPage.browser.test.tsx
+```
+
+Native serialization, image decoding, clipboard and saved-SVG qualification
+remain separate from mocked unit/component tests. A parser-only or renderer-only
+check does not establish native export success; use disposable synthetic
+profiles and the unchanged export inputs, not live user state.
+
+When upstream changes `ChatMarkdown.tsx`, preserve the narrow owned rich-fence
+mount and the closed-Mermaid streaming boundary. When it changes
+`chat/MermaidDiagram.tsx`, carry forward the shared lazy loader, sanitizer,
+math limits and snapshot seam used by Scient's card and exports. Do not restore
+a second Mermaid renderer to preserve recovery or export actions. Run the actual
+mounted Markdown, card, Word/PDF consumer and native-export conditions rather
+than accepting source-text wiring checks or old frame-internal assertions.

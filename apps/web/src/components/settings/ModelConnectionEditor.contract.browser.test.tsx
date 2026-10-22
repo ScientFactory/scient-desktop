@@ -112,14 +112,12 @@ async function editor(
       label === "API key"
         ? document.querySelector<HTMLInputElement>('input[aria-label="API key"]')!
         : field(label);
-    await act(async () => userEvent.fill(target, value));
+    await userEvent.fill(target, value);
   };
   const choose = async (label: string, value: string) =>
-    await act(async () => userEvent.selectOptions(field(label) as HTMLSelectElement, value));
+    await userEvent.selectOptions(field(label) as HTMLSelectElement, value);
   const useExisting = async () =>
-    await act(async () =>
-      page.getByRole("button", { name: /Use existing (key|connection)/ }).click(),
-    );
+    await page.getByRole("button", { name: /Use existing (key|connection)/ }).click();
   const row = (label: string) => {
     const span = [...document.querySelectorAll("span")].find(
       (element) => element.textContent === label,
@@ -143,13 +141,11 @@ async function editor(
   ]);
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
   const select = async (label: string, value: string) => {
-    await act(async () => userEvent.click(control(label)));
-    await act(async () =>
-      page.getByRole("option", { name: optionLabel(value), exact: true }).click(),
-    );
+    await userEvent.click(control(label));
+    await page.getByRole("option", { name: optionLabel(value), exact: true }).click();
   };
   const item = async (value: string) => {
-    await act(async () => userEvent.click(control("Reasoning")));
+    await userEvent.click(control("Reasoning"));
     const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) =>
         element.textContent?.trim() === optionLabel(value) ||
@@ -158,7 +154,7 @@ async function editor(
     const state = option
       ? { disabled: option.getAttribute("aria-disabled") === "true" }
       : undefined;
-    await act(async () => userEvent.keyboard("{Escape}"));
+    await userEvent.keyboard("{Escape}");
     return state;
   };
   const submit = async () => {

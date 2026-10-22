@@ -1,8 +1,8 @@
-import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
 
 import type { Editor as ProseEditor } from "@tiptap/core";
-import type { Editor } from "@pierre/diffs/edit";
+import type { Editor, EditorSelection } from "@pierre/diffs/edit";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -15,7 +15,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
-import { sourcePosition } from "../math/input/sourceAdapter";
+import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutSettled } from "./latexPagedGeometry";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
@@ -29,29 +29,18 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
   _fixture.host?.remove();
 }
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-async function settleRect(measure: () => DOMRect) {
-  let previous = "";
-  let since = 0;
-  await expect
-    .poll(
-      () => {
-        const rect = measure();
-        const key = [rect.left, rect.top, rect.width, rect.height]
-          .map((value) => value.toFixed(1))
-          .join(",");
-        if (key !== previous) {
-          previous = key;
-          since = performance.now();
-        }
-        return performance.now() - since >= 300;
-      },
-      { timeout: 15_000, interval: 50 },
-    )
-    .toBe(true);
+async function readyToHit(editor: ProseEditor, measure: () => DOMRect) {
+  await vi.waitFor(() => {
+    expect(pagedLayoutSettled(editor.view)).toBe(true);
+    const rect = measure();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+    const viewport = editor.view.dom
+      .closest(".scient-latex-visual-scroll")!
+      .getBoundingClientRect();
+    expect(rect.top + rect.height / 2).toBeGreaterThanOrEqual(viewport.top);
+    expect(rect.top + rect.height / 2).toBeLessThanOrEqual(viewport.bottom);
+  });
 }
 async function mount(_fixture: _Fixture, input: string, name: string) {
   await page.viewport(1300, 900);
@@ -66,6 +55,7 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
   let sourceEditor: Editor<"file", unknown, undefined> | undefined;
   let current = input;
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
+  const sourceSelections = vi.fn<(selection: EditorSelection | null) => void>();
   function Harness() {
     const [source, setSource] = useState(input);
     const owner = useLatexVisualTestOwner(source);
@@ -96,6 +86,7 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
             revealRequestId={reveal?.requestId ?? -1}
             wordWrap
             retainSelectionOnBlur
+            onEditorSelectionChange={sourceSelections}
             sourceSelectionReveal={reveal}
             onPostRender={(container, instance, context) => {
               sourceEditor = (instance as unknown as { editor: typeof sourceEditor }).editor;
@@ -186,9 +177,8 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
       { timeout: 15_000 },
     )
     .toBe(true);
-  await frame();
   await expect.poll(() => pagedLayoutSettled(visual.view), { timeout: 15_000 }).toBe(true);
-  return { visual, source: () => sourceEditor!, reveals, text: () => current };
+  return { visual, source: () => sourceEditor!, sourceSelections, reveals, text: () => current };
 }
 function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = true) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -267,8 +257,7 @@ it.each([
     }
     const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     wordPosition(state.visual.view.dom, word);
-    await frame();
-    await settleRect(() => wordPosition(state.visual.view.dom, word, false).box);
+    await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
@@ -359,8 +348,17 @@ it.each([
       )
       .toBe("visible");
     const sourceHit = wordPosition(container.shadowRoot!, word);
+    state.sourceSelections.mockClear();
     await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
-    await frame();
+    await vi.waitFor(() => {
+      expect(state.sourceSelections).toHaveBeenCalled();
+      const selected = state.source().getViewState().selections?.[0];
+      expect(selected).toBeDefined();
+      if (!selected) throw new Error("The Source owner did not acknowledge its native selection.");
+      expect(
+        source.slice(sourceOffset(source, selected.start), sourceOffset(source, selected.end)),
+      ).toBe(word);
+    });
     const manuallySelected = state.source().getViewState().selections;
     await page
       .getByTestId("active-visual-split")
@@ -369,7 +367,6 @@ it.each([
     expect(state.source().getViewState().selections).toEqual(manuallySelected);
     expect(state.text()).toBe(source);
   },
-  30_000,
 );
 
 it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async () => {
@@ -377,21 +374,26 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const state = await mount(_fixture, template26, "cancel-source");
-  const hit = wordPosition(state.visual.view.dom, "פסקה");
+  wordPosition(state.visual.view.dom, "פסקה");
+  await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, "פסקה", false).box);
+  const hit = wordPosition(state.visual.view.dom, "פסקה", false);
   const bounds = hit.element.getBoundingClientRect();
   const before = state.source().getViewState().selections;
-  hit.element.dispatchEvent(
-    new MouseEvent("dblclick", {
-      bubbles: true,
-      clientX: bounds.left + hit.position.x,
-      clientY: bounds.top + hit.position.y,
-    }),
-  );
-  _fixture.host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
-  await frame();
+  using _clock = fakeTimers();
+  await act(() => {
+    hit.element.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        clientX: bounds.left + hit.position.x,
+        clientY: bounds.top + hit.position.y,
+      }),
+    );
+    _fixture.host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(32));
   expect(state.reveals).toHaveLength(0);
   expect(state.source().getViewState().selections).toEqual(before);
-}, 30_000);
+});
 
 it.each([
   ["matrix", "pmatrix", "4", "4"],
@@ -416,8 +418,7 @@ it.each([
     expect(mathNode).toBeTruthy();
     const shell = mathNode as unknown as HTMLElement;
     shell.scrollIntoView({ block: "center" });
-    await frame();
-    await settleRect(() => shell.getBoundingClientRect());
+    await readyToHit(state.visual, () => shell.getBoundingClientRect());
     shell.dataset.testid = "active-math-shell";
     await page.getByTestId("active-math-shell").nth(0).click();
     const field = () =>
@@ -428,7 +429,7 @@ it.each([
       .poll(() => field()?.shadowRoot?.querySelector(".ML__latex"), { timeout: 15_000 })
       .toBeTruthy();
     field().scrollIntoView({ block: "center" });
-    await frame();
+    await readyToHit(state.visual, () => field().getBoundingClientRect());
     const glyph = () => {
       const math = field();
       for (let at = 1; at <= math.lastOffset; at++) {
@@ -466,7 +467,6 @@ it.each([
       .toEqual(sourcePosition(template26, range.from));
     expect(state.text()).toBe(template26);
   },
-  30_000,
 );
 
 function _createFixture() {

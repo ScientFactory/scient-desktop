@@ -3,7 +3,7 @@ import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3t
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import { addMermaidRepairToComposer, buildMermaidRepairRequest } from "./mermaidRepair";
-import { MERMAID_VERSION, MermaidRenderError } from "./mermaidRuntime";
+import { MERMAID_RENDERER, MermaidRenderError } from "./mermaidRuntime";
 
 const citation: AssistantCitation = {
   version: 1,
@@ -23,7 +23,7 @@ describe("Mermaid repair requests", () => {
     const source = 'flowchart LR\n A["```quoted```"] --> B\n';
     const diagnostic = "Parse error on line 2:\n```quoted```\n      ^\nExpected closing bracket";
     const request = buildMermaidRepairRequest(source, diagnostic);
-    expect(request).toContain(`Mermaid ${MERMAID_VERSION}`);
+    expect(request).toContain(MERMAID_RENDERER);
     expect(request).toContain(`\`\`\`\`mermaid\n${source}\`\`\`\``);
     expect(request).toContain(`\`\`\`\`text\n${diagnostic}\n\`\`\`\``);
     expect(request).toContain("Preserve its intended meaning");

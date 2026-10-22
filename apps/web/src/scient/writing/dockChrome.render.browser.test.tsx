@@ -152,9 +152,7 @@ describe("DockOverflowRow", () => {
     };
 
     await renderRow(false);
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await vi.waitFor(() => expect(offsetWidth.mock.calls.length).toBeGreaterThan(0));
     const initialMeasurements = offsetWidth.mock.calls.length;
     expect(initialMeasurements).toBeGreaterThan(0);
 

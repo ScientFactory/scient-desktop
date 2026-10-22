@@ -26,6 +26,7 @@ vi.mock("~/assets/assetUrls", () => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import {
   createLatexVisualTestOwner,
+  readMountedLatexVisualTestEditor,
   stubLatexReadingFonts,
   type LatexVisualTestOwner,
 } from "./latexVisualTestOwner";
@@ -44,11 +45,6 @@ describe("pending fields across outside document changes", () => {
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
-    _fixture.stack.use(
-      _fixtureFakeTimers({
-        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
-      }),
-    );
     writes.mockReset();
     pending.mockReset();
     localStorage.clear();
@@ -69,43 +65,43 @@ describe("pending fields across outside document changes", () => {
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
     _fixture.restoreFonts();
-    vi.useRealTimers();
     vi.unstubAllGlobals();
   }
-  const render = async (_fixture: _Fixture) =>
-    await act(
-      async () =>
-        await _fixture.root0.rerender(
-          <LatexVisualEditor
-            draftKey={KEY}
-            fileRevision={_fixture.revision}
-            source={_fixture.shown}
-            sourceSnapshot={_fixture.owner.observe(_fixture.shown)}
-            disabled={false}
-            onEditingChange={() => {}}
-            onOpenSource={() => {}}
-            onLocalDraftChange={pending}
-            registerFinishEditing={(callback) => {
-              _fixture.finish = callback;
-            }}
-            onEdit={(request) => {
-              writes(request.edit.source, request.edit);
-              const outcome = _fixture.owner.edit(
-                request,
-                _fixture.acceptWrites && request.edit.source === _fixture.shown,
-              );
-              if (outcome.accepted) _fixture.shown = outcome.snapshot.source;
-              return outcome;
-            }}
-          />,
-        ),
+  const render = async (_fixture: _Fixture) => {
+    await _fixture.root0.rerender(
+      <LatexVisualEditor
+        draftKey={KEY}
+        fileRevision={_fixture.revision}
+        source={_fixture.shown}
+        sourceSnapshot={_fixture.owner.observe(_fixture.shown)}
+        disabled={false}
+        onEditingChange={() => {}}
+        onOpenSource={() => {}}
+        onLocalDraftChange={pending}
+        registerFinishEditing={(callback) => {
+          _fixture.finish = callback;
+        }}
+        onEdit={(request) => {
+          writes(request.edit.source, request.edit);
+          const outcome = _fixture.owner.edit(
+            request,
+            _fixture.acceptWrites && request.edit.source === _fixture.shown,
+          );
+          if (outcome.accepted) _fixture.shown = outcome.snapshot.source;
+          return outcome;
+        }}
+      />,
     );
+    await vi.waitFor(() => {
+      const mounted = readMountedLatexVisualTestEditor(_fixture.container);
+      expect(mounted).not.toBeNull();
+      expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
+    });
+    _fixture.clock ??= _fixture.cleanup.use(_fixtureFakeTimers());
+  };
   const advance = async (ms: number) =>
     await act(async () => {
       await vi.advanceTimersByTimeAsync(ms);
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
     });
   const editor = (_fixture: _Fixture) =>
     (_fixture.container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor }).editor;
@@ -115,7 +111,6 @@ describe("pending fields across outside document changes", () => {
     )!;
   async function mount(_fixture: _Fixture) {
     await render(_fixture);
-    await advance(40);
     await vi.waitFor(() => expect(_fixture.container.querySelector(".ProseMirror")).not.toBeNull());
     let position = -1;
     editor(_fixture).state.doc.descendants((node, offset) => {
@@ -161,7 +156,6 @@ describe("pending fields across outside document changes", () => {
         }),
       );
     await render(_fixture);
-    await advance(40);
     await vi.waitFor(() =>
       expect(_fixture.container.querySelector("[data-table-cell='0-0']")).not.toBeNull(),
     );
@@ -323,7 +317,6 @@ describe("pending fields across outside document changes", () => {
 
     _fixture.shown = "\\documentclass{article}\n\\begin{document}\nBody text.\n\\end{document}";
     await render(_fixture);
-    await advance(40);
     await act(() => editor(_fixture).commands.setTextSelection({ from: 2, to: 5 }));
     const source = _fixture.shown;
     _fixture.acceptWrites = false;
@@ -346,7 +339,6 @@ describe("pending fields across outside document changes", () => {
     _fixture.shown =
       "\\documentclass{article}\n\\title{Keep title}\n\\begin{document}\n\\maketitle\nBody text.\n\\end{document}";
     await render(_fixture);
-    await advance(40);
     let position = 0;
     editor(_fixture).state.doc.descendants((node, at) => {
       if (node.type.name === "paragraph") position = at + 1;
@@ -411,6 +403,7 @@ function _createFixture() {
     container: undefined! as HTMLDivElement,
     stack,
     cleanup,
+    clock: undefined as Disposable | undefined,
     root0: undefined! as Screen,
     async [Symbol.asyncDispose]() {
       try {

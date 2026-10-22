@@ -3,7 +3,7 @@ import "../../../index.css";
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
@@ -66,10 +66,12 @@ it("types at the end after replacing a multiline source and acknowledging its sa
     await expect.poll(() => lease.getSnapshot().draftSource).toBe("x\ny\nz\nw");
     expect(await lease.flushNow()).toBe(true);
     await expect.poll(() => lease.getSnapshot().pending).toBe(false);
-    // Let native selectionchange and highlighting settle before the next key.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await vi.waitFor(() => {
+      const selection = document.getSelection()!;
+      expect(selection.isCollapsed).toBe(true);
+      expect(selection.anchorNode?.textContent).toBe("w");
+      expect(selection.anchorOffset).toBe(1);
+    });
     await userEvent.keyboard("!");
     await expect.poll(() => lease.getSnapshot().draftSource).toBe("x\ny\nz\nw!");
     expect(await lease.flushNow()).toBe(true);

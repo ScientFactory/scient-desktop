@@ -25,20 +25,6 @@ import type * as ServerConfig from "../config.ts";
 import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 // SCIENT-FORK:END
 
-type ProviderInstanceRegistryHydrationEnv =
-  | Exclude<
-      BuiltInDriversEnv,
-      | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
-      | AcpRegistrySupport.AcpRegistryCatalog
-      | ProviderHost.ProviderHost
-      // SCIENT-FORK:START — supplied below.
-      | ProviderLifecycleCoordinator.ProviderLifecycleCoordinator
-      // SCIENT-FORK:END
-    >
-  | Settings.ServerSettingsService
-  | BackgroundPolicy.BackgroundPolicy
-  | ServerConfig.ServerConfig;
-
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
 ): ProviderInstanceConfigMap => {

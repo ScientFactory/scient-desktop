@@ -1,7 +1,9 @@
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
+import { undoDepth } from "@tiptap/pm/history";
+import { observeResize } from "~/lib/observeResize";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
@@ -411,10 +413,18 @@ Body.
     _fixture.container.style.width = "780px";
     await expect.poll(error).toBeLessThan(0.00001);
     const width = frame().style.width;
-    _fixture.container.style.display = "none";
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    let delivered!: () => void;
+    const hidden = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    const stop = observeResize(_fixture.container, delivered);
+    try {
+      _fixture.container.style.display = "none";
+      await hidden;
+      expect(_fixture.container.clientWidth).toBe(0);
+    } finally {
+      stop();
+    }
     expect(frame().style.width).toBe(width);
     _fixture.container.style.width = "1040px";
     _fixture.container.style.display = "block";
@@ -590,19 +600,23 @@ Body.
       await _fixture.root0.rerender(<Harness />);
       await expect.poll(editor).toBeTruthy();
       await readingViewReady(_fixture);
+      _fixture.cleanup.use(fakeTimers());
       const live = editor()!;
       live.commands.setTextSelection(1);
       live.view.focus();
       for (let index = 0; index < 12; index++) {
         await userEvent.keyboard("m");
-        await new Promise((resolve) => setTimeout(resolve, 220));
+        await act(() => vi.advanceTimersByTimeAsync(220));
       }
       await expect.poll(() => current).toBe(original.replace("Before", "m".repeat(12) + "Before"));
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      for (let count = 0; count < 12 && current !== original; count++) {
+      await act(() => vi.advanceTimersByTimeAsync(500));
+      const events = undoDepth(live.state);
+      expect(events).toBeGreaterThan(0);
+      expect(events).toBeLessThanOrEqual(12);
+      for (let count = 0; count < events; count++) {
         live.view.focus();
         await undoKeyboard();
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await act(() => vi.advanceTimersByTimeAsync(400));
       }
       await expect.poll(() => current).toBe(original);
       expect(editor()).toBe(live);

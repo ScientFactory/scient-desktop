@@ -172,6 +172,10 @@ interface Harness {
   }>;
   maxConcurrent: number;
   response: unknown;
+  readonly holdNextInference: () => {
+    readonly entered: Promise<void>;
+    readonly release: () => void;
+  };
   readonly cleanup: () => Promise<void>;
 }
 
@@ -193,6 +197,10 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
     response: { segments: [{ text: "hello world" }] },
   };
   let active = 0;
+  let inferenceGate: {
+    readonly entered: ReturnType<typeof Promise.withResolvers<void>>;
+    readonly released: ReturnType<typeof Promise.withResolvers<void>>;
+  } | null = null;
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const target = String(url);
     const method = init?.method ?? "GET";
@@ -209,7 +217,12 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
     });
     active += 1;
     harness.maxConcurrent = Math.max(harness.maxConcurrent ?? 0, active);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const gate = inferenceGate;
+    inferenceGate = null;
+    if (gate) {
+      gate.entered.resolve();
+      await gate.released.promise;
+    }
     active -= 1;
     return new Response(JSON.stringify(harness.response), { status: 200 });
   }) as unknown as typeof fetch;
@@ -226,6 +239,14 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
     runtime,
     spawnCalls,
     posts,
+    holdNextInference: () => {
+      const gate = {
+        entered: Promise.withResolvers<void>(),
+        released: Promise.withResolvers<void>(),
+      };
+      inferenceGate = gate;
+      return { entered: gate.entered.promise, release: () => gate.released.resolve() };
+    },
     cleanup: async () => {
       await runtime.dispose();
       await NodeFSP.rm(runtimeDirectory, { recursive: true, force: true });
@@ -313,10 +334,18 @@ describe("LocalWhisperRuntime lifecycle", () => {
 
   it("reuses one process and serializes concurrent requests (single-flight)", async () => {
     const h = await harness();
-    const [a, b] = await Promise.all([
+    const gate = h.holdNextInference();
+    const requests = [
       h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
       h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
-    ]);
+    ] as const;
+    try {
+      await gate.entered;
+      expect(h.posts).toHaveLength(1);
+    } finally {
+      gate.release();
+    }
+    const [a, b] = await Promise.all(requests);
     expect(a.text).toBe("hello world");
     expect(b.text).toBe("hello world");
     expect(h.spawnCalls).toHaveLength(1); // process reused

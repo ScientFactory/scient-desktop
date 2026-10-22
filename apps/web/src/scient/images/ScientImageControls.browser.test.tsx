@@ -346,8 +346,7 @@ describe("shared image controls", () => {
         .find((item) => item.textContent === "Add caption")!
         .click(),
     );
-    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    expect(getAnimations).toHaveBeenCalled();
+    await vi.waitFor(() => expect(getAnimations).toHaveBeenCalled());
     expect(edit).not.toHaveBeenCalled();
     await render({ sourceIdentity: "second" });
     await act(() => finish());

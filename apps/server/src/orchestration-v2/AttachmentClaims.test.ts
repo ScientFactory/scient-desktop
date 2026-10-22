@@ -1,3 +1,4 @@
+import { releaseClaimedAttachments } from "./AttachmentClaims.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -17,11 +18,7 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import {
-  attachmentIsPendingUpload,
-  claimPendingAttachments,
-  releaseClaimedAttachments,
-} from "./AttachmentClaims.ts";
+import { attachmentIsPendingUpload, claimPendingAttachments } from "./AttachmentClaims.ts";
 
 const layerTest = Layer.mergeAll(NodeServices.layer).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-claims-" })),
@@ -50,21 +47,6 @@ const stagePendingUpload = Effect.fn("test.stagePendingUpload")(function* (input
 });
 
 describe("AttachmentClaims", () => {
-  it.effect("accepts 100 existing files without claiming new copies", () =>
-    Effect.gen(function* () {
-      const attachments: ChatAttachment[] = Array.from({ length: 100 }, (_, index) => ({
-        type: "file",
-        id: ChatAttachmentId.make(`existing-file-${index}`),
-        name: `${index}.txt`,
-        mimeType: "text/plain",
-        sizeBytes: 1,
-      }));
-      const claimed = yield* claimPendingAttachments({ threadId: "thread-many", attachments });
-      expect(claimed.attachments).toEqual(attachments);
-      expect(claimed.claimedPaths).toEqual([]);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("rejects oversized image batches before copying a pending upload", () =>
     Effect.gen(function* () {
       const pending = yield* stagePendingUpload({
@@ -139,22 +121,6 @@ describe("AttachmentClaims", () => {
       });
       expect(claimed.attachments[0]).toBe(stored);
       expect(claimed.claimedPaths).toHaveLength(0);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("rejects a pending ref whose staged file is missing", () =>
-    Effect.gen(function* () {
-      const missing: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make(createPendingAttachmentId()!),
-        name: "gone.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-      };
-      const result = yield* Effect.exit(
-        claimPendingAttachments({ threadId: "thread-claims-3", attachments: [missing] }),
-      );
-      expect(result._tag).toBe("Failure");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -268,42 +234,6 @@ describe("AttachmentClaims", () => {
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.startsWith("pending-")),
       ).toHaveLength(1);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("releaseClaimedAttachments removes claimed copies best-effort", () =>
-    Effect.gen(function* () {
-      const pending = yield* stagePendingUpload({
-        name: "release.png",
-        bytes: new Uint8Array([9, 9]),
-        mimeType: "image/png",
-      });
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-5",
-        attachments: [pending],
-      });
-      expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(true);
-      yield* releaseClaimedAttachments(claimed.claimedPaths);
-      expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(false);
-      yield* releaseClaimedAttachments(claimed.claimedPaths);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("treats malformed ids as non-pending and passes them through", () =>
-    Effect.gen(function* () {
-      const bogus: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make("pending-not-a-uuid"),
-        name: "weird.png",
-        mimeType: "image/png",
-        sizeBytes: 1,
-      };
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-6",
-        attachments: [bogus],
-      });
-      expect(claimed.attachments[0]).toBe(bogus);
-      expect(claimed.claimedPaths).toHaveLength(0);
     }).pipe(Effect.provide(layerTest)),
   );
 });

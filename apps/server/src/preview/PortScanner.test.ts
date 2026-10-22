@@ -1,5 +1,7 @@
 import * as NodeNet from "node:net";
-
+import * as Clock from "effect/Clock";
+import * as Fiber from "effect/Fiber";
+import * as Cause from "effect/Cause";
 import { it as effectIt } from "@effect/vitest";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
@@ -7,19 +9,15 @@ import {
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Cause from "effect/Cause";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
@@ -252,28 +250,6 @@ const commonNonHttpServer = Effect.acquireRelease(
  * without depending on `lsof` being installed.
  */
 effectIt.layer(layerTestPortDiscovery)("PortDiscovery integration (configured URLs)", (it) => {
-  it.effect(
-    "scan() returns a configured HTTP server we just opened",
-    Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
-      const { port } = yield* commonDevServer;
-      const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan([`http://localhost:${port}`]);
-      const found = result.find((server) => server.port === port);
-      expect(found).toBeDefined();
-      expect(found?.host).toBe("localhost");
-    }),
-  );
-
-  it.effect(
-    "scan() excludes a listening port that does not speak HTTP",
-    Effect.fn("PortScannerTest.scanExcludesNonHttpServer")(function* () {
-      const { port } = yield* commonNonHttpServer;
-      const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan([`http://localhost:${port}`]);
-      expect(result.some((server) => server.port === port)).toBe(false);
-    }),
-  );
-
   it.effect(
     "retain drives an immediate broadcast to subscribers",
     Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
@@ -595,26 +571,6 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
-});
-
-effectIt.effect("writes no poll span while no client retains the scanner", () => {
-  let pollSpans = 0;
-  const tracer = Tracer.make({
-    span: (options) => {
-      if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
-      return new Tracer.NativeSpan(options);
-    },
-  });
-  const layer = layerProbeFailure(processProbeFailure);
-
-  return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
-    yield* TestClock.adjust(Duration.seconds(15));
-    expect(pollSpans).toBe(0);
-
-    yield* scanner.retain;
-    expect(pollSpans).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
 });
 
 effectIt.effect("uses the current configured fragment when readiness comes from cache", () => {

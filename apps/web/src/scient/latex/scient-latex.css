@@ -4327,8 +4327,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-content-layout[data-layout="landscape"] {
   position: relative;
   left: calc(
-    (var(--scient-latex-paper-width) -
-        var(--scient-latex-canvas-width, var(--scient-latex-paper-width))) /
+    (
+        var(--scient-latex-paper-width) -
+          var(--scient-latex-canvas-width, var(--scient-latex-paper-width))
+      ) /
       2
   );
   width: var(--scient-latex-text-height);

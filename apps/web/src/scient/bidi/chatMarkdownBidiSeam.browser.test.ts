@@ -1,5 +1,7 @@
 import _sourceContract0 from "../../components/chat/MessagesTimeline.tsx?raw";
 import _sourceContract1 from "./scient-bidi.css?raw";
+import userRowSource from "../../components/chat/TimelineUserMessageRow.tsx?raw";
+import assistantRowSource from "../../components/chat/TimelineAssistantRows.tsx?raw";
 
 import { createElement } from "react";
 import { render } from "../../../test/render";
@@ -99,8 +101,12 @@ describe("ChatMarkdown BiDi seam", () => {
   });
 
   it("routes user messages through literal HTML and assistant messages through the default parser", () => {
-    expect(timelineSource.match(/parseRawHtml=\{false\}/gu)?.length).toBeGreaterThanOrEqual(1);
-    const assistantMount = timelineSource.match(
+    expect(timelineSource).toContain('from "./TimelineUserMessageRow"');
+    expect(timelineSource).toContain('from "./TimelineAssistantRows"');
+    expect(timelineSource).toContain("<UserMessageRow row={row} />");
+    expect(timelineSource).toContain("<AssistantTimelineRow row={row} />");
+    expect(userRowSource.match(/parseRawHtml=\{false\}/gu)?.length).toBeGreaterThanOrEqual(1);
+    const assistantMount = assistantRowSource.match(
       /function AssistantTimelineRow[\s\S]*?<ChatMarkdown\b([\s\S]*?)\/>/u,
     )?.[1];
     expect(assistantMount).toBeDefined();

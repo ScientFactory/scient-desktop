@@ -2,6 +2,7 @@
 // @effect-diagnostics globalFetch:off -- The broker is exercised as Droid uses it: plain HTTP clients.
 // @effect-diagnostics globalTimers:off -- Polls a Node server callback, outside any Effect.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeAsyncHooks from "node:async_hooks";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
@@ -11,7 +12,7 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
+import { afterAll, vi } from "vite-plus/test";
 import { ProviderInstanceId, type CustomModelProtocol } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -28,8 +29,24 @@ interface Captured {
   readonly url: string;
   readonly headers: NodeHttp.IncomingHttpHeaders;
   readonly body: string;
+  readonly closed: Promise<void>;
   aborted: boolean;
 }
+
+const pendingServerDestruction = new Map<number, PromiseWithResolvers<void>>();
+const serverResources = NodeAsyncHooks.createHook({
+  init(id, type) {
+    if (type === "TCPSERVERWRAP") pendingServerDestruction.set(id, Promise.withResolvers<void>());
+  },
+  destroy(id) {
+    const resource = pendingServerDestruction.get(id);
+    if (resource) {
+      pendingServerDestruction.delete(id);
+      resource.resolve();
+    }
+  },
+}).enable();
+afterAll(() => serverResources.disable());
 
 type UpstreamHandler = (
   request: Captured,
@@ -42,15 +59,18 @@ async function startUpstream(handler: UpstreamHandler) {
   const server = NodeHttp.createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += String(chunk);
+    const closed = Promise.withResolvers<void>();
     const captured: Captured = {
       method: request.method ?? "",
       url: request.url ?? "",
       headers: request.headers,
       body,
+      closed: closed.promise,
       aborted: false,
     };
     response.on("close", () => {
       if (!response.writableFinished) captured.aborted = true;
+      closed.resolve();
     });
     requests.push(captured);
     await handler(captured, response);
@@ -440,9 +460,9 @@ describe("Droid key broker", () => {
       const chat = connection("openai-completions", "chat", upstream.origin);
       const aborted = (index: number) =>
         Effect.promise(async () => {
-          for (let attempt = 0; attempt < 200 && !upstream.requests[index]?.aborted; attempt++)
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          return upstream.requests[index]?.aborted === true;
+          const request = upstream.requests[index]!;
+          await request.closed;
+          return request.aborted;
         });
       const scope = yield* Scope.make("sequential");
       const broker = yield* makeDroidKeyBroker({
@@ -637,8 +657,9 @@ describe("Droid key broker", () => {
           // The key begins three bytes before the bound.
           const head = Buffer.from(`{"error":{"message":"${"é".repeat(32_756)}`);
           expect(head.byteLength).toBe(64 * 1024 - 3);
-          response.write(head);
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await new Promise<void>((resolve, reject) =>
+            response.write(head, (error) => (error ? reject(error) : resolve())),
+          );
           response.end(`${encoded}"}}${"x".repeat(100_000)}`);
         }),
       );
@@ -767,20 +788,32 @@ describe("Droid key broker", () => {
       // The model repeats a key it read elsewhere; a character is split across writes.
       const body = Buffer.from(sse([chatChunk("stop", "line\n— chat-real-key-0123456789")]));
       const split = body.indexOf("—") + 1;
+      const release = Promise.withResolvers<void>();
       const upstream = yield* Effect.promise(() =>
         startUpstream(async (_request, response) => {
           response.writeHead(200, { "content-type": "text/event-stream" });
           response.write(body.subarray(0, split));
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await release.promise;
           response.end(body.subarray(split));
         }),
       );
       yield* Effect.addFinalizer(() => Effect.promise(upstream.close));
       const chat = connection("openai-completions", "chat", upstream.origin);
       yield* withBroker({ connections: [chat] }, async (broker) => {
-        const reply = await droidRequest(broker, chat, "/chat/completions");
-        expect(reply.status).toBe(200);
-        expect(Buffer.from(await reply.arrayBuffer()).equals(body)).toBe(true);
+        try {
+          const reply = await droidRequest(broker, chat, "/chat/completions");
+          expect(reply.status).toBe(200);
+          const reader = reply.body!.getReader();
+          const first = await reader.read();
+          expect(first.done).toBe(false);
+          const chunks = [first.value!];
+          release.resolve();
+          for (let next = await reader.read(); !next.done; next = await reader.read())
+            chunks.push(next.value);
+          expect(Buffer.concat(chunks).equals(body)).toBe(true);
+        } finally {
+          release.resolve();
+        }
       });
     }).pipe(Effect.scoped),
   );
@@ -795,7 +828,24 @@ describe("Droid key broker", () => {
       yield* withBroker({ connections: [chat] }, async (broker) => {
         const route = broker.route(chat.id)!;
         // Droid hangs up while the broker is still reading its request.
-        await new Promise<void>((resolve) => {
+        const received = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const emit = NodeHttp.Server.prototype.emit;
+        const requests = vi.spyOn(NodeHttp.Server.prototype, "emit").mockImplementation(function (
+          this: NodeHttp.Server,
+          event: string | symbol,
+          ...args: unknown[]
+        ) {
+          if (event === "request") {
+            const incoming = args[0] as NodeHttp.IncomingMessage;
+            if (incoming.socket.localPort === Number(new URL(route.baseUrl).port)) {
+              incoming.once("close", () => closed.resolve());
+              received.resolve();
+            }
+          }
+          return Reflect.apply(emit, this, [event, ...args]) as boolean;
+        });
+        try {
           const request = NodeHttp.request(`${route.baseUrl}/chat/completions`, {
             method: "POST",
             headers: {
@@ -803,14 +853,14 @@ describe("Droid key broker", () => {
               "content-type": "application/json",
             },
           });
-          request.on("error", () => resolve());
+          request.on("error", () => undefined);
           request.write('{"model":"vendor/chat",');
-          setTimeout(() => {
-            request.destroy();
-            resolve();
-          }, 50);
-        });
-        await new Promise((resolve) => setTimeout(resolve, 200));
+          await received.promise;
+          request.destroy();
+          await closed.promise;
+        } finally {
+          requests.mockRestore();
+        }
         expect(upstream.requests).toEqual([]);
       });
     }).pipe(Effect.scoped, TestClock.withLive),
@@ -870,8 +920,16 @@ describe("Droid key broker", () => {
       const chat = connection("openai-completions", "chat", upstream.origin);
       let current = true;
       let retired = 0;
+      const retirement = Promise.withResolvers<void>();
       yield* withBroker(
-        { connections: [chat], authorized: () => current, onRetire: () => void retired++ },
+        {
+          connections: [chat],
+          authorized: () => current,
+          onRetire: () => {
+            retired++;
+            retirement.resolve();
+          },
+        },
         async (broker) => {
           expect((await droidRequest(broker, chat, "/chat/completions")).status).toBe(200);
           // Rotated in settings; the owner has not closed the runtime yet.
@@ -880,7 +938,7 @@ describe("Droid key broker", () => {
           expect(reply.status).toBe(403);
           expect(upstream.requests).toHaveLength(1);
           // The broker asks its owner to retire the runtime.
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await retirement.promise;
           expect(retired).toBe(1);
         },
       );
@@ -1037,8 +1095,10 @@ describe("Droid key broker and the endpoint's transport", () => {
     Effect.gen(function* () {
       const listeners = () =>
         process.getActiveResourcesInfo().filter((name) => name === "TCPServerWrap").length;
-      // Servers that earlier tests closed leave the list a moment later.
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      // Native resource destruction follows close callbacks; await that actual boundary.
+      yield* Effect.promise(() =>
+        Promise.all([...pendingServerDestruction.values()].map((resource) => resource.promise)),
+      );
       const before = listeners();
       const { apiKey: _key, ...lost } = connection(
         "openai-completions",
@@ -1119,8 +1179,10 @@ describe("Droid key broker and the endpoint's transport", () => {
     Effect.gen(function* () {
       // Accepts the TCP connection and never answers the TLS handshake.
       const sockets = new Set<NodeNet.Socket>();
+      const accepted = Promise.withResolvers<void>();
       const mute = NodeNet.createServer((socket) => {
         sockets.add(socket);
+        accepted.resolve();
         socket.on("error", () => undefined);
       });
       yield* Effect.promise(
@@ -1137,23 +1199,20 @@ describe("Droid key broker and the endpoint's transport", () => {
       );
       const host = `127.0.0.1:${(mute.address() as { port: number }).port}`;
       const stalled = connection("openai-completions", "stalled", `https://${host}/v1`);
-      const turns = () => new Promise((resolve) => setImmediate(resolve));
-
       // The production bounds, on a clock the test moves.
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.useFakeTimers();
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       yield* withBroker({ connections: [stalled] }, async (broker) => {
         let settled = false;
         const pending = droidRequest(broker, stalled, "/chat/completions").finally(() => {
           settled = true;
         });
-        while (sockets.size === 0) await turns();
+        await accepted.promise;
         // Still connecting just before the bound: nothing is answered yet.
-        vi.advanceTimersByTime(14_900);
-        for (let turn = 0; turn < 20; turn++) await turns();
+        await vi.advanceTimersByTimeAsync(14_900);
         expect(settled).toBe(false);
         // The Test action waits 45 s and background generation 180 s; both get the cause.
-        vi.advanceTimersByTime(100);
+        await vi.advanceTimersByTimeAsync(100);
         const reply = await pending;
         expect(reply.status).toBe(400);
         expect(await brokerError(reply)).toEqual({
@@ -1164,87 +1223,91 @@ describe("Droid key broker and the endpoint's transport", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "bounds establishing a connection through an HTTPS proxy too",
-    () =>
-      Effect.gen(function* () {
-        // Accepts TCP connections and never answers: as a proxy it never answers
-        // CONNECT, as a tunnel's endpoint it never completes the TLS handshake.
-        const sockets = new Set<NodeNet.Socket>();
-        const mute = NodeNet.createServer((socket) => {
-          sockets.add(socket);
-          socket.on("error", () => undefined);
+  it.effect("bounds establishing a connection through an HTTPS proxy too", () =>
+    Effect.gen(function* () {
+      // Accepts TCP connections and never answers: as a proxy it never answers
+      // CONNECT, as a tunnel's endpoint it never completes the TLS handshake.
+      const sockets = new Set<NodeNet.Socket>();
+      const mute = NodeNet.createServer((socket) => {
+        sockets.add(socket);
+        socket.on("error", () => undefined);
+      });
+      const tunnels: Array<string | undefined> = [];
+      const proxy = NodeHttp.createServer().on("connect", (request, client) => {
+        tunnels.push(request.url);
+        const [hostname, port] = request.url!.split(":");
+        const target = NodeNet.connect(Number(port), hostname, () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          target.pipe(client).pipe(target);
         });
-        const tunnels: Array<string | undefined> = [];
-        const proxy = NodeHttp.createServer().on("connect", (request, client) => {
-          tunnels.push(request.url);
-          const [hostname, port] = request.url!.split(":");
-          const target = NodeNet.connect(Number(port), hostname, () => {
-            client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-            target.pipe(client).pipe(target);
-          });
-          for (const socket of [client, target]) socket.on("error", () => undefined);
-        });
-        for (const server of [mute, proxy])
-          yield* Effect.promise(
-            () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
-          );
-        yield* Effect.addFinalizer(() =>
-          Effect.promise(async () => {
-            for (const socket of sockets) socket.destroy();
-            proxy.closeAllConnections();
-            await Promise.all(
-              [mute, proxy].map((server) => new Promise((resolve) => server.close(resolve))),
-            );
-          }),
+        for (const socket of [client, target]) socket.on("error", () => undefined);
+      });
+      for (const server of [mute, proxy])
+        yield* Effect.promise(
+          () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
         );
-        const origin = (server: NodeNet.Server) =>
-          `127.0.0.1:${(server.address() as { port: number }).port}`;
-
-        const cases = [
-          // The proxy takes the connection and never answers CONNECT.
-          ["models.example", `http://${origin(mute)}`],
-          // The tunnel opens; the endpoint behind it never completes TLS.
-          [origin(mute), `http://${origin(proxy)}`],
-        ] as const;
-        for (const [host, HTTPS_PROXY] of cases) {
-          const stalled = connection("openai-completions", "stalled", `https://${host}/v1`);
-          yield* withBroker(
-            { connections: [stalled], connectTimeoutMs: 200, environment: { HTTPS_PROXY } },
-            async (broker) => {
-              const reply = await droidRequest(broker, stalled, "/chat/completions");
-              expect(reply.status, host).toBe(400);
-              expect(await brokerError(reply)).toEqual({
-                type: "scient_broker",
-                message: `Scient could not connect to ${host}: connection timed out.`,
-              });
-            },
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          for (const socket of sockets) socket.destroy();
+          proxy.closeAllConnections();
+          await Promise.all(
+            [mute, proxy].map((server) => new Promise((resolve) => server.close(resolve))),
           );
-        }
-        expect(tunnels).toEqual([origin(mute)]);
-      }).pipe(Effect.scoped, TestClock.withLive),
-    15_000,
+        }),
+      );
+      const origin = (server: NodeNet.Server) =>
+        `127.0.0.1:${(server.address() as { port: number }).port}`;
+
+      const cases = [
+        // The proxy takes the connection and never answers CONNECT.
+        ["models.example", `http://${origin(mute)}`],
+        // The tunnel opens; the endpoint behind it never completes TLS.
+        [origin(mute), `http://${origin(proxy)}`],
+      ] as const;
+      for (const [host, HTTPS_PROXY] of cases) {
+        const stalled = connection("openai-completions", "stalled", `https://${host}/v1`);
+        yield* withBroker(
+          { connections: [stalled], connectTimeoutMs: 200, environment: { HTTPS_PROXY } },
+          async (broker) => {
+            const reply = await droidRequest(broker, stalled, "/chat/completions");
+            expect(reply.status, host).toBe(400);
+            expect(await brokerError(reply)).toEqual({
+              type: "scient_broker",
+              message: `Scient could not connect to ${host}: connection timed out.`,
+            });
+          },
+        );
+      }
+      expect(tunnels).toEqual([origin(mute)]);
+    }).pipe(Effect.scoped, TestClock.withLive),
   );
 
   it.effect("does not bound an established connection by the time allowed to establish it", () =>
     Effect.gen(function* () {
       // A slow model: connected at once, first byte after the connection bound.
+      let arrived = Promise.withResolvers<() => void>();
       const slow = yield* Effect.promise(() =>
         startUpstream(async (_request, response) => {
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          const released = Promise.withResolvers<void>();
+          arrived.resolve(released.resolve);
+          await released.promise;
           json(response, 200, { via: "slow model" });
         }),
       );
       yield* Effect.addFinalizer(() => Effect.promise(slow.close));
       const proxy = yield* Effect.promise(() =>
         startUpstream(async (_request, response) => {
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          const released = Promise.withResolvers<void>();
+          arrived.resolve(released.resolve);
+          await released.promise;
           json(response, 200, { via: "slow model behind a proxy" });
         }),
       );
       yield* Effect.addFinalizer(() => Effect.promise(proxy.close));
       const direct = connection("openai-completions", "direct", slow.origin);
       const proxied = connection("openai-completions", "proxied", "http://models.example/v1");
+      vi.useFakeTimers();
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       yield* withBroker(
         {
           connections: [direct, proxied],
@@ -1259,7 +1322,19 @@ describe("Droid key broker and the endpoint's transport", () => {
             [proxied, "slow model behind a proxy"],
             [proxied, "slow model behind a proxy"],
           ] as const) {
-            const reply = await droidRequest(broker, target, "/chat/completions");
+            arrived = Promise.withResolvers<() => void>();
+            let settled = false;
+            const pending = droidRequest(broker, target, "/chat/completions").finally(() => {
+              settled = true;
+            });
+            const release = await arrived.promise;
+            try {
+              await vi.advanceTimersByTimeAsync(300);
+              expect(settled).toBe(false);
+            } finally {
+              release();
+            }
+            const reply = await pending;
             expect(reply.status).toBe(200);
             expect(await reply.json()).toEqual({ via });
           }
@@ -1354,9 +1429,18 @@ describe("Droid key broker and the endpoint's transport", () => {
         Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
       );
       const file = (name: string) => NodePath.join(directory, name);
+      // Pin the digest and EC encoding; LibreSSL's defaults are rejected by current Node.
       const openssl = (...args: ReadonlyArray<string>) =>
-        NodeChildProcess.execFileSync("openssl", args, { stdio: "ignore" });
-      const key = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"];
+        NodeChildProcess.execFileSync("openssl", [...args, "-sha256"], { stdio: "ignore" });
+      const key = [
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-pkeyopt",
+        "ec_param_enc:named_curve",
+        "-nodes",
+      ];
       openssl(
         "req",
         "-x509",
@@ -1400,6 +1484,7 @@ describe("Droid key broker and the endpoint's transport", () => {
       );
 
       const requests: Array<string | undefined> = [];
+      let slowRequest = Promise.withResolvers<() => void>();
       const server = NodeHttps.createServer(
         {
           key: NodeFS.readFileSync(file("server.key")),
@@ -1408,8 +1493,11 @@ describe("Droid key broker and the endpoint's transport", () => {
         async (request, response) => {
           requests.push(request.headers.authorization);
           request.resume();
-          if (request.url?.includes("slow=1"))
-            await new Promise((resolve) => setTimeout(resolve, 300));
+          if (request.url?.includes("slow=1")) {
+            const released = Promise.withResolvers<void>();
+            slowRequest.resolve(released.resolve);
+            await released.promise;
+          }
           json(response, 200, { ok: true });
         },
       );
@@ -1494,6 +1582,8 @@ describe("Droid key broker and the endpoint's transport", () => {
         ),
       );
       requests.length = 0;
+      vi.useFakeTimers();
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       yield* withBroker(
         {
           connections: [gateway],
@@ -1505,13 +1595,28 @@ describe("Droid key broker and the endpoint's transport", () => {
         },
         async (broker) => {
           for (let request = 0; request < 2; request++) {
-            const reply = await droidRequest(broker, gateway, "/chat/completions?slow=1");
+            slowRequest = Promise.withResolvers<() => void>();
+            let settled = false;
+            const pending = droidRequest(broker, gateway, "/chat/completions?slow=1").finally(
+              () => {
+                settled = true;
+              },
+            );
+            const release = await slowRequest.promise;
+            try {
+              await vi.advanceTimersByTimeAsync(300);
+              expect(settled).toBe(false);
+            } finally {
+              release();
+            }
+            const reply = await pending;
             expect(reply.status).toBe(200);
           }
           expect(tunnels[0]).toBe(host);
           expect(requests).toHaveLength(2);
         },
       );
+      vi.useRealTimers();
       // A CA file that cannot be read adds no trust, as in Node and Droid, and the
       // certificate failure it leads to names the file.
       for (const variable of ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]) {

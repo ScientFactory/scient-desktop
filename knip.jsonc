@@ -17,19 +17,24 @@
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "scripts": {
-      // Knip loads its preprocessor through a CLI option, not a source import.
-      // Native verification and worktree setup (from t3.json) run directly.
+      // Knip loads its preprocessor through a CLI option; native verification and
+      // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
+      // Windows verify script with esbuild through a path knip does not trace, and
+      // electron-builder loads the macOS signer by path.
       "entry": [
         "knip-schemas.ts",
         "qualify-managed-runtime-catalog.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        "sign-macos.ts",
+        "verify-windows-desktop-artifact.ts",
         // Documented advisory inventory CLI and its independent Node regressions.
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
         // Documented manual TeX-to-SVG math-symbol atlas generator.
         "generate-math-symbol-glyphs.mjs",
       ],
+      "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": ["npm-launcher/**"],
     },
@@ -115,6 +120,7 @@
       // also a test entry point.
       "entry": [
         "scripts/warm-dep-cache.ts",
+        "test/fixtures/**/*.mjs",
         // Explicit standalone connected extracted-intent qualification configuration.
         "extractedIntentSend.vitest.config.ts",
         // Documented standalone Chromium selection qualification configuration.
@@ -152,6 +158,10 @@
         "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
+    },
+    "apps/marketing": {
+      // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
+      "ignoreDependencies": ["@astrojs/check"],
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.

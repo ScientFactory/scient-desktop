@@ -1,4 +1,4 @@
-import { stubGlobal as _fixtureStubGlobal } from "../../../test/render";
+import { fakeTimers } from "../../../test/render";
 import {
   scientDocumentReadinessRejection,
   ScientDocumentPageReadiness,
@@ -43,11 +43,6 @@ const fonts = (...faces: ReadonlyArray<{ family: string; status: string }>) =>
   Object.assign(faces, { ready: Promise.resolve(), status: "loaded" });
 
 async function _setupFixture0(_fixture: _Fixture) {
-  _fixture.stack.use(
-    _fixtureStubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-      setTimeout(() => callback(0), 0),
-    ),
-  );
   Object.defineProperty(document, "fonts", {
     configurable: true,
     value: fonts(
@@ -75,18 +70,20 @@ describe("document page tracker", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    using _timers = fakeTimers();
     const tracker = new DocumentPageTracker();
     const first = tracker.track();
     let settled = false;
     const settling = tracker.settle(5_000).then((result) => {
       settled = result;
     });
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await vi.advanceTimersByTimeAsync(32);
     const second = tracker.track();
     first();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await vi.advanceTimersByTimeAsync(32);
     expect(settled).toBe(false);
     second();
+    await vi.advanceTimersByTimeAsync(32);
     await settling;
     expect(settled).toBe(true);
   });
@@ -96,9 +93,12 @@ describe("document page tracker", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    using _timers = fakeTimers();
     const tracker = new DocumentPageTracker();
     tracker.track();
-    expect(await tracker.settle(20)).toBe(false);
+    const settling = tracker.settle(20);
+    await vi.advanceTimersByTimeAsync(32);
+    expect(await settling).toBe(false);
     tracker.warn("missing-image", "Same");
     tracker.warn("missing-image", "Same");
     expect(tracker.diagnostics).toHaveLength(1);
@@ -368,11 +368,14 @@ describe("printed export notes", () => {
     const rendered: Array<ReadonlyArray<string>> = [];
     const inspections = [["Found while rendering."], ["Found while rendering.", "Found last."]];
     let pass = 0;
-    const readiness = await renderWithCompleteNotes({
+    using _timers = fakeTimers();
+    const rendering = renderWithCompleteNotes({
       render: (notes) => rendered.push(notes),
       tracker: new DocumentPageTracker(),
       inspect: async () => readinessWith(inspections[Math.min(pass++, 1)]!),
     });
+    await vi.runAllTimersAsync();
+    const readiness = await rendering;
     expect(rendered).toEqual([
       [],
       ["Found while rendering."],
@@ -388,11 +391,14 @@ describe("printed export notes", () => {
 
     let pass = 0;
     const tracker = new DocumentPageTracker();
-    const readiness = await renderWithCompleteNotes({
+    using _timers = fakeTimers();
+    const rendering = renderWithCompleteNotes({
       render: () => undefined,
       tracker,
       inspect: async () => readinessWith([`Note ${pass++}`]),
     });
+    await vi.runAllTimersAsync();
+    const readiness = await rendering;
     expect(readiness.status).toBe("failed");
     expect(readiness.diagnostics).toEqual([
       expect.objectContaining({ severity: "fatal", code: "render-crashed" }),

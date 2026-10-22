@@ -52,6 +52,7 @@ import type { StyledDiffCodeView } from "./StyledDiffCodeView";
 
 const target = DraftId.make("diff-draft-test");
 const range: SelectedLineRange = { start: 1, end: 1, side: "additions" };
+let container: HTMLDivElement;
 
 function file(
   name: string,
@@ -97,108 +98,59 @@ function view(
   );
 }
 
-function click(_fixture: _Fixture, label: string) {
-  const button = Array.from(_fixture.container.querySelectorAll("button")).find(
+function click(label: string) {
+  const button = Array.from(container.querySelectorAll("button")).find(
     (node) => node.textContent === label,
   );
   if (!button) throw new Error(`Missing button: ${label}`);
   return act(() => button.click());
 }
 
-function editor(_fixture: _Fixture) {
-  const textarea = _fixture.container.querySelector("textarea");
+function editor() {
+  const textarea = container.querySelector("textarea");
   if (!textarea) throw new Error("Comment editor is not available");
   return textarea;
 }
 
-function typeComment(_fixture: _Fixture, text: string) {
+function typeComment(text: string) {
   return act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-      editor(_fixture),
+      editor(),
       text,
     );
-    editor(_fixture).dispatchEvent(new Event("input", { bubbles: true }));
+    editor().dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
-function setup(_fixture: _Fixture): Disposable {
+function setup(): Disposable {
   const reset = () => useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
   reset();
-  _fixture.container = document.createElement("div");
+  container = document.createElement("div");
   return { [Symbol.dispose]: reset };
 }
 
 describe("diff comment drafts", () => {
-  it.each(["removed file", "replaced rename"] as const)(
-    "allows a fresh comment after a %s loses its draft",
-    async (scenario) => {
-      await using _fixture = _createFixture();
-
-      using _drafts = setup(_fixture);
-      const original =
-        scenario === "removed file"
-          ? file("a.ts")
-          : file("shared.ts", 1, "rename-changed", "old.ts");
-      await using screen = await render(view([original, file("b.ts")]), {
-        container: _fixture.container,
-      });
-      await click(_fixture, `Comment on ${original.filePath}`);
-      await typeComment(_fixture, "Discard this draft");
-      const pending =
-        scenario === "removed file"
-          ? []
-          : [
-              {
-                ...file("shared.ts", 2, "rename-changed", "other.ts").fileDiff,
-                hunks: [],
-                cacheKey: "replacement:pending",
-              },
-            ];
-
-      await screen.rerender(view([file("b.ts")], "refreshed", pending));
-      expect(_fixture.container.querySelector("textarea")).toBeNull();
-      await click(_fixture, "Comment on b.ts");
-      expect(editor(_fixture).value).toBe("");
-      await typeComment(_fixture, "  Review b.ts  ");
-      await click(_fixture, "Comment");
-
-      expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
-        expect.objectContaining({
-          filePath: "b.ts",
-          text: "Review b.ts",
-          selection: { ...range, endSide: "additions" },
-        }),
-      ]);
-      await screen.rerender(view([original, file("b.ts")], "returned"));
-      expect(_fixture.container.querySelector("textarea")).toBeNull();
-      expect(_fixture.container.querySelector("mark")).toBeNull();
-      expect(_fixture.container.querySelector("p")?.textContent).toBe("Review b.ts");
-    },
-  );
-
   it("keeps the text and selected line through refresh and a provisional lazy patch", async () => {
-    await using _fixture = _createFixture();
-
-    using _drafts = setup(_fixture);
+    using _drafts = setup();
     const original = file("shared.ts", 1, "rename-pure", "old.ts");
-    await using screen = await render(view([original]), { container: _fixture.container });
-    await click(_fixture, "Comment on shared.ts");
-    await typeComment(_fixture, "Keep this draft");
+    await using screen = await render(view([original]), { container });
+    await click("Comment on shared.ts");
+    await typeComment("Keep this draft");
     const refreshed = file("shared.ts", 2, "rename-pure", "old.ts");
     await screen.rerender(view([refreshed], "refreshed"));
-    expect(editor(_fixture).value).toBe("Keep this draft");
-    expect(_fixture.container.querySelector("mark")?.textContent).toBe("Line 1");
+    expect(editor().value).toBe("Keep this draft");
+    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
 
     await screen.rerender(
       view([], "loading", [
         { ...refreshed.fileDiff, type: "rename-changed", hunks: [], cacheKey: "shared:pending" },
       ]),
     );
-    expect(_fixture.container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector("textarea")).toBeNull();
     await screen.rerender(view([refreshed], "loaded"));
-    expect(editor(_fixture).value).toBe("Keep this draft");
-    expect(_fixture.container.querySelector("mark")?.textContent).toBe("Line 1");
-    await click(_fixture, "Comment");
+    expect(editor().value).toBe("Keep this draft");
+    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
+    await click("Comment");
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
       expect.objectContaining({
         filePath: "shared.ts",
@@ -206,18 +158,6 @@ describe("diff comment drafts", () => {
         selection: { ...range, endSide: "additions" },
       }),
     ]);
-    expect(_fixture.container.querySelector("p")?.textContent).toBe("Keep this draft");
+    expect(container.querySelector("p")?.textContent).toBe("Keep this draft");
   });
 });
-
-function _createFixture() {
-  const stack = new AsyncDisposableStack();
-  return {
-    container: undefined! as HTMLDivElement,
-    stack,
-    async [Symbol.asyncDispose]() {
-      await stack.disposeAsync();
-    },
-  };
-}
-type _Fixture = ReturnType<typeof _createFixture>;

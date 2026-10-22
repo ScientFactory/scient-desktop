@@ -70,7 +70,7 @@ const headlessFlag = Flag.Boolean("headless").pipe(
  * OAuth callback, so the device authorization grant is the only flow that
  * can work.
  */
-export const headlessSessionConfig = Config.all({
+const headlessSessionConfig = Config.all({
   sshConnection: Config.String("SSH_CONNECTION").pipe(Config.option),
   sshTty: Config.String("SSH_TTY").pipe(Config.option),
 }).pipe(
@@ -441,7 +441,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
  * A missing CLI login or a failed relay DELETE leaves that record registered, so
  * those outcomes warn to deregister it from the T3 Connect account page.
  */
-export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_results")(
+const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_results")(
   function* (input: {
     readonly clearAuthorization: boolean;
     readonly liveResult: LiveCloudActionResult;

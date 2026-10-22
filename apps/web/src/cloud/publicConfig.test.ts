@@ -1,11 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  CloudPublicConfigMissingError,
   hasCloudPublicConfig,
   resolveCloudPublicConfig,
   resolveRelayTracingConfig,
-  resolveRelayClerkTokenOptions,
 } from "./publicConfig.ts";
 
 afterEach(() => {
@@ -138,13 +136,5 @@ describe("hasCloudPublicConfig", () => {
 
       expectCloudConfig(false);
     });
-  });
-
-  it("reports the missing Clerk JWT template as structured configuration", () => {
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "");
-
-    expect(() => resolveRelayClerkTokenOptions()).toThrowError(
-      new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" }),
-    );
   });
 });

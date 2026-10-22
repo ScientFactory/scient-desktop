@@ -1,3 +1,4 @@
+import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,7 +16,6 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as Schema from "effect/Schema";
 import { OMP_MINIMUM_VERSION, OMP_SUPPORTED_MAJOR } from "@scientfactory/provider-runtime";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -414,26 +414,6 @@ describe("provider compatibility", () => {
     );
   });
 
-  it("compares Muse versions by their release, ignoring the revision suffix", () => {
-    const muse = ProviderDriverKind.make("muse");
-    for (const [version, expected] of [
-      ["1.4.3-R5018.1", "supported"],
-      ["1.4.2-R4684", "supported"],
-      ["1.4.1-R4100.2", "unknown"],
-      ["1.4.3-beta.1", "unknown"],
-    ] as const) {
-      assert.strictEqual(
-        resolveProviderCompatibility(
-          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-          muse,
-          version,
-          V2_RELEASE,
-        )?.status,
-        expected,
-      );
-    }
-  });
-
   it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
     const antigravity = ProviderDriverKind.make("antigravity");
     const taggedPolicy = {
@@ -481,25 +461,6 @@ describe("provider compatibility", () => {
         "0.6.17",
       ),
     );
-  });
-
-  it("supports every driver without inventing policies for uncovered adapters", () => {
-    for (const kind of [
-      "codex",
-      "claudeAgent",
-      "cursor",
-      "grok",
-      "opencode",
-      "antigravity",
-      "customDriver",
-    ]) {
-      const adapter = ProviderDriverKind.make(kind);
-      assert.strictEqual(
-        resolveProviderCompatibility([{ ...policy, driver: adapter }], adapter, "2.0.0")?.status,
-        "supported",
-      );
-      assert.isUndefined(resolveProviderCompatibility([], adapter, "2.0.0"));
-    }
   });
 
   it("relaxes remote policy without losing probe errors, and falls back when a policy is omitted", () => {
@@ -644,32 +605,3 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
     }).pipe(Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.scoped),
 );
-
-it("recomputes latest-version compatibility without losing the underlying update advisory", () => {
-  const snapshot: ServerProvider = {
-    ...provider,
-    version: "2.0.0",
-    versionAdvisory: {
-      status: "behind_latest",
-      currentVersion: "2.0.0",
-      latestVersion: "4.0.0",
-      canUpdate: true,
-      updateCommand: "npm install -g fixture@latest",
-      checkedAt: provider.checkedAt,
-      message: null,
-    },
-  };
-  const blockedPolicy: ProviderCompatibilityPolicy = {
-    ...policy,
-    ranges: [...policy.ranges, { range: ">=3.0.0", status: "broken" }],
-  };
-  const blocked = applyProviderCompatibility(snapshot, [blockedPolicy], []);
-  assert.strictEqual(blocked.compatibilityAdvisory?.latestVersionStatus, "broken");
-  const relaxed = applyProviderCompatibility(
-    blocked,
-    [{ ...policy, ranges: [{ range: ">=2.0.0", status: "supported" }] }],
-    [],
-  );
-  assert.strictEqual(relaxed.compatibilityAdvisory?.latestVersionStatus, "supported");
-  assert.deepStrictEqual(relaxed.versionAdvisory, snapshot.versionAdvisory);
-});

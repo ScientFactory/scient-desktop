@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import type * as MarkdownCheckpointModule from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
@@ -279,6 +279,8 @@ describe("retiring the project's recovery copy", () => {
   }
 
   async function _setupFixture0(_fixture: _Fixture) {
+    _fixture.stack.use(await _fixtureRender(null, { router: false }));
+    _fixture.cleanup.use(fakeTimers());
     cwd = `/synthetic-retirement-${(workspace += 1)}`;
     KEY = `${environmentId}\0${cwd}\0project-visual:${path}`;
     SLOT = `scient:latex-visual-draft:source:${KEY}`;
@@ -340,8 +342,7 @@ describe("retiring the project's recovery copy", () => {
     await act(async () => await root.rerender(element));
     return async (next: React.ReactElement) => await act(async () => await root.rerender(next));
   }
-  const settle = async (ms: number) =>
-    await act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
+  const settle = async (ms: number) => await act(() => vi.advanceTimersByTimeAsync(ms));
 
   it("keeps a prepared owned edit and its exact undo across a same-owner filename rename", async () => {
     await using _fixture = _createFixture();

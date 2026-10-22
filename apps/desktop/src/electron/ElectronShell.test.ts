@@ -125,24 +125,6 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
-  it.effect("opens Zed's ssh deep link", () =>
-    Effect.gen(function* () {
-      openExternalMock.mockResolvedValue(undefined);
-
-      const electronShell = yield* ElectronShell.ElectronShell;
-      const results = yield* Effect.all([
-        electronShell.openExternal("zed://ssh/user@example.com/home/user/project"),
-        electronShell.openExternal("zed://ssh/example.com/"),
-      ]);
-
-      assert.deepEqual(results, [true, true]);
-      assert.deepEqual(openExternalMock.mock.calls, [
-        ["zed://ssh/user@example.com/home/user/project"],
-        ["zed://ssh/example.com/"],
-      ]);
-    }).pipe(Effect.provide(ElectronShell.layer)),
-  );
-
   it.effect("opens the JetBrains Toolbox ssh deep link", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

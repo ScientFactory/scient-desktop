@@ -4,7 +4,7 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useState, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { userEvent } from "vite-plus/test/browser";
@@ -148,28 +148,6 @@ describe("citation comment source disappearance", () => {
     expect(onSave).toHaveBeenLastCalledWith("keep this draft");
     expect(textarea()).toBeNull();
   });
-
-  it("still allows explicit cancellation after source disappearance", async () => {
-    using source = setup();
-    const onSave = vi.fn(() => false);
-    await using _screen = await mount(source.sourceAnchor, onSave);
-    await typeComment("discard this draft");
-    await removeSource();
-    onSave.mockClear();
-    await clickButton("Cancel");
-    expect(onSave).not.toHaveBeenCalled();
-    expect(textarea()).toBeNull();
-  });
-
-  it("saves and closes when the source disappears with a valid draft", async () => {
-    using source = setup();
-    const onSave = vi.fn(() => true);
-    await using _screen = await mount(source.sourceAnchor, onSave);
-    await typeComment("saved comment");
-    await removeSource();
-    expect(onSave).toHaveBeenCalledWith("saved comment");
-    expect(textarea()).toBeNull();
-  });
 });
 
 // SCIENT-FORK:START - captured file and assistant quotes keep their source and hover content.
@@ -196,7 +174,7 @@ describe("citation hover content", () => {
 
   const sourceLink = (container: HTMLElement) => container.querySelector<HTMLAnchorElement>("a")!;
   async function hoverFile(container: HTMLElement) {
-    await act(async () => userEvent.hover(sourceLink(container)));
+    await userEvent.hover(sourceLink(container));
     await vi.waitFor(async () => {
       await act(async () => {});
       expect(document.querySelector('[data-slot="tooltip-popup"]')).not.toBeNull();

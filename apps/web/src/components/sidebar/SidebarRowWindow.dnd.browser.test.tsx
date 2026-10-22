@@ -2,7 +2,7 @@ import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -59,6 +59,7 @@ function Slot({ item }: { item: SidebarListItem }) {
 }
 
 function Fixture() {
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState("");
   const [overSection, setOverSection] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -84,7 +85,7 @@ function Fixture() {
   const collision = createSidebarCollisionDetection(() => true, { items });
   return (
     <>
-      <output data-over-section={overSection} data-over-id={overId}>
+      <output data-active-id={activeId} data-over-section={overSection} data-over-id={overId}>
         {receipt}
       </output>
       <div data-slot="scroll-area-viewport" style={{ height: 400, width: 300, overflow: "auto" }}>
@@ -92,6 +93,7 @@ function Fixture() {
           sensors={sensors}
           collisionDetection={collision}
           autoScroll={false}
+          onDragStart={({ active }) => setActiveId(String(active.id))}
           onDragOver={({ active, over }) => {
             setOverId(over ? String(over.id) : null);
             setOverSection(
@@ -102,6 +104,7 @@ function Fixture() {
             );
           }}
           onDragEnd={({ active, over }) => {
+            setActiveId(null);
             setReceipt(
               JSON.stringify(
                 over && resolveSidebarDropTarget(items, String(active.id), String(over.id)),
@@ -136,10 +139,6 @@ async function mount(_fixture: _Fixture) {
   };
 }
 
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
 function pointer(target: EventTarget, type: string, x: number, y: number) {
   target.dispatchEvent(
     new PointerEvent(type, {
@@ -160,7 +159,11 @@ async function startDrag(row: HTMLElement) {
   const y = rect.top + 30;
   pointer(row, "pointerdown", x, y);
   pointer(document, "pointermove", x, y + 10);
-  await frame();
+  await vi.waitFor(() =>
+    expect(document.querySelector("output")?.getAttribute("data-active-id")).toBe(
+      row.dataset.threadItem,
+    ),
+  );
   return x;
 }
 
@@ -178,7 +181,6 @@ it("uses the real sidebar sensor and sorting strategy to reorder mounted slots",
     .poll(() => _fixture.host!.querySelector("output")!.getAttribute("data-over-id"))
     .toBe("thread-2");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
-  await frame();
   await expect
     .poll(() => _fixture.host!.querySelector("output")!.textContent)
     .toContain('"activeOrder":["thread-1","thread-2","thread-0"');
@@ -195,7 +197,6 @@ it("keeps the dragged body alive while scrolling to a previously empty settled s
   await expect.poll(() => target.dataset.sidebarRowBody).toBe("placeholder");
   const x = await startDrag(source);
   fixture.viewport.scrollTop = fixture.viewport.scrollHeight;
-  await frame();
   await expect.poll(() => target.dataset.sidebarRowBody).toBe("mounted");
   expect(source.dataset.sidebarRowBody).toBe("mounted");
   expect(_fixture.host!.querySelectorAll("[data-marker]")).toHaveLength(3);
@@ -205,7 +206,6 @@ it("keeps the dragged body alive while scrolling to a previously empty settled s
     .poll(() => _fixture.host!.querySelector("output")!.getAttribute("data-over-section"))
     .toBe("settled");
   pointer(document, "pointerup", x, rect.top + rect.height / 2);
-  await frame();
   await expect
     .poll(() => _fixture.host!.querySelector("output")!.textContent)
     .toContain('"section":"settled"');

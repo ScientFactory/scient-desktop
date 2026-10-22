@@ -2234,9 +2234,10 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         .pipe(Effect.forkChild);
       yield* Deferred.await(removing);
       // The client goes away while the agent is removing the sign-in.
-      const interruption = yield* Fiber.interrupt(request).pipe(Effect.forkChild);
-      // Let the interruption reach the request while the removal is still pending.
-      yield* Effect.sleep("50 millis");
+      // Start the interrupt operation now, so its signal is delivered before removal resumes.
+      const interruption = yield* Fiber.interrupt(request).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
       yield* Deferred.succeed(finishRemoval, undefined);
       yield* Fiber.join(interruption);
       assert.isTrue(yield* Deferred.isDone(stopped));

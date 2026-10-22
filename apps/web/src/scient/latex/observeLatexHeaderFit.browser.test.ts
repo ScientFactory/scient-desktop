@@ -1,7 +1,22 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { fakeTimers } from "../../../test/render";
+import { observeResize } from "~/lib/observeResize";
 import { observeLatexHeaderFit } from "./observeLatexHeaderFit";
 
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 80));
+async function fitAfterResize(row: HTMLElement, change: () => void) {
+  let deliver!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    deliver = resolve;
+  });
+  const stop = observeResize(row, deliver);
+  try {
+    change();
+    await delivered;
+    await vi.advanceTimersByTimeAsync(300);
+  } finally {
+    stop();
+  }
+}
 const steps = ["first", "second", "third"];
 
 describe("responsive LaTeX header fitting", () => {
@@ -44,58 +59,71 @@ describe("responsive LaTeX header fitting", () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
+    using _clock = fakeTimers();
 
     const reads = vi.spyOn(_fixture.row, "scrollWidth", "get");
     const clientReads = vi.spyOn(_fixture.row, "clientWidth", "get");
     _fixture.dispose = observeLatexHeaderFit(_fixture.row, steps);
     expect(reads).not.toHaveBeenCalled();
     expect(clientReads).not.toHaveBeenCalled();
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second");
+    await fitAfterResize(_fixture.row, () => {});
+    expect(_fixture.row.dataset.fit).toBe("first second");
     expect(_fixture.row.scrollWidth).toBeLessThanOrEqual(_fixture.row.clientWidth + 1);
-    _fixture.row.style.width = "120px";
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second third");
-    _fixture.row.style.width = "300px";
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("");
+    await fitAfterResize(_fixture.row, () => {
+      _fixture.row.style.width = "120px";
+    });
+    expect(_fixture.row.dataset.fit).toBe("first second third");
+    await fitAfterResize(_fixture.row, () => {
+      _fixture.row.style.width = "300px";
+    });
+    expect(_fixture.row.dataset.fit).toBe("");
   });
 
   it("coalesces content changes and restores controls when the content shrinks", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
+    using _clock = fakeTimers();
 
     _fixture.dispose = observeLatexHeaderFit(_fixture.row, steps);
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second");
-    await settle();
+    await fitAfterResize(_fixture.row, () => {});
+    expect(_fixture.row.dataset.fit).toBe("first second");
     const reads = vi.spyOn(_fixture.row, "scrollWidth", "get");
     for (let i = 0; i < 20; i++) _fixture.required.textContent = "Long status message " + i;
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second third");
-    await settle();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(_fixture.row.dataset.fit).toBe("first second third");
     expect(reads).toHaveBeenCalledTimes(3);
     _fixture.required.textContent = "OK";
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(_fixture.row.dataset.fit).toBe("first second");
   });
 
   it("keeps the last fit while hidden and cancels queued measurements on cleanup", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
+    using _clock = fakeTimers();
 
     _fixture.dispose = observeLatexHeaderFit(_fixture.row, steps);
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second");
-    _fixture.row.style.display = "none";
-    await settle();
+    await fitAfterResize(_fixture.row, () => {});
     expect(_fixture.row.dataset.fit).toBe("first second");
-    _fixture.row.style.width = "300px";
-    _fixture.row.style.display = "flex";
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("");
-    await settle();
+    await fitAfterResize(_fixture.row, () => {
+      _fixture.row.style.display = "none";
+    });
+    expect(_fixture.row.dataset.fit).toBe("first second");
+    await fitAfterResize(_fixture.row, () => {
+      _fixture.row.style.width = "300px";
+      _fixture.row.style.display = "flex";
+    });
+    expect(_fixture.row.dataset.fit).toBe("");
     const reads = vi.spyOn(_fixture.row, "scrollWidth", "get");
     _fixture.required.textContent = "Queued status update";
     await Promise.resolve();
     _fixture.dispose();
     _fixture.dispose = undefined;
-    _fixture.row.style.width = "120px";
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await fitAfterResize(_fixture.row, () => {
+      _fixture.row.style.width = "120px";
+    });
     expect(reads).not.toHaveBeenCalled();
     expect(_fixture.row.dataset.fit).toBe("");
   });
@@ -104,16 +132,18 @@ describe("responsive LaTeX header fitting", () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
+    using _clock = fakeTimers();
 
-    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(2147483000);
+    using _frame = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(2147483000);
     _fixture.dispose = observeLatexHeaderFit(_fixture.row, steps);
-    await expect.poll(() => _fixture.row.dataset.fit).toBe("first second");
+    await fitAfterResize(_fixture.row, () => {});
+    expect(_fixture.row.dataset.fit).toBe("first second");
     _fixture.dispose();
     _fixture.dispose = undefined;
     _fixture.row.dataset.fit = "";
     const reads = vi.spyOn(_fixture.row, "scrollWidth", "get");
     observeLatexHeaderFit(_fixture.row, steps)();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await vi.advanceTimersByTimeAsync(300);
     expect(reads).not.toHaveBeenCalled();
     expect(_fixture.row.dataset.fit).toBe("");
   });

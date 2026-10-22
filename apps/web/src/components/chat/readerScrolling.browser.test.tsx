@@ -1,4 +1,9 @@
-import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
+import {
+  fakeTimers,
+  act as _fixtureAct,
+  render as _fixtureRender,
+  type Screen,
+} from "../../../test/render";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
@@ -32,18 +37,28 @@ function entry(index: number, text = `Message ${index}\n\n${"Readable paragraph.
   };
 }
 
-const frames = async (count = 4) => {
-  for (let i = 0; i < count; i++)
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-};
+/** Legend's receipt needs scheduled work; waitFor drives the owned clock while it is pending. */
+async function scroll(operation: () => Promise<void>) {
+  let receipt!: Promise<void>;
+  await _fixtureAct(() => {
+    receipt = operation();
+  });
+  await vi.waitFor(() => receipt);
+}
+
+async function advanceClock(ms = 64) {
+  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+}
 async function mountHost(_fixture: _Fixture) {
   if (!_fixture.host) {
     _fixture.host = document.createElement("div");
     Object.assign(_fixture.host.style, { width: "720px", height: "600px" });
     document.body.append(_fixture.host);
+    // No routed controls are exercised in this measured viewport fixture.
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
+    _fixture.timers ??= _fixture.cleanup.use(fakeTimers());
   }
 }
 async function render(
@@ -60,7 +75,7 @@ async function render(
           emptyPlaceholderInset={0}
           {..._fixture.base}
           routeThreadKey={key}
-          timelineEntries={entries}
+          timelineEntries={[...entries]}
           {...extra}
         />,
       ),
@@ -79,28 +94,30 @@ it("holds a measured viewport through repeated appended rows and completion", as
 
   let entries = Array.from({ length: 20 }, (_, i) => entry(i));
   await render(_fixture, "geometry:stream", entries);
-  await expect
-    .poll(() => _fixture.listRef.current?.getScrollableNode()?.scrollTop ?? 0)
-    .toBeGreaterThan(0);
+  await vi.waitFor(() => {
+    expect(_fixture.listRef.current?.getScrollableNode()?.scrollTop ?? 0).toBeGreaterThan(0);
+  });
   // Opening a thread holds the end until its rows stop growing; a position is
   // saved only once that is done. Only then is the reader moved up, or the
   // opening's own settling would take them back to the end.
-  await expect.poll(() => readTimelinePosition("geometry:stream")).toBeDefined();
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:stream")).toBeDefined();
+  });
+  await advanceClock();
   const node = _fixture.listRef.current!.getScrollableNode()!;
-  await _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false });
-  await frames();
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
+  await advanceClock();
   const original = node.scrollTop;
   // The reader really is away from the end, reading at 300.
   expect(Math.abs(original - 300)).toBeLessThanOrEqual(1);
   for (let i = 20; i < 45; i++) {
-    entries = [...entries, entry(i)];
+    entries.push(entry(i));
     await render(_fixture, "geometry:stream", entries, { isWorking: true });
-    await frames(2);
+    await advanceClock(32);
     expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
   }
   await render(_fixture, "geometry:stream", entries, { isWorking: false });
-  await frames();
+  await advanceClock();
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
 });
 
@@ -110,24 +127,30 @@ it("restores the same message after switching threads with a saved at-end positi
 
   const entries = Array.from({ length: 15 }, (_, i) => entry(i));
   await render(_fixture, "geometry:a", entries);
-  await expect.poll(() => readTimelinePosition("geometry:a")?.messageId).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:a")?.messageId).toBeDefined();
+  });
   const saved = readTimelinePosition("geometry:a")!;
   await render(
     _fixture,
     "geometry:b",
     Array.from({ length: 4 }, (_, i) => entry(i + 100)),
   );
-  await expect.poll(() => readTimelinePosition("geometry:b")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:b")).toBeDefined();
+  });
   await render(_fixture, "geometry:a", [
     ...entries,
     ...Array.from({ length: 10 }, (_, i) => entry(i + 15)),
   ]);
-  await expect.poll(() => readTimelinePosition("geometry:a")?.messageId).toBe(saved.messageId);
-  await frames(6);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:a")?.messageId).toBe(saved.messageId);
+  });
+  await advanceClock(96);
   const node = _fixture.listRef.current!.getScrollableNode()!;
-  await expect
-    .poll(
-      () => {
+  await vi.waitFor(() => {
+    expect(
+      (() => {
         const live = _fixture.listRef.current!.getState();
         const i = live.data.findIndex(
           (row: { message?: { id: string } }) => row.message?.id === saved.messageId,
@@ -140,10 +163,9 @@ it("restores the same message after switching threads with a saved at-end positi
                 saved.offsetWithinRow,
             )
           : Infinity;
-      },
-      { timeout: 5000 },
-    )
-    .toBeLessThanOrEqual(2);
+      })(),
+    ).toBeLessThanOrEqual(2);
+  });
 });
 
 it("captures the last scroll before an immediate thread switch", async () => {
@@ -152,18 +174,20 @@ it("captures the last scroll before an immediate thread switch", async () => {
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   await render(_fixture, "geometry:quick-switch", entries);
-  await expect.poll(() => readTimelinePosition("geometry:quick-switch")).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:quick-switch")).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
+  await advanceClock();
   const node = _fixture.listRef.current!.getScrollableNode()!;
   // No timer, polling, or animation frame between this gesture and navigation.
   node.scrollTop += 35;
   node.dispatchEvent(new Event("scroll"));
   const expectedOffset = node.scrollTop;
   await render(_fixture, "geometry:quick-other", [entry(100)]);
-  await frames(8);
+  await advanceClock(128);
   await render(_fixture, "geometry:quick-switch", entries);
-  await frames(16);
+  await advanceClock(256);
   expect(_fixture.listRef.current!.getScrollableNode()!.scrollTop).toBeCloseTo(expectedOffset, 0);
 });
 
@@ -176,9 +200,11 @@ it("flushes the latest captured position on pagehide before the storage debounce
     "geometry:pagehide",
     Array.from({ length: 20 }, (_, i) => entry(i)),
   );
-  await expect.poll(() => readTimelinePosition("geometry:pagehide")).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:pagehide")).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
+  await advanceClock();
   const node = _fixture.listRef.current!.getScrollableNode()!;
   node.scrollTop += 35;
   node.dispatchEvent(new Event("scroll"));
@@ -198,9 +224,11 @@ it("keeps a held thread's exact reading and follow receipt through scroll, pageh
   const key = "geometry:held-follow-receipt";
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   await render(_fixture, key, entries);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
+  await advanceClock();
   const captured = readTimelinePosition(key)!;
   const saved = { ...captured, atEnd: false, followingPromptId: "message-19" };
   rememberTimelinePosition(key, saved);
@@ -209,7 +237,7 @@ it("keeps a held thread's exact reading and follow receipt through scroll, pageh
   const node = _fixture.listRef.current!.getScrollableNode()!;
   node.scrollTop += 35;
   node.dispatchEvent(new Event("scroll"));
-  await frames();
+  await advanceClock();
   expect(readTimelinePosition(key)).toEqual(saved);
   window.dispatchEvent(new Event("pagehide"));
   expect(readTimelinePosition(key)).toEqual(saved);
@@ -241,10 +269,10 @@ it("does not offer a jump into reserved blank space but reports a hidden answer"
     onIsAtEndChange,
   };
   await render(_fixture, "geometry:reserved-end", [prompt], extra);
-  await frames(16);
+  await advanceClock(256);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
   await render(_fixture, "geometry:reserved-end", [prompt, answer("Short answer")], extra);
-  await frames(8);
+  await advanceClock(128);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
   // The send gate must agree with the end control even while padding remains.
   expect(
@@ -259,7 +287,7 @@ it("does not offer a jump into reserved blank space but reports a hidden answer"
     [prompt, answer("Long answer\n\n".repeat(100))],
     extra,
   );
-  await frames(8);
+  await advanceClock(128);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
@@ -274,7 +302,7 @@ it("never paints a cold thread at the beginning before positioning at its end", 
   );
   let visibleFrames = 0;
   for (let i = 0; i < 16; i++) {
-    await frames(1);
+    await advanceClock(16);
     const node = _fixture.listRef.current!.getScrollableNode()!;
     if (getComputedStyle(node).visibility !== "hidden") {
       visibleFrames++;
@@ -298,14 +326,14 @@ it("does not apply an unrelated offset when a transient saved row disappeared", 
     atEnd: false,
   });
   await render(_fixture, "geometry:transient", entries);
-  await expect
-    .poll(() =>
+  await vi.waitFor(() => {
+    expect(
       _fixture.listRef.current
         ?.getState()
         .data.some((row: { message?: { id: string } }) => row.message?.id === "message-7"),
-    )
-    .toBe(true);
-  await frames(12);
+    ).toBe(true);
+  });
+  await advanceClock(192);
   const state = _fixture.listRef.current!.getState();
   const index = state.data.findIndex(
     (row: { message?: { id: string } }) => row.message?.id === "message-7",
@@ -323,7 +351,9 @@ it("does not follow a growing answer even when the reader starts at the bottom",
 
   const entries = Array.from({ length: 12 }, (_, i) => entry(i));
   await render(_fixture, "geometry:bottom-growth", entries);
-  await expect.poll(() => readTimelinePosition("geometry:bottom-growth")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:bottom-growth")).toBeDefined();
+  });
   const node = _fixture.listRef.current!.getScrollableNode()!;
   const original = node.scrollTop;
   for (let i = 0; i < 20; i++) {
@@ -331,7 +361,7 @@ it("does not follow a growing answer even when the reader starts at the bottom",
       ...entries,
       ...Array.from({ length: i + 1 }, (_, n) => entry(n + 12)),
     ]);
-    await frames(2);
+    await advanceClock(32);
     expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
   }
 });
@@ -355,16 +385,18 @@ it("waits for older history before restoring a saved reading message", async () 
   await render(_fixture, "geometry:paged", recent, {
     loadEarlier: { loading: false, cursor: "page-2", onLoadEarlier: load },
   });
-  await expect.poll(() => load.mock.calls.length).toBe(1);
-  await frames();
+  await vi.waitFor(() => {
+    expect(load.mock.calls.length).toBe(1);
+  });
+  await advanceClock();
   expect(readTimelinePosition("geometry:paged")?.messageId).toBe(old.message.id);
   await render(_fixture, "geometry:paged", [
     ...Array.from({ length: 30 }, (_, i) => entry(i)),
     ...recent,
   ]);
-  await expect
-    .poll(
-      () => {
+  await vi.waitFor(() => {
+    expect(
+      (() => {
         const state = _fixture.listRef.current!.getState();
         const index = state.data.findIndex(
           (row: { message?: { id: string } }) => row.message?.id === old.message.id,
@@ -374,10 +406,9 @@ it("waits for older history before restoring a saved reading message", async () 
         return element
           ? Math.abs(element.getBoundingClientRect().top - node.getBoundingClientRect().top)
           : Infinity;
-      },
-      { timeout: 5000 },
-    )
-    .toBeLessThanOrEqual(2);
+      })(),
+    ).toBeLessThanOrEqual(2);
+  });
 });
 
 it("manual navigation cancels restoration while history is still loading", async () => {
@@ -397,26 +428,30 @@ it("manual navigation cancels restoration while history is still loading", async
   await render(_fixture, "geometry:cancel", recent, {
     loadEarlier: { loading: false, cursor: "older", onLoadEarlier: load },
   });
-  await expect.poll(() => load.mock.calls.length).toBe(1);
-  await frames();
+  await vi.waitFor(() => {
+    expect(load.mock.calls.length).toBe(1);
+  });
+  await advanceClock();
   const node = _fixture.listRef.current!.getScrollableNode()!;
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, bubbles: true }));
-  await _fixture.listRef.current!.scrollToOffset({ offset: 350, animated: false });
-  await frames();
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 350, animated: false }));
+  await advanceClock();
   const before = _fixture.listRef.current!.getState();
   const rowIndex = before.data.findIndex(
     (row: { message?: { id: string } }) => row.message?.id === "message-51",
   );
   const original = before.elementAtIndex(rowIndex)!.getBoundingClientRect().top;
   await render(_fixture, "geometry:cancel", recent, { loadEarlier: null });
-  await frames(10);
+  await advanceClock(160);
   expect(
     Math.abs(
       _fixture.listRef.current!.getState().elementAtIndex(rowIndex)!.getBoundingClientRect().top -
         original,
     ),
   ).toBeLessThanOrEqual(1);
-  await expect.poll(() => readTimelinePosition("geometry:cancel")?.messageId).not.toBe("message-1");
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:cancel")?.messageId).not.toBe("message-1");
+  });
 });
 
 it("keeps the saved reading position while a send is being placed", async () => {
@@ -425,22 +460,26 @@ it("keeps the saved reading position while a send is being placed", async () => 
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   await render(_fixture, "geometry:single-writer", entries);
-  await expect.poll(() => readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
+  });
+  await advanceClock();
   const saved = readTimelinePosition("geometry:single-writer")!;
   // While the placement is in flight, scrolling saves nothing: the record that
   // names its message stays (no raw record without one replaces it).
   await render(_fixture, "geometry:single-writer", entries, { timelinePositioningPending: true });
-  await _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
   _fixture.listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
-  await frames(6);
+  await advanceClock(96);
   expect(readTimelinePosition("geometry:single-writer")).toEqual(saved);
   // Once it is done, the reader's place is saved again, by message.
   await render(_fixture, "geometry:single-writer", entries, { timelinePositioningPending: false });
   _fixture.listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
-  await expect
-    .poll(() => readTimelinePosition("geometry:single-writer")?.offsetWithinRow)
-    .not.toBe(saved.offsetWithinRow);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:single-writer")?.offsetWithinRow).not.toBe(
+      saved.offsetWithinRow,
+    );
+  });
   expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
 });
 
@@ -463,8 +502,10 @@ it("keeps existing first-message framing and short-answer space through completi
   };
   const extra = { anchorMessageId: followUp.message.id, onAnchorReady };
   await render(_fixture, "geometry:anchor", [...entries, followUp], extra);
-  await expect.poll(() => positioned).toBe(true);
-  await frames(12);
+  await vi.waitFor(() => {
+    expect(positioned).toBe(true);
+  });
+  await advanceClock(192);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   const original = node.scrollTop;
   await render(
@@ -473,11 +514,11 @@ it("keeps existing first-message framing and short-answer space through completi
     [...entries, followUp, entry(9, "Short answer")],
     extra,
   );
-  await frames(8);
+  await advanceClock(128);
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
-  await expect
-    .poll(() => readTimelinePosition("geometry:anchor")?.anchorMessageId)
-    .toBe(followUp.message.id);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:anchor")?.anchorMessageId).toBe(followUp.message.id);
+  });
   const saved = readTimelinePosition("geometry:anchor")!;
   await _fixture.root0!.unmount();
   _fixture.host!.remove();
@@ -487,9 +528,9 @@ it("keeps existing first-message framing and short-answer space through completi
     ...extra,
     onAnchorReady: () => {},
   });
-  await expect
-    .poll(() => _fixture.listRef.current?.getScrollableNode()?.scrollTop)
-    .toBeCloseTo(original, 0);
+  await vi.waitFor(() => {
+    expect(_fixture.listRef.current?.getScrollableNode()?.scrollTop).toBeCloseTo(original, 0);
+  });
   expect(readTimelinePosition("geometry:anchor")?.messageId).toBe(saved.messageId);
 });
 
@@ -502,15 +543,17 @@ it("preserves the original near-bottom tolerance for lines hidden by the compose
     "geometry:strict-edge",
     Array.from({ length: 20 }, (_, i) => entry(i)),
   );
-  await expect.poll(() => readTimelinePosition("geometry:strict-edge")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:strict-edge")).toBeDefined();
+  });
   const list = _fixture.listRef.current!;
   const initial = list.getScrollableNode()!.scrollTop;
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(true);
-  await list.scrollToOffset({ offset: initial - 20, animated: false });
-  await frames();
+  await scroll(() => list.scrollToOffset({ offset: initial - 20, animated: false }));
+  await advanceClock();
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(true);
-  await list.scrollToOffset({ offset: initial - 80, animated: false });
-  await frames();
+  await scroll(() => list.scrollToOffset({ offset: initial - 80, animated: false }));
+  await advanceClock();
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(false);
 });
 
@@ -522,9 +565,11 @@ it("counts new answers below the reader once while streaming, then clears them o
   const onUnreadBelowChange = vi.fn();
   const extra = { onUnreadBelowChange };
   await render(_fixture, "geometry:unread", entries, extra);
-  await expect.poll(() => readTimelinePosition("geometry:unread")).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 250, animated: false });
-  await frames();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:unread")).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 250, animated: false }));
+  await advanceClock();
   const original = _fixture.listRef.current!.getScrollableNode()!.scrollTop;
   let answer = {
     ...entry(20),
@@ -532,20 +577,24 @@ it("counts new answers below the reader once while streaming, then clears them o
   };
   for (let chunk = 0; chunk < 12; chunk++) {
     answer = {
-      ...answer,
+      id: answer.id,
+      kind: answer.kind,
+      createdAt: answer.createdAt,
       message: {
         ...answer.message,
         text: answer.message.text + "\n\nAnother paragraph. ".repeat(4),
       },
     };
     await render(_fixture, "geometry:unread", [...entries, answer], extra);
-    await frames(2);
+    await advanceClock(32);
     expect(
       Math.abs(_fixture.listRef.current!.getScrollableNode()!.scrollTop - original),
     ).toBeLessThanOrEqual(1);
   }
-  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
-  await _fixture.listRef.current!.scrollToEnd({ animated: false });
+  await vi.waitFor(() => {
+    expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
   // A streaming answer shows nothing until its first lines appear (after a
   // short wait): an answer not yet seen is not read. Once they show at the
   // end, it is.
@@ -556,16 +605,20 @@ it("counts new answers below the reader once while streaming, then clears them o
         ?.style.getPropertyValue("--reveal-front") || "0",
     );
   // The reveal runs on the clock after its wait; a slow runner needs more than the default second.
-  await expect.poll(revealFront, { timeout: 5000 }).toBeGreaterThan(0);
-  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0], { timeout: 5000 }).toBe(0);
-  await _fixture.listRef.current!.scrollToOffset({ offset: 250, animated: false });
+  await vi.waitFor(() => {
+    expect(revealFront()).toBeGreaterThan(0);
+  });
+  await vi.waitFor(() => {
+    expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 250, animated: false }));
   await render(
     _fixture,
     "geometry:unread",
     [...entries, { ...answer, message: { ...answer.message, streaming: false } }],
     extra,
   );
-  await frames(5);
+  await advanceClock(80);
   expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
 });
 
@@ -575,7 +628,9 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
   await render(_fixture, "geometry:bounded", entries);
-  await expect.poll(() => readTimelinePosition("geometry:bounded")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:bounded")).toBeDefined();
+  });
   const node = _fixture.listRef.current!.getScrollableNode()!;
   const initial = node.scrollTop;
   let answer = {
@@ -590,7 +645,9 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
   const extra = { readingFollowPromptId: entries[9]!.message.id };
   for (let chunk = 0; chunk < 20; chunk++) {
     answer = {
-      ...answer,
+      id: answer.id,
+      kind: answer.kind,
+      createdAt: answer.createdAt,
       message: {
         ...answer.message,
         text:
@@ -599,7 +656,7 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
       },
     };
     await render(_fixture, "geometry:bounded", [...entries, answer], extra);
-    await frames(5);
+    await advanceClock(80);
   }
   const promptTextTop = () => {
     const state = _fixture.listRef.current!.getState();
@@ -610,7 +667,9 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
   };
   // The same eased reveal; a slow runner needs more than the default second.
-  await expect.poll(promptTextTop, { timeout: 5000 }).toBeLessThanOrEqual(25);
+  await vi.waitFor(() => {
+    expect(promptTextTop()).toBeLessThanOrEqual(25);
+  });
   expect(promptTextTop()).toBeGreaterThanOrEqual(23);
   expect(node.scrollTop).toBeGreaterThan(initial);
   const capped = node.scrollTop;
@@ -626,7 +685,7 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     ],
     extra,
   );
-  await frames(12);
+  await advanceClock(192);
   expect(Math.abs(node.scrollTop - capped)).toBeLessThanOrEqual(1);
 });
 
@@ -636,7 +695,9 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
   await render(_fixture, "geometry:bounded-cancel", entries);
-  await expect.poll(() => readTimelinePosition("geometry:bounded-cancel")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:bounded-cancel")).toBeDefined();
+  });
   const node = _fixture.listRef.current!.getScrollableNode()!;
   const answer = {
     ...entry(20),
@@ -652,10 +713,12 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
   // not the follow this test is about.
   const extra = { readingFollowPromptId: entries[9]!.message.id, isWorking: true };
   await render(_fixture, "geometry:bounded-cancel", [...entries, answer], extra);
-  await frames(3);
+  await advanceClock(48);
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: -80, bubbles: true }));
-  await _fixture.listRef.current!.scrollToOffset({ offset: node.scrollTop - 80, animated: false });
-  await frames(3);
+  await scroll(() =>
+    _fixture.listRef.current!.scrollToOffset({ offset: node.scrollTop - 80, animated: false }),
+  );
+  await advanceClock(48);
   const original = node.scrollTop;
   await render(
     _fixture,
@@ -666,7 +729,7 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
     ],
     extra,
   );
-  await frames(12);
+  await advanceClock(192);
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
 });
 
@@ -676,7 +739,9 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
   await render(_fixture, "geometry:fast-answer", entries);
-  await expect.poll(() => readTimelinePosition("geometry:fast-answer")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:fast-answer")).toBeDefined();
+  });
   const prompt = entry(10, "New question");
   const answer = {
     ...entry(11),
@@ -691,13 +756,13 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
     ...extra,
     timelinePositioningPending: true,
   });
-  await frames(4);
+  await advanceClock(64);
   const list = _fixture.listRef.current!;
   await render(_fixture, "geometry:fast-answer", [...entries, prompt, answer], extra);
-  // The reveal eases in over ~40 frames; a slow runner needs more than the default second.
-  await expect
-    .poll(
-      () => {
+  // Observe the prompt alignment reached by the controlled reveal.
+  await vi.waitFor(() => {
+    expect(
+      (() => {
         const state = list.getState();
         const answerIndex = state.data.findIndex(
           (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
@@ -708,10 +773,9 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
             .querySelector('[data-user-message-body="true"]')!
             .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
         );
-      },
-      { timeout: 5000 },
-    )
-    .toBeLessThanOrEqual(25);
+      })(),
+    ).toBeLessThanOrEqual(25);
+  });
   const state = list.getState();
   const answerIndex = state.data.findIndex(
     (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
@@ -730,18 +794,20 @@ it("retains the reading position when the same thread briefly has no loaded rows
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
   await render(_fixture, "geometry:reload-window", entries);
-  await expect.poll(() => readTimelinePosition("geometry:reload-window")).toBeDefined();
-  await _fixture.listRef.current!.scrollToOffset({ offset: 900, animated: false });
-  await expect
-    .poll(() => readTimelinePosition("geometry:reload-window")?.scrollOffset)
-    .toBeGreaterThan(800);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:reload-window")).toBeDefined();
+  });
+  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 900, animated: false }));
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:reload-window")?.scrollOffset).toBeGreaterThan(800);
+  });
   const saved = readTimelinePosition("geometry:reload-window")!;
   await render(_fixture, "geometry:reload-window", [], { positionHistoryLoading: true });
-  await frames();
+  await advanceClock();
   await render(_fixture, "geometry:reload-window", entries);
-  await expect
-    .poll(
-      () => {
+  await vi.waitFor(() => {
+    expect(
+      (() => {
         const list = _fixture.listRef.current!;
         const state = list.getState();
         const index = state.data.findIndex(
@@ -755,10 +821,9 @@ it("retains the reading position when the same thread briefly has no loaded rows
                 saved.offsetWithinRow,
             )
           : Infinity;
-      },
-      { timeout: 5000 },
-    )
-    .toBeLessThanOrEqual(2);
+      })(),
+    ).toBeLessThanOrEqual(2);
+  });
 });
 
 it("allows three of the answer's lines hidden, but not more, at different text sizes", async () => {
@@ -777,7 +842,9 @@ it("allows three of the answer's lines hidden, but not more, at different text s
     ...Array.from({ length: 20 }, (_, i) => entry(i)),
     answer,
   ]);
-  await expect.poll(() => readTimelinePosition("geometry:three-line-end")).toBeDefined();
+  await vi.waitFor(() => {
+    expect(readTimelinePosition("geometry:three-line-end")).toBeDefined();
+  });
   const list = _fixture.listRef.current!;
   const node = list.getScrollableNode()!;
   const inset = _fixture.base.contentInsetEndAdjustment;
@@ -785,13 +852,25 @@ it("allows three of the answer's lines hidden, but not more, at different text s
     const body = node.querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')!;
     body.style.fontSize = `${lineHeight / 1.5}px`;
     body.style.lineHeight = `${lineHeight}px`;
-    await frames(6);
+    await advanceClock(96);
+    // Native resize delivery is not driven by the controlled clock.
+    await vi.waitFor(() => {
+      const state = list.getState();
+      const answerIndex = state.data.findIndex(
+        (row: { message?: { id: string } }) => row.message?.id === answer.message.id,
+      );
+      const row = state.elementAtIndex(answerIndex);
+      expect(row).toBeInstanceOf(HTMLElement);
+      expect(state.sizeAtIndex(answerIndex)).toBe(row!.getBoundingClientRect().height);
+    });
     // Scroll offset at which the answer's text end sits exactly at the visible bottom.
     const state = list.getState();
     const atTextEnd = withReadingEnd(state, inset)!.contentLength - state.scrollLength;
     for (const hiddenLines of [0, 1, 2, 2.9, 3.3, 4]) {
-      await list.scrollToOffset({ offset: atTextEnd - lineHeight * hiddenLines, animated: false });
-      await frames(2);
+      await scroll(() =>
+        list.scrollToOffset({ offset: atTextEnd - lineHeight * hiddenLines, animated: false }),
+      );
+      await advanceClock(32);
       expect(
         readerAtReadingEnd(list.getState(), inset),
         JSON.stringify({ lineHeight, hiddenLines }),
@@ -915,20 +994,27 @@ it("remeasures pending handoff footer layout and clears end navigation through t
     );
   };
   await renderControlled(false);
-  await expect.poll(() => positionedThreadKey).toBe(key);
+  await vi.waitFor(() => {
+    expect(positionedThreadKey).toBe(key);
+  });
   // Production's StrictMode replays effect cleanup/setup before the first RAF.
   // A cancelled frame must not leave the only bookkeeping owner permanently busy.
-  await expect
-    .poll(() => reports.length, {
-      message: "Reader bookkeeping must resume after StrictMode effect replay.",
-    })
-    .toBeGreaterThan(0);
-  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
-  await frames();
+  await vi.waitFor(() => {
+    expect(
+      reports.length,
+      "Reader bookkeeping must resume after StrictMode effect replay.",
+    ).toBeGreaterThan(0);
+  });
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)).toBeDefined();
+  });
+  await advanceClock();
   const list = _fixture.listRef.current!;
   const viewport = list.getScrollableNode()!;
-  await list.scrollToOffset({ offset: 300, animated: false });
-  await expect.poll(() => _fixture.host!.querySelector("[data-reader-end-control]")).not.toBeNull();
+  await scroll(() => list.scrollToOffset({ offset: 300, animated: false }));
+  await vi.waitFor(() => {
+    expect(_fixture.host!.querySelector("[data-reader-end-control]")).not.toBeNull();
+  });
   const scrollBefore = viewport.scrollTop;
   const state = list.getState();
   const anchor = state.elementAtIndex(state.start)!;
@@ -936,7 +1022,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   const anchorBefore = anchor.getBoundingClientRect().top;
   for (const pending of [true, false, true]) {
     await renderControlled(pending);
-    await frames(8);
+    await advanceClock(128);
     expect(viewport.scrollTop).toBeCloseTo(scrollBefore, 0);
     expect(anchor.getBoundingClientRect().top).toBe(anchorBefore);
   }
@@ -945,26 +1031,33 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   // sends no scroll event. It still must produce fresh end/position bookkeeping.
   const reportCount = reports.length;
   await _fixtureAct(() => resizeFooter(160));
-  await expect
-    .poll(() => reports.length, {
-      message: JSON.stringify({ phase: "footer-only-reflow", reportCount, last: reports.at(-1) }),
-    })
-    .toBeGreaterThan(reportCount);
+  await vi.waitFor(() => {
+    expect(
+      reports.length,
+      JSON.stringify({ phase: "footer-only-reflow", reportCount, last: reports.at(-1) }),
+    ).toBeGreaterThan(reportCount);
+  });
   expect(viewport.scrollTop).toBeCloseTo(scrollBefore, 0);
   expect(reports.at(-1)?.atEnd, JSON.stringify(reports.at(-1))).toBe(false);
 
   const endControl = _fixture.host!.querySelector<HTMLButtonElement>("[data-reader-end-control]")!;
   endControl.click();
-  await expect
-    .poll(() => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop)
-    .toBeLessThanOrEqual(1);
-  await expect.poll(() => _fixture.host!.querySelector("[data-reader-end-control]")).toBeNull();
+  await vi.waitFor(() => {
+    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
+      1,
+    );
+  });
+  await vi.waitFor(() => {
+    expect(_fixture.host!.querySelector("[data-reader-end-control]")).toBeNull();
+  });
   const reached = reports.at(-1)!;
   expect(reached.measuredGap, JSON.stringify(reached)).not.toBeNull();
   expect(reached.measuredGap, JSON.stringify(reached)).toBeLessThanOrEqual(40);
   expect(reached.predicate, JSON.stringify(reached)).toBe(true);
   expect(reached.atEnd).toBe(true);
-  await expect.poll(() => readTimelinePosition(key)?.atEnd).toBe(true);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)?.atEnd).toBe(true);
+  });
 
   // Metadata may grow below the answer without becoming unread answer content
   // or moving the reader. The already-visible answer still owns being at end.
@@ -974,15 +1067,16 @@ it("remeasures pending handoff footer layout and clears end navigation through t
     .getBoundingClientRect().bottom;
   const endReportCount = reports.length;
   await _fixtureAct(() => resizeFooter(240));
-  await expect
-    .poll(() => reports.length, {
-      message: JSON.stringify({
+  await vi.waitFor(() => {
+    expect(
+      reports.length,
+      JSON.stringify({
         phase: "footer-growth-at-end",
         endReportCount,
         last: reports.at(-1),
       }),
-    })
-    .toBeGreaterThan(endReportCount);
+    ).toBeGreaterThan(endReportCount);
+  });
   expect(viewport.scrollTop).toBeCloseTo(endScroll, 0);
   expect(
     viewport.querySelector<HTMLElement>("[data-reading-end]")!.getBoundingClientRect().bottom,
@@ -1028,6 +1122,7 @@ function _createFixture() {
   return {
     listRef,
     base,
+    timers: undefined as ReturnType<typeof fakeTimers> | undefined,
     host: undefined! as HTMLDivElement | undefined,
     stack,
     cleanup,

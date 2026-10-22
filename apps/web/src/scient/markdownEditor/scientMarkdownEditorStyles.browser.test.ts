@@ -3,6 +3,7 @@ import _sourceContract1 from "../writing/findBar.css?raw";
 import _sourceContract2 from "../../index.css?raw";
 import _sourceContract3 from "../../components/files/FileMarkdownPreview.tsx?raw";
 import _sourceContract4 from "../../components/ChatMarkdown.tsx?raw";
+import tableRendererSource from "../../components/chat/MarkdownTable.tsx?raw";
 
 import { describe, expect, it } from "vite-plus/test";
 
@@ -27,13 +28,15 @@ describe("rich Markdown preview presentation parity", () => {
   it("retains the established preview table expansion and export controls", async () => {
     await using _fixture = _createFixture();
 
+    expect(previewRendererSource).toContain('from "./chat/MarkdownTable"');
+    expect(previewRendererSource).toContain("<MarkdownTable {...props} dir={tableDirection} />");
     for (const label of [
       '"Collapse table cells"',
       '"Expand table cells"',
       "Copy as Markdown",
       "Copy as CSV",
     ]) {
-      expect(previewRendererSource).toContain(label);
+      expect(tableRendererSource).toContain(label);
     }
   });
 

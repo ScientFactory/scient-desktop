@@ -135,11 +135,15 @@ Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
 `CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
 `ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
 hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
-(#14924) and the pressed wrap toggle (#13208) are ported. Returning the generic code block to
-`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Closed Mermaid fences render
+(#14924) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
+upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
-through `scient/presentation/ScientRichFence.tsx` in place of T3's
-`chat/MermaidDiagram.tsx`. `ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
+through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
+capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
+resource notices, theme snapshots and native exports around that renderer. The old Mermaid
+engine and isolated frame are removed, not retained as a fallback. Generic links, tables and media
+use upstream's extracted `chat/Markdown*` and `ChatMarkdownMedia` owners with marked Scient mounts.
+`ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
 names; every Scient edit there sits in a `SCIENT-FORK` region that names its owner. The Copy
 message rich flavour reads chat's Markdown through `scient/clipboard/chatMarkdownPipeline.ts`,
 which imports one marked export list from `ChatMarkdown.tsx`; math copy lives in

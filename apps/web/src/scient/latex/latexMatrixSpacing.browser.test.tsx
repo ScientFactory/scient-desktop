@@ -1,4 +1,5 @@
 import { render as _fixtureRender, type Screen } from "../../../test/render";
+import { observeLatexSelectionPresentation } from "./latexSelectionPresentation.testkit";
 import { createRef, useState, type ReactNode } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
@@ -24,10 +25,6 @@ import { clearVisualDraft } from "./visualDrafts";
 let published = "";
 
 const draftKey = "synthetic-matrix-spacing-qualification";
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
@@ -35,7 +32,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
   _fixture.root0 = undefined;
   clearVisualDraft(draftKey);
-  await frame();
 }
 
 async function mount(_fixture: _Fixture, value: string, display = true) {
@@ -48,6 +44,9 @@ async function mount(_fixture: _Fixture, value: string, display = true) {
   document.body.append(_fixture.host);
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  _fixture.selectionPresentation = _fixture.stack.use(
+    observeLatexSelectionPresentation(_fixture.host),
   );
   await _fixture.root0.rerender(
     <LatexMathField
@@ -76,7 +75,7 @@ async function mount(_fixture: _Fixture, value: string, display = true) {
   const math = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
   await userEvent.click(math);
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   return math;
 }
 
@@ -146,7 +145,7 @@ it.each(["matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix"] as con
     math.executeCommand("removeColumn");
     expect(matrix(math, environment).colCount).toBe(3);
     spaced(math, 4, environment);
-    await frame();
+    await _fixture.selectionPresentation!.wait();
     expect(_fixture.handle.current!.flush()).toBe(true);
     await expect.poll(() => published).toBe(math.getValue("latex-without-placeholders"));
     math.setValue(published);
@@ -196,7 +195,7 @@ it("does not modify compact, inline, or author-defined matrices on mount or when
 
   const math = await mount(_fixture, String.raw`\begin{bmatrix}a&b\\c&d\end{bmatrix}`);
   const original = math.getValue();
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   expect(math.getValue()).toBe(original);
   cell(math);
   math.executeCommand("addRowAfter");
@@ -299,6 +298,9 @@ Before.
       />
     );
   }
+  _fixture.selectionPresentation = _fixture.stack.use(
+    observeLatexSelectionPresentation(_fixture.host),
+  );
   await _fixture.root0.rerender(<Harness />);
   await page.getByText("Before.", { exact: true }).click();
   await page.getByRole("button", { name: "Math", exact: true }).click();
@@ -313,7 +315,7 @@ Before.
   spaced(math, 3);
   cell(math);
   math.insert("7");
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await expect.poll(() => finish?.()).toBe(true);
   // Slow CI runners have exceeded the 1 s default here; no edit is lost.
   await expect.poll(() => published, { timeout: 5000 }).toContain("[0.12 em]");
@@ -325,15 +327,15 @@ Before.
   const editing = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   await userEvent.click(editing);
   cell(editing);
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await expect.poll(() => editing.matches(":focus-within")).toBe(true);
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
   await expect
     .poll(() => matrix(_fixture.host!.querySelector<MathfieldElement>("math-field")!).rowCount)
     .toBe(4);
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await expect.poll(() => published.match(/\\\\\[0\.12\s*em\]/gu)?.length).toBe(3);
-  await frame();
+  await _fixture.selectionPresentation!.wait();
   await userEvent.keyboard("{Control>}z{/Control}");
   await expect
     .poll(
@@ -362,6 +364,9 @@ Before.
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
+  _fixture.selectionPresentation = _fixture.stack.use(
+    observeLatexSelectionPresentation(_fixture.host),
+  );
   await _fixture.root0.rerender(<Harness />);
   await expect.poll(() => _fixture.host?.querySelector(".scient-latex-mathfield")).toBeTruthy();
   await userEvent.click(_fixture.host.querySelector<HTMLElement>(".scient-latex-mathfield")!);
@@ -380,6 +385,9 @@ function _createFixture() {
     handle,
     host: undefined! as HTMLDivElement | undefined,
     stack,
+    selectionPresentation: undefined as
+      | ReturnType<typeof observeLatexSelectionPresentation>
+      | undefined,
     cleanup,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {

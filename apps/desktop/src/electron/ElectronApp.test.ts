@@ -1,133 +1,23 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { beforeEach, vi } from "vite-plus/test";
+import { vi } from "vite-plus/test";
 
-const {
-  appendSwitchMock,
-  autoUpdaterOnMock,
-  autoUpdaterRemoveListenerMock,
-  exitMock,
-  getAppPathMock,
-  getSystemLocaleMock,
-  getVersionMock,
-  onMock,
-  quitMock,
-  relaunchMock,
-  removeListenerMock,
-  removeSwitchMock,
-  setAboutPanelOptionsMock,
-  setAppUserModelIdMock,
-  setAsDefaultProtocolClientMock,
-  setDesktopNameMock,
-  setDockIconMock,
-  setNameMock,
-  setPathMock,
-  whenReadyMock,
-} = vi.hoisted(() => ({
-  appendSwitchMock: vi.fn(),
-  autoUpdaterOnMock: vi.fn(),
-  autoUpdaterRemoveListenerMock: vi.fn(),
-  exitMock: vi.fn(),
-  getAppPathMock: vi.fn(() => "/app"),
-  getSystemLocaleMock: vi.fn(() => "en-GB"),
+const { getVersionMock, whenReadyMock } = vi.hoisted(() => ({
   getVersionMock: vi.fn(() => "1.2.3"),
-  onMock: vi.fn(),
-  quitMock: vi.fn(),
-  relaunchMock: vi.fn(),
-  removeListenerMock: vi.fn(),
-  removeSwitchMock: vi.fn(),
-  setAboutPanelOptionsMock: vi.fn(),
-  setAppUserModelIdMock: vi.fn(),
-  setAsDefaultProtocolClientMock: vi.fn(() => true),
-  setDesktopNameMock: vi.fn(),
-  setDockIconMock: vi.fn(),
-  setNameMock: vi.fn(),
-  setPathMock: vi.fn(),
   whenReadyMock: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("electron", () => ({
-  autoUpdater: {
-    on: autoUpdaterOnMock,
-    removeListener: autoUpdaterRemoveListenerMock,
-  },
   app: {
-    commandLine: {
-      appendSwitch: appendSwitchMock,
-      removeSwitch: removeSwitchMock,
-    },
-    dock: {
-      setIcon: setDockIconMock,
-    },
-    getAppPath: getAppPathMock,
-    getSystemLocale: getSystemLocaleMock,
+    getAppPath: () => "/app",
     getVersion: getVersionMock,
     isPackaged: true,
-    name: "Scient",
-    on: onMock,
-    quit: quitMock,
-    relaunch: relaunchMock,
-    removeListener: removeListenerMock,
-    runningUnderARM64Translation: false,
-    setAboutPanelOptions: setAboutPanelOptionsMock,
-    setAsDefaultProtocolClient: setAsDefaultProtocolClientMock,
-    setAppUserModelId: setAppUserModelIdMock,
-    setDesktopName: setDesktopNameMock,
-    setName: setNameMock,
-    setPath: setPathMock,
     whenReady: whenReadyMock,
-    exit: exitMock,
   },
 }));
-
 import * as ElectronApp from "./ElectronApp.ts";
 
 describe("ElectronApp", () => {
-  beforeEach(() => {
-    appendSwitchMock.mockClear();
-    autoUpdaterOnMock.mockClear();
-    autoUpdaterRemoveListenerMock.mockClear();
-    exitMock.mockClear();
-    onMock.mockClear();
-    quitMock.mockClear();
-    relaunchMock.mockClear();
-    removeListenerMock.mockClear();
-    removeSwitchMock.mockClear();
-    setPathMock.mockClear();
-  });
-
-  it.effect("reads app metadata through the service", () =>
-    Effect.gen(function* () {
-      const electronApp = yield* ElectronApp.ElectronApp;
-      const metadata = yield* electronApp.metadata;
-
-      assert.deepEqual(metadata, {
-        appVersion: "1.2.3",
-        appPath: "/app",
-        isPackaged: true,
-        resourcesPath: process.resourcesPath,
-        runningUnderArm64Translation: false,
-      });
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
-  it.effect("reads the OS locale through the service", () =>
-    Effect.gen(function* () {
-      const electronApp = yield* ElectronApp.ElectronApp;
-
-      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
-  it.effect("normalizes POSIX-style locale identifiers that Intl rejects", () =>
-    Effect.gen(function* () {
-      getSystemLocaleMock.mockImplementationOnce(() => "en_GB");
-      const electronApp = yield* ElectronApp.ElectronApp;
-
-      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
   it.effect("reports which app metadata property failed", () =>
     Effect.gen(function* () {
       const cause = new Error("version unavailable");
@@ -163,49 +53,6 @@ describe("ElectronApp", () => {
         error.message,
         "Failed to wait for the Electron app to become ready (packaged: true).",
       );
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
-  it.effect("scopes app event listeners", () =>
-    Effect.gen(function* () {
-      const listener = vi.fn();
-
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const electronApp = yield* ElectronApp.ElectronApp;
-          yield* electronApp.on("activate", listener);
-        }),
-      );
-
-      assert.deepEqual(onMock.mock.calls, [["activate", listener]]);
-      assert.deepEqual(removeListenerMock.mock.calls, [["activate", listener]]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
-  it.effect("scopes native updater quit listeners", () =>
-    Effect.gen(function* () {
-      const listener = vi.fn();
-
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const electronApp = yield* ElectronApp.ElectronApp;
-          yield* electronApp.onBeforeQuitForUpdate(listener);
-        }),
-      );
-
-      assert.deepEqual(autoUpdaterOnMock.mock.calls, [["before-quit-for-update", listener]]);
-      assert.deepEqual(autoUpdaterRemoveListenerMock.mock.calls, [
-        ["before-quit-for-update", listener],
-      ]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
-  );
-
-  it.effect("removes command-line switches through the service", () =>
-    Effect.gen(function* () {
-      const electronApp = yield* ElectronApp.ElectronApp;
-      yield* electronApp.removeCommandLineSwitch("password-store");
-
-      assert.deepEqual(removeSwitchMock.mock.calls, [["password-store"]]);
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });

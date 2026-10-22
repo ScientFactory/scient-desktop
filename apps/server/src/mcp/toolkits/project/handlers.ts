@@ -9,6 +9,9 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   newCommandId,
@@ -75,9 +78,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     (input) => input,
     (input, { runtimeMode, interactionMode }) =>
       Effect.gen(function* () {
-        yield* mutation;
         const context = yield* readCaller();
         const { caller } = context;
+        if (caller !== undefined) yield* mutation;
         const commandId = yield* newCommandId();
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
@@ -143,10 +146,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
+        // A caller outside a thread has nothing to inherit, so it starts with the
+        // project's effective defaults, as the composer does. Its mode stays
+        // within the ceiling it was approved with.
+        const projectDefaults =
+          caller === undefined
+            ? yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.flatMap((settings) => settings.getSettings),
+                Effect.mapError(unavailable),
+                Effect.flatMap((settings) =>
+                  Effect.map(
+                    readProject,
+                    (project) => resolveProjectSettings(settings, projectId, project).settings,
+                  ),
+                ),
+              )
+            : undefined;
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
+          projectDefaults?.defaultModelSelection ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -154,13 +173,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        const startedRuntimeMode =
+          projectDefaults !== undefined && input.runtimeMode === undefined
+            ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
+                Effect.orElseSucceed(() => runtimeMode),
+              )
+            : runtimeMode;
+        // Thread credentials retain Scient's live full-access/default fence;
+        // an approved local MCP client has its own explicit session ceiling.
+        if (caller !== undefined) yield* mutation;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
           title: input.title,
           modelSelection,
-          runtimeMode,
+          runtimeMode: startedRuntimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
           ...(input.message === undefined && attachments.length === 0

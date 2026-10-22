@@ -171,5 +171,5 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
     expect(total.bursts).toBeGreaterThan(150);
     expect(total.deferrals).toBeGreaterThan(15);
     expect(total.viewRefusals).toBeGreaterThan(10);
-  }, 60_000);
+  });
 });

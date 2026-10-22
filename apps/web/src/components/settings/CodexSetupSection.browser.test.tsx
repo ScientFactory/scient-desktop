@@ -290,7 +290,7 @@ describe("CodexSetupSection provider-management scope", () => {
     const callbackInput = _fixture.container.querySelector<HTMLInputElement>(
       '[aria-label="ChatGPT sign-in redirect URL"]',
     )!;
-    await act(async () => userEvent.fill(callbackInput, "http://localhost/callback?code=test"));
+    await userEvent.fill(callbackInput, "http://localhost/callback?code=test");
     const form = _fixture.container.querySelector("form")!;
     const submit = () =>
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
