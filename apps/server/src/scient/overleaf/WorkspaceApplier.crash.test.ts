@@ -37,6 +37,8 @@ async function put(cwd: string, files: Record<string, string>) {
 }
 
 interface Scenario {
+  /** The last synchronized files, when they differ from what the folder held. */
+  readonly base?: Record<string, string>;
   readonly captured: Record<string, string>;
   readonly target: Record<string, string>;
   readonly renames?: WorkspaceApplyPlan["renames"];
@@ -67,7 +69,7 @@ async function crashAt(
     killAt,
     occurrence,
     plan: {
-      base: revisions(scenario.captured),
+      base: revisions(scenario.base ?? scenario.captured),
       remote: revisions(scenario.target),
       captured: revisions(scenario.captured),
       target: Object.fromEntries(
@@ -79,7 +81,13 @@ async function crashAt(
       renames: scenario.renames ?? [],
       conflicts: [
         {
-          paths: [...new Set([...Object.keys(scenario.captured), ...Object.keys(scenario.target)])],
+          paths: [
+            ...new Set([
+              ...Object.keys(scenario.base ?? {}),
+              ...Object.keys(scenario.captured),
+              ...Object.keys(scenario.target),
+            ]),
+          ],
           types: ["content"],
           origins: ["merge"],
         },
@@ -130,7 +138,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
   );
 
   // A peer is checked by what stands there, not only by its bytes.
-  it.live.each(["empty folder", "folder with a file", "link"] as const)(
+  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
     "publishes nothing when a peer that should be absent becomes a %s",
     (occupant) =>
       fixture(async (h) => {
@@ -142,7 +150,8 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
         if (occupant === "link") {
           await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "B");
           await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
-        } else {
+        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+        else {
           await NodeFSP.mkdir(peer);
           if (occupant === "folder with a file") await put(peer, { "later.tex": "later" });
         }
@@ -152,6 +161,89 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
         await h.apply("crash").catch(() => undefined);
         expect(await read(h.cwd, "a.tex")).toBeNull();
       }),
+  );
+
+  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
+    "publishes nothing when a peer that should be a file becomes a %s",
+    (occupant) =>
+      fixture(async (h) => {
+        await crashAt(h, "prepared", {
+          captured: { "a.tex": "base", "z.tex": "guard" },
+          target: { "a.tex": "remote", "z.tex": "guard" },
+        });
+        const peer = NodePath.join(h.cwd, "z.tex");
+        await NodeFSP.unlink(peer);
+        if (occupant === "link") {
+          await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
+          await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
+        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+        else {
+          await NodeFSP.mkdir(peer);
+          if (occupant === "folder with a file") await put(peer, { foreign: "foreign" });
+        }
+        await h.restart();
+        await editorReads(h);
+        expect(await read(h.cwd, "a.tex")).toBe("base");
+      }),
+  );
+
+  it.live("publishes nothing when a file blocks the folder of a path the group adds", () =>
+    fixture(async (h) => {
+      await crashAt(h, "prepared", {
+        captured: { "a.tex": "base" },
+        target: { "a.tex": "remote", "z/new.tex": "new" },
+      });
+      await put(h.cwd, { z: "foreign" });
+      await h.restart();
+      await editorReads(h);
+      expect(await read(h.cwd, "a.tex")).toBe("base");
+    }),
+  );
+
+  it.live("publishes nothing when a folder the group creates appears early with other files", () =>
+    fixture(async (h) => {
+      await crashAt(h, "prepared", {
+        base: { "a.tex": "base", z: "old" },
+        captured: { "a.tex": "base" },
+        target: { "a.tex": "remote", "z/deep/new.tex": "new" },
+      });
+      await put(h.cwd, { "z/foreign.tex": "foreign" });
+      await h.restart();
+      await editorReads(h);
+      expect(await read(h.cwd, "a.tex")).toBe("base");
+    }),
+  );
+
+  it.live.each(["notes/old.tex", "notes/deep/old.tex"])(
+    "removes nothing from a folder the group empties when another file appears in it (%s)",
+    (old) =>
+      fixture(async (h) => {
+        await crashAt(h, "prepared", {
+          captured: { [old]: "old", "a.tex": "base" },
+          target: { notes: "remote", "a.tex": "remote" },
+        });
+        await put(h.cwd, { "notes/foreign.tex": "foreign" });
+        await h.restart();
+        await editorReads(h);
+        expect(await read(h.cwd, old)).toBe("old");
+        expect(await read(h.cwd, "notes/foreign.tex")).toBe("foreign");
+      }),
+  );
+
+  // The bytes are what was reviewed; a hard link elsewhere does not change them.
+  it.live("accepts a peer replaced by a hard link with the same bytes", () =>
+    fixture(async (h) => {
+      await crashAt(h, "prepared", {
+        captured: { "a.tex": "base", "z.tex": "guard" },
+        target: { "a.tex": "remote", "z.tex": "guard" },
+      });
+      await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
+      await NodeFSP.unlink(NodePath.join(h.cwd, "z.tex"));
+      await NodeFSP.link(NodePath.join(h.root, "outside"), NodePath.join(h.cwd, "z.tex"));
+      await h.restart();
+      expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+      expect(await read(h.root, "outside")).toBe("guard");
+    }),
   );
 
   it.live("publishes nothing when a peer's folder is replaced by a link to the same bytes", () =>

@@ -80,6 +80,7 @@ const Journal = Schema.Struct({
         path: Schema.String,
         revision: Schema.NullOr(Schema.String),
         directory: Schema.optionalKey(Schema.Literal(true)),
+        only: Schema.optionalKey(Schema.Array(Schema.String)),
       }),
     ),
   ),
@@ -141,17 +142,20 @@ export interface RetainedMutationInput {
   readonly destination?: string;
   readonly guardMaxBytes?: number;
   /**
-   * Other paths, relative to `cwd`, published together with this one. Each must
-   * still be a regular file with `revision`, or, for a null revision, hold
-   * nothing (or a folder, when `directory` says the group puts one there), with
-   * no link on the way, when this file becomes visible. A change before then
-   * skips the mutation, so a group never lands half-applied. Kept in the
-   * record, so recovery after a crash checks them too.
+   * Other paths, relative to `cwd`, published together with this one, as they
+   * must stand when this file becomes visible: a regular file with `revision`,
+   * or for a null revision nothing at all. A folder stands there only with
+   * `directory`, and then holds nothing but the paths in `only` when given (a
+   * folder the group removes). On the way, no link, and a file only where it is
+   * one of these paths or this one. A change before then skips the mutation, so
+   * a group never lands half-applied. Kept in the record, so recovery after a
+   * crash checks them too.
    */
   readonly peerGuards?: ReadonlyArray<{
     readonly path: string;
     readonly revision: string | null;
     readonly directory?: true;
+    readonly only?: ReadonlyArray<string>;
   }>;
   readonly expectedMutationEpoch?: string;
   readonly retentionLimitBytes?: number | null;
@@ -308,11 +312,13 @@ export async function fileIdentity(file: string): Promise<Identity | null> {
 /**
  * What stands at `path` below `root`, found without following any link: a link
  * anywhere on the way, or a special file, is `other`. A file where a folder on
- * the way should be means nothing can stand at `path`.
+ * the way should be means nothing can stand at `path`, but only if that file is
+ * one of `planned`; any other file there is `other`.
  */
 async function peerEntry(
   root: string,
   path: string,
+  planned: ReadonlySet<string>,
 ): Promise<
   | { readonly kind: "absent" | "directory" | "other" }
   | { readonly kind: "file"; readonly revision: string | null }
@@ -328,14 +334,39 @@ async function peerEntry(
     if (stat === null) return { kind: "absent" };
     if (stat.isSymbolicLink()) return { kind: "other" };
     if (index < segments.length - 1) {
-      if (!stat.isDirectory()) return { kind: "absent" };
-      continue;
+      if (stat.isDirectory()) continue;
+      return planned.has(segments.slice(0, index + 1).join("/"))
+        ? { kind: "absent" }
+        : { kind: "other" };
     }
     if (stat.isDirectory()) return { kind: "directory" };
     if (!stat.isFile()) return { kind: "other" };
     return { kind: "file", revision: await fileRevision(current) };
   }
   return { kind: "other" };
+}
+/**
+ * Whether the folder `path` below `root` holds nothing but `only`, the folders
+ * leading to them included, without following links.
+ */
+async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
+  const allowed = new Set(only);
+  const folders = new Set(
+    only.flatMap((name) => {
+      const segments = name.split("/");
+      return segments.slice(1).map((_, index) => segments.slice(0, index + 1).join("/"));
+    }),
+  );
+  const pending = [path];
+  for (let folder = pending.pop(); folder !== undefined; folder = pending.pop()) {
+    const entries = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
+    for (const entry of entries) {
+      const name = `${folder}/${entry.name}`;
+      if (entry.isDirectory() && folders.has(name)) pending.push(name);
+      else if (!(entry.isFile() && allowed.has(name))) return false;
+    }
+  }
+  return true;
 }
 export async function fileRevision(file: string): Promise<string | null> {
   let handle;
@@ -915,12 +946,19 @@ async function run(
     return snapshot.revision === record.expected;
   };
   const peersIntact = async () => {
+    const root = input.binding.rootPath;
+    const planned = new Set([
+      NodePath.relative(root, target),
+      ...(record.peerGuards ?? []).map((peer) => peer.path),
+    ]);
     for (const peer of record.peerGuards ?? []) {
-      const entry = await peerEntry(input.binding.rootPath, peer.path);
+      const entry = await peerEntry(root, peer.path, planned);
       if (peer.revision !== null) {
         if (entry.kind !== "file" || entry.revision !== peer.revision) return false;
-      } else if (entry.kind !== "absent" && !(entry.kind === "directory" && peer.directory))
-        return false;
+      } else if (entry.kind === "directory") {
+        if (!peer.directory) return false;
+        if (peer.only && !(await holdsOnly(root, peer.path, peer.only))) return false;
+      } else if (entry.kind !== "absent") return false;
     }
     return true;
   };

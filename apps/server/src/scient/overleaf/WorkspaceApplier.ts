@@ -553,23 +553,35 @@ export const make = (hooks: ApplierHooks = {}) =>
                 // steps before this one applied, later ones still as captured. The record
                 // keeps them, so a crash's recovery cannot publish into a changed group.
                 const position = ordered.indexOf(name);
-                // A folder may stand at a guard only where the plan has paths below it.
+                const expected = (guard: string) =>
+                  (!unit.includes(guard) || ordered.indexOf(guard) < position
+                    ? ownValue(state.plan.target, guard)?.revision
+                    : ownValue(state.plan.captured, guard)) ?? null;
                 const planned = [
-                  ...Object.keys(state.plan.captured),
-                  ...Object.keys(state.plan.target),
+                  ...new Set([
+                    ...Object.keys(state.plan.captured),
+                    ...Object.keys(state.plan.target),
+                  ]),
                 ];
                 const peerGuards = state.plan.guards[unitIndex]!.filter(
                   (guard) => guard !== name,
-                ).map((guard) => ({
-                  path: guard,
-                  revision:
-                    (!unit.includes(guard) || ordered.indexOf(guard) < position
-                      ? ownValue(state.plan.target, guard)?.revision
-                      : ownValue(state.plan.captured, guard)) ?? null,
-                  ...(planned.some((path) => path.startsWith(`${guard}/`))
-                    ? { directory: true as const }
-                    : {}),
-                }));
+                ).map((guard) => {
+                  const below = planned.filter((path) => path.startsWith(`${guard}/`));
+                  // A folder stands here now only while it holds a file the plan still
+                  // keeps or has already written, or this step's own file. One the plan
+                  // empties for good may hold nothing but the files it removes.
+                  const folder =
+                    name.startsWith(`${guard}/`) || below.some((path) => expected(path) !== null);
+                  const removed = !below.some((path) => ownValue(state.plan.target, path));
+                  return {
+                    path: guard,
+                    revision: expected(guard),
+                    ...(folder ? { directory: true as const } : {}),
+                    ...(folder && removed
+                      ? { only: below.filter((path) => ownValue(state.plan.captured, path)) }
+                      : {}),
+                  };
+                });
                 const args = {
                   cwd: state.cwd,
                   relativePath: name,
