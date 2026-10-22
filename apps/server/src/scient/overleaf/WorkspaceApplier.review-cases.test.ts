@@ -13,7 +13,8 @@ import * as Effect from "effect/Effect";
 import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { advanceBase } from "./syncRules.ts";
-import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
+import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
+import { make, type WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 
 const canPublish = await nativePublicationHost();
@@ -763,6 +764,42 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
       );
     });
 
+    // The file layer binds the root it finds; only the applier knows the root it planned for.
+    it.live("refuses a root replaced by a regular folder at the file layer's entry", () =>
+      fixture(async (h) => {
+        await put(h.cwd, { "a.tex": "base" });
+        let once = true;
+        const substituting = {
+          ...h.files,
+          replaceFileRetained: (input: Parameters<typeof h.files.replaceFileRetained>[0]) =>
+            Effect.gen(function* () {
+              if (once) {
+                once = false;
+                yield* Effect.promise(async () => {
+                  await NodeFSP.rename(h.cwd, `${h.cwd}-old`);
+                  await put(h.cwd, { "a.tex": "base" });
+                });
+              }
+              return yield* h.files.replaceFileRetained(input);
+            }),
+        };
+        const applier = await h.run(
+          make().pipe(Effect.provideService(WorkspaceFileSystem, substituting)),
+        );
+        await expect(
+          h.run(
+            applier.apply({
+              cwd: h.cwd,
+              applicationDirectory: h.owner,
+              id: "substituted-root",
+              plan: plan({ "a.tex": "base" }, { "a.tex": "remote" }),
+            }),
+          ),
+        ).rejects.toBeTruthy();
+        expect(await read(h.cwd, "a.tex")).toBe("base");
+      }),
+    );
+
     it.live("does not confuse manuscript names with Object.prototype", () =>
       fixture(async (h) => {
         await put(h.cwd, { constructor: "local", toString: "base" });
@@ -821,7 +858,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
       );
     });
 
-    it.live("keeps a local file's executable bit whether or not its bytes change", () =>
+    it.live("keeps an unchanged file's executable bit while another file changes", () =>
       fixture(async (h) => {
         await put(h.cwd, { "main.tex": "base", latexmkrc: "$pdf_mode = 1;" });
         await NodeFSP.chmod(NodePath.join(h.cwd, "latexmkrc"), 0o755);
@@ -858,20 +895,35 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             "locked",
             plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
           );
-          await started;
-          const save = h.run(
-            Effect.result(
-              h.files.writeFile({
-                cwd: h.cwd,
-                relativePath: "main.tex",
-                contents: "editor draft",
-                expectedRevision: bytesRevision(bytes("base")),
-              }),
-            ),
-          );
-          release();
-          await applying;
-          expect((await save)._tag).toBe("Failure");
+          try {
+            await started;
+            const save = h.run(
+              Effect.result(
+                h.files.writeFile({
+                  cwd: h.cwd,
+                  relativePath: "main.tex",
+                  contents: "editor draft",
+                  expectedRevision: bytesRevision(bytes("base")),
+                }),
+              ),
+            );
+            // While the applier holds the lock the save cannot finish; without the lock it
+            // would, since the file still holds the revision the save expects.
+            const whileHeld = await Promise.race([
+              save.then(() => "finished"),
+              h.run(Effect.as(Effect.sleep("1 second"), "waiting")),
+            ]);
+            expect(whileHeld).toBe("waiting");
+            release();
+            await applying;
+            expect(await save).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "WorkspaceFileRevisionConflictError" },
+            });
+          } finally {
+            release();
+            await applying.catch(() => undefined);
+          }
           expect(await read(h.cwd, "main.tex")).toBe("incoming");
           await h.run(
             h.files.writeFile({
