@@ -54,8 +54,10 @@ export const LATEX_STATE_LOCATION_FILE = "tex-location.json";
 const PRIVATE_FOLDER_PATTERN = /^scient-latex-[0-9a-f]{16}$/u;
 const TOOL_TIMEOUT = "10 seconds";
 const TOOL_MAX_OUTPUT_BYTES = 64 * 1024;
-/** Server start waits for this at most; past it, the profile folder is used. */
-const RESOLVE_TIMEOUT = "30 seconds";
+/** Server start waits this long for the folder; past it, the profile one is used. */
+const FOLDER_TIMEOUT = "30 seconds";
+/** And this long for moving earlier state; whatever is left moves next start. */
+const CARRY_OVER_TIMEOUT = "30 seconds";
 /**
  * What earlier builds left that is worth keeping: build evidence and the
  * SyncTeX indexes of published PDFs. Everything else there is rebuilt.
@@ -184,6 +186,13 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         const name = `scient-latex-${NodeCrypto.randomBytes(8).toString("hex")}`;
         const staging = path.join(latexDir, `.${name}`);
         const directory = path.join(programData, name);
+        // What an interrupted earlier attempt left in the profile.
+        for (const entry of yield* fileSystem.readDirectory(latexDir)) {
+          if (!entry.startsWith(".scient-latex-")) continue;
+          yield* fileSystem
+            .remove(path.join(latexDir, entry), { recursive: true, force: true })
+            .pipe(Effect.ignoreCause());
+        }
         // Not recursive: an existing folder is refused rather than adopted.
         yield* fileSystem.makeDirectory(staging);
         let moved = false;
@@ -211,7 +220,10 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
           });
           return directory;
         }).pipe(
-          Effect.onError(() =>
+          // On failure only, and interruptible: a removal that hangs must not
+          // hold server start past its timeout. A folder an interrupted
+          // attempt moved into ProgramData stays, empty and private.
+          Effect.tapError(() =>
             fileSystem
               .remove(moved ? directory : staging, { recursive: true, force: true })
               .pipe(Effect.ignoreCause()),
@@ -245,7 +257,7 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         { discard: true },
       );
 
-    return yield* Effect.gen(function* () {
+    const findOrMakeFolder = Effect.gen(function* () {
       const programData =
         environmentValue(environment, "ProgramData") ??
         environmentValue(environment, "ALLUSERSPROFILE");
@@ -266,15 +278,22 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         recorded !== null &&
         isPrivateLatexStateFolder({ directory: recorded.directory, programData, path }) &&
         (yield* folderIdentity(recorded.directory)) === recorded.identity;
-      const directory = reusable ? recorded.directory : yield* makePrivateFolder(programData);
-      yield* carryOver(directory);
-      return directory;
+      return reusable ? recorded.directory : yield* makePrivateFolder(programData);
     }).pipe(
       Effect.timeoutOrElse({
-        duration: RESOLVE_TIMEOUT,
+        duration: FOLDER_TIMEOUT,
         orElse: () =>
           Effect.fail(new LatexStateLocationError({ detail: "Finding the folder took too long." })),
       }),
+    );
+
+    return yield* Effect.gen(function* () {
+      const directory = yield* findOrMakeFolder;
+      // Once the folder is recorded it is the one in use, however the move of
+      // earlier state goes: falling back now would split new state between two.
+      yield* carryOver(directory).pipe(Effect.timeoutOption(CARRY_OVER_TIMEOUT));
+      return directory;
+    }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("scient latex state stays in the profile folder", {
           latexDir,

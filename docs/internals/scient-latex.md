@@ -755,9 +755,13 @@ later start reuses it only if the path is a direct child of `%ProgramData%` with
 that name pattern and the same real folder (not a link) is still there; a folder
 recreated under the name has a different identity and is ignored. Build evidence
 and SyncTeX indexes in the profile folder move across entry by entry, never over
-an existing entry, and anything left moves on a later start. If any step fails,
-or resolving takes more than 30 seconds, the profile `latexDir` stays in use,
-which is the earlier behavior. ASCII paths and other platforms are untouched. Every compile writes into
+an existing entry, within 30 seconds; anything left moves on a later start, and
+the recorded folder stays in use either way. If finding or making the folder
+fails or takes more than 30 seconds, the profile `latexDir` stays in use, which
+is the earlier behavior, and the next start sweeps the attempt's leftovers from
+the profile. ASCII paths and other platforms are untouched. All of this assumes
+the state directory is private to the account, as Scient's state directory must
+be anyway: whoever can write there can already replace the managed TeX. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.

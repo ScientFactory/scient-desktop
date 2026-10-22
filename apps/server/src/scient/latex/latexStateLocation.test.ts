@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
@@ -59,6 +62,8 @@ const harness = (
     readonly respond?: (
       input: ProcessRunner.ProcessRunInput,
     ) => Effect.Effect<ProcessRunner.ProcessRunOutput>;
+    /** Stands in for a disk that stops answering part-way. */
+    readonly wrapFileSystem?: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -80,6 +85,10 @@ const harness = (
               Effect.andThen(respond(input)),
             ),
         }),
+      ),
+      Layer.succeed(
+        FileSystem.FileSystem,
+        options.wrapFileSystem === undefined ? fileSystem : options.wrapFileSystem(fileSystem),
       ),
       Layer.succeed(HostProcess.Platform, options.platform ?? "win32"),
       Layer.succeed(HostProcess.Environment, {
@@ -324,6 +333,76 @@ describe("resolveLatexStateDirectory", () => {
       // As on a profile kept on another drive: the move is refused.
       const fixture = yield* harness({ programData: "missing" });
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the new folder when moving earlier state runs out of time", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stalled = yield* Deferred.make<void>();
+      let evidenceMoves = 0;
+      const fixture = yield* harness({
+        wrapFileSystem: (real) => ({
+          ...real,
+          rename: (from, to) =>
+            from.includes(`${path.sep}evidence${path.sep}`) && ++evidenceMoves === 2
+              ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
+              : real.rename(from, to),
+        }),
+      });
+      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "a");
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "b.json"), "b");
+
+      const running = yield* Effect.forkChild(fixture.resolve);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("31 seconds");
+      const directory = yield* Fiber.join(running);
+      expect(path.dirname(directory)).toBe(fixture.programData);
+      expect(yield* fileSystem.readDirectory(path.join(directory, "evidence"))).toHaveLength(1);
+      expect(yield* fileSystem.readDirectory(path.join(fixture.latexDir, "evidence"))).toHaveLength(
+        1,
+      );
+
+      // The next start finds the same folder and moves the rest.
+      expect(yield* fixture.resolve).toBe(directory);
+      expect(
+        (yield* fileSystem.readDirectory(path.join(directory, "evidence"))).toSorted(),
+      ).toEqual(["a.json", "b.json"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets the server start when cleaning up a failed attempt hangs", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const stalled = yield* Deferred.make<void>();
+      let diskStuck = true;
+      const fixture = yield* harness({
+        respond: (input) =>
+          diskStuck && input.command.endsWith("icacls.exe")
+            ? Effect.succeed(
+                output({ code: ChildProcessSpawner.ExitCode(5), stderr: "Access is denied." }),
+              )
+            : windowsTools(input),
+        wrapFileSystem: (real) => ({
+          ...real,
+          remove: (target, options) =>
+            diskStuck && target.includes(".scient-latex-")
+              ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
+              : real.remove(target, options),
+        }),
+      });
+      const running = yield* Effect.forkChild(fixture.resolve);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("31 seconds");
+      expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
+      expect(yield* fixture.stagingLeftovers).toHaveLength(1);
+
+      // The next start sweeps what that attempt left in the profile.
+      diskStuck = false;
+      expect(path.dirname(yield* fixture.resolve)).toBe(fixture.programData);
       expect(yield* fixture.stagingLeftovers).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
