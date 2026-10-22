@@ -3,7 +3,10 @@
  * engine: an offer to install the one Scient pins, the progress of that
  * install, or — where Scient has nothing to offer — what to install by hand.
  */
-import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
+import type {
+  ScientLatexManagedInstallState,
+  ScientLatexUnusableToolchain,
+} from "@t3tools/contracts";
 import { Download, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
 
 import { latexSetupCardModel } from "./latexToolchainSetupModel";
@@ -17,6 +20,8 @@ export function LatexToolchainSetupCard(props: {
   readonly toolchainMissing: boolean;
   readonly requiredCompiler?: LatexDocumentCompiler | null;
   readonly downloadBytes?: number | null;
+  /** A driver that exists but did not run, named so the card can say why. */
+  readonly unusableToolchain?: ScientLatexUnusableToolchain | null;
   readonly disabled?: boolean;
   readonly onInstall: () => void;
 }) {
@@ -28,6 +33,7 @@ export function LatexToolchainSetupCard(props: {
     toolchainMissing,
     requiredCompiler: props.requiredCompiler ?? null,
     downloadBytes: props.downloadBytes ?? null,
+    unusableToolchain: props.unusableToolchain ?? null,
   });
 
   return (
@@ -41,6 +47,11 @@ export function LatexToolchainSetupCard(props: {
       ) : null}
       <h2>{model.title}</h2>
       <p role={model.kind === "failed" ? "alert" : undefined}>{model.body}</p>
+      {model.detail === null ? null : (
+        <p className="scient-latex-placeholder-note scient-latex-placeholder-detail">
+          {model.detail}
+        </p>
+      )}
       {model.warning === null ? null : (
         <p className="scient-latex-placeholder-note">{model.warning}</p>
       )}

@@ -22,7 +22,7 @@ import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts"
 import { selectLatexBuildEngine } from "./latexEngineGate.ts";
 import { parseLatexLog } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
-import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexToolchain, latexDriverBinDirectory } from "./LatexToolchain.ts";
 import { latexArtworkWorkspaceKey, makeLatexArtworkWorkspaces } from "./latexArtworkWorkspaces.ts";
 import { makeLatexArtworkRaster } from "./latexArtworkRaster.ts";
 
@@ -107,7 +107,7 @@ const make = Effect.gen(function* () {
         TEXINPUTS: `${documentDirectory.replaceAll("\\", "/")}/${delimiter}${hostEnvironment.TEXINPUTS ?? ""}${delimiter}`,
       },
       hostEnvironment,
-      binDirectory: managedBin,
+      binDirectory: latexDriverBinDirectory(toolchain, path),
       pathDelimiter: delimiter,
     });
     return yield* withWorkspace({

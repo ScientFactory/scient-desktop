@@ -1189,6 +1189,14 @@ standalone installation of all three compilers. If you install tools yourself,
 choose **Rebuild PDF** to refresh discovery without reopening the file or
 restarting Scient.
 
+If you have more than one distribution, Scient uses the first `latexmk` that
+runs: it tries the next one on PATH, and on Windows the folders MiKTeX and TeX
+Live install into, before reporting that LaTeX is missing. MiKTeX's `latexmk`,
+for example, needs Perl, so without Perl Scient builds with TeX Live's instead.
+When it finds a `latexmk` that will not run, the message names it and quotes
+what it said. If the TinyTeX installation fails, the card says which step
+failed and shows the installer's own message under **Details**.
+
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.
 
