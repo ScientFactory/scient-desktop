@@ -167,7 +167,7 @@ describe("plugin bundle snapshot boundary", () => {
     ).toContain("not a regular file");
   });
 
-  it("bounds a file that grows after it was listed", async () => {
+  it("refuses a file that grows after it was listed", async () => {
     const root = await directoryWith({ "notes.txt": "small" });
     const message = await rejection(
       snapshotBundle(root, {
@@ -179,7 +179,9 @@ describe("plugin bundle snapshot boundary", () => {
         },
       }),
     );
-    expect(message).toContain("per-file limit");
+    // Growth changes the file's ctime, so the identity check refuses it before
+    // the streamed per-file bound would.
+    expect(message).toMatch(/changed while the bundle was read|per-file limit/);
   });
 
   it("rejects hard links, including one to a file outside the bundle", async () => {

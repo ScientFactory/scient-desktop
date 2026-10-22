@@ -188,7 +188,14 @@ export async function snapshotBundle(
       if (!opened.isFile()) {
         throw new BundleRejected(`Bundle entry '${relativePath}' is not a regular file.`);
       }
-      if (!sameIdentity(opened, listed)) {
+      // Linux hands a freed inode number to the next new file, so a file
+      // deleted and recreated after listing can keep its (dev, ino); its change
+      // and birth times still differ.
+      if (
+        !sameIdentity(opened, listed) ||
+        opened.ctimeMs !== listed.ctimeMs ||
+        opened.birthtimeMs !== listed.birthtimeMs
+      ) {
         throw new BundleRejected(
           `Bundle file '${relativePath}' changed while the bundle was read.`,
         );

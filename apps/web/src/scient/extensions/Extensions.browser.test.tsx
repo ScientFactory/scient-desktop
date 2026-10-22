@@ -1442,9 +1442,11 @@ describe("Detail pages", () => {
     });
   const agentsCard = () =>
     document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"]');
+  // A closed tooltip stays mounted until its exit transition ends, which fake
+  // timers never finish; only an open popup counts as showing the reason.
   const reasonTooltip = () =>
-    [...document.querySelectorAll<HTMLElement>('[data-slot="tooltip-popup"]')].find((item) =>
-      item.textContent?.includes(OPENCODE_REASON),
+    [...document.querySelectorAll<HTMLElement>('[data-slot="tooltip-popup"][data-open]')].find(
+      (item) => item.textContent?.includes(OPENCODE_REASON),
     ) ?? null;
   const advance = (ms: number) => act(async () => vi.advanceTimersByTime(ms));
 
