@@ -20,6 +20,8 @@ export interface CrashJob {
   readonly helper: string;
   readonly id: string;
   readonly killAt: MutationPoint;
+  /** Which time `killAt` is reached that kills the child: 1 for the first step. */
+  readonly occurrence?: number;
   readonly plan: {
     readonly base: Record<string, string>;
     readonly remote: Record<string, string>;
@@ -35,6 +37,7 @@ export interface CrashJob {
 const jobPath = process.argv[2];
 if (jobPath !== undefined) {
   const job: CrashJob = JSON.parse(await NodeFSP.readFile(jobPath, "utf8"));
+  let reached = 0;
   const plan: WorkspaceApplyPlan = {
     base: new Map(Object.entries(job.plan.base)),
     remote: new Map(Object.entries(job.plan.remote)),
@@ -56,7 +59,8 @@ if (jobPath !== undefined) {
         helper: job.helper,
         retainedHooks: {
           at: async (point) => {
-            if (point === job.killAt) process.kill(process.pid, "SIGKILL");
+            if (point === job.killAt && ++reached === (job.occurrence ?? 1))
+              process.kill(process.pid, "SIGKILL");
           },
         },
       });

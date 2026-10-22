@@ -75,7 +75,13 @@ const Journal = Schema.Struct({
   guardMaxBytes: Schema.NullOr(Schema.Number),
   /** Files published together with this one; see `RetainedMutationInput.peerGuards`. */
   peerGuards: Schema.optionalKey(
-    Schema.Array(Schema.Struct({ path: Schema.String, revision: Schema.NullOr(Schema.String) })),
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        revision: Schema.NullOr(Schema.String),
+        directory: Schema.optionalKey(Schema.Literal(true)),
+      }),
+    ),
   ),
   binding: Schema.NullOr(Binding),
   destinationBinding: Schema.NullOr(Binding),
@@ -135,12 +141,18 @@ export interface RetainedMutationInput {
   readonly destination?: string;
   readonly guardMaxBytes?: number;
   /**
-   * Other files, relative to `cwd`, published together with this one: each must
-   * still hold its revision (null: no file) when this file becomes visible. A
-   * change before then skips the mutation, so a group never lands half-applied.
-   * Kept in the record, so recovery after a crash checks them too.
+   * Other paths, relative to `cwd`, published together with this one. Each must
+   * still be a regular file with `revision`, or, for a null revision, hold
+   * nothing (or a folder, when `directory` says the group puts one there), with
+   * no link on the way, when this file becomes visible. A change before then
+   * skips the mutation, so a group never lands half-applied. Kept in the
+   * record, so recovery after a crash checks them too.
    */
-  readonly peerGuards?: ReadonlyArray<{ readonly path: string; readonly revision: string | null }>;
+  readonly peerGuards?: ReadonlyArray<{
+    readonly path: string;
+    readonly revision: string | null;
+    readonly directory?: true;
+  }>;
   readonly expectedMutationEpoch?: string;
   readonly retentionLimitBytes?: number | null;
   /** Internal ownership only; never accepted from a transport. */
@@ -293,6 +305,38 @@ export async function fileIdentity(file: string): Promise<Identity | null> {
   }
 }
 /** Whole-file hashing is streaming; a prefix digest is never a manuscript CAS guard. */
+/**
+ * What stands at `path` below `root`, found without following any link: a link
+ * anywhere on the way, or a special file, is `other`. A file where a folder on
+ * the way should be means nothing can stand at `path`.
+ */
+async function peerEntry(
+  root: string,
+  path: string,
+): Promise<
+  | { readonly kind: "absent" | "directory" | "other" }
+  | { readonly kind: "file"; readonly revision: string | null }
+> {
+  const segments = path.split("/");
+  let current = root;
+  for (const [index, segment] of segments.entries()) {
+    current = NodePath.join(current, segment);
+    const stat = await NodeFSP.lstat(current).catch((e: unknown) => {
+      if (absent(e)) return null;
+      throw e;
+    });
+    if (stat === null) return { kind: "absent" };
+    if (stat.isSymbolicLink()) return { kind: "other" };
+    if (index < segments.length - 1) {
+      if (!stat.isDirectory()) return { kind: "absent" };
+      continue;
+    }
+    if (stat.isDirectory()) return { kind: "directory" };
+    if (!stat.isFile()) return { kind: "other" };
+    return { kind: "file", revision: await fileRevision(current) };
+  }
+  return { kind: "other" };
+}
 export async function fileRevision(file: string): Promise<string | null> {
   let handle;
   try {
@@ -871,9 +915,13 @@ async function run(
     return snapshot.revision === record.expected;
   };
   const peersIntact = async () => {
-    for (const peer of record.peerGuards ?? [])
-      if ((await fileRevision(NodePath.join(input.binding.rootPath, peer.path))) !== peer.revision)
+    for (const peer of record.peerGuards ?? []) {
+      const entry = await peerEntry(input.binding.rootPath, peer.path);
+      if (peer.revision !== null) {
+        if (entry.kind !== "file" || entry.revision !== peer.revision) return false;
+      } else if (entry.kind !== "absent" && !(entry.kind === "directory" && peer.directory))
         return false;
+    }
     return true;
   };
   // This durable refusal is definitive: no native source syscall was admitted.

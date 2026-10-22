@@ -553,6 +553,11 @@ export const make = (hooks: ApplierHooks = {}) =>
                 // steps before this one applied, later ones still as captured. The record
                 // keeps them, so a crash's recovery cannot publish into a changed group.
                 const position = ordered.indexOf(name);
+                // A folder may stand at a guard only where the plan has paths below it.
+                const planned = [
+                  ...Object.keys(state.plan.captured),
+                  ...Object.keys(state.plan.target),
+                ];
                 const peerGuards = state.plan.guards[unitIndex]!.filter(
                   (guard) => guard !== name,
                 ).map((guard) => ({
@@ -561,6 +566,9 @@ export const make = (hooks: ApplierHooks = {}) =>
                     (!unit.includes(guard) || ordered.indexOf(guard) < position
                       ? ownValue(state.plan.target, guard)?.revision
                       : ownValue(state.plan.captured, guard)) ?? null,
+                  ...(planned.some((path) => path.startsWith(`${guard}/`))
+                    ? { directory: true as const }
+                    : {}),
                 }));
                 const args = {
                   cwd: state.cwd,
