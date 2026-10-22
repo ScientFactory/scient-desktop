@@ -2708,6 +2708,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         expectedRevision: null,
         kind: "prune",
         condition: "unguarded",
+        // The folder goes as part of the caller's group, under the same checks.
+        ...(input.peerGuards ? { peerGuards: input.peerGuards } : {}),
       },
       undefined,
       input.retentionDirectory,

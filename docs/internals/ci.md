@@ -20,6 +20,24 @@ is present and the repository cannot merge around its own branch policy.
 For every pull request, merge-queue candidate (`merge_group`), and push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
 gates (a queue candidate or main push may reuse an exact earlier qualification, described below):
 
+Release-note-only changes use **Release notes qualification** instead of the full lanes below.
+The event's immutable base and tested commit must differ only in `releaseNotes/catalog.ts`
+and optionally its existing `model.test.ts` and `ScientReleaseNotes.browser.test.tsx` files
+under `apps/web/src/scient/`. The catalog must change, both versions must contain literal
+data only, and all changed files must remain regular files. Empty or unresolved diffs,
+additions, deletions, renames, mode changes, executable catalog code, and any other path
+run full CI. Workflow, component, dependency and test-configuration changes therefore
+qualify through full CI, including changes to this optimization itself.
+
+The focused lane runs catalog/model validation, release-note Chromium tests, web type checking,
+and release-note formatting and lint. Only after all pass does it suppress unrelated workspace,
+server, full web shards, Rust, mobile, Compute, packaging and release-smoke qualification.
+The existing required shard names explicitly report that focused qualification passed and
+their suites were not applicable. No transfer measurements or full-suite reuse receipt are
+fabricated: focused runs do not produce them and are independently qualified on each event.
+Failures or absent qualification output retain full CI. Beta and Stable release workflows
+still build, sign, package and check their actual release artifacts normally.
+
 - **Check**: `knip:check` rejects unused files/dependencies repository-wide and unused exports in the enabled application/runtime workspaces. `brand:check` verifies Scient product identity on shipped code and `docs/user`; its reviewed exemptions live in `scripts/scient-brand-allowlist.json`, each with a reason, and an entry that no longer exempts anything fails the check. `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
@@ -124,3 +142,9 @@ If the artifact is unavailable, installation runs the checks again.
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
 
 The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
+
+Merge-queue candidates and their pushes to `main` may contain several PRs. The provenance
+guard admits only the contiguous two-parent integration chain from the event head back to
+its exact base. It still checks merges inside every PR history for official upstream,
+previously owned ancestry, or an exact recorded historical exception. A broken chain or an
+octopus integration merge fails qualification.

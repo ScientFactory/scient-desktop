@@ -41,8 +41,8 @@ describe("Compute CI suite selection", () => {
           },
         },
         compute_native: {
-          needs: ["queue_ci", "compute_changes"],
-          if: "${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.compute_changes.outputs.changed != 'false' }}",
+          needs: ["queue_ci", "release_notes", "compute_changes"],
+          if: "${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.compute_changes.outputs.changed != 'false' }}",
           uses: "./.github/workflows/scient-compute-python-kernel.yml",
           with: {
             real_kernel: "${{ needs.compute_changes.outputs.real_kernel != 'false' }}",

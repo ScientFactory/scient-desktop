@@ -64,7 +64,9 @@ it.each(["light", "dark"])(
         return popup ? getComputedStyle(popup).opacity : null;
       })
       .toBe("1");
-    await expect.poll(() => document.querySelectorAll('[role="dialog"] ol li').length).toBe(9);
+    await expect
+      .poll(() => document.querySelectorAll('[role="dialog"] ol li').length)
+      .toBe(SCIENT_RELEASE_NOTES[0].highlights.length);
     if (import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS}/extended-${theme}.png`,

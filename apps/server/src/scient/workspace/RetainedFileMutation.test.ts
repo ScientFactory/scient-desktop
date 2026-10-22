@@ -168,7 +168,9 @@ describe("retained publication admission", () => {
           expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("captured");
         }),
     );
-    it("never re-captures after an ambiguous publishing boundary", () =>
+    // Stopped after admission but before the native call: nothing was captured, so
+    // recovery checks the target afresh rather than keeping the step for review.
+    it("checks again, and never captures, an outside change after a capture that never ran", () =>
       fixture(async (input, target) => {
         await expect(
           mutateRetainedFile(input, target, {
@@ -180,11 +182,49 @@ describe("retained publication admission", () => {
         await NodeFSP.writeFile(target, "outside D");
         const identity = await fileIdentity(target);
         const result = await mutateRetainedFile(input, target);
-        expect(result.outcome).toBe("attention");
-        expect(result.failure).toBe("recovery");
+        expect(result.outcome).toBe("skipped");
+        expect(result.failure).toBe("revision");
         expect(await fileIdentity(target)).toEqual(identity);
         expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
       }));
+    it("finishes a capture that never ran", () =>
+      fixture(async (input, target) => {
+        await expect(
+          mutateRetainedFile(input, target, {
+            at: async (point) => {
+              if (point === "checked") throw new Error("native admission interrupted");
+            },
+          }),
+        ).rejects.toThrow("native admission interrupted");
+        const result = await mutateRetainedFile(input, target);
+        expect(result.outcome).toBe("done");
+        await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("captured");
+      }));
+    // Only the caller checks a fenced publication's workspace epoch; recovery cannot.
+    it.each(["prepared", "checked"] as MutationPoint[])(
+      "never makes a fenced publication on recovery after %s",
+      (point) =>
+        fixture(async (input, target) => {
+          const fenced = {
+            ...input,
+            kind: "write" as const,
+            bytes: bytes("generated"),
+            expectedMutationEpoch: "epoch-1",
+          };
+          await expect(
+            mutateRetainedFile(fenced, target, {
+              at: async (at) => {
+                if (at === point) throw new Error("process died before publishing");
+              },
+            }),
+          ).rejects.toThrow("process died");
+          const recovered = await mutateRetainedFile({ ...fenced, bytes: undefined }, target);
+          expect(recovered.outcome).toBe("skipped");
+          expect(recovered.sourceMutation).toBe(false);
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("captured");
+        }),
+    );
     it("refuses same-content private replacement as a captured receipt", () =>
       fixture(async (input, target, root) => {
         const recordDirectory = NodePath.join(input.retentionDirectory, input.id);
