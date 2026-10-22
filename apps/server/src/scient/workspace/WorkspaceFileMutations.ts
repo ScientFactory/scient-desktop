@@ -658,32 +658,6 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     skipDirectory?: string,
   ) => {
     for (const { directory, record, mutationId } of records) {
-      // Admission was indexed but its first journal never landed. That journal comes
-      // before any staging or native call, so with nothing kept, nothing happened:
-      // the intent is durably refused and its identity is never replayed.
-      if (
-        record === null &&
-        directory !== skipDirectory &&
-        (await NodeFSP.lstat(NodePath.join(directory, "record.json")).then(
-          () => false,
-          (cause: unknown) => {
-            if (isNodeError(cause, "ENOENT")) return true;
-            throw cause;
-          },
-        )) &&
-        (await retainedPaths(directory)).length === 0
-      ) {
-        await durableJson(
-          NodePath.join(
-            deps.retentionStorageDirectory,
-            "mutation-identities",
-            keyFor(mutationId),
-            "refusal.json",
-          ),
-          { version: 1, outcome: "unchanged", reason: "interrupted before its journal" },
-        );
-        continue;
-      }
       if (!record || record.version !== 2 || record.phase === "done" || directory === skipDirectory)
         continue;
       if (

@@ -466,18 +466,11 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       }),
   );
 
-  // Between hooks: dying as a step's first journal is renamed into place, or while its
-  // copy is being staged. Neither published anything; the step is tried again.
-  it.live.each(
-    (["rename", "open"] as const).flatMap((operation) =>
-      [0, 1].map((step) => ({ operation, step })),
-    ),
-  )("finishes a unit after a crash in step $step's $operation", ({ operation, step }) =>
+  // Between hooks, while a step's copy is being staged: nothing was published, so the
+  // partial copy is discarded and the step is tried again.
+  it.live.each([0, 1])("finishes a unit after a crash while staging step %s", (step) =>
     fixture(async (h) => {
-      await crashAt(h, "done", both, 99, {
-        operation,
-        suffix: `/step-${step}/${operation === "rename" ? "record.json" : "slot"}`,
-      });
+      await crashAt(h, "done", both, 99, { operation: "open", suffix: `/step-${step}/slot` });
       await h.restart();
       expect(await h.apply("crash")).toMatchObject({
         outcome: "complete",
@@ -486,6 +479,33 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       });
       expect(await read(h.cwd, "a.tex")).toBe("remote A");
       expect(await read(h.cwd, "b.tex")).toBe("remote B");
+    }),
+  );
+
+  // Between the file layer's intent index and a step's first journal, recovery cannot
+  // prove what happened (the file's folders may already have been made), so the file
+  // stays for explicit review, as the native layer decides. Nothing is lost.
+  it.live.each([0, 1])("holds a file for review after a crash before step %s's journal", (step) =>
+    fixture(async (h) => {
+      await crashAt(h, "done", both, 99, {
+        operation: "rename",
+        suffix: `/step-${step}/record.json`,
+      });
+      await h.restart();
+      const refused = await h.apply("crash").then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toMatchObject({
+        _tag: "WorkspaceApplyError",
+        cause: {
+          _tag: "WorkspaceFileRecoveryRequiredError",
+          relativePath: step === 0 ? "a.tex" : "b.tex",
+          publicationOutcome: "retained-attention",
+        },
+      });
+      expect(await read(h.cwd, "a.tex")).toBe(step === 0 ? "base A" : "remote A");
+      expect(await read(h.cwd, "b.tex")).toBe("base B");
     }),
   );
 

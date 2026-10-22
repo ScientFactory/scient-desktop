@@ -653,14 +653,11 @@ export const make = (hooks: ApplierHooks = {}) =>
                         try: () => readStepRecord(NodePath.join(begin.retentionDirectory, latest)),
                         catch: (cause) => new WorkspaceApplyError({ cause }),
                       });
-                // A folder without a journal was made just before a crash: its first
-                // journal precedes any staging or native call, so nothing happened.
                 const unpublished =
-                  (latest !== undefined && closed === null) ||
-                  (closed?.version === 2 &&
-                    closed.phase === "done" &&
-                    closed.outcome === "skipped" &&
-                    closed.sourceMutation === false);
+                  closed?.version === 2 &&
+                  closed.phase === "done" &&
+                  closed.outcome === "skipped" &&
+                  closed.sourceMutation === false;
                 const args = {
                   cwd: state.cwd,
                   relativePath: name,
