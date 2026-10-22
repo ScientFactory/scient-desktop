@@ -549,6 +549,19 @@ export const make = (hooks: ApplierHooks = {}) =>
                 }
                 const file = ownValue(state.plan.target, name);
                 const index = state.plan.units.flat().indexOf(name);
+                // The rest of the unit as it must stand when this file becomes visible:
+                // steps before this one applied, later ones still as captured. The record
+                // keeps them, so a crash's recovery cannot publish into a changed group.
+                const position = ordered.indexOf(name);
+                const peerGuards = state.plan.guards[unitIndex]!.filter(
+                  (guard) => guard !== name,
+                ).map((guard) => ({
+                  path: guard,
+                  revision:
+                    (!unit.includes(guard) || ordered.indexOf(guard) < position
+                      ? ownValue(state.plan.target, guard)?.revision
+                      : ownValue(state.plan.captured, guard)) ?? null,
+                }));
                 const args = {
                   cwd: state.cwd,
                   relativePath: name,
@@ -556,16 +569,36 @@ export const make = (hooks: ApplierHooks = {}) =>
                   id: `step-${index}`,
                   expectedRevision: ownValue(state.plan.captured, name) ?? null,
                   expectedRootIdentity: state.rootIdentity,
+                  peerGuards,
                   ...(file
                     ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
                     : {}),
                 };
-                const outcome = yield* (
-                  file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
-                ).pipe(
-                  Effect.map((result) => result.outcome),
-                  Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
-                );
+                // A step another reader settled after a crash, before its bytes were
+                // staged, is closed as skipped: nothing was published, and replaying it
+                // would only repeat the refusal.
+                const settled = yield* Effect.tryPromise({
+                  try: () =>
+                    NodeFSP.readFile(
+                      NodePath.join(begin.retentionDirectory, `step-${index}`, "record.json"),
+                      "utf8",
+                    ).then(decodeRetainedRecord, (e: NodeJS.ErrnoException) => {
+                      if (e.code === "ENOENT") return null;
+                      throw e;
+                    }),
+                  catch: (cause) => new WorkspaceApplyError({ cause }),
+                });
+                const outcome =
+                  settled?.version === 2 &&
+                  settled.phase === "done" &&
+                  settled.outcome === "skipped"
+                    ? "skipped"
+                    : yield* (
+                        file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
+                      ).pipe(
+                        Effect.map((result) => result.outcome),
+                        Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+                      );
                 yield* Effect.tryPromise({
                   try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
                   catch: (cause) => new WorkspaceApplyError({ cause }),

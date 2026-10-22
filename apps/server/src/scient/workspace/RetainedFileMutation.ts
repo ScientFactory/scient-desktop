@@ -73,6 +73,10 @@ const Journal = Schema.Struct({
   desired: Schema.NullOr(Schema.String),
   executable: Schema.Boolean,
   guardMaxBytes: Schema.NullOr(Schema.Number),
+  /** Files published together with this one; see `RetainedMutationInput.peerGuards`. */
+  peerGuards: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: Schema.String, revision: Schema.NullOr(Schema.String) })),
+  ),
   binding: Schema.NullOr(Binding),
   destinationBinding: Schema.NullOr(Binding),
   phase: Schema.Literals([
@@ -130,6 +134,13 @@ export interface RetainedMutationInput {
   readonly condition?: "revision" | "unguarded" | "absent";
   readonly destination?: string;
   readonly guardMaxBytes?: number;
+  /**
+   * Other files, relative to `cwd`, published together with this one: each must
+   * still hold its revision (null: no file) when this file becomes visible. A
+   * change before then skips the mutation, so a group never lands half-applied.
+   * Kept in the record, so recovery after a crash checks them too.
+   */
+  readonly peerGuards?: ReadonlyArray<{ readonly path: string; readonly revision: string | null }>;
   readonly expectedMutationEpoch?: string;
   readonly retentionLimitBytes?: number | null;
   /** Internal ownership only; never accepted from a transport. */
@@ -688,6 +699,7 @@ async function run(
       record.expected !== input.expectedRevision ||
       record.executable !== (input.executable ?? false) ||
       record.guardMaxBytes !== (input.guardMaxBytes ?? null) ||
+      JSON.stringify(record.peerGuards ?? []) !== JSON.stringify(input.peerGuards ?? []) ||
       (record.expectedMutationEpoch ?? null) !== (input.expectedMutationEpoch ?? null) ||
       record.visibleRetentionPath !== (input.visibleRetentionPath ?? null) ||
       (input.bytes !== undefined &&
@@ -726,6 +738,7 @@ async function run(
       desired: input.bytes == null ? null : bytesRevision(input.bytes),
       executable: input.executable ?? false,
       guardMaxBytes: input.guardMaxBytes ?? null,
+      ...(input.peerGuards ? { peerGuards: input.peerGuards } : {}),
       binding: input.binding,
       destinationBinding: input.destinationBinding ?? null,
       phase: "preparing",
@@ -857,6 +870,12 @@ async function run(
       return false;
     return snapshot.revision === record.expected;
   };
+  const peersIntact = async () => {
+    for (const peer of record.peerGuards ?? [])
+      if ((await fileRevision(NodePath.join(input.binding.rootPath, peer.path))) !== peer.revision)
+        return false;
+    return true;
+  };
   // This durable refusal is definitive: no native source syscall was admitted.
   if (
     record.sourceMutation === false &&
@@ -865,6 +884,12 @@ async function run(
     !(await guarded(target))
   )
     return finish("skipped", record.currentRevision === null ? "target" : "revision");
+  if (
+    record.sourceMutation === false &&
+    (record.phase === "preparing" || record.phase === "prepared") &&
+    !(await peersIntact())
+  )
+    return finish("skipped", "revision");
   if (
     record.sourceMutation === false &&
     (record.phase === "preparing" || record.phase === "prepared") &&
@@ -1064,6 +1089,8 @@ async function run(
       (await fileRevision(slot)) !== record.desired)
   )
     return finish("attention", "recovery");
+  // Staging takes time; the group is checked again just before anything becomes visible.
+  if (!(await peersIntact())) return finish("skipped", "revision");
   if (record.publication === "create") {
     await save({
       phase: "publishing",
