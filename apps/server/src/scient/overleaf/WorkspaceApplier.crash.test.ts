@@ -477,6 +477,34 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     }),
   );
 
+  // An empty folder giving way to a file is removed under the group's checks too.
+  const folded: Scenario = {
+    captured: { "guard.tex": "guard" },
+    target: { notes: "new", "guard.tex": "guard" },
+  };
+  it.live.each(["checked", "called"] as const)(
+    "keeps a group whose file changed after a crash at the folder removal's %s",
+    (point) =>
+      fixture(async (h) => {
+        await NodeFSP.mkdir(NodePath.join(h.cwd, "notes"));
+        await crashAt(h, point, folded);
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
+        await h.restart();
+        await editorReads(h);
+        const result = await h.apply("crash");
+        expect(await read(h.cwd, "guard.tex")).toBe("later");
+        expect(await read(h.cwd, "notes")).toBeNull();
+        if (point === "checked") {
+          // Nothing was removed: the folder stays and the group is not reported.
+          expect((await NodeFSP.lstat(NodePath.join(h.cwd, "notes"))).isDirectory()).toBe(true);
+          expect(result.interrupted).toEqual([]);
+        } else {
+          // The folder was already removed: the group is reported.
+          expect(result.interrupted).toHaveLength(1);
+        }
+      }),
+  );
+
   // A create leaves no trace in its record, only in the folder it adds to; a folder
   // changed since leaves the call's fate unknown, and the step is kept for review.
   const added: Scenario = {

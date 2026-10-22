@@ -303,6 +303,22 @@ async function unitHasDurableMutation(
       if (await attemptHasDurableMutation(state, name, NodePath.join(retentionRoot, attempt)))
         return true;
   }
+  // A step that turns a folder into a file first removes the folder, under records
+  // of their own. Every record here belongs to this apply.
+  for (const entry of await NodeFSP.readdir(retentionRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || /^step-\d+(?:-\d+)?$/u.test(entry.name)) continue;
+    const directory = NodePath.join(retentionRoot, entry.name);
+    const record = await readStepRecord(directory);
+    if (record?.version !== 2 || record.kind !== "prune") continue;
+    const folder = NodePath.relative(state.cwd, record.target);
+    if (!unit.some((name) => folder === name || folder.startsWith(`${name}/`))) continue;
+    if (
+      record.phase === "done"
+        ? record.outcome !== "skipped"
+        : record.phase !== "preparing" && record.phase !== "prepared"
+    )
+      return true;
+  }
   return false;
 }
 async function attemptHasDurableMutation(state: State, name: string, directory: string) {

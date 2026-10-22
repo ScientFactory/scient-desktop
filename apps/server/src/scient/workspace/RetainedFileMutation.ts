@@ -1019,6 +1019,17 @@ async function run(
     if (ran === false) await save({ phase: "prepared", sourceMutation: false });
     else if (ran !== null) await save(ran);
   }
+  // A fenced publication is made only by its own caller, which checks the
+  // workspace epoch under the root lease first. Recovery, which has no bytes,
+  // cannot check it, so it never makes one: nothing was published, and the
+  // caller's next attempt starts afresh.
+  if (
+    input.bytes === undefined &&
+    record.expectedMutationEpoch !== undefined &&
+    record.sourceMutation === false &&
+    (record.phase === "preparing" || record.phase === "prepared")
+  )
+    return finish("skipped", "revision");
   // This durable refusal is definitive: no native source syscall was admitted.
   if (
     record.sourceMutation === false &&
