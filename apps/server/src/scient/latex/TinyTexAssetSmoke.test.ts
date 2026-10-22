@@ -20,7 +20,8 @@ import {
   latexDriverBinDirectory,
   make as makeLatexToolchain,
 } from "./LatexToolchain.ts";
-import { resolveTinyTexAsset } from "./tinytexManifest.ts";
+import { LatexArchiveUnpacker, make as makeLatexArchiveUnpacker } from "./LatexArchiveUnpacker.ts";
+import { resolveTinyTexAsset, type TinyTexAsset } from "./tinytexManifest.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
@@ -30,6 +31,11 @@ const SMOKE_TIMEOUT_MS = 15 * 60 * 1_000;
 const HOST_PLATFORM = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- native runner selection happens at collection time, before an Effect runtime exists.
 const HOST_ARCHITECTURE = NodeOS.arch();
+
+interface DownloadedAsset {
+  readonly archivePath: string;
+  readonly asset: TinyTexAsset;
+}
 
 interface NativeAsset {
   readonly executable: string;
@@ -117,7 +123,7 @@ async function writeBrokenEngine(directory: string, name: string): Promise<strin
  * app uses, starts its real `latexmk`, and proves SyncTeX navigation over its
  * output. `null` where this host has nothing pinned.
  */
-async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | null> {
+async function downloadPinnedAsset(temporaryRoot: string): Promise<DownloadedAsset | null> {
   const lookup = resolveTinyTexAsset(HOST_PLATFORM, HOST_ARCHITECTURE);
   expect(lookup.supported, `No asset is pinned for ${HOST_PLATFORM}-${HOST_ARCHITECTURE}`).toBe(
     true,
@@ -128,7 +134,6 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   expect(NodeFS.existsSync(SYNCTEX_RUNTIME)).toBe(true);
 
   const archivePath = NodePath.join(temporaryRoot, lookup.asset.fileName);
-  const payloadPath = NodePath.join(temporaryRoot, "payload");
   const response = await fetch(lookup.asset.url);
   expect(response.ok).toBe(true);
   expect(response.body).not.toBeNull();
@@ -149,7 +154,20 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   }
   expect(bytes).toBe(lookup.asset.sizeBytes);
   expect(digest.digest("hex")).toBe(lookup.asset.sha256);
+  return { archivePath, asset: lookup.asset };
+}
 
+/**
+ * Expands the download with the same host `tar` the app tries first, starts
+ * its real `latexmk`, and proves SyncTeX navigation over its output.
+ */
+async function verifyNativeAsset(
+  temporaryRoot: string,
+  downloaded: DownloadedAsset,
+): Promise<NativeAsset | null> {
+  const { archivePath, asset } = downloaded;
+  if (!SYNCTEX_RUNTIME) return null;
+  const payloadPath = NodePath.join(temporaryRoot, "payload");
   await NodeFSP.mkdir(payloadPath, { recursive: true });
   const tarCommand =
     HOST_PLATFORM === "win32"
@@ -163,7 +181,7 @@ async function verifyNativeAsset(temporaryRoot: string): Promise<NativeAsset | n
   expect(unpacked.error).toBeUndefined();
   expect(unpacked.status, unpacked.stderr || unpacked.stdout).toBe(0);
 
-  const executable = NodePath.join(payloadPath, lookup.asset.executableRelativePath);
+  const executable = NodePath.join(payloadPath, asset.executableRelativePath);
   expect(NodeFS.existsSync(executable)).toBe(true);
   if (HOST_PLATFORM !== "win32") await NodeFSP.chmod(executable, 0o755);
   const binDirectory = NodePath.dirname(executable);
@@ -338,6 +356,57 @@ const brokenFirstOnPath = (temporaryRoot: string, native: NativeAsset) =>
   });
 
 /**
+ * Windows 10's bsdtar cannot decode this bundle. With the system tar out of
+ * reach, the real unpacker must hand the verified download to its own 7-Zip
+ * extractor and still leave an engine that starts.
+ */
+const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAsset) =>
+  Effect.gen(function* () {
+    // A profile path can have spaces, which the extractor's argument must
+    // survive. Not non-ASCII letters: TeX Live itself (runscript.dll, then
+    // kpathsea) cannot start from such a folder, however it was unpacked.
+    const destination = NodePath.join(temporaryRoot, "self extracted");
+    yield* Effect.promise(() => NodeFSP.mkdir(destination, { recursive: true }));
+    yield* LatexArchiveUnpacker.use((unpacker) =>
+      unpacker.unpack({
+        archivePath: native.archivePath,
+        destination,
+        archive: native.asset.archive,
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.effect(LatexArchiveUnpacker, makeLatexArchiveUnpacker).pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, {
+              ...process.env,
+              SystemRoot: NodePath.join(temporaryRoot, "no-system-tar"),
+            }),
+          ),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+    const engine = NodePath.join(destination, native.asset.executableRelativePath);
+    expect(NodeFS.existsSync(engine)).toBe(true);
+    const environment = isolatedEnvironment(
+      [
+        NodePath.dirname(engine),
+        NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+      ],
+      NodePath.join(temporaryRoot, "no-default-installs"),
+    );
+    const started = NodeChildProcess.spawnSync(engine, ["-v"], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+      env: environment,
+    });
+    expect(started.error).toBeUndefined();
+    expect(started.status, started.stderr || started.stdout).toBe(0);
+  });
+
+/**
  * Unit tests cover failures and state transitions; this opt-in lane proves
  * each native release asset is executable on the operating system it claims
  * to support, and that discovery handles a broken driver ahead of it.
@@ -352,7 +421,15 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         ),
         (temporaryRoot) =>
           Effect.gen(function* () {
-            const native = yield* Effect.promise(() => verifyNativeAsset(temporaryRoot));
+            const downloaded = yield* Effect.promise(() => downloadPinnedAsset(temporaryRoot));
+            if (downloaded === null) return;
+            // First, and on its own: it is the path a Windows 10 tar cannot take.
+            if (HOST_PLATFORM === "win32") {
+              yield* selfExtractWithoutSystemTar(temporaryRoot, downloaded);
+            }
+            const native = yield* Effect.promise(() =>
+              verifyNativeAsset(temporaryRoot, downloaded),
+            );
             if (native === null) return;
             yield* brokenFirstOnPath(temporaryRoot, native);
           }),
