@@ -26,7 +26,7 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { act, createRef, Profiler, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -1946,6 +1946,15 @@ it("renders video attachments with the shared video player", async () => {
       ],
     },
   };
+
+  // The preview host does not exist, so the browser's load error can arrive before the markup
+  // is read and swap in the unavailable state. This test covers rendering, not that failure:
+  // keep video errors from reaching the player (media errors run their capture phase first).
+  const holdVideoErrors = (event: Event) => {
+    if (event.target instanceof HTMLVideoElement) event.stopPropagation();
+  };
+  document.addEventListener("error", holdVideoErrors, true);
+  onTestFinished(() => document.removeEventListener("error", holdVideoErrors, true));
 
   const markup = await renderScientMarkup(
     <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
