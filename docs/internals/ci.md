@@ -142,3 +142,9 @@ If the artifact is unavailable, installation runs the checks again.
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
 
 The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.
+
+Merge-queue candidates and their pushes to `main` may contain several PRs. The provenance
+guard admits only the contiguous two-parent integration chain from the event head back to
+its exact base. It still checks merges inside every PR history for official upstream,
+previously owned ancestry, or an exact recorded historical exception. A broken chain or an
+octopus integration merge fails qualification.
