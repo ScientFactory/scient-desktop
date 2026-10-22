@@ -755,14 +755,18 @@ later start reuses it only if the path is a direct child of `%ProgramData%` with
 that name pattern and the same real folder (not a link) is still there; a folder
 recreated under the name has a different identity and is ignored. Build evidence
 and SyncTeX indexes in the profile folder move across entry by entry, never over
-an existing entry, within 30 seconds; anything left moves on a later start, and
-the recorded folder stays in use either way. If finding or making the folder
-fails or takes more than 30 seconds, the profile `latexDir` stays in use, which
-is the earlier behavior, unless the attempt had already recorded its folder: the
-record is written beside its final name and renamed into place, and whatever it
-names decides. The next start sweeps an attempt's leftovers from the profile. ASCII paths and other platforms are untouched. All of this assumes
-the state directory is private to the account, as Scient's state directory must
-be anyway: whoever can write there can already replace the managed TeX. Every compile writes into
+an existing entry (files are linked to their new name, which fails if it is
+taken, then unlinked), and anything left moves on a later start. The work runs
+on a detached fiber and server start waits only for its answer, at most 30
+seconds, never for cleanup it cannot interrupt (stopping a hung process, closing
+a file). Whichever settles first wins: the new folder, or the profile `latexDir`
+when the wait runs out or a step fails, which is the earlier behavior. Earlier
+state moves only after the new folder has won, so it is never split; a folder
+recorded after losing is the one the next start uses, and the next start sweeps
+an attempt's leftovers from the profile. ASCII paths and other platforms are
+untouched. All of this assumes the state directory is private to the account, as
+Scient's state directory must be anyway: whoever can write there can already
+replace the managed TeX. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.

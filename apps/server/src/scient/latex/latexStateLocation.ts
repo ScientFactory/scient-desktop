@@ -31,12 +31,14 @@
  *   name after it was deleted has a different identity and is ignored.
  *
  * Everywhere else, and on any Windows whose path is already ASCII, nothing
- * changes. If the private folder cannot be made, the original stays in use:
- * that is how it was before, and TeX's own error still reaches the user.
+ * changes. If the private folder cannot be made, or the answer takes longer
+ * than server start should wait, the original stays in use: that is how it was
+ * before, and TeX's own error still reaches the user.
  */
 import * as NodeCrypto from "node:crypto";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,12 +55,10 @@ export const LATEX_STATE_LOCATION_FILE = "tex-location.json";
 const PRIVATE_FOLDER_PATTERN = /^scient-latex-[0-9a-f]{16}$/u;
 const TOOL_TIMEOUT = "10 seconds";
 const TOOL_MAX_OUTPUT_BYTES = 64 * 1024;
-/** Server start waits this long for the folder; past it, the profile one is used. */
-const FOLDER_TIMEOUT = "30 seconds";
-/** And this long for moving earlier state; whatever is left moves next start. */
+/** Server start waits this long for the answer; past it, the profile folder is used. */
+const DECISION_TIMEOUT = "30 seconds";
+/** And this long for earlier state to move; the rest moves on in the background. */
 const CARRY_OVER_TIMEOUT = "30 seconds";
-/** After a failed or timed-out attempt, this long to see whether it was recorded. */
-const RECHECK_TIMEOUT = "5 seconds";
 /**
  * What earlier builds left that is worth keeping: build evidence and the
  * SyncTeX indexes of published PDFs. Everything else there is rebuilt.
@@ -239,8 +239,10 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
 
     /**
      * Moves what is worth keeping, one entry at a time, never over an entry
-     * already there. Best effort and repeatable: whatever fails moves on a
-     * later start, and nothing here can fail one.
+     * already there — not even one the services write while this still runs:
+     * a file is linked to its new name, which fails if the name is taken, and
+     * only then unlinked; a folder rename fails onto a folder with contents.
+     * Best effort and repeatable: whatever fails moves on a later start.
      */
     const carryOver = (directory: string) =>
       Effect.forEach(
@@ -252,9 +254,17 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
             const to = path.join(directory, folder);
             yield* fileSystem.makeDirectory(to, { recursive: true });
             for (const entry of yield* fileSystem.readDirectory(from)) {
+              const source = path.join(from, entry);
               const target = path.join(to, entry);
               if (yield* fileSystem.exists(target)) continue;
-              yield* fileSystem.rename(path.join(from, entry), target).pipe(Effect.ignoreCause());
+              yield* Effect.gen(function* () {
+                if ((yield* fileSystem.stat(source)).type === "Directory") {
+                  yield* fileSystem.rename(source, target);
+                } else {
+                  yield* fileSystem.link(source, target);
+                  yield* fileSystem.remove(source);
+                }
+              }).pipe(Effect.ignoreCause());
             }
             if ((yield* fileSystem.readDirectory(from)).length === 0) {
               yield* fileSystem.remove(from, { recursive: true });
@@ -287,40 +297,44 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         : null;
     });
 
-    const findOrMakeFolder = Effect.gen(function* () {
-      return (yield* recordedFolder) ?? (yield* makePrivateFolder(programData));
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: FOLDER_TIMEOUT,
-        orElse: () =>
-          Effect.fail(new LatexStateLocationError({ detail: "Finding the folder took too long." })),
-      }),
-    );
-
-    return yield* Effect.gen(function* () {
-      const directory = yield* findOrMakeFolder;
-      // Once the folder is recorded it is the one in use, however the move of
-      // earlier state goes: falling back now would split new state between two.
-      yield* carryOver(directory).pipe(Effect.timeoutOption(CARRY_OVER_TIMEOUT));
-      return directory;
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          // An attempt stopped after publishing its record still decides:
-          // the record is what every later start will follow.
-          const published = yield* recordedFolder.pipe(
-            Effect.timeoutOption(RECHECK_TIMEOUT),
-            Effect.map(Option.getOrNull),
-          );
-          if (published !== null) return published;
-          yield* Effect.logWarning("scient latex state stays in the profile folder", {
+    const decision = yield* Deferred.make<string>();
+    const carried = yield* Deferred.make<void>();
+    // The work runs on its own fiber and only its answer is waited for. Some
+    // of what it calls cleans up in steps nothing can interrupt — stopping a
+    // hung process, closing a file — and none of that may hold server start.
+    // Whichever settles `decision` first wins: this folder, or the profile one
+    // when the wait runs out. Earlier state moves only when this folder won,
+    // so it is never split between the two. A folder recorded after losing is
+    // the one the next start uses.
+    yield* Effect.gen(function* () {
+      const directory = yield* Effect.gen(function* () {
+        return (yield* recordedFolder) ?? (yield* makePrivateFolder(programData));
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("scient latex state stays in the profile folder", {
             latexDir,
             reason: cause.message,
-          });
-          return latexDir;
-        }),
-      ),
-    );
+          }).pipe(Effect.as(latexDir)),
+        ),
+      );
+      if ((yield* Deferred.succeed(decision, directory)) && directory !== latexDir) {
+        yield* carryOver(directory);
+      }
+    }).pipe(Effect.ensuring(Deferred.succeed(carried, undefined)), Effect.forkDetach);
+
+    yield* Deferred.await(decision).pipe(Effect.timeoutOption(DECISION_TIMEOUT));
+    if (yield* Deferred.succeed(decision, latexDir)) {
+      yield* Effect.logWarning("scient latex state stays in the profile folder", {
+        latexDir,
+        reason: "Finding the folder took too long.",
+      });
+      return latexDir;
+    }
+    const chosen = yield* Deferred.await(decision);
+    if (chosen !== latexDir) {
+      yield* Deferred.await(carried).pipe(Effect.timeoutOption(CARRY_OVER_TIMEOUT));
+    }
+    return chosen;
   },
 );
 

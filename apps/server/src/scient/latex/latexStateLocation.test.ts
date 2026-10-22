@@ -346,10 +346,10 @@ describe("resolveLatexStateDirectory", () => {
       const fixture = yield* harness({
         wrapFileSystem: (real) => ({
           ...real,
-          rename: (from, to) =>
+          link: (from, to) =>
             from.includes(`${path.sep}evidence${path.sep}`) && ++evidenceMoves === 2
               ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
-              : real.rename(from, to),
+              : real.link(from, to),
         }),
       });
       yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
@@ -407,16 +407,17 @@ describe("resolveLatexStateDirectory", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("still uses the folder when an attempt stops right after recording it", () =>
+  it.effect("follows a record published after the wait ran out, from the next start", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stalled = yield* Deferred.make<void>();
+      let diskStuck = true;
       const fixture = yield* harness({
         wrapFileSystem: (real) => ({
           ...real,
           rename: (from, to) =>
-            to.endsWith(LATEX_STATE_LOCATION_FILE)
+            diskStuck && to.endsWith(LATEX_STATE_LOCATION_FILE)
               ? real
                   .rename(from, to)
                   .pipe(
@@ -426,15 +427,45 @@ describe("resolveLatexStateDirectory", () => {
               : real.rename(from, to),
         }),
       });
+      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "a");
       const running = yield* Effect.forkChild(fixture.resolve);
       yield* Deferred.await(stalled);
       yield* TestClock.adjust("31 seconds");
-      const directory = yield* Fiber.join(running);
-      expect(path.dirname(directory)).toBe(fixture.programData);
+      // This start never heard back, so it keeps the profile folder whole.
+      expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
+      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "evidence", "a.json"))).toBe(
+        true,
+      );
+
+      diskStuck = false;
       const recorded = JSON.parse(
         yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE)),
       );
-      expect(recorded.directory).toBe(directory);
+      const directory = yield* fixture.resolve;
+      expect(directory).toBe(recorded.directory);
+      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
+        "a",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets the server start even when a tool hangs beyond interruption", () =>
+    Effect.gen(function* () {
+      const stalled = yield* Deferred.make<void>();
+      const fixture = yield* harness({
+        respond: (input) =>
+          input.command.endsWith("icacls.exe")
+            ? Deferred.succeed(stalled, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.uninterruptible,
+              )
+            : windowsTools(input),
+      });
+      const running = yield* Effect.forkChild(fixture.resolve);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("31 seconds");
+      expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
