@@ -174,6 +174,19 @@ const world = (input: {
       retention: { vaultIdentity: retention.identity, copies: [] },
     });
 
+    const coordinatorWith = (stateStore: OverleafStateStore.OverleafStateStore["Service"]) =>
+      OverleafCoordinator.make({
+        stateRoot,
+        exchangeHelper,
+        fetchRemote,
+        volumeUuid,
+        registry,
+      }).pipe(
+        Effect.provideService(OverleafStateStore.OverleafStateStore, stateStore),
+        Effect.provideService(OverleafRepository.OverleafRepository, repos),
+        Effect.provideService(WorkspaceApplier, applier),
+        Effect.provideService(CheckoutBarrier, makeCheckoutBarrier()),
+      );
     const coordinator = yield* OverleafCoordinator.make({
       stateRoot,
       exchangeHelper,
@@ -207,6 +220,8 @@ const world = (input: {
       });
     return {
       store,
+      coordinatorWith,
+      volumeUuid,
       stateRoot,
       checkout,
       folder,
@@ -502,6 +517,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(confirmed).toMatchObject({ _tag: "applied", adopted: { outcome: "attention" } });
         const after = yield* w.connection;
         expect(after.forcedConflicts).toEqual([["new.tex", "old.tex"]]);
+        // Managed paths are the reviewed result's; old.tex stays in the base instead.
+        expect(after.managedPaths).toEqual(["main.tex", "new.tex"]);
         expect(after.completedSyncCount).toBe(1);
         expect(yield* read(w.folder, "old.tex")).toBe("edited meanwhile");
         // The next review shows the group as a conflict to decide.
@@ -940,6 +957,107 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         );
         expect(yield* read(w.folder, "old.tex")).toBeNull();
         expect((yield* w.connection).activeApply).toBeNull();
+      }),
+    ),
+  );
+
+  /** Wraps the applier to report one more version of the first kept path, written to disk. */
+  const withExtraVersion =
+    (changed: boolean) =>
+    (real: WorkspaceApplier["Service"]): WorkspaceApplier["Service"] =>
+      WorkspaceApplier.of({
+        apply: (input) =>
+          real.apply(input).pipe(
+            Effect.flatMap((result) => {
+              const [first] = result.retained;
+              if (first === undefined) return Effect.succeed(result);
+              const provisional = NodePath.join(
+                NodePath.dirname(first.retainedPath!),
+                "provisional",
+              );
+              return Effect.promise(async () => {
+                await NodeFSP.writeFile(provisional, "D");
+                return {
+                  ...result,
+                  retained: [
+                    ...result.retained,
+                    {
+                      ...first,
+                      retainedPath: provisional,
+                      retainedRevision: bytesRevision(new TextEncoder().encode("D")),
+                      changed,
+                    },
+                  ],
+                };
+              });
+            }),
+          ),
+      });
+
+  it.live("never marks a record with another version releasable, even unchanged", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          applier: withExtraVersion(false),
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).retention.copies).toMatchObject([
+          { relativePath: "main.tex", state: "ambiguous" },
+        ]);
+      }),
+    ),
+  );
+
+  it.live("keeps listing every version when the applier's step record is damaged", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          applier: withExtraVersion(true),
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        yield* Effect.promise(async () => {
+          const record = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
+            path.endsWith("/step-0/record.json"),
+          );
+          await NodeFSP.writeFile(NodePath.join(w.stateRoot, record!), "{ damaged");
+        });
+        const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(listed).toHaveLength(2);
+        // A damaged record is unknown authority to the file layer: the file waits for
+        // explicit review before anything, a restore included, writes to it.
+        const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
+        const refused = yield* Effect.exit(
+          w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: extra.applyId,
+            kept: extra.kept,
+            keptRevision: extra.keptRevision!,
+            currentRevision: extra.currentRevision,
+          }),
+        );
+        expect(String(refused)).toContain("needs explicit review");
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+      }),
+    ),
+  );
+
+  it.live("refuses to prepare without this process's writable lease", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "B" } });
+        // Another store on the same state folder cannot take the lease this one holds.
+        const other = yield* OverleafStateStore.make({
+          root: w.stateRoot,
+          volumeUuid: w.volumeUuid,
+        });
+        const blocked = yield* w.coordinatorWith(other);
+        const refused = yield* Effect.exit(blocked.prepare({ connectionId: CONNECTION }));
+        expect(String(refused)).toContain("OverleafStateLockedError");
       }),
     ),
   );

@@ -286,6 +286,8 @@ describe("OverleafStateStore", () => {
                 retainedAtSyncCount: 0,
                 kept: "apply-1/files/step-0/retained",
                 markers: false,
+                versions: [],
+                stamp: "1:1",
               },
             ],
           },

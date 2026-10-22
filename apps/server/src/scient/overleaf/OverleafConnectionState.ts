@@ -152,6 +152,14 @@ const PublicationAttempt = Schema.Struct({
 );
 export type OverleafPublicationAttempt = typeof PublicationAttempt.Type;
 
+/** A kept version's place in the retention folder: `<apply>/files/<step>/<leaf>`. */
+const KeptPath = Schema.String.check(
+  Schema.isPattern(
+    /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
+  ),
+);
+/** Further versions recorded for one kept path; beyond this the record is ambiguous. */
+export const KEPT_VERSION_LIMIT = 16;
 const RetainedCopy = Schema.Struct({
   applyId: OverleafServerId,
   relativePath: ManuscriptPath,
@@ -166,13 +174,17 @@ const RetainedCopy = Schema.Struct({
    * (`<apply>/files/<step>/<leaf>`). A step may keep further versions of the
    * same path beside it; they are found on disk, under the same apply.
    */
-  kept: Schema.String.check(
-    Schema.isPattern(
-      /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
-    ),
-  ),
+  kept: KeptPath,
   /** The kept bytes were Scient conflict material still unresolved when kept. */
   markers: Schema.Boolean,
+  /**
+   * Further versions the apply reported for the same path (a staged, provisional
+   * or retried step's copy), in the same form as `kept`. They appear only when
+   * something went wrong, so a record with any is never released automatically.
+   */
+  versions: Schema.Array(KeptPath).check(Schema.isMaxLength(KEPT_VERSION_LIMIT)),
+  /** Size and change time of the main version when kept; a later difference means a late writer. */
+  stamp: Schema.String.check(Schema.isPattern(/^\d{1,20}:\d{1,30}$/u)),
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
@@ -440,6 +452,8 @@ export function overleafTransitionViolation(
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
       kept.kept !== copy.kept ||
       kept.markers !== copy.markers ||
+      kept.stamp !== copy.stamp ||
+      kept.versions.join("\0") !== copy.versions.join("\0") ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
       (kept.state === "releasable" && copy.state !== "releasable")
     )

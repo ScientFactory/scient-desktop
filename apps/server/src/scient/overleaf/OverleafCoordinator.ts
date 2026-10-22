@@ -27,12 +27,9 @@ import {
   type CheckoutSection,
   type CheckoutSuspendedError,
 } from "../workspace/CheckoutBarrier.ts";
+import { bytesRevision, fileRevision } from "../workspace/RetainedFileMutation.ts";
 import {
-  bytesRevision,
-  decodeRetainedRecord,
-  fileRevision,
-} from "../workspace/RetainedFileMutation.ts";
-import {
+  KEPT_VERSION_LIMIT,
   overleafRequiredPins,
   type OverleafConnectionDocument,
   type OverleafOperationReceipt,
@@ -306,6 +303,14 @@ export const make = (options: OverleafCoordinatorOptions) =>
     const reservations = new Map<string, string>();
 
     const now = Clock.currentTimeMillis;
+    /** Size and change time of a kept file, or null when it is gone or not a file. */
+    const stampAt = (path: string) =>
+      Effect.promise(() =>
+        NodeFSP.lstat(path, { bigint: true }).then(
+          (stat) => (stat.isFile() ? `${stat.size}:${stat.ctimeNs}` : null),
+          () => null,
+        ),
+      );
 
     const reserve = <A, E, R>(
       connectionId: string,
@@ -480,9 +485,10 @@ export const make = (options: OverleafCoordinatorOptions) =>
         return kept !== null && KEPT_PATH.test(kept) ? kept : null;
       };
       /**
-       * One record per path this apply kept. Further versions of the path (a staged
-       * or provisional copy, a retried step's) stay on disk beside the main one and
-       * are listed from there; any changed one makes the record "changed".
+       * One record per path this apply kept, naming every version the applier
+       * reported for it: the main one (the displaced file) and any others (a
+       * staged, provisional or retried step's copy). Others appear only when
+       * something went wrong, so their record is never released automatically.
        */
       const keptByThisApply = (
         settle: (
@@ -495,37 +501,47 @@ export const make = (options: OverleafCoordinatorOptions) =>
         for (const kept of result.retained)
           if (kept.retainedRevision !== null && keptAt(kept.retainedPath) !== null)
             versionsOf.set(kept.relativePath, [...(versionsOf.get(kept.relativePath) ?? []), kept]);
-        return [...versionsOf].map(([relativePath, versions]) => {
-          const main =
-            versions.find((kept) => kept.retainedPath?.endsWith("/retained")) ?? versions[0]!;
-          return {
-            applyId: link.applyId,
-            relativePath,
-            revision: main.retainedRevision!,
-            state: versions.some((kept) => kept.changed)
+        return Effect.forEach([...versionsOf], ([relativePath, versions]) =>
+          Effect.gen(function* () {
+            const main =
+              versions.find((kept) => kept.retainedPath?.endsWith("/retained")) ?? versions[0]!;
+            const others = unique(
+              versions.filter((kept) => kept !== main).map((kept) => keptAt(kept.retainedPath)!),
+            );
+            const state = versions.some((kept) => kept.changed)
               ? ("changed" as const)
-              : settle(relativePath),
-            retainedAt: updatedAt,
-            retainedAtSyncCount: syncCount,
-            kept: keptAt(main.retainedPath)!,
-            markers: markers.includes(relativePath),
-          };
-        });
+              : others.length > 0
+                ? ("ambiguous" as const)
+                : settle(relativePath);
+            return {
+              applyId: link.applyId,
+              relativePath,
+              revision: main.retainedRevision!,
+              state:
+                others.length > KEPT_VERSION_LIMIT && state !== "changed"
+                  ? ("ambiguous" as const)
+                  : state,
+              retainedAt: updatedAt,
+              retainedAtSyncCount: syncCount,
+              kept: keptAt(main.retainedPath)!,
+              markers: markers.includes(relativePath),
+              // Beyond the limit, the rest stay in the apply's folder; the record is ambiguous.
+              versions: others.slice(0, KEPT_VERSION_LIMIT),
+              stamp: (yield* stampAt(main.retainedPath!)) ?? "0:0",
+            };
+          }),
+        );
       };
       // Every explicit sync or restore checks the copies kept before (contract section
-      // 8): a releasable copy whose bytes changed, or that is gone, is never released.
+      // 8), by size and change time: a releasable copy that changed or is gone is
+      // never released.
       const rechecked = yield* Effect.forEach(connection.retention.copies, (copy) =>
         copy.state !== "releasable"
           ? Effect.succeed(copy)
-          : Effect.map(
-              Effect.promise(() => fileRevision(NodePath.join(vault, copy.kept))),
-              (now) =>
-                now === copy.revision
-                  ? copy
-                  : {
-                      ...copy,
-                      state: now === null ? ("ambiguous" as const) : ("changed" as const),
-                    },
+          : Effect.map(stampAt(NodePath.join(vault, copy.kept)), (now) =>
+              now === copy.stamp
+                ? copy
+                : { ...copy, state: now === null ? ("ambiguous" as const) : ("changed" as const) },
             ),
       );
       if (link.kind === "retained-restore") {
@@ -551,11 +567,11 @@ export const make = (options: OverleafCoordinatorOptions) =>
             ...connection.retention,
             copies: [
               ...rechecked,
-              ...keptByThisApply(
+              ...(yield* keptByThisApply(
                 () => "kept",
                 connection.completedSyncCount,
                 connection.markerPaths,
-              ),
+              )),
             ],
           },
           activeApply: null,
@@ -573,12 +589,12 @@ export const make = (options: OverleafCoordinatorOptions) =>
         connection.completedSyncCount + (result.outcome === "complete" ? 1 : 0);
       const copies = [
         ...rechecked,
-        ...keptByThisApply(
+        ...(yield* keptByThisApply(
           (path) =>
             result.interrupted.some((group) => group.includes(path)) ? "interrupted" : "releasable",
           completedSyncCount,
           link.priorMarkers,
-        ),
+        )),
       ];
       return {
         ...connection,
@@ -600,10 +616,9 @@ export const make = (options: OverleafCoordinatorOptions) =>
                 ...connection.priorBases,
               ].slice(0, PRIOR_BASE_LIMIT),
         completedSyncCount,
-        managedPaths: unique([
-          ...candidate.map((entry) => entry.path),
-          ...result.interrupted.flat(),
-        ]),
+        // The reviewed result's paths (bounded by the review's file limit). Paths an
+        // interrupted unit left as they were stay in the base, which inventory reads too.
+        managedPaths: unique(candidate.map((entry) => entry.path)),
         localOnlyPaths: unique(link.localOnly),
         forcedConflicts: result.interrupted.map((group) => unique(group)),
         markerPaths: unique([...result.markerPaths, ...link.priorMarkers]),
@@ -672,6 +687,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
     ) {
       const pending = yield* readActive(connectionId);
       if (pending.activeApply === null) return { _tag: "none" as const };
+      yield* store.admitWritable;
       const repo = yield* repositoryFor(pending);
       return yield* barrier.application(
         folderOf(pending),
@@ -692,6 +708,8 @@ export const make = (options: OverleafCoordinatorOptions) =>
     const prepare: OverleafCoordinator["Service"]["prepare"] = (input) =>
       reserve(input.connectionId, () =>
         Effect.gen(function* () {
+          // Writable admission before anything touches the private repository.
+          yield* store.admitWritable;
           let connection = yield* readActive(input.connectionId);
           if (connection.activeApply !== null) {
             const recovered = yield* recoverHeld(input.connectionId);
@@ -721,6 +739,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
     const confirm: OverleafCoordinator["Service"]["confirm"] = (input) =>
       reserve(input.connectionId, (operationId) =>
         Effect.gen(function* () {
+          yield* store.admitWritable;
           const started = DateTime.formatIso(yield* DateTime.now);
           const begun = yield* store.beginReceipt({
             schemaVersion: 1,
@@ -879,54 +898,26 @@ export const make = (options: OverleafCoordinatorOptions) =>
         .pipe(Effect.map((retention) => retention.directory));
     const revisionAt = (path: string) => Effect.promise(() => fileRevision(path));
 
-    /**
-     * Every version an apply kept, by path, as found on disk: the main one a record
-     * names and any others its steps kept beside it (`<apply>/files/<step>/<leaf>`).
-     */
-    const versionsOnDisk = (vault: string, folder: string, applyId: string) =>
-      Effect.promise(async () => {
-        const versions = new Map<string, string[]>();
-        const files = NodePath.join(vault, applyId, "files");
-        const steps = await NodeFSP.readdir(files, { withFileTypes: true }).catch(() => []);
-        for (const step of steps) {
-          if (!step.isDirectory() || !/^step-\d{1,5}(?:-\d{1,5})?$/u.test(step.name)) continue;
-          const record = await NodeFSP.readFile(
-            NodePath.join(files, step.name, "record.json"),
-            "utf8",
-          )
-            .then((text) => decodeRetainedRecord(text))
-            .catch(() => null);
-          if (record === null) continue;
-          const relativePath = NodePath.relative(folder, record.target)
-            .split(NodePath.sep)
-            .join("/");
-          for (const leaf of ["retained", "slot", "provisional"]) {
-            const kept = `${applyId}/files/${step.name}/${leaf}`;
-            if (
-              await fileRevision(NodePath.join(vault, kept)).then((revision) => revision !== null)
-            )
-              versions.set(relativePath, [...(versions.get(relativePath) ?? []), kept]);
-          }
-        }
-        return versions;
-      });
-
     const keptCopies: OverleafCoordinator["Service"]["keptCopies"] = (input) =>
       Effect.gen(function* () {
         const connection = yield* readActive(input.connectionId);
         const vault = yield* vaultOf(connection);
         const folder = folderOf(connection);
+        const current = new Map<string, string | null>();
         const listed: OverleafKeptCopy[] = [];
-        const onDisk = new Map<string, Map<string, string[]>>();
         for (const copy of connection.retention.copies) {
-          if (!onDisk.has(copy.applyId))
-            onDisk.set(copy.applyId, yield* versionsOnDisk(vault, folder, copy.applyId));
-          const versions = unique([
-            copy.kept,
-            ...(onDisk.get(copy.applyId)!.get(copy.relativePath) ?? []),
-          ]);
-          const currentRevision = yield* revisionAt(NodePath.join(folder, copy.relativePath));
-          for (const kept of versions)
+          if (!current.has(copy.relativePath))
+            current.set(
+              copy.relativePath,
+              yield* revisionAt(NodePath.join(folder, copy.relativePath)),
+            );
+          for (const kept of [copy.kept, ...copy.versions]) {
+            const path = NodePath.join(vault, kept);
+            // An unchanged main version is what was recorded; only others are read again.
+            const keptRevision =
+              kept === copy.kept && (yield* stampAt(path)) === copy.stamp
+                ? copy.revision
+                : yield* revisionAt(path);
             listed.push({
               applyId: copy.applyId,
               kept,
@@ -934,9 +925,10 @@ export const make = (options: OverleafCoordinatorOptions) =>
               state: copy.state,
               retainedAt: copy.retainedAt,
               revision: kept === copy.kept ? copy.revision : null,
-              keptRevision: yield* revisionAt(NodePath.join(vault, kept)),
-              currentRevision,
+              keptRevision,
+              currentRevision: current.get(copy.relativePath)!,
             });
+          }
         }
         return listed;
       });
@@ -944,6 +936,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
     const restoreKept: OverleafCoordinator["Service"]["restoreKept"] = (input) =>
       reserve(input.connectionId, (operationId) =>
         Effect.gen(function* () {
+          yield* store.admitWritable;
           const started = DateTime.formatIso(yield* DateTime.now);
           const begun = yield* store.beginReceipt({
             schemaVersion: 1,
@@ -994,13 +987,11 @@ export const make = (options: OverleafCoordinatorOptions) =>
                   });
                 yield* verifyFolders(connection);
                 const vault = yield* vaultOf(connection);
-                // The record that kept this version: its main one, or another beside it.
-                const versions = yield* versionsOnDisk(vault, folderOf(connection), input.applyId);
+                // The record that kept this version: its main one, or another it names.
                 const copy = connection.retention.copies.find(
                   (entry) =>
                     entry.applyId === input.applyId &&
-                    (entry.kept === input.kept ||
-                      (versions.get(entry.relativePath) ?? []).includes(input.kept)),
+                    (entry.kept === input.kept || entry.versions.includes(input.kept)),
                 );
                 if (copy === undefined || connection.base.commit === null)
                   return { _tag: "unknown-copy" as const };

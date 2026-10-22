@@ -309,6 +309,8 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      versions: [],
+      stamp: "1:1",
     };
     const holding = next(synced, { retention: { ...synced.retention, copies: [copy] } });
     expect(violation(holding, { retention: { ...freshVault, copies: [copy] } })).toBe(
@@ -347,6 +349,8 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      versions: [],
+      stamp: "1:1",
     };
     const holding = (change: Partial<typeof copy>, completedSyncCount: number) =>
       next(synced, {
