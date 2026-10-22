@@ -37,7 +37,6 @@
 import * as NodeCrypto from "node:crypto";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -58,6 +57,8 @@ const TOOL_MAX_OUTPUT_BYTES = 64 * 1024;
 const FOLDER_TIMEOUT = "30 seconds";
 /** And this long for moving earlier state; whatever is left moves next start. */
 const CARRY_OVER_TIMEOUT = "30 seconds";
+/** After a failed or timed-out attempt, this long to see whether it was recorded. */
+const RECHECK_TIMEOUT = "5 seconds";
 /**
  * What earlier builds left that is worth keeping: build evidence and the
  * SyncTeX indexes of published PDFs. Everything else there is rebuilt.
@@ -213,8 +214,13 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
               detail: "The moved folder could not be identified.",
             });
           }
+          // Written beside the record and renamed over it: one interruptible
+          // step publishes it whole. The temporary name is one the sweep
+          // above clears if an attempt stops in between.
           const contents = yield* encodeLocation({ schemaVersion: 1, directory, identity });
-          yield* writeFileStringAtomically({ filePath: locationPath, contents });
+          const pending = path.join(latexDir, `.${name}.json`);
+          yield* fileSystem.writeFileString(pending, contents);
+          yield* fileSystem.rename(pending, locationPath);
           yield* Effect.logInfo("scient latex state moved to a private ASCII folder", {
             directory,
           });
@@ -257,28 +263,32 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         { discard: true },
       );
 
-    const findOrMakeFolder = Effect.gen(function* () {
-      const programData =
-        environmentValue(environment, "ProgramData") ??
-        environmentValue(environment, "ALLUSERSPROFILE");
-      if (
-        programData === undefined ||
-        !path.isAbsolute(programData) ||
-        !isTexSafePath(programData)
-      ) {
-        return yield* new LatexStateLocationError({
-          detail: "This computer has no plain-ASCII ProgramData folder.",
-        });
-      }
+    const programData =
+      environmentValue(environment, "ProgramData") ??
+      environmentValue(environment, "ALLUSERSPROFILE");
+    if (programData === undefined || !path.isAbsolute(programData) || !isTexSafePath(programData)) {
+      yield* Effect.logWarning("scient latex state stays in the profile folder", {
+        latexDir,
+        reason: "This computer has no plain-ASCII ProgramData folder.",
+      });
+      return latexDir;
+    }
+
+    /** The folder the record names, if it is still the very folder made. */
+    const recordedFolder = Effect.gen(function* () {
       const recorded = yield* fileSystem.readFileString(locationPath).pipe(
         Effect.flatMap(decodeLocation),
         Effect.orElseSucceed(() => null),
       );
-      const reusable =
-        recorded !== null &&
+      return recorded !== null &&
         isPrivateLatexStateFolder({ directory: recorded.directory, programData, path }) &&
-        (yield* folderIdentity(recorded.directory)) === recorded.identity;
-      return reusable ? recorded.directory : yield* makePrivateFolder(programData);
+        (yield* folderIdentity(recorded.directory)) === recorded.identity
+        ? recorded.directory
+        : null;
+    });
+
+    const findOrMakeFolder = Effect.gen(function* () {
+      return (yield* recordedFolder) ?? (yield* makePrivateFolder(programData));
     }).pipe(
       Effect.timeoutOrElse({
         duration: FOLDER_TIMEOUT,
@@ -295,10 +305,20 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
       return directory;
     }).pipe(
       Effect.catch((cause) =>
-        Effect.logWarning("scient latex state stays in the profile folder", {
-          latexDir,
-          reason: cause.message,
-        }).pipe(Effect.as(latexDir)),
+        Effect.gen(function* () {
+          // An attempt stopped after publishing its record still decides:
+          // the record is what every later start will follow.
+          const published = yield* recordedFolder.pipe(
+            Effect.timeoutOption(RECHECK_TIMEOUT),
+            Effect.map(Option.getOrNull),
+          );
+          if (published !== null) return published;
+          yield* Effect.logWarning("scient latex state stays in the profile folder", {
+            latexDir,
+            reason: cause.message,
+          });
+          return latexDir;
+        }),
       ),
     );
   },

@@ -758,8 +758,9 @@ and SyncTeX indexes in the profile folder move across entry by entry, never over
 an existing entry, within 30 seconds; anything left moves on a later start, and
 the recorded folder stays in use either way. If finding or making the folder
 fails or takes more than 30 seconds, the profile `latexDir` stays in use, which
-is the earlier behavior, and the next start sweeps the attempt's leftovers from
-the profile. ASCII paths and other platforms are untouched. All of this assumes
+is the earlier behavior, unless the attempt had already recorded its folder: the
+record is written beside its final name and renamed into place, and whatever it
+names decides. The next start sweeps an attempt's leftovers from the profile. ASCII paths and other platforms are untouched. All of this assumes
 the state directory is private to the account, as Scient's state directory must
 be anyway: whoever can write there can already replace the managed TeX. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own

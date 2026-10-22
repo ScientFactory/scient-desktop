@@ -407,6 +407,73 @@ describe("resolveLatexStateDirectory", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("still uses the folder when an attempt stops right after recording it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stalled = yield* Deferred.make<void>();
+      const fixture = yield* harness({
+        wrapFileSystem: (real) => ({
+          ...real,
+          rename: (from, to) =>
+            to.endsWith(LATEX_STATE_LOCATION_FILE)
+              ? real
+                  .rename(from, to)
+                  .pipe(
+                    Effect.andThen(Deferred.succeed(stalled, undefined)),
+                    Effect.andThen(Effect.never),
+                  )
+              : real.rename(from, to),
+        }),
+      });
+      const running = yield* Effect.forkChild(fixture.resolve);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("31 seconds");
+      const directory = yield* Fiber.join(running);
+      expect(path.dirname(directory)).toBe(fixture.programData);
+      const recorded = JSON.parse(
+        yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE)),
+      );
+      expect(recorded.directory).toBe(directory);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets the server start when writing the record hangs, and clears it next time", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stalled = yield* Deferred.make<void>();
+      let diskStuck = true;
+      const fixture = yield* harness({
+        wrapFileSystem: (real) => ({
+          ...real,
+          writeFileString: (target, data, options) =>
+            diskStuck && path.basename(target).startsWith(".scient-latex-")
+              ? real
+                  .writeFileString(target, data, options)
+                  .pipe(
+                    Effect.andThen(Deferred.succeed(stalled, undefined)),
+                    Effect.andThen(Effect.never),
+                  )
+              : real.writeFileString(target, data, options),
+        }),
+      });
+      const running = yield* Effect.forkChild(fixture.resolve);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust("31 seconds");
+      expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
+      expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE))).toBe(
+        false,
+      );
+      expect(yield* fixture.stagingLeftovers).toHaveLength(1);
+
+      diskStuck = false;
+      const directory = yield* fixture.resolve;
+      expect(path.dirname(directory)).toBe(fixture.programData);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("stays in the profile on a computer without a ProgramData folder", () =>
     Effect.gen(function* () {
       const fixture = yield* harness({ programData: "absent" });
