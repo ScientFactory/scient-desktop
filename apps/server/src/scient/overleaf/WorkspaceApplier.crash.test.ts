@@ -49,6 +49,33 @@ const edit: Scenario = {
   target: { "a.tex": "remote", "guard.tex": "guard" },
 };
 
+/** Every path the scenario names, in one conflict group: applied together or not at all. */
+const groupOf = (scenario: Scenario) => [
+  {
+    paths: [
+      ...new Set([
+        ...Object.keys(scenario.base ?? {}),
+        ...Object.keys(scenario.captured),
+        ...Object.keys(scenario.target),
+      ]),
+    ],
+    types: ["content"],
+    origins: ["merge" as const],
+  },
+];
+/** The scenario's plan, for an apply in this process. */
+const planOf = (scenario: Scenario): WorkspaceApplyPlan => ({
+  base: new Map(Object.entries(revisions(scenario.base ?? scenario.captured))),
+  remote: new Map(Object.entries(revisions(scenario.target))),
+  captured: new Map(Object.entries(revisions(scenario.captured))),
+  target: new Map(
+    Object.entries(scenario.target).map(([name, text]) => [name, { bytes: Buffer.from(text) }]),
+  ),
+  renames: scenario.renames ?? [],
+  conflicts: groupOf(scenario),
+  markerPaths: [],
+});
+
 /**
  * Writes `scenario.captured` to the folder and runs its apply, every path in one
  * unit, in a child that dies the `occurrence`th time it reaches `killAt`.
@@ -79,19 +106,7 @@ async function crashAt(
         ]),
       ),
       renames: scenario.renames ?? [],
-      conflicts: [
-        {
-          paths: [
-            ...new Set([
-              ...Object.keys(scenario.base ?? {}),
-              ...Object.keys(scenario.captured),
-              ...Object.keys(scenario.target),
-            ]),
-          ],
-          types: ["content"],
-          origins: ["merge"],
-        },
-      ],
+      conflicts: groupOf(scenario),
       markerPaths: [],
     },
   };
@@ -372,6 +387,41 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       }),
   );
 
+  // Removing a folder's last file leaves the folder until the file replacing it is written;
+  // that empty folder is the plan's own, not a change.
+  const emptied = (old: string): Scenario => ({
+    captured: { "a.tex": "base", [old]: "old" },
+    target: { "a.tex": "remote", notes: "new" },
+  });
+  it.live.each(["notes/old.tex", "notes/deep/old.tex"])(
+    "applies a group whose folder becomes a file (%s)",
+    (old) =>
+      fixture(async (h) => {
+        await put(h.cwd, emptied(old).captured);
+        expect(await h.apply("emptied", planOf(emptied(old)))).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await read(h.cwd, "notes")).toBe("new");
+      }),
+  );
+  it.live.each(["notes/old.tex", "notes/deep/old.tex"])(
+    "recovers a group whose folder becomes a file after a crash (%s)",
+    (old) =>
+      fixture(async (h) => {
+        await crashAt(h, "prepared", emptied(old));
+        await h.restart();
+        await editorReads(h);
+        expect(await h.apply("crash")).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await read(h.cwd, "notes")).toBe("new");
+      }),
+  );
+
   // Without a crash: a peer that changes while the step is staged stops it before publishing.
   it.live("publishes nothing when a peer changes while the step is staged", () => {
     let folder = "";
@@ -379,17 +429,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       async (h) => {
         folder = h.cwd;
         await put(h.cwd, edit.captured);
-        const result = await h.apply("late", {
-          base: new Map(Object.entries(revisions(edit.captured))),
-          remote: new Map(Object.entries(revisions(edit.target))),
-          captured: new Map(Object.entries(revisions(edit.captured))),
-          target: new Map(
-            Object.entries(edit.target).map(([name, text]) => [name, { bytes: Buffer.from(text) }]),
-          ),
-          renames: [],
-          conflicts: [{ paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge"] }],
-          markerPaths: [],
-        });
+        const result = await h.apply("late", planOf(edit));
         expect(result.interrupted).toEqual([]);
         expect(await read(h.cwd, "a.tex")).toBe("base");
         expect(await read(h.cwd, "guard.tex")).toBe("later");

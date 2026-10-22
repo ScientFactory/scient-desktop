@@ -490,6 +490,10 @@ export const make = (hooks: ApplierHooks = {}) =>
               try: () => durableJson(begin.recordPath, progress(state)),
               catch: (cause) => new WorkspaceApplyError({ cause }),
             });
+          // Every path the plan names, for the folders a peer guard may meet.
+          const planned = [
+            ...new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
+          ];
           if (state.phase === "applying")
             for (const [unitIndex, unit] of state.plan.units.entries()) {
               if (state.outcomes[unitIndex] !== "pending") continue;
@@ -511,6 +515,13 @@ export const make = (hooks: ApplierHooks = {}) =>
                   .filter((name) => !ownValue(state.plan.target, name) && !blockers.includes(name))
                   .sort(),
               ];
+              const positions = new Map(ordered.map((name, index) => [name, index]));
+              const below = new Map(
+                state.plan.guards[unitIndex]!.map((guard) => [
+                  guard,
+                  planned.filter((path) => path.startsWith(`${guard}/`)),
+                ]),
+              );
               const destinationsIntact = async () => {
                 await assertRootBinding(state.cwd, state.rootIdentity);
                 for (const name of state.plan.guards[unitIndex]!) {
@@ -552,33 +563,31 @@ export const make = (hooks: ApplierHooks = {}) =>
                 // The rest of the unit as it must stand when this file becomes visible:
                 // steps before this one applied, later ones still as captured. The record
                 // keeps them, so a crash's recovery cannot publish into a changed group.
-                const position = ordered.indexOf(name);
+                const position = positions.get(name)!;
                 const expected = (guard: string) =>
-                  (!unit.includes(guard) || ordered.indexOf(guard) < position
+                  (!positions.has(guard) || positions.get(guard)! < position
                     ? ownValue(state.plan.target, guard)?.revision
                     : ownValue(state.plan.captured, guard)) ?? null;
-                const planned = [
-                  ...new Set([
-                    ...Object.keys(state.plan.captured),
-                    ...Object.keys(state.plan.target),
-                  ]),
-                ];
                 const peerGuards = state.plan.guards[unitIndex]!.filter(
                   (guard) => guard !== name,
                 ).map((guard) => {
-                  const below = planned.filter((path) => path.startsWith(`${guard}/`));
-                  // A folder stands here now only while it holds a file the plan still
-                  // keeps or has already written, or this step's own file. One the plan
-                  // empties for good may hold nothing but the files it removes.
+                  const inside = below.get(guard)!;
+                  // A folder may stand here where one stood when the folder was captured,
+                  // or where the plan needs one now: it holds a file still kept or already
+                  // written, or this step's own file. One the plan empties for good may
+                  // hold nothing but the files it removes.
                   const folder =
-                    name.startsWith(`${guard}/`) || below.some((path) => expected(path) !== null);
-                  const removed = !below.some((path) => ownValue(state.plan.target, path));
+                    name.startsWith(`${guard}/`) ||
+                    inside.some(
+                      (path) => ownValue(state.plan.captured, path) || expected(path) !== null,
+                    );
+                  const removed = !inside.some((path) => ownValue(state.plan.target, path));
                   return {
                     path: guard,
                     revision: expected(guard),
                     ...(folder ? { directory: true as const } : {}),
                     ...(folder && removed
-                      ? { only: below.filter((path) => ownValue(state.plan.captured, path)) }
+                      ? { only: inside.filter((path) => ownValue(state.plan.captured, path)) }
                       : {}),
                   };
                 });
