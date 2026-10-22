@@ -168,7 +168,9 @@ describe("retained publication admission", () => {
           expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("captured");
         }),
     );
-    it("never re-captures after an ambiguous publishing boundary", () =>
+    // Stopped after admission but before the native call: nothing was captured, so
+    // recovery checks the target afresh rather than keeping the step for review.
+    it("checks again, and never captures, an outside change after a capture that never ran", () =>
       fixture(async (input, target) => {
         await expect(
           mutateRetainedFile(input, target, {
@@ -180,10 +182,24 @@ describe("retained publication admission", () => {
         await NodeFSP.writeFile(target, "outside D");
         const identity = await fileIdentity(target);
         const result = await mutateRetainedFile(input, target);
-        expect(result.outcome).toBe("attention");
-        expect(result.failure).toBe("recovery");
+        expect(result.outcome).toBe("skipped");
+        expect(result.failure).toBe("revision");
         expect(await fileIdentity(target)).toEqual(identity);
         expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
+      }));
+    it("finishes a capture that never ran", () =>
+      fixture(async (input, target) => {
+        await expect(
+          mutateRetainedFile(input, target, {
+            at: async (point) => {
+              if (point === "checked") throw new Error("native admission interrupted");
+            },
+          }),
+        ).rejects.toThrow("native admission interrupted");
+        const result = await mutateRetainedFile(input, target);
+        expect(result.outcome).toBe("done");
+        await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("captured");
       }));
     it("refuses same-content private replacement as a captured receipt", () =>
       fixture(async (input, target, root) => {

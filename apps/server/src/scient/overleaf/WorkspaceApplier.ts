@@ -263,6 +263,34 @@ async function revision(cwd: string, name: string) {
   }
 }
 
+/**
+ * A step's record folders, oldest first: `step-N`, then `step-N-1`, `step-N-2`, …,
+ * one for each time the step was tried again.
+ */
+async function stepAttempts(retentionRoot: string, index: number) {
+  const names: string[] = [];
+  for (;;) {
+    const name = names.length ? `step-${index}-${names.length}` : `step-${index}`;
+    try {
+      await NodeFSP.lstat(NodePath.join(retentionRoot, name));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return names;
+      throw e;
+    }
+    names.push(name);
+  }
+}
+async function readStepRecord(directory: string) {
+  try {
+    return decodeRetainedRecord(
+      await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
+    );
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
 async function unitHasDurableMutation(
   state: State,
   unit: readonly string[],
@@ -271,53 +299,48 @@ async function unitHasDurableMutation(
   const paths = state.plan.units.flat();
   for (const name of unit) {
     if (["done", "attention"].includes(ownValue(state.steps, name) ?? "")) return true;
-    const directory = NodePath.join(retentionRoot, `step-${paths.indexOf(name)}`);
-    let record;
-    try {
-      record = decodeRetainedRecord(
-        await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
-      );
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw e;
-    }
+    for (const attempt of await stepAttempts(retentionRoot, paths.indexOf(name)))
+      if (await attemptHasDurableMutation(state, name, NodePath.join(retentionRoot, attempt)))
+        return true;
+  }
+  return false;
+}
+async function attemptHasDurableMutation(state: State, name: string, directory: string) {
+  const record = await readStepRecord(directory);
+  if (record === null) return false;
+  if (
+    record.target !== NodePath.join(state.cwd, name) ||
+    record.expected !== (ownValue(state.plan.captured, name) ?? null) ||
+    record.desired !== (ownValue(state.plan.target, name)?.revision ?? null)
+  )
+    throw new Error("Retained mutation does not match apply intent.");
+  if (record.phase === "done") return record.outcome !== "skipped";
+  if (record.phase === "preparing") return false;
+  if (record.phase !== "prepared") return true;
+  // Older additive records have no durable pre-publication boundary. Their
+  // absence of evidence cannot establish that publication never happened.
+  if (record.expected === null && record.desired !== null && !record.installBoundary) return true;
+  // The syscall may have completed before the primitive's phase write. The
+  // displaced file or changed staging identity is evidence even if outer
+  // progress is empty. Merely staging a file is not a manuscript mutation.
+  if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
+  if (record.desired !== null) {
+    const target = await fileIdentity(record.target);
     if (
-      record.target !== NodePath.join(state.cwd, name) ||
-      record.expected !== (ownValue(state.plan.captured, name) ?? null) ||
-      record.desired !== (ownValue(state.plan.target, name)?.revision ?? null)
+      target &&
+      record.stagedIdentity &&
+      target.dev === record.stagedIdentity.dev &&
+      target.ino === record.stagedIdentity.ino
     )
-      throw new Error("Retained mutation does not match apply intent.");
-    if (record.phase === "done") {
-      if (record.outcome !== "skipped") return true;
-      continue;
-    }
-    if (record.phase === "preparing") continue;
-    if (record.phase !== "prepared") return true;
-    // Older additive records have no durable pre-publication boundary. Their
-    // absence of evidence cannot establish that publication never happened.
-    if (record.expected === null && record.desired !== null && !record.installBoundary) return true;
-    // The syscall may have completed before the primitive's phase write. The
-    // displaced file or changed staging identity is evidence even if outer
-    // progress is empty. Merely staging a file is not a manuscript mutation.
-    if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
-    if (record.desired !== null) {
-      const target = await fileIdentity(record.target);
-      if (
-        target &&
-        record.stagedIdentity &&
-        target.dev === record.stagedIdentity.dev &&
-        target.ino === record.stagedIdentity.ino
-      )
-        return true;
-      const slot = await fileIdentity(NodePath.join(directory, "slot"));
-      if (
-        !record.stagedIdentity ||
-        !slot ||
-        slot.dev !== record.stagedIdentity.dev ||
-        slot.ino !== record.stagedIdentity.ino
-      )
-        return true;
-    }
+      return true;
+    const slot = await fileIdentity(NodePath.join(directory, "slot"));
+    if (
+      !record.stagedIdentity ||
+      !slot ||
+      slot.dev !== record.stagedIdentity.dev ||
+      slot.ino !== record.stagedIdentity.ino
+    )
+      return true;
   }
   return false;
 }
@@ -598,11 +621,37 @@ export const make = (hooks: ApplierHooks = {}) =>
                       : {}),
                   };
                 });
+                // A crash can leave a step's record closed without anything published:
+                // settlement after a crash before staging has no bytes to finish it. The
+                // plan has them, so such a step is tried again under a new record, with
+                // every check made afresh. A closed record is otherwise its receipt.
+                const attempts = yield* Effect.tryPromise({
+                  try: () => stepAttempts(begin.retentionDirectory, index),
+                  catch: (cause) => new WorkspaceApplyError({ cause }),
+                });
+                const latest = attempts.at(-1);
+                const closed =
+                  latest === undefined
+                    ? null
+                    : yield* Effect.tryPromise({
+                        try: () => readStepRecord(NodePath.join(begin.retentionDirectory, latest)),
+                        catch: (cause) => new WorkspaceApplyError({ cause }),
+                      });
+                const unpublished =
+                  closed?.version === 2 &&
+                  closed.phase === "done" &&
+                  closed.outcome === "skipped" &&
+                  closed.sourceMutation === false;
                 const args = {
                   cwd: state.cwd,
                   relativePath: name,
                   retentionDirectory: begin.retentionDirectory,
-                  id: `step-${index}`,
+                  id:
+                    latest === undefined
+                      ? `step-${index}`
+                      : unpublished
+                        ? `step-${index}-${attempts.length}`
+                        : latest,
                   expectedRevision: ownValue(state.plan.captured, name) ?? null,
                   expectedRootIdentity: state.rootIdentity,
                   peerGuards,
@@ -610,31 +659,12 @@ export const make = (hooks: ApplierHooks = {}) =>
                     ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
                     : {}),
                 };
-                // A step another reader settled after a crash, before its bytes were
-                // staged, is closed as skipped: nothing was published, and replaying it
-                // would only repeat the refusal.
-                const settled = yield* Effect.tryPromise({
-                  try: () =>
-                    NodeFSP.readFile(
-                      NodePath.join(begin.retentionDirectory, `step-${index}`, "record.json"),
-                      "utf8",
-                    ).then(decodeRetainedRecord, (e: NodeJS.ErrnoException) => {
-                      if (e.code === "ENOENT") return null;
-                      throw e;
-                    }),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                const outcome =
-                  settled?.version === 2 &&
-                  settled.phase === "done" &&
-                  settled.outcome === "skipped"
-                    ? "skipped"
-                    : yield* (
-                        file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
-                      ).pipe(
-                        Effect.map((result) => result.outcome),
-                        Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
-                      );
+                const outcome = yield* (
+                  file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
+                ).pipe(
+                  Effect.map((result) => result.outcome),
+                  Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+                );
                 yield* Effect.tryPromise({
                   try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
                   catch: (cause) => new WorkspaceApplyError({ cause }),
@@ -693,40 +723,41 @@ export const make = (hooks: ApplierHooks = {}) =>
               Effect.tryPromise({
                 try: async (): Promise<WorkspaceApplyResult> => {
                   const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
-                  for (const [index, name] of state.plan.units.flat().entries()) {
-                    const directory = NodePath.join(begin.retentionDirectory, `step-${index}`);
-                    try {
-                      const record = decodeRetainedRecord(
-                        await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
-                      );
-                      for (const leaf of ["slot", "retained", "provisional"]) {
-                        const kept = NodePath.join(directory, leaf);
-                        const current = await fileRevision(kept);
-                        if (
-                          current !== null &&
-                          (leaf === "retained" ||
-                            record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
-                            record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
-                            current !== record.desired)
-                        ) {
-                          retained.push(
-                            await recheckRetainedFile(
-                              {
-                                outcome: record.outcome ?? "attention",
-                                recordDirectory: directory,
-                                retainedPath: kept,
-                                retainedRevision: current,
-                                retainedIdentity: null,
-                              },
-                              ownValue(state.plan.captured, name) ?? null,
-                            ),
-                          );
+                  for (const [index, name] of state.plan.units.flat().entries())
+                    for (const attempt of await stepAttempts(begin.retentionDirectory, index)) {
+                      const directory = NodePath.join(begin.retentionDirectory, attempt);
+                      try {
+                        const record = decodeRetainedRecord(
+                          await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
+                        );
+                        for (const leaf of ["slot", "retained", "provisional"]) {
+                          const kept = NodePath.join(directory, leaf);
+                          const current = await fileRevision(kept);
+                          if (
+                            current !== null &&
+                            (leaf === "retained" ||
+                              record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
+                              record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
+                              current !== record.desired)
+                          ) {
+                            retained.push(
+                              await recheckRetainedFile(
+                                {
+                                  outcome: record.outcome ?? "attention",
+                                  recordDirectory: directory,
+                                  retainedPath: kept,
+                                  retainedRevision: current,
+                                  retainedIdentity: null,
+                                },
+                                ownValue(state.plan.captured, name) ?? null,
+                              ),
+                            );
+                          }
                         }
+                      } catch (e) {
+                        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                       }
-                    } catch (e) {
-                      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                     }
-                  }
                   await assertRootBinding(state.cwd, state.rootIdentity);
                   let matchesTarget = true;
                   for (const name of new Set([
