@@ -38,12 +38,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
 import { latexEngineEnvironment } from "./latexCommand.ts";
 import { LatexPackageInstaller, clearFailedPackageSearches } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { latexTexDirectory } from "./latexTexDirectory.ts";
 import {
   decodeManagedLatexInstallRecord,
   encodeManagedLatexInstallRecord,
@@ -200,7 +200,6 @@ export const make = Effect.gen(function* () {
   const manifest = yield* TinyTexManifestRef;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
   const unpacker = yield* LatexArchiveUnpacker.LatexArchiveUnpacker;
   const toolchain = yield* LatexToolchain;
   const packageInstaller = yield* LatexPackageInstaller;
@@ -211,7 +210,7 @@ export const make = Effect.gen(function* () {
   const pathDelimiter = platform === "win32" ? ";" : ":";
   const assetLookup = resolveTinyTexAsset(platform, architecture, manifest);
   const asset = assetLookup.supported ? assetLookup.asset : null;
-  const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
+  const paths = managedLatexPaths({ latexDir: yield* latexTexDirectory, join: path.join });
   // The install runs on a fiber whose callers hold no context, so the atomic
   // write helper's own services are captured here.
   const fileContext = yield* Effect.context<FileSystem.FileSystem | Path.Path>();

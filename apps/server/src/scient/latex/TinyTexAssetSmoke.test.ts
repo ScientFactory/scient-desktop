@@ -11,10 +11,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
-import { latexEngineEnvironment } from "./latexCommand.ts";
+import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 import {
   LatexToolchain,
   latexDriverBinDirectory,
@@ -22,6 +23,17 @@ import {
 } from "./LatexToolchain.ts";
 import { LatexArchiveUnpacker, make as makeLatexArchiveUnpacker } from "./LatexArchiveUnpacker.ts";
 import { resolveTinyTexAsset, type TinyTexAsset } from "./tinytexManifest.ts";
+import {
+  LatexTexDirectory,
+  isTexSafePath,
+  latexTexDirectory,
+  make as makeLatexTexDirectory,
+} from "./latexTexDirectory.ts";
+import {
+  encodeManagedLatexInstallRecord,
+  managedLatexInstallRoot,
+  managedLatexPaths,
+} from "./managedLatexInstall.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
@@ -47,12 +59,21 @@ interface NativeAsset {
  * The real toolchain probe over exactly the environment given, with an empty
  * state directory so no managed install can answer instead.
  */
-const probeRealToolchain = (environment: NodeJS.ProcessEnv, stateDirectory: string) =>
+const probeRealToolchain = (
+  environment: NodeJS.ProcessEnv,
+  stateDirectory: string,
+  config: Layer.Layer<
+    ServerConfig.ServerConfig,
+    PlatformError.PlatformError
+  > = ServerConfig.layerTest(stateDirectory, stateDirectory).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+) =>
   LatexToolchain.use((toolchain) => toolchain.probe(true)).pipe(
     Effect.provide(
       Layer.effect(LatexToolchain, makeLatexToolchain).pipe(
         Layer.provide(ProcessRunner.layer),
-        Layer.provide(ServerConfig.layerTest(stateDirectory, stateDirectory)),
+        Layer.provide(config),
         Layer.provide(Layer.succeed(HostProcess.Environment, environment)),
         Layer.provide(NodeServices.layer),
       ),
@@ -407,6 +428,149 @@ const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAs
   });
 
 /**
+ * A Windows profile whose name TeX Live cannot read. TeX's own files must
+ * move to a private ASCII folder under the real `%ProgramData%`, locked to
+ * this account; TinyTeX installed there must be the one the probe finds; and a
+ * build of documents in Hebrew-named folders, invoked exactly as the build
+ * service invokes it, must produce PDFs.
+ */
+const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
+  Effect.gen(function* () {
+    const profile = NodePath.join(temporaryRoot, "יעקב ü");
+    const stateDirectory = NodePath.join(profile, "userdata");
+    const relocated = Layer.effect(LatexTexDirectory, makeLatexTexDirectory).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(stateDirectory, stateDirectory)),
+      Layer.provide(ProcessRunner.layer),
+      Layer.provide(Layer.succeed(HostProcess.Environment, { ...process.env })),
+      Layer.provide(NodeServices.layer),
+    );
+    const texDirectory = yield* latexTexDirectory.pipe(Effect.provide(relocated));
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() => NodeFSP.rm(texDirectory, { recursive: true, force: true })),
+    );
+    const programData = process.env.ProgramData ?? "C:\\ProgramData";
+    expect(NodePath.dirname(texDirectory).toLowerCase()).toBe(programData.toLowerCase());
+    expect(isTexSafePath(texDirectory)).toBe(true);
+    const acl = NodeChildProcess.spawnSync(
+      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
+      [texDirectory],
+      { encoding: "utf8" },
+    );
+    expect(acl.status, acl.stderr).toBe(0);
+    const grants = acl.stdout
+      .replace(texDirectory, "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.includes(":("));
+    expect(grants, acl.stdout).toHaveLength(3);
+    expect(acl.stdout).toMatch(/NT AUTHORITY\\SYSTEM:\(OI\)\(CI\)\(F\)/u);
+    expect(acl.stdout).toMatch(/BUILTIN\\Administrators:\(OI\)\(CI\)\(F\)/u);
+    expect(acl.stdout).not.toMatch(/\b(Users|Everyone|Authenticated Users):/u);
+
+    // Installed where the managed installer would place it, and recorded the
+    // same way, so the probe below has to find it through the relocated state.
+    const paths = managedLatexPaths({ latexDir: texDirectory, join: NodePath.join });
+    const installRoot = managedLatexInstallRoot({
+      managedRoot: paths.managedRoot,
+      version: "smoke",
+      unique: "0000",
+      join: NodePath.join,
+    });
+    yield* Effect.promise(() => NodeFSP.mkdir(installRoot, { recursive: true }));
+    yield* LatexArchiveUnpacker.use((unpacker) =>
+      unpacker.unpack({
+        archivePath: downloaded.archivePath,
+        destination: installRoot,
+        archive: downloaded.asset.archive,
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.effect(LatexArchiveUnpacker, makeLatexArchiveUnpacker).pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(Layer.succeed(HostProcess.Environment, { ...process.env })),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+    const record = yield* encodeManagedLatexInstallRecord({
+      schemaVersion: 1,
+      version: "smoke",
+      installedAtEpochMs: 0,
+      root: installRoot,
+    });
+    yield* Effect.promise(() => NodeFSP.writeFile(paths.statePath, record));
+
+    const systemFolders = [
+      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+      process.env.SystemRoot ?? "C:\\Windows",
+    ];
+    const environment = isolatedEnvironment(
+      systemFolders,
+      NodePath.join(temporaryRoot, "no-default-installs"),
+    );
+    const found = yield* withProcessPath(
+      systemFolders.join(NodePath.delimiter),
+      probeRealToolchain(environment, stateDirectory, relocated),
+    );
+    expect(found.kind).toBe("latexmk");
+    expect(found.source).toBe("scient-managed");
+    expect(found.executable?.toLowerCase().startsWith(texDirectory.toLowerCase())).toBe(true);
+    const executable = found.executable ?? "";
+
+    for (const [folder, rootFileName] of [
+      ["מאמר", "main.tex"],
+      ["מאמר", "מאמר.tex"],
+    ] as const) {
+      const documentDirectory = NodePath.join(profile, "Documents", folder);
+      yield* Effect.promise(() => NodeFSP.mkdir(documentDirectory, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(documentDirectory, rootFileName),
+          "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n",
+        ),
+      );
+      const workDirectory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(texDirectory, "builds-")),
+      );
+      const invocation = buildLatexInvocation({
+        toolchain: { kind: "latexmk", executable, version: found.version ?? "unknown" },
+        engine: "pdflatex",
+        rootFileName,
+        workDirectory,
+        windows: true,
+        relativeWorkDirectory: NodePath.relative(documentDirectory, workDirectory) || ".",
+        forceReprocess: true,
+      });
+      if (invocation.inputWrapper !== undefined) {
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            invocation.inputWrapper?.path ?? "",
+            invocation.inputWrapper?.contents ?? "",
+          ),
+        );
+      }
+      const compiled = NodeChildProcess.spawnSync(invocation.command, invocation.args, {
+        cwd: documentDirectory,
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 2 * 60_000,
+        env: {
+          ...environment,
+          ...latexEngineEnvironment({
+            base: {},
+            hostEnvironment: environment,
+            binDirectory: NodePath.dirname(executable),
+            pathDelimiter: NodePath.delimiter,
+          }),
+        },
+      });
+      expect(compiled.error).toBeUndefined();
+      expect(compiled.status, compiled.stderr || compiled.stdout).toBe(0);
+      expect(NodeFS.existsSync(invocation.pdfPath), rootFileName).toBe(true);
+    }
+  });
+
+/**
  * Unit tests cover failures and state transitions; this opt-in lane proves
  * each native release asset is executable on the operating system it claims
  * to support, and that discovery handles a broken driver ahead of it.
@@ -426,6 +590,7 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
             // First, and on its own: it is the path a Windows 10 tar cannot take.
             if (HOST_PLATFORM === "win32") {
               yield* selfExtractWithoutSystemTar(temporaryRoot, downloaded);
+              yield* Effect.scoped(nonAsciiProfile(temporaryRoot, downloaded));
             }
             const native = yield* Effect.promise(() =>
               verifyNativeAsset(temporaryRoot, downloaded),

@@ -15,6 +15,7 @@ on:
       - "apps/server/src/scient/latex/SyncTexRuntime.ts"
       - "apps/server/src/scient/latex/latexCommand.ts"
       - "apps/server/src/scient/latex/managedLatexInstall.ts"
+      - "apps/server/src/scient/latex/latexTexDirectory.ts"
       - "apps/server/src/processRunner.ts"
       - "packages/shared/src/hostProcess.ts"
       - "scripts/stage-synctex-runtime.ts"
