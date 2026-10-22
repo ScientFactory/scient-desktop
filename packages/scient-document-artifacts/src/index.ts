@@ -1,5 +1,6 @@
 export {
   ArtifactAuthority,
+  AttachmentPdfLocator,
   AssetCopyFailureReason,
   AssetCopyRequest,
   AssetCopyResult,

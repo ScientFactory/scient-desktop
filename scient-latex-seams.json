@@ -179,6 +179,16 @@
       "path": "apps/web/src/components/settings/FoldedSettingsSection.tsx",
       "anchor": "[&>:not(:first-child)]:border-t",
       "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
+    },
+    {
+      "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+      "anchor": "attachmentPdfMount",
+      "purpose": "Open chat attachment PDFs in Scient's PDF reader (find, outline, zoom, Ask in chat) instead of Chromium's built-in viewer; other kinds keep their generic previews."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "draftPdf={{",
+      "purpose": "Name a draft attachment (thread and composer file context id) to Scient's PDF reader; the prop affects only PDF previews."
     }
   ]
 }
