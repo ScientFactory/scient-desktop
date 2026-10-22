@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 
 import {
   CheckoutBarrier,
+  type CheckoutLookupError,
   CheckoutRecoveryRequiredError,
   type CheckoutSection,
   type CheckoutSuspendedError,
@@ -171,6 +172,7 @@ export type OverleafCoordinatorError =
   | OverleafConnectionNotReadyError
   | OverleafRetainedLimitError
   | CheckoutSuspendedError
+  | CheckoutLookupError
   | FetchError
   | WorkspaceApplyError
   | OverleafStateIoError
@@ -727,8 +729,11 @@ export const make = (options: OverleafCoordinatorOptions) =>
             .pipe(Effect.orElseSucceed(() => ({ _tag: "missing" as const })));
           if (read._tag !== "ready" || read.document.state !== "active") continue;
           const connection = read.document;
-          if ((yield* barrier.current(connection.checkout.canonicalRoot)).key !== section.key)
-            continue;
+          // The connection's checkout, or one enclosing it, is the one changing.
+          const held = yield* barrier
+            .current(folderOf(connection))
+            .pipe(Effect.orElseSucceed(() => null));
+          if (held === null || !held.keys.includes(section.key)) continue;
           const refuse = new CheckoutRecoveryRequiredError({ checkout: section.root });
           // Structural source copies sit in the folder; a bulk change could erase them.
           if (connection.stagingPaths.length > 0) return yield* refuse;

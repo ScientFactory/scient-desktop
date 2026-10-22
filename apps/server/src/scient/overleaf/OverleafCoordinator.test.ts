@@ -18,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import {
   CheckoutBarrier,
+  type CheckoutLookupError,
   type CheckoutRecoveryRequiredError,
   makeCheckoutBarrier,
 } from "../workspace/CheckoutBarrier.ts";
@@ -34,6 +35,7 @@ import { makeOverleafReviewRegistry } from "./OverleafReviewRegistry.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
+import type { MutationPoint } from "../workspace/RetainedFileMutation.ts";
 
 const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
@@ -59,6 +61,8 @@ const world = (input: {
   readonly synced: Record<string, string>;
   readonly remote: Record<string, string>;
   readonly at?: (point: Point) => Promise<void>;
+  /** Runs at the native publication hooks of every step the applier takes. */
+  readonly native?: (point: MutationPoint, folder: string) => Promise<void>;
 }) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -90,7 +94,11 @@ const world = (input: {
       Effect.provideService(OverleafGitExecutor.OverleafGitExecutor, git),
     );
     const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid });
-    const files = yield* makeApplierFiles({ root, helper, retainedHooks: {} });
+    const files = yield* makeApplierFiles({
+      root,
+      helper,
+      retainedHooks: { at: async (point) => input.native?.(point, folder) },
+    });
     const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
     const barrier = makeCheckoutBarrier();
     const registry = makeOverleafReviewRegistry();
@@ -375,7 +383,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
 
   it.live("makes a bulk change of the checkout wait until the apply is adopted", () => {
     const order: string[] = [];
-    let bulk: Fiber.Fiber<void, CheckoutRecoveryRequiredError> | undefined;
+    let bulk: Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError> | undefined;
     let barrier: ReturnType<typeof makeCheckoutBarrier> | undefined;
     let checkout = "";
     return run(
@@ -466,4 +474,34 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
       }),
     ),
   );
+
+  it.live("keeps a group interrupted partway as a forced conflict for the next review", () => {
+    let prepared = 0;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "old.tex": "chapter text that moves", "main.tex": "M" },
+          remote: { "new.tex": "chapter text that moves", "main.tex": "M" },
+          // The rename's second step removes old.tex; it changes just before.
+          native: async (point, folder) => {
+            if (point === "prepared" && ++prepared === 2)
+              await NodeFSP.writeFile(NodePath.join(folder, "old.tex"), "edited meanwhile");
+          },
+        });
+        const confirmed = yield* w.sync();
+        expect(confirmed).toMatchObject({ _tag: "applied", adopted: { outcome: "attention" } });
+        const after = yield* w.connection;
+        expect(after.forcedConflicts).toEqual([["new.tex", "old.tex"]]);
+        expect(after.completedSyncCount).toBe(1);
+        expect(yield* read(w.folder, "old.tex")).toBe("edited meanwhile");
+        // The next review shows the group as a conflict to decide.
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.conflicts.map((conflict) => [...conflict.paths].sort())).toContainEqual([
+          "new.tex",
+          "old.tex",
+        ]);
+      }),
+    );
+  });
 });
