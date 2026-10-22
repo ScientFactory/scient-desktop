@@ -1,8 +1,8 @@
-# Unread completed answers
+# Unread answers and the app icon badge
 
-Scient's macOS Dock badge represents the number of unarchived conversations with
-an unread successful answer, across the client's connected environments. It is
-a projection of current state, never an increment/decrement event counter.
+The desktop app icon shows how many threads the sidebar marks unread: threads
+with a successful answer completed after their last visit. It is a projection of
+current state, never an increment/decrement event counter.
 
 ## Completion and read ownership
 
@@ -18,55 +18,77 @@ wins when merging independently delivered detail. An omitted field supports old
 servers by falling back to the latest successful turn; an explicit null means no
 answer. Old servers cannot preserve an answer across subsequent queued turns.
 
-The existing environment-scoped, persisted `threadLastVisitedAtById` owns read
-acknowledgement and Mark unread. The chat acknowledges the exact completion time
-only when its final assistant message is loaded and the document is visible and
-focused. Selecting a background conversation does not acknowledge it. Merely
-opening Settings does not acknowledge any conversation. Reading here means
-viewing the conversation, without requiring scrolling to a particular message.
+Read state is the sidebar's visit watermark. When a server tracks visits, its
+`lastVisitedAt` is authoritative, including Mark unread and reads on other
+clients; the persisted `threadLastVisitedAtById` only serves servers without
+visit tracking. The chat acknowledges the exact completion time only when its
+final assistant message is loaded and the document is visible and focused.
+Selecting a background conversation does not acknowledge it. Merely opening
+Settings does not acknowledge any conversation. Reading here means viewing the
+conversation, without requiring scrolling to a particular message.
 
-On the first live snapshot of each environment, a Scient-owned persisted baseline
-records the latest server timestamp in that snapshot. For the Dock count only,
-missing read markers fall back to this fixed adoption boundary. Existing sidebar
-visit timestamps are never initialized or overwritten, preserving independent
-wake indicators and explicit Mark unread. Later new conversations use the same
-baseline, so their completed answers are counted. Using server time avoids client-clock skew. The baseline
-survives renderer reloads; restricted storage falls back to the current session.
-Client read state remains local and is not synchronized across devices.
+## What the badge counts
+
+`countUnreadConversations` reuses the sidebar's own predicates rather than
+restating them: its roster filter (no archived, unfiled, or subagent threads),
+its visit resolution, `hasUnseenCompletion`, and its shelf rule (snoozed and
+settled threads are left out where their environment supports parking; pinned
+threads count). Every project and environment counts, whatever project scope the
+sidebar shows. A thread never visited has no unread dot and is not counted, so
+the badge needs no adoption baseline of its own. Sections placement reads unread
+answers through the same shared `hasUnreadCompletedAnswer`.
 
 ## Desktop delivery
 
-A Scient coordinator above routes follows shell snapshots and read state.
-Replayed updates are idempotent, multiple completions in one conversation count
-once, and cached remote snapshots preserve their known count during disconnection.
-An unavailable environment does not block updates from other environments. Removed
-environments and archived/deleted conversations are excluded. Initial missing
-snapshots do not erase an existing native badge.
+A coordinator above routes runs only in the desktop app. It waits until the
+catalog lists every environment (this machine's once discovery adds it, unless
+the local environment is off) and each one has a cached or live snapshot or has
+settled offline, so loading never erases the native badge. It then sends each
+changed count; window focus reapplies the current one in case OS permissions
+changed. Snooze ends are compared in UTC at minute precision. **Settings → General → App icon badge** (per device,
+on by default) sends zero instead.
 
-A narrow preload method sends the derived count through schema-validated IPC.
-The main process accepts only its primary renderer's sender ID, then calls
-Electron's native badge API on macOS. Zero clears the badge. Count changes are
-deduplicated; returning focus reapplies the current value in case OS permissions
-changed. Guest browser previews cannot set the count. Other platforms are a no-op.
-OS badge permission remains authoritative; a successful API call is not proof
-that macOS displayed the badge. The feature requests no banners or sounds.
+The app icon has one owner. `installUnreadAnswerBadge` replaces upstream's
+`installNotificationBadge` in `DesktopIpcHandlers.ts`. Upstream's
+`ThreadNotificationCoordinator` is unchanged and still reports its pending
+notifications on upstream's channel; the Scient owner answers that channel
+without writing the app icon, and keeps the rest of upstream's handler: when a
+window gains focus, when a notification arrives while a window has focus, and on
+quit, renderers are told to dismiss their pending notifications
+(`onNotificationBadgeClear`). On the web, upstream's count still badges the
+favicon. The unread-badge IPC accepts only the main renderer and validates the
+count and image.
 
-The coordinator runs while a window is open, hidden, or minimized. The existing
-macOS red-close behavior destroys the last renderer, so its last count remains
-but new completions are incorporated only when the window reopens. Supporting
-updates with all windows closed would require a main-process environment
-subscription owner; this implementation does not change application lifecycle.
+- **macOS:** `app.setBadgeCount` on the Dock. macOS hides the Dock badge of an
+  app without notification permission (electron/electron#22715), and Electron
+  requests that permission (alerts, sounds, badges) only when it first creates its
+  notification presenter. The handler calls `Notification.isSupported()`, which
+  creates it, once there is a count to show, so the system asks once.
+- **Windows:** there is no badge API. The renderer paints the count ("9+" above
+  nine) as a PNG, and the main window shows it as a taskbar overlay with an
+  accessible description.
+- **Linux:** `app.setBadgeCount`, on docks that support the LauncherEntry API.
+
+Neither Electron nor the OS reports whether the badge is displayed, so the
+Settings row says where each OS allows it. The badge is cleared on quit and when
+the desktop shuts down by signal or relaunches. The coordinator runs while a
+window is open, hidden, or minimized. Closing the last window on macOS destroys
+its renderer: the last count remains, and new answers are counted when a window
+reopens.
 
 ## Integration and verification
 
 Scient-owned behavior lives in `scient/answerAttention` modules in server, web,
-and desktop. Shared changes are limited to the optional summary contract, query
-selection/mapping, detail merge, one root coordinator, read acknowledgement and
-Mark unread integration, and the validated desktop bridge. Preserve these seams
-when aligning upstream; do not duplicate completion events or provider logic.
+and desktop, plus `packages/contracts/src/scient/desktopBridge.ts`. Upstream
+files carry marked seams only: the handler install in `DesktopIpcHandlers.ts`,
+the bridge method in `preload.ts` and `channels.ts`, the root mount, and the
+Settings row and search entry. When upstream changes `installNotificationBadge`
+or its channel's payload, carry the change into the Scient owner, except writes
+to the app icon.
 
-Tests cover durable completion selection, streaming/reverted messages, queued and
-unsuccessful turns, shell/detail propagation, background focus and delayed detail,
-historical initialization, environment scoping, replay, read/archive removal, and
-IPC payload/sender validation. Native appearance and macOS permission behavior
-require the user's manual review in an isolated development app.
+Tests cover the count against the sidebar's unread rows (server and local
+visits, Mark unread, hidden and parked threads, environments), catalog
+completeness, the coordinator's loading, deduplication, focus, time zones,
+setting, and Windows overlay, and the IPC's platforms, permission request,
+payload and sender validation, notification dismissal, quit, and shutdown.
+Native appearance and OS permission prompts need manual review on each platform.

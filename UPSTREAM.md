@@ -1067,10 +1067,14 @@ retain split-index handling, and preserve the deterministic regression in
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
-shell-authoritative merge, focus-aware read acknowledgement, and validated native
-badge bridge. Queue/provider execution and the existing macOS window lifecycle
-remain owned by their current systems. The badge adoption baseline is separate
-from sidebar visit timestamps. See [answer attention](docs/internals/answer-attention.md).
+shell-authoritative merge, and focus-aware read acknowledgement. The desktop app
+icon badge counts the sidebar's unread threads through the sidebar's own predicates
+and has one owner: `installUnreadAnswerBadge` replaces upstream's
+`installNotificationBadge` in `DesktopIpcHandlers.ts`, answering upstream's
+notification-badge channel without writing the app icon while keeping its
+dismissal of pending notifications; upstream's favicon badge remains on the web. Queue/provider execution and the existing macOS
+window lifecycle remain owned by their current systems. See
+[answer attention](docs/internals/answer-attention.md).
 
 Conversation forks keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared

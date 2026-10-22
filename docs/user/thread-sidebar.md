@@ -381,25 +381,23 @@ the send button. Choose **Artwork**, **Version pill**, or **None** in Settings u
 identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
 pill** fallback because their colors are not controlled by Scient.
 
-## Answers waiting in the Dock
+## Unread answers on the app icon
 
-On macOS, Scient's Dock badge counts conversations with an unread completed answer.
-Several answers in one conversation count once. The badge keeps updating while
-Scient is in the background or minimized. Opening the app clears only the answer
-in the conversation you view; opening Settings or another conversation leaves
-other answers waiting.
+Scient's app icon shows how many threads have an unread answer: on the Dock on macOS, on the
+taskbar button on Windows, and on Linux docks that support badges. It counts the threads the
+sidebar marks unread, in every project, so reading a thread here or on another device lowers it,
+and **Mark unread** raises it again. Several answers in one thread count once. Archived, snoozed,
+and settled threads are not counted, nor are the threads agents start for their subagents. A
+queued turn starting does not clear an earlier unread answer, and stopped or failed turns do not
+add one.
 
-A queued turn starting does not clear an earlier unread answer. Stopped or failed
-turns do not add a completed-answer badge. Archiving or deleting a conversation
-removes it from the count. **Mark unread** restores its waiting-answer indication.
-Read state belongs to this client; reading on another device does not clear the
-Mac's badge. Existing conversations without read history are treated as read when
-this feature first connects to their environment.
+Turn it off in **Settings → General → App icon badge**. On macOS, the badge needs notification
+permission: macOS asks once, the first time there is something to show. If the count doesn't
+appear, allow badges for Scient in System Settings › Notifications. On Windows, badges must be on
+in Settings › Personalization › Taskbar. The badge itself sends no banner or sound.
 
-The badge uses the macOS app-icon badge permission. If macOS suppresses it, check
-Scient's notification settings and allow app-icon badges. No banner or sound is
-sent by this feature. Closing the last window pauses badge updates until a window
-is reopened; the last displayed count remains. Quitting Scient stops updates.
+The badge keeps updating while Scient is in the background or minimized. Closing the last window
+pauses updates until a window is reopened; the last count remains. Quitting Scient clears it.
 
 ## Inspect agent work
 
