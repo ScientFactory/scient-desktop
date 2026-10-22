@@ -114,6 +114,8 @@ interface Entry {
   readonly turn: Semaphore.Semaphore;
   drained: Deferred.Deferred<void> | null;
   readonly held: Set<CheckoutSection>;
+  /** Work running inside a held section from outside its own fiber; the section waits for it. */
+  readonly joins: Map<CheckoutSection, { count: number; idle: Deferred.Deferred<void> | null }>;
 }
 
 interface Located {
@@ -188,6 +190,7 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
         turn: Semaphore.makeUnsafe(1),
         drained: null,
         held: new Set(),
+        joins: new Map(),
       };
       entries.set(key, found);
     }
@@ -214,9 +217,26 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
       const key = found.keys[0]!;
       const already = yield* HeldCheckouts;
       const held = entry(key);
-      // A bulk change inside a live one of the same checkout joins it.
+      // A bulk change inside a live one of the same checkout joins it, and that
+      // section is not released until the joined work is done.
       const joined = already.get(key);
-      if (joined !== undefined && held.held.has(joined)) return yield* effect;
+      const join =
+        joined !== undefined && held.held.has(joined) ? held.joins.get(joined) : undefined;
+      if (join !== undefined)
+        return yield* Effect.acquireUseRelease(
+          Effect.sync(() => {
+            join.count++;
+          }),
+          () => effect,
+          () =>
+            Effect.suspend(() => {
+              join.count--;
+              const idle = join.idle;
+              if (join.count > 0 || idle === null) return Effect.void;
+              join.idle = null;
+              return Deferred.succeed(idle, undefined);
+            }),
+        );
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           held.bulks++;
@@ -232,25 +252,37 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
               // The path may name another checkout by now (moved, replaced); never
               // change one under another's identity.
               const now = yield* lookup(path, options?.missing === "skip");
-              if (now !== null && now.keys[0] !== key)
+              // Gone while waiting, with `missing: "skip"`: nothing of it is left to settle.
+              if (now === null) return yield* effect;
+              if (now.keys[0] !== key)
                 return yield* new CheckoutLookupError({
                   path,
                   cause: new Error("The checkout at this path changed while waiting."),
                 });
-              const keys = now?.keys ?? found.keys;
               const section: CheckoutSection = {
                 key,
-                keys,
-                root: now?.root ?? found.root,
-                epoch: epochOf(keys),
+                keys: now.keys,
+                root: now.root,
+                epoch: epochOf(now.keys),
               };
+              const joins = { count: 0, idle: null as Deferred.Deferred<void> | null };
               held.held.add(section);
+              held.joins.set(section, joins);
               return yield* Effect.gen(function* () {
                 for (const settle of settlers) yield* settle(section);
                 return yield* effect;
               }).pipe(
                 Effect.provideService(HeldCheckouts, new Map([...already, [key, section]])),
-                Effect.ensuring(Effect.sync(() => held.held.delete(section))),
+                Effect.ensuring(
+                  Effect.gen(function* () {
+                    while (joins.count > 0) {
+                      joins.idle ??= Deferred.makeUnsafe<void>();
+                      yield* Deferred.await(joins.idle);
+                    }
+                    held.held.delete(section);
+                    held.joins.delete(section);
+                  }),
+                ),
               );
             }),
           ),

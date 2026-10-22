@@ -347,6 +347,78 @@ describe("CheckoutBarrier", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a bulk section until work that joined it has finished", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const joinedIn = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      let child: Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError> | undefined;
+      const outer = yield* barrier
+        .bulk(
+          repo,
+          Effect.gen(function* () {
+            child = yield* barrier
+              .bulk(
+                repo,
+                Deferred.succeed(joinedIn, undefined).pipe(Effect.andThen(Deferred.await(gate))),
+              )
+              .pipe(Effect.forkDetach);
+            yield* Deferred.await(joinedIn);
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(joinedIn);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      // The outer change's own work is done, but the joined work still runs inside it.
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(barrier.application(repo, () => Effect.void))),
+      );
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(child!);
+      yield* Fiber.join(outer);
+      yield* barrier.application(repo, () => Effect.void);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("runs a queued change of a vanished path without settlers when told to skip", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      const barrier = makeCheckoutBarrier();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const release = yield* Deferred.make<void>();
+          const outer = yield* holdBulk(barrier, worktree, release);
+          let removed = false;
+          const queued = yield* barrier
+            .bulk(
+              worktree,
+              Effect.sync(() => {
+                removed = true;
+              }),
+              { missing: "skip" },
+            )
+            .pipe(Effect.forkChild);
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          // Gone meanwhile; a settler that would refuse its vanished checkout never runs.
+          yield* Effect.promise(() => NodeFSP.rm(worktree, { recursive: true, force: true }));
+          yield* barrier.settleBeforeBulk((section) =>
+            Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root })),
+          );
+          yield* Deferred.succeed(release, undefined).pipe(
+            Effect.andThen(Effect.exit(Fiber.join(outer))),
+          );
+          yield* Fiber.join(queued);
+          assert.isTrue(removed);
+        }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports a folder it cannot examine as a typed failure", () =>
     Effect.gen(function* () {
       const { root } = yield* folders;
