@@ -242,9 +242,13 @@ describe("resolveLatexTexDirectory", () => {
       const path = yield* Path.Path;
       const fixture = yield* harness();
       const first = yield* fixture.resolve;
+      // Made while the original still exists, so it is a different folder
+      // even where a filesystem hands a freed inode number straight back.
+      const impostor = path.join(path.dirname(fixture.programData), "impostor");
+      yield* fileSystem.makeDirectory(path.join(impostor, "managed"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(impostor, "managed", "managed-state.json"), "{}");
       yield* fileSystem.remove(first, { recursive: true });
-      yield* fileSystem.makeDirectory(path.join(first, "managed"), { recursive: true });
-      yield* fileSystem.writeFileString(path.join(first, "managed", "managed-state.json"), "{}");
+      yield* fileSystem.rename(impostor, first);
       const second = yield* fixture.resolve;
       expect(second).not.toBe(first);
       expect(path.dirname(second)).toBe(fixture.programData);
