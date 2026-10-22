@@ -30,6 +30,7 @@ import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts"
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   CheckoutBarrier,
+  type CheckoutLookupError,
   CheckoutRecoveryRequiredError,
   makeCheckoutBarrier,
   type CheckoutSection,
@@ -254,6 +255,95 @@ describe("CheckoutBarrier", () => {
       assert.isTrue(mutated);
       // The outer change makes plans of the inner checkout stale too.
       assert.equal((yield* barrier.current(submodule)).epoch, inner.epoch + 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not let a detached task join a bulk section that has ended", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const afterOuter = yield* Deferred.make<void>();
+      let mutated = false;
+      let detached:
+        | Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError>
+        | undefined;
+      yield* barrier.bulk(
+        repo,
+        Effect.gen(function* () {
+          // Started inside the section, it inherits the section and outlives it.
+          detached = yield* Deferred.await(afterOuter).pipe(
+            Effect.andThen(
+              barrier.bulk(
+                repo,
+                Effect.sync(() => {
+                  mutated = true;
+                }),
+              ),
+            ),
+            Effect.forkDetach,
+          );
+        }),
+      );
+      const release = yield* Deferred.make<void>();
+      const application = yield* holdApplication(barrier, repo, release);
+      yield* Deferred.succeed(afterOuter, undefined);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.isFalse(mutated);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(application);
+      yield* Fiber.join(detached!);
+      assert.isTrue(mutated);
+      assert.equal((yield* barrier.current(repo)).epoch, 4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a queued bulk change whose path now names another checkout", () =>
+    Effect.gen(function* () {
+      const { root, repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const release = yield* Deferred.make<void>();
+      const outer = yield* holdBulk(barrier, repo, release);
+      let mutated = false;
+      const queued = yield* barrier
+        .bulk(
+          repo,
+          Effect.sync(() => {
+            mutated = true;
+          }),
+        )
+        .pipe(Effect.forkChild);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      // The checkout moves away and another takes its path.
+      yield* Effect.promise(async () => {
+        await NodeFSP.rename(repo, NodePath.join(root, "moved"));
+        await NodeFSP.mkdir(NodePath.join(repo, ".git"), { recursive: true });
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(outer);
+      const refused = yield* Effect.exit(Fiber.join(queued));
+      assert.include(String(refused), "CheckoutLookupError");
+      assert.isFalse(mutated);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("hands settlers an inner checkout's whole chain and summed epoch", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const submodule = NodePath.join(repo, "vendor/sub");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(submodule, ".git"), { recursive: true }),
+      );
+      const barrier = makeCheckoutBarrier();
+      yield* barrier.bulk(repo, Effect.void);
+      const handed: CheckoutSection[] = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* barrier.settleBeforeBulk((section) => Effect.sync(() => handed.push(section)));
+          const inside = yield* barrier.bulk(submodule, barrier.current(submodule));
+          assert.equal(handed[0]!.keys.length, 2);
+          assert.equal(handed[0]!.epoch, inside.epoch);
+        }),
+      );
     }).pipe(Effect.scoped),
   );
 

@@ -121,10 +121,13 @@ interface Located {
   readonly keys: ReadonlyArray<string>;
 }
 
-/** Checkouts the current fiber already holds a bulk section of. */
-class HeldCheckouts extends Context.Reference<ReadonlySet<string>>(
+/**
+ * The bulk sections the current fiber runs inside, by checkout. A forked fiber
+ * inherits them, so each is honored only while its section is still held.
+ */
+class HeldCheckouts extends Context.Reference<ReadonlyMap<string, CheckoutSection>>(
   "t3/scient/workspace/CheckoutBarrier/HeldCheckouts",
-  { defaultValue: () => new Set() },
+  { defaultValue: () => new Map() },
 ) {}
 
 const missing = (error: unknown) =>
@@ -210,9 +213,10 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
       if (found === null) return yield* effect;
       const key = found.keys[0]!;
       const already = yield* HeldCheckouts;
-      // A bulk change inside one of the same checkout joins it.
-      if (already.has(key)) return yield* effect;
       const held = entry(key);
+      // A bulk change inside a live one of the same checkout joins it.
+      const joined = already.get(key);
+      if (joined !== undefined && held.held.has(joined)) return yield* effect;
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           held.bulks++;
@@ -225,18 +229,27 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
                 held.drained ??= Deferred.makeUnsafe<void>();
                 yield* Deferred.await(held.drained);
               }
+              // The path may name another checkout by now (moved, replaced); never
+              // change one under another's identity.
+              const now = yield* lookup(path, options?.missing === "skip");
+              if (now !== null && now.keys[0] !== key)
+                return yield* new CheckoutLookupError({
+                  path,
+                  cause: new Error("The checkout at this path changed while waiting."),
+                });
+              const keys = now?.keys ?? found.keys;
               const section: CheckoutSection = {
                 key,
-                keys: [key],
-                root: found.root,
-                epoch: held.epoch,
+                keys,
+                root: now?.root ?? found.root,
+                epoch: epochOf(keys),
               };
               held.held.add(section);
               return yield* Effect.gen(function* () {
                 for (const settle of settlers) yield* settle(section);
                 return yield* effect;
               }).pipe(
-                Effect.provideService(HeldCheckouts, new Set([...already, key])),
+                Effect.provideService(HeldCheckouts, new Map([...already, [key, section]])),
                 Effect.ensuring(Effect.sync(() => held.held.delete(section))),
               );
             }),
