@@ -343,6 +343,7 @@ jobs:
             apps/server/src/resourceTelemetry \
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/threadSections \
+            apps/server/src/scient/workspace/CheckoutBarrier.ts \
             apps/server/src/sourceControl \
             apps/server/src/telemetry \
             apps/server/src/textGeneration \
