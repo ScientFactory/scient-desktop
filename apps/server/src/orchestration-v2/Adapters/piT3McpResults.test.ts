@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import * as NodeFSP from "node:fs/promises";
@@ -34,6 +35,7 @@ async function loadBridge(result: unknown, mode = "full-access") {
   let extension = makePiMcpExtensionSource(SCIENT_ORCHESTRATION_INSTRUCTIONS);
   for (const declaration of [
     'import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";',
+    'import * as NodeCrypto from "node:crypto";',
     'import * as NodeFSP from "node:fs/promises";',
     'import * as NodePath from "node:path";',
     'import { Type } from "typebox";',
@@ -49,6 +51,7 @@ async function loadBridge(result: unknown, mode = "full-access") {
     AbortSignal,
     TextDecoder,
     TextEncoder,
+    NodeCrypto,
     NodeFSP,
     NodePath,
     stripFrontmatter: () => {

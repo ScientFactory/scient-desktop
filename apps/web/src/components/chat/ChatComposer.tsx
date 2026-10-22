@@ -6405,6 +6405,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
+                    draftPdf={{
+                      threadRef: routeThreadRef,
+                      contextId: toKindScopedComposerContextId("file", previewFile.id),
+                    }}
                     onRemove={removeComposerFileFromDraft}
                     onPreviewFileIdChange={setPreviewFileId}
                   />

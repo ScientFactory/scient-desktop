@@ -507,6 +507,17 @@ The existing per-feature commands, including CI entry points, now use this same 
 they are not independent fallbacks. If it needs repair, continue independent review, repair it
 with equivalent evidence, and do not claim the affected gate passed prematurely.
 
+An ambiguous diff signal may have manifest-owned `diffSignalRefinements`: alternatives with a
+`changed` expression and optional `fileContext` expression. After the original signal matches,
+the `changed` expression inspects source lines with their `+`/`-` markers and the source
+declaration after a hunk header's closing `@@`, excluding Git filenames and other metadata.
+This retains ownership evidence when only a function body changes. Context is read from both
+the base and candidate file, so unchanged imports and removed namespaces still identify a seam.
+These rules apply only to the named `signal`; other signals retain their existing diff matching.
+Base signals and refinement alternatives remain active when the candidate removes or narrows them.
+Introducing a refinement requires positive boundary/removal fixtures and unrelated-domain negative fixtures;
+it is matching precision, not a path exemption or a substitute for behavioral review.
+
 Run additional focused gates required by the range, including mobile native checks, release smoke,
 provenance, migration, and provider seam tests where applicable. User-facing desktop behavior also
 requires an isolated synthetic-state app from the exact candidate head and a proportional visual and

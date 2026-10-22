@@ -1009,6 +1009,64 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               },
             }),
           );
+          // SCIENT-FORK:START — Scient Extensions: connectors are best effort beside Scient's own server:
+          // one unreachable connector must not stop the session. They take the
+          // mode's permission rules like any other MCP server, never Scient's.
+          // The credential's tracker starts before the first add and hears which
+          // connectors OpenCode rejected, so the receipt never claims them.
+          const report =
+            mcpSession.connectors.length === 0
+              ? undefined
+              : yield* mcpSession.beginConnectorRegistration ?? Effect.undefined;
+          const registered = new Set<string>();
+          const settle = Effect.suspend(() =>
+            report === undefined
+              ? Effect.void
+              : report({
+                  withheld: mcpSession.connectors.flatMap(({ serverName }) =>
+                    registered.has(serverName)
+                      ? []
+                      : [{ serverName, reason: "registration-failed" as const }],
+                  ),
+                }),
+          );
+          yield* Effect.forEach(
+            mcpSession.connectors,
+            (connector) =>
+              OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                client.mcp.add({
+                  name: connector.serverName,
+                  config: {
+                    type: "remote",
+                    url: connector.url,
+                    headers: { Authorization: mcpSession.authorizationHeader },
+                    oauth: false,
+                  },
+                }),
+              ).pipe(
+                // A 200 answer maps each server to its status; only a connected one is delivered.
+                Effect.flatMap((result) => {
+                  const status = result.data?.[connector.serverName]?.status;
+                  if (status === "connected") {
+                    registered.add(connector.serverName);
+                    return Effect.void;
+                  }
+                  return Effect.logWarning(
+                    `OpenCode did not connect the ${connector.displayName} connector.`,
+                    { status: status ?? "missing" },
+                  );
+                }),
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    `Could not add the ${connector.displayName} connector to OpenCode.`,
+                    error,
+                  ),
+                ),
+              ),
+            { discard: true },
+          ).pipe(Effect.onError(() => settle));
+          yield* settle;
+          // SCIENT-FORK:END
         }
 
         const now = yield* DateTime.now;

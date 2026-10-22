@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
 import type { ScientSkillPolicySnapshot } from "./ScientSkillPolicy.ts";
-import type { ScientSkillRegistryShape } from "./ScientSkillRegistry.ts";
+import type { ScientSkillCatalogView } from "./ScientSkillRegistry.ts";
 
 const release = BUILT_IN_SKILL_RELEASES[0]!;
 
@@ -12,7 +12,7 @@ function resolve(
   defaultActive: boolean,
   preference?: ScientSkillPolicySnapshot["userSkills"][number],
 ) {
-  const registry: ScientSkillRegistryShape = {
+  const registry: ScientSkillCatalogView = {
     catalog: { releases: [release], diagnostics: [] },
     resolveReleaseKey: () => release,
     defaultActive: () => defaultActive,
@@ -53,5 +53,30 @@ describe("effective Scient skill policy", () => {
     });
     expect(effective.active).toBe(false);
     expect(effective.release).toBe(release);
+  });
+
+  it("binds an add-on choice to the exact release, even under an unchanged origin", () => {
+    const addon: typeof release = { ...release, origin: "addon:acme.lab@1.0.0" };
+    const resolveAddon = (preference: ScientSkillPolicySnapshot["userSkills"][number]) =>
+      resolveEffectiveUserSkillPolicies(
+        {
+          catalog: { releases: [addon], diagnostics: [] },
+          resolveReleaseKey: () => addon,
+          defaultActive: () => false,
+        },
+        { userSkills: [preference], projectSkills: [], trustedProjects: [] },
+      )[0]!;
+    const exact = toSkillReleaseRef(addon);
+    expect(
+      resolveAddon({ release: exact, active: true, invocationPolicy: "automatic" }).active,
+    ).toBe(true);
+    for (const changed of [
+      { ...exact, digest: `sha256:${"b".repeat(64)}` },
+      { ...exact, version: "0.0.9" },
+    ]) {
+      expect(
+        resolveAddon({ release: changed, active: true, invocationPolicy: "automatic" }),
+      ).toMatchObject({ active: false, defaultActive: false });
+    }
   });
 });

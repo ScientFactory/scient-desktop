@@ -27,6 +27,9 @@ import {
 } from "./latexSourceEditPlan";
 import { LATEX_COMPILATION_STORAGE_KEY } from "./latexCompilation";
 
+const analyticsView = vi.hoisted(() => vi.fn());
+vi.mock("~/scient/analytics/client", () => ({ useScientAnalyticsView: analyticsView }));
+
 const {
   notifyLatexBindingChange,
   requestLatexRebuild,
@@ -286,6 +289,7 @@ describe("the LaTeX surface on a document session", () => {
     _fixture.stack.use(_fixtureFakeTimers());
 
     localStorage.clear();
+    analyticsView.mockClear();
     notifyLatexBindingChange.mockReset();
     build.snapshot = null;
     build.toolchain = null;
@@ -386,6 +390,25 @@ describe("the LaTeX surface on a document session", () => {
     flushVisualDraft(draftKey);
     return readPersistedVisualDraft(draftKey);
   };
+
+  it("observes Visual and Split/Visual, but not a retained editor hidden in Source", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture, "visual");
+    expect(analyticsView).toHaveBeenLastCalledWith(
+      { name: "feature.viewed", properties: { feature: "latex-visual" } },
+      environmentId,
+    );
+    await mount(_fixture, "source");
+    expect(analyticsView).toHaveBeenLastCalledWith(null, environmentId);
+    await mount(_fixture, "split");
+    expect(analyticsView).toHaveBeenLastCalledWith(
+      { name: "feature.viewed", properties: { feature: "latex-visual" } },
+      environmentId,
+    );
+  });
 
   it.each(["source", "visual"] as const)(
     "owns Save in %s even when the composer's global listener mounted first",

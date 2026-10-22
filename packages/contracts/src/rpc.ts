@@ -426,6 +426,26 @@ import {
   WsProviderSkillsSetEnabledRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  SCIENT_EXTENSION_WS_METHODS,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsListRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsProviderPluginsActRpc,
+} from "./scient/extensionRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
 import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
@@ -496,6 +516,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient skill methods.
   ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient extensions methods.
+  ...SCIENT_EXTENSION_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -2337,6 +2361,26 @@ export const WsDeviceAndTelemetryRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
 );
 
+// SCIENT-FORK:START — Scient extensions group.
+export const WsExtensionsRpcGroup = RpcGroup.make(
+  WsExtensionsListRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsProviderPluginsActRpc,
+);
+// SCIENT-FORK:END
+
 export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsServerManagementRpcGroup,
   WsRepositoryRpcGroup,
@@ -2344,4 +2388,7 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
+  // SCIENT-FORK:START — Scient extensions group.
+  WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 ).middleware(RpcScopeAuthorization);

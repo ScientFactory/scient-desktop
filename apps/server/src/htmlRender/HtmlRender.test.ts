@@ -200,6 +200,9 @@ describe("HtmlRender", () => {
         endpoint: "http://localhost:8311/mcp",
         authorizationHeader: "Bearer first-token",
         capabilities: new Set<string>(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       };
       yield* mcpSessions.set(session);
 

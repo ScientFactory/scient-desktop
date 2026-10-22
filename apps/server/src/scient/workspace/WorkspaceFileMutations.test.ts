@@ -34,7 +34,7 @@ it.layer(NodeServices.layer)("WorkspaceFileMutations", (it) => {
         workspacePaths: yield* WorkspacePaths.WorkspacePaths,
         workspaceEntries: entries,
         readFile: () => Effect.die("unused"),
-        retentionStorageDirectory: path.join(root, "retention"),
+        resolveRetentionStorageDirectory: async () => path.join(root, "retention"),
         retentionDirectoryFor: () => Promise.reject(new Error("unused")),
         isProtectedPath: async (absolutePath) => {
           checked.push(absolutePath);

@@ -1,6 +1,7 @@
 import {
   ArtifactId,
   ArtifactRevisionId,
+  LogicalDocumentKey,
   PdfSourceDescriptor,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
@@ -19,6 +20,14 @@ export type ScientLatexToolchainKind = typeof ScientLatexToolchainKind.Type;
 export const ScientLatexToolchainSource = Schema.Literals(["system", "scient-managed"]);
 export type ScientLatexToolchainSource = typeof ScientLatexToolchainSource.Type;
 
+/** A build driver that is on this computer but did not answer its version probe. */
+export const ScientLatexUnusableToolchain = Schema.Struct({
+  executable: Schema.String,
+  /** The engine's own first line of complaint, or how the probe ended. */
+  reason: Schema.String,
+});
+export type ScientLatexUnusableToolchain = typeof ScientLatexUnusableToolchain.Type;
+
 export const ScientLatexToolchainStatus = Schema.Struct({
   kind: Schema.NullOr(ScientLatexToolchainKind),
   executable: Schema.NullOr(Schema.String),
@@ -26,6 +35,11 @@ export const ScientLatexToolchainStatus = Schema.Struct({
   probedAtEpochMs: Schema.Number,
   /** Absent when no engine was found, and on statuses that predate managed installs. */
   source: Schema.optionalKey(ScientLatexToolchainSource),
+  /**
+   * Only when no driver was found: the ones that exist but did not run, so
+   * "not installed" and "installed but broken" read differently.
+   */
+  unusable: Schema.optionalKey(Schema.Array(ScientLatexUnusableToolchain)),
 });
 export type ScientLatexToolchainStatus = typeof ScientLatexToolchainStatus.Type;
 
@@ -71,6 +85,17 @@ export const ScientLatexManagedInstallFailureReason = Schema.Literals([
 export type ScientLatexManagedInstallFailureReason =
   typeof ScientLatexManagedInstallFailureReason.Type;
 
+/**
+ * Which part of an `unpack-failed` install broke: opening the archive, finding
+ * the engine in what it unpacked to, or running that engine.
+ */
+export const ScientLatexManagedInstallFailureStep = Schema.Literals([
+  "extract",
+  "engine-missing",
+  "engine-failed",
+]);
+export type ScientLatexManagedInstallFailureStep = typeof ScientLatexManagedInstallFailureStep.Type;
+
 export const ScientLatexManagedInstallState = Schema.Struct({
   state: ScientLatexManagedInstallPhase,
   /** The pinned distribution this install is placing, or the installed one. */
@@ -78,6 +103,10 @@ export const ScientLatexManagedInstallState = Schema.Struct({
   bytesReceived: Schema.NullOr(Schema.Number),
   totalBytes: Schema.NullOr(Schema.Number),
   failureReason: Schema.NullOr(ScientLatexManagedInstallFailureReason),
+  /** Present on `unpack-failed` from servers that report it. */
+  failureStep: Schema.optionalKey(ScientLatexManagedInstallFailureStep),
+  /** One line of what the failing tool said, for support; older servers omit it. */
+  failureDetail: Schema.optionalKey(Schema.String),
   updatedAtEpochMs: Schema.Number,
   /**
    * Present only on an install that finished with its eager package fetch
@@ -362,6 +391,18 @@ export const ScientLatexPageAnchorsResult = Schema.Union([
   ScientLatexSyncUnavailable,
 ]);
 export type ScientLatexPageAnchorsResult = typeof ScientLatexPageAnchorsResult.Type;
+
+/** The current revision of a generated document, by its logical key. */
+export const ScientCurrentDocumentRequest = Schema.Struct({
+  logicalDocumentKey: LogicalDocumentKey,
+});
+export type ScientCurrentDocumentRequest = typeof ScientCurrentDocumentRequest.Type;
+
+/** Null when this environment has no such document (never produced, or another authority's). */
+export const ScientCurrentDocumentResult = Schema.Struct({
+  descriptor: Schema.NullOr(PdfSourceDescriptor),
+});
+export type ScientCurrentDocumentResult = typeof ScientCurrentDocumentResult.Type;
 
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,

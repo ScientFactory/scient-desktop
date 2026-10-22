@@ -242,7 +242,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
   readonly nativePublicationHelper?: string;
-  readonly retentionStorageDirectory: string;
+  readonly resolveRetentionStorageDirectory: () => Promise<string>;
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
   readonly retainedHooks?: RetainedMutationHooks;
@@ -504,7 +504,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       if (text === null) {
         if (reference) {
           const refusalPath = NodePath.join(
-            deps.retentionStorageDirectory,
+            await deps.resolveRetentionStorageDirectory(),
             "mutation-identities",
             keyFor(reference.mutationId ?? entry.name),
             "refusal.json",
@@ -561,8 +561,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const allRecords = async (): Promise<Stored[]> => {
     let parents;
     try {
-      await assertPrivateRetention(deps.retentionStorageDirectory);
-      parents = await NodeFSP.readdir(deps.retentionStorageDirectory, { withFileTypes: true });
+      await assertPrivateRetention(await deps.resolveRetentionStorageDirectory());
+      parents = await NodeFSP.readdir(await deps.resolveRetentionStorageDirectory(), {
+        withFileTypes: true,
+      });
     } catch (e) {
       if (isNodeError(e, "ENOENT")) return [];
       throw e;
@@ -574,7 +576,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         (/^\d+-\d+$/u.test(parent.name) || parent.name === "mutation-identities")
       )
         records.push(
-          ...(await recordsIn(NodePath.join(deps.retentionStorageDirectory, parent.name))),
+          ...(await recordsIn(
+            NodePath.join(await deps.resolveRetentionStorageDirectory(), parent.name),
+          )),
         );
     return [...new Map(records.map((record) => [record.directory, record])).values()];
   };
@@ -695,6 +699,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             condition: record.condition,
             executable: record.executable,
             ...(record.guardMaxBytes === null ? {} : { guardMaxBytes: record.guardMaxBytes }),
+            ...(record.peerGuards ? { peerGuards: record.peerGuards } : {}),
             ...(record.expectedMutationEpoch === undefined
               ? {}
               : { expectedMutationEpoch: record.expectedMutationEpoch }),
@@ -1644,7 +1649,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         const id = retentionOverride ? intent.id : keyFor(mutationId);
         const indexRoot = await ensureNativePrivateRetentionDirectory(
           helper,
-          NodePath.join(deps.retentionStorageDirectory, "mutation-identities"),
+          NodePath.join(await deps.resolveRetentionStorageDirectory(), "mutation-identities"),
         );
         const identityDirectory = await prepareRetainedDirectory(
           indexRoot,
@@ -1869,7 +1874,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   {
                     ...(await bindNativeFilePublicationParent(
                       helper,
-                      deps.retentionStorageDirectory,
+                      await deps.resolveRetentionStorageDirectory(),
                       "",
                     )),
                     mode: "exclusive" as const,
@@ -2034,10 +2039,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               if (deps.retentionLimitBytes != null) {
                 // The configured budget belongs to the shared store, not one source parent.
                 // Its exclusive lease stays owned until journal and native work retire.
-                const retainedBytes = await retainedTreeBytes(deps.retentionStorageDirectory);
+                const retainedBytes = await retainedTreeBytes(
+                  await deps.resolveRetentionStorageDirectory(),
+                );
                 let externalBytes = 0;
                 for (const entry of await allRecords()) {
-                  if (!within(deps.retentionStorageDirectory, entry.directory))
+                  if (!within(await deps.resolveRetentionStorageDirectory(), entry.directory))
                     externalBytes += await retainedTreeBytes(entry.directory);
                 }
                 const targetBytes = await retainedTreeBytes(resolved.target);
@@ -2319,7 +2326,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           });
     return yield* owned(input, named.absolutePath, async (signal) => {
       const identityDirectory = NodePath.join(
-        deps.retentionStorageDirectory,
+        await deps.resolveRetentionStorageDirectory(),
         "mutation-identities",
         keyFor(input.mutationId!),
       );

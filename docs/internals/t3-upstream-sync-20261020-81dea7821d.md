@@ -1,11 +1,72 @@
-# T3 upstream alignment, 2026-10-20 (through 81dea7821d)
+# T3 upstream alignment, 2026-10-20 (extended through 21da3061aa)
 
 The original integration and qualification below describe `81dea7821d`, not
 the subsequent extension. The authorized extension to `21da3061aa` has bounded
 qualification only; see [the extension checkpoint](#extension-checkpoint-2026-10-21).
 Final qualification belongs to the composed main catch-up result.
 
-## Integration state
+## Extension integration (2026-10-22)
+
+- Owned base: `80436ae5bead92d3cde82b90a6aa5b137aefde6b`.
+- Previous official boundary: `81dea7821dca30b417182db6fa0cb99a0195bfd8`.
+- Frozen official target: `21da3061aa006fc852ea4bd84c31ec084a3afa26`, no tag at the target (nearest reachable: `v0.1.2-nightly.20261021.3457`).
+- Range: 133 official commits, 2308 incoming paths, 774 same-path overlaps with Scient, 463 initially unmerged paths.
+- Literal integration merge: `a495ed55e0d5f5e2740b750121772dcf1327108c`, tree `3b5309d4b88315ecd5bd0bb188c90f06a798cc02`; parents are the owned base and the frozen official target.
+
+The literal extension is committed and passes provenance against its exact two
+parents. All five staged seam checks pass on its committed tree. The registry
+now follows the extracted pull-request page and timeline row; scheduling mounts
+point to the actual all-file assignment rule instead of requiring Scient names
+in the approved official timing table. A bounded scheduler probe assigns all
+980 test-like server source paths plus one unrecorded sentinel exactly once
+across one, three and six shards; it is not test execution or Vitest discovery.
+The four incoming-only deletions retain the shared Scient code/diagram and
+guarded read owners. Webhook deduplication is appended as 071; all 69 previously
+registered migration bodies and their identities remain unchanged.
+
+Owned main was fetched and frozen at `c326cf596c3cfeac4894cef45ed09b99458b3082`.
+The catch-up preserves the extension and this exact owned-main parent;
+Claude's preparation is a resolution reference, never a merge parent.
+Provider claim ownership retains both option descriptors and plugin inventory.
+Codex connector overrides use independent `mcp_servers.<name>` keys beside
+Scient's entry, preserving user configuration. The extracted attachment dialog
+retains draft PDF identity; the guarded read owner and single native badge
+writer remain authoritative. Visual LaTeX analytics retains consent filtering.
+The composed lockfile has 129 executable metadata markers; comparison with
+immutable main, official and preparation entries found no missing exact-match
+`hasBin` metadata. Counts alone are not installation evidence.
+
+Two causal local repairs accompany this composition. Pagination retires a
+measurement continuation when its host detaches or loses geometry and requests
+one normal restart, covering visibility restoration before a resize event.
+Retained publication resolves its configured storage ancestry once, lazily,
+while preserving the protected final directory's symlink, ownership and mode
+checks. Discovery, replay and shared-budget accounting use that same canonical
+owner; an aliased macOS temporary directory no longer prevents saving.
+
+Bounded post-catch-up evidence includes 453 provider/native-process/toolchain/
+applier cases, 238 unread/PDF/keyboard/timeline/analytics cases, and 155 retained
+publication/native filesystem/applier cases. All pass without skips or source
+drift. The three new storage regressions demonstrate the original failure and
+preserved privacy refusals, then pass after repair. Pagination recovery also has
+causal failing-before/passing-after evidence; the final three-file native browser
+group passes 49 cases. The historic one-character Hebrew selection failure has
+not been causally reproduced or attributed; fresh original native tests pass,
+while manual native selection remains a separate acceptance requirement.
+Independent bounded composition and storage-owner reviews found no blocking
+objection. All six actual-index seam checks pass against the captured owned-main
+base; the connector signal refinement distinguishes tunnel vocabulary while
+retaining positive boundary/removal fixtures and base evidence.
+
+Final aggregate, complete build and native/visual acceptance remain pending.
+The interim visual review captured 22 screenshots and exposed the save failure;
+it does not establish final acceptance. Covered aggregates run in CI under the
+owner-approved split; known failures, affected checks, uncovered macOS behavior,
+the complete root build and isolated native smoke remain local. The absent
+server-generator result remains unqualified. Original integration evidence below
+does not qualify this extension or its owned-main catch-up.
+
+## Original integration state
 
 Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` receives the exact
 official target. It has the intended two parents and unchanged qualified tree;

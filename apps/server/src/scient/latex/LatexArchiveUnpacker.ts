@@ -15,6 +15,18 @@
  * that is absent, which also keeps PATH — the one thing on this path a user's
  * other software can rewrite — out of the install entirely.
  *
+ * Not every Windows bsdtar can decode it, though. The 7-Zip payload is LZMA,
+ * and Windows 10's bsdtar is built without liblzma, so it opens the archive
+ * and then fails on every entry. The bundle carries its own decoder: the stub
+ * is 7-Zip's console self-extractor, which unpacks itself with `x -y -o<dir>`
+ * and shows no window. When the system tar cannot expand the bundle, the
+ * half-written destination is cleared and the bundle unpacks itself. Its
+ * digest has been checked against the pin before this port is ever called,
+ * and it is the same reviewed release whose `latexmk.exe` the install runs
+ * next, so running it trusts nothing more than the install already does.
+ * The system tar stays first so that every computer where it works today
+ * keeps exactly the path it has.
+ *
  * The extraction runs behind this port so the installer can be tested without
  * a real archive.
  */
@@ -77,6 +89,42 @@ export function windowsSystemTarPath(env: NodeJS.ProcessEnv): string {
   return `${env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`;
 }
 
+const MAX_TAR_DETAIL_LENGTH = 120;
+
+const boundedDetail = (detail: string): string => {
+  const line = detail.replace(/\s+/gu, " ").trim();
+  return line.length > MAX_TAR_DETAIL_LENGTH
+    ? `${line.slice(0, MAX_TAR_DETAIL_LENGTH - 1)}…`
+    : line;
+};
+
+/**
+ * What a failed 7-Zip extraction said, led by its exit code (2 fatal, 7 bad
+ * command line, 8 out of memory). 7-Zip reports errors on stderr and keeps
+ * its banner and progress on stdout, so stderr's last line is preferred.
+ */
+export function selfExtractorComplaint(result: {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}): string {
+  const lastLine = (text: string) =>
+    text
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .at(-1);
+  const said = lastLine(result.stderr) ?? lastLine(result.stdout);
+  return `exit ${String(result.code)}${said === undefined ? "" : `, ${said}`}`;
+}
+
+/** How the 7-Zip console self-extractor is told to unpack into `destination` without asking. */
+export function sevenZipSelfExtractArguments(
+  input: LatexArchiveUnpackInput,
+): ReadonlyArray<string> {
+  return ["x", "-y", `-o${input.destination}`];
+}
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -86,15 +134,9 @@ export const make = Effect.gen(function* () {
   // bsdtar as `tar`, and Linux only ever reads the `.tar.xz` asset.
   const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";
 
-  const unpack: LatexArchiveUnpacker["Service"]["unpack"] = Effect.fn(
-    "LatexArchiveUnpacker.unpack",
-  )(function* (input) {
-    if (input.archive !== "seven-zip-sfx" && input.archive !== "tar-xz") {
-      return yield* new LatexArchiveUnpackError({
-        reason: "unsupported-archive",
-        detail: `Scient cannot expand a ${String(input.archive)} bundle.`,
-      });
-    }
+  const runTar = Effect.fn("LatexArchiveUnpacker.runTar")(function* (
+    input: LatexArchiveUnpackInput,
+  ) {
     if (platform === "win32") {
       const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
       if (!present) {
@@ -143,6 +185,64 @@ export const make = Effect.gen(function* () {
         }`,
       });
     }
+  });
+
+  /** The Windows bundle unpacking itself, into a destination cleared of tar's partial output. */
+  const runSelfExtractor = Effect.fn("LatexArchiveUnpacker.runSelfExtractor")(function* (
+    input: LatexArchiveUnpackInput,
+    tarFailure: LatexArchiveUnpackError,
+  ) {
+    // The extractor's failure is the final one, so it leads; tar's, which
+    // may repeat per entry, follows in brief and stays complete in the log.
+    const failed = (detail: string) =>
+      new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: `The download's own extractor failed: ${/[.!?:]$/u.test(detail) ? detail : `${detail}.`} Before that, ${boundedDetail(tarFailure.detail)}`,
+      });
+    yield* fileSystem.remove(input.destination, { recursive: true, force: true }).pipe(
+      Effect.andThen(fileSystem.makeDirectory(input.destination, { recursive: true })),
+      Effect.mapError((cause) =>
+        failed(`Scient could not clear ${input.destination}: ${cause.message}`),
+      ),
+    );
+    const result = yield* processRunner
+      .run({
+        command: input.archivePath,
+        args: sevenZipSelfExtractArguments(input),
+        timeout: UNPACK_TIMEOUT,
+        maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.mapError((cause) => failed(cause.message)));
+    if (result.timedOut) return yield* failed("it took too long and was stopped.");
+    if (result.code !== 0) {
+      yield* Effect.logWarning("scient latex bundle could not unpack itself", {
+        code: result.code,
+        stderr: result.stderr,
+        stdout: result.stdout,
+        tarFailure: tarFailure.detail,
+      });
+      return yield* failed(selfExtractorComplaint(result));
+    }
+    yield* Effect.logInfo("scient latex bundle unpacked itself after the system tar failed", {
+      tarFailure: tarFailure.detail,
+    });
+  });
+
+  const unpack: LatexArchiveUnpacker["Service"]["unpack"] = Effect.fn(
+    "LatexArchiveUnpacker.unpack",
+  )(function* (input) {
+    if (input.archive !== "seven-zip-sfx" && input.archive !== "tar-xz") {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unsupported-archive",
+        detail: `Scient cannot expand a ${String(input.archive)} bundle.`,
+      });
+    }
+    if (platform !== "win32" || input.archive !== "seven-zip-sfx") return yield* runTar(input);
+    return yield* runTar(input).pipe(
+      Effect.catch((tarFailure) => runSelfExtractor(input, tarFailure)),
+    );
   });
 
   return LatexArchiveUnpacker.of({ unpack });

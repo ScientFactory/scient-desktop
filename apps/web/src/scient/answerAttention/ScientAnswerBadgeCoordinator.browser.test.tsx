@@ -1,129 +1,216 @@
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import { useAnswerBaselines } from "./baseline";
-
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
-import * as Option from "effect/Option";
-import { EnvironmentId, type OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+
+import { act, render, stubGlobal } from "../../../test/render";
+
+import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { makeThreadFixture } from "../../test-fixtures";
 import { useUiStateStore } from "../../uiStateStore";
-import { ScientAnswerBadgeCoordinator } from "./ScientAnswerBadgeCoordinator";
 
-const mock = vi.hoisted(() => ({ snapshot: {} as unknown }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mock.snapshot }));
-vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));
-vi.mock("../../state/shell", () => ({ environmentShell: {} }));
-
-const badge = vi.fn(async (_count: number) => true);
-const before = "2026-09-09T09:00:00.000Z";
-const after = "2026-09-09T10:00:00.000Z";
-const thread = (id: string, completedAt = before, archivedAt: string | null = null) => ({
-  id,
-  archivedAt,
-  updatedAt: before,
-  latestCompletedAnswer: { turnId: "turn", messageId: "answer", completedAt },
-  latestTurn: { state: "running" },
-});
-const environment = (
-  environmentId: string,
-  threads: ReturnType<typeof thread>[],
-  status = "live",
-) => ({
-  environmentId: EnvironmentId.make(environmentId),
-  shell: {
-    status,
-    snapshot: Option.some({
-      threads,
-      archivedThreads: [],
-    } as unknown as OrchestrationV2ShellSnapshot),
-  },
-});
-const render = async (_fixture: _Fixture, environments: ReturnType<typeof environment>[]) => {
-  mock.snapshot = { ready: true, environments };
-  return await act(async () => await _fixture.root0.rerender(<ScientAnswerBadgeCoordinator />));
-};
-async function _setupFixture0(_fixture: _Fixture) {
-  Object.defineProperty(window, "desktopBridge", {
-    value: { setUnreadAnswerCount: badge },
-    configurable: true,
-  });
-  useUiStateStore.setState({ threadLastVisitedAtById: {} });
-  badge.mockClear();
-  _fixture.root0 = _fixture.stack.use(
-    await _fixtureRender(null, { container: document.createElement("div"), router: false }),
-  );
-}
-async function _cleanupFixture1(_fixture: _Fixture) {
-  await act(async () => await _fixture.root0.unmount());
-  vi.unstubAllGlobals();
-}
-it("ignores historical answers, counts conversations across environments, and preserves queued completions", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await render(_fixture, [
-    environment("local-a", [thread("same")]),
-    environment("remote-a", [thread("same")]),
-  ]);
-  expect(badge).toHaveBeenLastCalledWith(0);
-  expect(useUiStateStore.getState().threadLastVisitedAtById).toEqual({});
-  await render(_fixture, [
-    environment("local-a", [thread("same", after)]),
-    environment("remote-a", [thread("same", after)]),
-  ]);
-  expect(badge).toHaveBeenLastCalledWith(2);
-  const calls = badge.mock.calls.length;
-  await render(_fixture, [
-    environment("local-a", [thread("same", after)]),
-    environment("remote-a", [thread("same", after)], "cached"),
-  ]);
-  expect(badge.mock.calls).toHaveLength(calls);
-  const key = scopedThreadKey(scopeThreadRef(EnvironmentId.make("local-a"), "same" as never));
-  await act(() => useUiStateStore.getState().markThreadVisited(key, after));
-  expect(badge).toHaveBeenLastCalledWith(1);
-  await render(_fixture, [
-    environment("local-a", [thread("same", after)]),
-    environment("remote-a", [thread("same", after, after)]),
-  ]);
-  expect(badge).toHaveBeenLastCalledWith(0);
-});
-it("counts newly created conversations and clears removed environments without blocking on an offline one", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await render(_fixture, [environment("local-b", [])]);
-  await render(_fixture, [environment("local-b", [thread("new", after)])]);
-  expect(badge).toHaveBeenLastCalledWith(1);
-  await render(_fixture, [environment("local-b", [])]);
-  expect(badge).toHaveBeenLastCalledWith(0);
-});
-
-it("retains unread answers from cached offline snapshots without writing visits", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  useAnswerBaselines.setState({ byEnvironment: { "offline-c": before } });
-  await render(_fixture, [environment("offline-c", [thread("waiting", after)], "cached")]);
-  expect(badge).toHaveBeenLastCalledWith(1);
-  expect(useUiStateStore.getState().threadLastVisitedAtById).toEqual({});
-});
-
-function _createFixture() {
-  const stack = new AsyncDisposableStack();
-  const cleanup = new AsyncDisposableStack();
+// Stands in for the catalog and shell atoms, which re-render their readers on change.
+const shells = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  let value = {
+    catalog: { isReady: false, entries: new Map<string, unknown>() },
+    bootstrapped: true,
+    threads: [] as ReadonlyArray<EnvironmentThreadShell>,
+  };
   return {
-    stack,
-    cleanup,
-    root0: undefined! as Screen,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
+    get: () => value,
+    set: (patch: Partial<typeof value>) => {
+      value = { ...value, ...patch };
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
+});
+vi.mock(import("../../state/entities"), async () => {
+  const { useSyncExternalStore } = await import("react");
+  const use = () => useSyncExternalStore(shells.subscribe, shells.get);
+  return {
+    useAllEnvironmentShellsBootstrapped: () => use().bootstrapped,
+    useThreadShells: () => use().threads,
+  } as never;
+});
+vi.mock(import("../../connection/catalog"), () => ({
+  environmentCatalog: { catalogValueAtom: "catalog" } as never,
+}));
+vi.mock(import("../../state/server"), () => ({ environmentServerConfigsAtom: "configs" as never }));
+vi.mock(import("@effect/atom-react"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  const configs = new Map([
+    ["local", { environment: { capabilities: { threadSnooze: true, threadSettlement: true } } }],
+  ]);
+  return {
+    ...(await original()),
+    useAtomValue: ((atom: unknown) => {
+      const { catalog } = useSyncExternalStore(shells.subscribe, shells.get);
+      return atom === "catalog" ? catalog : configs;
+    }) as never,
+  };
+});
+const localEnvironment = vi.hoisted(() => ({ disabled: false }));
+vi.mock(import("../../localEnvironment"), () => ({
+  isLocalEnvironmentDisabled: () => localEnvironment.disabled,
+}));
+// The minute clock reads like `toISOString()` without its zone.
+vi.mock(import("../../hooks/useNowMinute"), () => ({ useNowMinute: () => "2026-10-22T12:00" }));
+
+import {
+  APP_BADGE_ENABLED_KEY,
+  ScientAnswerBadgeCoordinator,
+} from "./ScientAnswerBadgeCoordinator";
+
+const local = EnvironmentId.make("local");
+const answered = "2026-10-22T10:00:00.000Z";
+const complete = {
+  isReady: true,
+  entries: new Map<string, unknown>([
+    ["local", { enabled: true, target: { _tag: "PrimaryConnectionTarget" } }],
+  ]),
+};
+type Source = ReturnType<typeof makeThreadFixture>["source"];
+const thread = (id: string, patch: Partial<Source> = {}, environmentId = local) =>
+  presentThreadShell(environmentId, {
+    ...makeThreadFixture().source,
+    id: ThreadId.make(id),
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+    latestCompletedAnswer: {
+      turnId: TurnId.make("run"),
+      messageId: MessageId.make("answer"),
+      completedAt: answered,
+    },
+    lastVisitedAt: DateTime.makeUnsafe("2026-10-22T09:00:00.000Z"),
+    ...patch,
+  });
+const read = (id: string) => thread(id, { lastVisitedAt: DateTime.makeUnsafe(answered) });
+const setBadge = vi.fn(async (_badge: { count: number; image: string | null }) => true);
+let platform = "darwin";
+/** The Settings row's switch, reduced to the stored preference it writes. */
+function SettingsSwitch() {
+  const [enabled, setEnabled] = useLocalStorage(APP_BADGE_ENABLED_KEY, true, Schema.Boolean);
+  return (
+    <input
+      type="checkbox"
+      checked={enabled}
+      onChange={(event) => setEnabled(event.target.checked)}
+    />
+  );
 }
-type _Fixture = ReturnType<typeof _createFixture>;
+function renderBadge() {
+  // The coordinator observes shell state without navigating.
+  return render(
+    <>
+      <ScientAnswerBadgeCoordinator />
+      <SettingsSwitch />
+    </>,
+    { router: false },
+  );
+}
+const update = (patch: Parameters<typeof shells.set>[0]) => act(() => shells.set(patch));
+
+function setup() {
+  const stack = new DisposableStack();
+  const previousEnabled = localStorage.getItem(APP_BADGE_ENABLED_KEY);
+  const previousVisits = useUiStateStore.getState().threadLastVisitedAtById;
+  stack.defer(() => {
+    if (previousEnabled === null) localStorage.removeItem(APP_BADGE_ENABLED_KEY);
+    else localStorage.setItem(APP_BADGE_ENABLED_KEY, previousEnabled);
+    useUiStateStore.setState({ threadLastVisitedAtById: previousVisits });
+  });
+  localStorage.removeItem(APP_BADGE_ENABLED_KEY);
+  useUiStateStore.setState({ threadLastVisitedAtById: {} });
+  shells.set({ catalog: complete, bootstrapped: true, threads: [thread("one"), thread("two")] });
+  platform = "darwin";
+  localEnvironment.disabled = false;
+  setBadge.mockClear();
+  stack.use(
+    stubGlobal("desktopBridge", {
+      getClientPlatform: () => platform,
+      setUnreadAnswerBadge: setBadge,
+    }),
+  );
+  return stack;
+}
+
+it("keeps the badge until every environment is known and loaded, then follows reading", async () => {
+  using _fixture = setup();
+  // A saved catalog can arrive before discovery adds this machine's environment.
+  shells.set({ catalog: { isReady: true, entries: new Map() } });
+  await using _screen = await renderBadge();
+  await update({ catalog: complete, bootstrapped: false });
+  expect(setBadge).not.toHaveBeenCalled();
+  await update({ bootstrapped: true });
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 2, image: null });
+  await update({ threads: [read("one"), thread("two")] });
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 1, image: null });
+  // Unchanged counts are not resent, but focus reapplies the current one.
+  await update({ threads: [read("one"), thread("two")] });
+  expect(setBadge).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event("focus"));
+  expect(setBadge).toHaveBeenCalledTimes(3);
+});
+
+it("clears the badge when the last remote environment goes, with this machine's turned off", async () => {
+  using _fixture = setup();
+  localEnvironment.disabled = true;
+  const remote = EnvironmentId.make("remote");
+  const entry = { enabled: true, target: { _tag: "SavedConnectionTarget" } };
+  shells.set({
+    catalog: { isReady: true, entries: new Map([[remote, entry]]) },
+    threads: [thread("one", {}, remote), thread("two", {}, remote)],
+  });
+  await using _screen = await renderBadge();
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 2, image: null });
+  await update({ catalog: { isReady: true, entries: new Map() }, threads: [] });
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
+});
+
+it("ends snoozes in UTC, whatever the machine's time zone", async () => {
+  using _fixture = setup();
+  // Only a run outside UTC can tell the two readings of the clock apart.
+  shells.set({
+    threads: [
+      thread("woke", { snoozedUntil: DateTime.makeUnsafe("2026-10-22T11:30:00.000Z") }),
+      thread("snoozed", { snoozedUntil: DateTime.makeUnsafe("2026-10-22T12:30:00.000Z") }),
+    ],
+  });
+  await using _screen = await renderBadge();
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 1, image: null });
+});
+
+it("draws the Windows taskbar overlay, and clears it with the count", async () => {
+  using _fixture = setup();
+  platform = "win32";
+  await using _screen = await renderBadge();
+  expect(setBadge.mock.lastCall?.[0]).toEqual({
+    count: 2,
+    image: expect.stringMatching(/^data:image\/png;base64,/),
+  });
+  await update({ threads: [] });
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
+});
+
+it("follows the Settings switch", async () => {
+  using _fixture = setup();
+  await using screen = await renderBadge();
+  const toggle = () => act(() => screen.container.querySelector("input")!.click());
+  await toggle();
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
+  await toggle();
+  expect(setBadge).toHaveBeenLastCalledWith({ count: 2, image: null });
+});
+
+it("does nothing without the desktop bridge", async () => {
+  using _fixture = setup();
+  using _bridge = stubGlobal("desktopBridge", undefined);
+  await using _screen = await renderBadge();
+  expect(setBadge).not.toHaveBeenCalled();
+});

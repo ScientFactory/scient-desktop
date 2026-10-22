@@ -590,16 +590,18 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`81dea7821dca30b417182db6fa0cb99a0195bfd8` is recorded in
+`21da3061aa006fc852ea4bd84c31ec084a3afa26` is recorded in
 [the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
 ([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
-Literal merge `c66c948db02a3db7b293ecb9838d96413099f1af` has exact owned base
-`8d7e8b956dc24e3cdfc01d4655013c41a5871125` and the frozen official target as
-parents, retaining all 607 donor commits. Native V2, scientific capabilities,
+Literal extension merge `a495ed55e0d5f5e2740b750121772dcf1327108c` has exact owned
+base `80436ae5bead92d3cde82b90a6aa5b137aefde6b` and the frozen official target as
+parents, retaining all 133 additional donor commits after `81dea7821d`.
+Its committed provenance and staged seam checks pass; final qualification of the
+composed owned-main catch-up remains pending. Native V2, scientific capabilities,
 immutable migrations and database durability remain; cloud, telemetry, relay,
-updater, mobile publication and release holds are unchanged. Complete web
-qualification passes; remaining workspace and native/visual limits are explicit
-in the receipt. Release remains separate.
+updater, mobile publication and release holds are unchanged. The receipt separates
+older qualification from extension evidence and outstanding native/visual checks.
+Release remains separate.
 
 ## Receiving T3 updates
 
@@ -1058,6 +1060,24 @@ Analytics sends OMP as the gateway's existing `other` provider and is not a moun
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
 
+Scient Extensions owns `apps/server/src/scient/extensions` and
+`apps/web/src/scient/extensions`. Connected services stay on the Scient server:
+agents reach them only through the per-connector proxy route
+`/mcp/connectors/<id>` with their existing thread-scoped MCP credential, and the
+OAuth callback is `/oauth/connectors/callback`. Vendor credentials never enter
+provider config, environment or transcripts. `ProviderSessionManager` adds the
+granted connectors to the same MCP session preparation that delivers `scient`,
+and each V2 adapter or provider package passes them in its own native form; ACP
+sessions always use the stdio bridge. Provider plugin and MCP inventory is read
+from the owning provider (Codex app-server, Claude session init) and mutated only
+through that provider's own API. `scient-extensions-seams.json` inventories the
+owned roots, the anchored `upstreamMounts` in upstream-owned files (RPC
+contracts, authorization and instrumentation, HTTP and WebSocket routes, MCP
+session registry, server secret store, provider registry, drivers, adapters and
+provider packages, settings navigation and the chat header) and the shared
+`scientMounts`; `scripts/scient-seam-check.mjs` checks it with the other
+inventories. See [Scient Extensions](docs/internals/scient-extensions.md).
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
@@ -1066,10 +1086,14 @@ retain split-index handling, and preserve the deterministic regression in
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
-shell-authoritative merge, focus-aware read acknowledgement, and validated native
-badge bridge. Queue/provider execution and the existing macOS window lifecycle
-remain owned by their current systems. The badge adoption baseline is separate
-from sidebar visit timestamps. See [answer attention](docs/internals/answer-attention.md).
+shell-authoritative merge, and focus-aware read acknowledgement. The desktop app
+icon badge counts the sidebar's unread threads through the sidebar's own predicates
+and has one owner: `installUnreadAnswerBadge` replaces upstream's
+`installNotificationBadge` in `DesktopIpcHandlers.ts`, answering upstream's
+notification-badge channel without writing the app icon while keeping its
+dismissal of pending notifications; upstream's favicon badge remains on the web. Queue/provider execution and the existing macOS
+window lifecycle remain owned by their current systems. See
+[answer attention](docs/internals/answer-attention.md).
 
 Conversation forks keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared

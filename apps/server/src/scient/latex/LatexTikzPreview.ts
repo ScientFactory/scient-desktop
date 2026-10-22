@@ -14,7 +14,6 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as ServerConfig from "../../config.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
@@ -22,7 +21,8 @@ import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts"
 import { selectLatexBuildEngine } from "./latexEngineGate.ts";
 import { parseLatexLog } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
-import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexToolchain, latexDriverBinDirectory } from "./LatexToolchain.ts";
+import { latexTexDirectory } from "./latexTexDirectory.ts";
 import { latexArtworkWorkspaceKey, makeLatexArtworkWorkspaces } from "./latexArtworkWorkspaces.ts";
 import { makeLatexArtworkRaster } from "./latexArtworkRaster.ts";
 
@@ -42,7 +42,6 @@ const unavailable = (message: string): ScientLatexArtworkResult => ({
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
   const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const paths = yield* WorkspacePaths.WorkspacePaths;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
@@ -52,7 +51,7 @@ const make = Effect.gen(function* () {
   const delimiter = platform === "win32" ? ";" : ":";
   const resolveExecutable = yield* SpawnExecutableResolution;
   const gate = yield* Semaphore.make(2);
-  const previews = path.join(config.latexDir, "artwork");
+  const previews = path.join(yield* latexTexDirectory, "artwork");
   const withWorkspace = yield* makeLatexArtworkWorkspaces(previews);
   const rasterize = yield* makeLatexArtworkRaster;
 
@@ -107,7 +106,7 @@ const make = Effect.gen(function* () {
         TEXINPUTS: `${documentDirectory.replaceAll("\\", "/")}/${delimiter}${hostEnvironment.TEXINPUTS ?? ""}${delimiter}`,
       },
       hostEnvironment,
-      binDirectory: managedBin,
+      binDirectory: latexDriverBinDirectory(toolchain, path),
       pathDelimiter: delimiter,
     });
     return yield* withWorkspace({

@@ -148,6 +148,144 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(layerConcurrentCreateSecretStore())),
   );
 
+  it.effect("uses restrictive permissions for the secret directory and files", () =>
+    Effect.gen(function* () {
+      const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
+      const layerRecordingFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+
+          return {
+            ...fileSystem,
+            // SCIENT-FORK:START — Scient Extensions: the real directory exists so replace can open and sync
+            // its temporary file; only permission changes and the rename are recorded.
+            // SCIENT-FORK:END
+            rename: () => Effect.void,
+            chmod: (path, mode) =>
+              Effect.sync(() => {
+                chmodCalls.push({ path: String(path), mode });
+              }),
+          } satisfies FileSystem.FileSystem;
+        }),
+      ).pipe(Layer.provide(NodeServices.layer));
+
+      // SCIENT-FORK:START — Scient Extensions: use the store while its temporary config directory exists.
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
+      }).pipe(
+        Effect.provide(
+          ServerSecretStore.layer.pipe(
+            Layer.provide(layerServerConfig()),
+            Layer.provideMerge(layerRecordingFileSystem),
+          ),
+        ),
+      );
+      // SCIENT-FORK:END
+
+      assert.isTrue(
+        chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
+      );
+      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // SCIENT-FORK:START — Scient Extensions: durable replace and directory-entry sync.
+  const syncFailure = (code: string, method: string) =>
+    PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method,
+      cause: Object.assign(new Error(code), { code }),
+    });
+  const layerSyncFileSystem = (options: {
+    readonly dataSync?: string;
+    readonly directoryOpen?: string;
+  }) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        return {
+          ...fileSystem,
+          open: (path, openOptions) => {
+            if (openOptions?.flag === "r" && options.directoryOpen !== undefined) {
+              return Effect.fail(syncFailure(options.directoryOpen, "open"));
+            }
+            const failure = options.dataSync;
+            return fileSystem.open(path, openOptions).pipe(
+              Effect.map((file) =>
+                openOptions?.flag === "w" && failure !== undefined
+                  ? new Proxy(file, {
+                      get: (target, key) =>
+                        key === "sync"
+                          ? Effect.fail(syncFailure(failure, "sync"))
+                          : Reflect.get(target, key, target),
+                    })
+                  : file,
+              ),
+            );
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeServices.layer));
+  const withStore = <A, E>(
+    fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
+    use: (store: ServerSecretStore.ServerSecretStore["Service"]) => Effect.Effect<A, E>,
+  ) =>
+    Effect.flatMap(ServerSecretStore.ServerSecretStore, use).pipe(
+      Effect.provide(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(layerServerConfig()),
+          Layer.provideMerge(fileSystemLayer),
+        ),
+      ),
+    );
+
+  it.effect("fails a replace whose data cannot be synced instead of acknowledging it", () =>
+    withStore(layerSyncFileSystem({ dataSync: "EIO" }), (secretStore) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(secretStore.set("connector-sync", Uint8Array.from([1])));
+        assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
+        assert.isTrue(Option.isNone(yield* secretStore.get("connector-sync")));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails directory sync errors but skips platforms that cannot sync a directory", () =>
+    Effect.gen(function* () {
+      yield* withStore(layerSyncFileSystem({ directoryOpen: "EIO" }), (failing) =>
+        Effect.gen(function* () {
+          assert.instanceOf(
+            yield* Effect.flip(failing.set("connector-sync", Uint8Array.from([1]))),
+            ServerSecretStore.SecretStorePersistError,
+          );
+          assert.instanceOf(
+            yield* Effect.flip(failing.create("connector-created", Uint8Array.from([3]))),
+            ServerSecretStore.SecretStorePersistError,
+          );
+          assert.instanceOf(
+            yield* Effect.flip(failing.remove("connector-sync")),
+            ServerSecretStore.SecretStoreRemoveError,
+          );
+        }),
+      );
+      yield* withStore(layerSyncFileSystem({ directoryOpen: "EISDIR" }), (unsupported) =>
+        Effect.gen(function* () {
+          yield* unsupported.set("connector-sync", Uint8Array.from([2]));
+          yield* unsupported.create("connector-created", Uint8Array.from([3]));
+          yield* unsupported.remove("connector-created");
+          assert.deepStrictEqual(
+            Option.map(yield* unsupported.get("connector-sync"), (bytes) => [...bytes]),
+            Option.some([2]),
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  // SCIENT-FORK:END
+
   it.effect("propagates read failures other than missing-file errors", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;

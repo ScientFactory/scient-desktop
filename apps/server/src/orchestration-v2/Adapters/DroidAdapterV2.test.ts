@@ -172,6 +172,7 @@ const harness = Effect.fnUntraced(function* (
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer synthetic-droid-awareness",
       capabilities,
+      connectors: [],
     });
     yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }

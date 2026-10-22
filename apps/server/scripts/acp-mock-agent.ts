@@ -174,6 +174,9 @@ const initialGrokReasoningEffort =
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
 const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
+// SCIENT-FORK:START — Scient Extensions connectors.
+const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
+// SCIENT-FORK:END
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
 const omitSessionListHandler = process.env.T3_ACP_OMIT_SESSION_LIST_HANDLER === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
@@ -731,7 +734,16 @@ const program = Effect.gen(function* () {
           session: {
             ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
             ...(supportsV2Management ? { delete: {} } : {}),
-            ...(supportsAcpMcp ? { mcp: { acp: {} } } : {}),
+            // SCIENT-FORK:START — Scient Extensions connectors.
+            ...(supportsAcpMcp || supportsHttpMcp
+              ? {
+                  mcp: {
+                    ...(supportsAcpMcp ? { acp: {} } : {}),
+                    ...(supportsHttpMcp ? { http: {} } : {}),
+                  },
+                }
+              : {}),
+            // SCIENT-FORK:END
           },
           ...(supportsV2Management ? { providers: {} } : {}),
         },

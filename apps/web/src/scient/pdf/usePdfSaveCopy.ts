@@ -25,10 +25,9 @@ export function usePdfSaveCopy(environmentId: EnvironmentId) {
         throw new Error("The environment connection is unavailable.");
       }
 
-      const issued = await createAssetUrl({
-        environmentId,
-        input: { resource: pdfSourceAssetResource(source) },
-      });
+      const resource = pdfSourceAssetResource(source);
+      if (resource === null) throw new Error("This PDF has not been uploaded yet.");
+      const issued = await createAssetUrl({ environmentId, input: { resource } });
       if (issued._tag === "Failure") throw squashAtomCommandFailure(issued);
 
       const url = resolveAssetUrl(httpBaseUrl, issued.value.relativeUrl);

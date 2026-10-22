@@ -210,31 +210,28 @@ function setup() {
   };
 }
 
-it("leaves the macOS badge to Scient's durable unread-answer coordinator", async () => {
-  await using app = setup();
-  using _bridge = stubGlobal("desktopBridge", {
-    getClientPlatform: () => "darwin",
-    setUnreadAnswerCount: vi.fn(),
-  });
-  await app.render();
-  complete();
-  await app.render();
-  expect(app.notifications).toHaveLength(1);
-  expect(state.badge).not.toHaveBeenCalled();
-});
-
-it("keeps upstream notification badges on Windows", async () => {
-  await using app = setup();
-  using _bridge = stubGlobal("desktopBridge", {
-    getClientPlatform: () => "win32",
-    setUnreadAnswerCount: vi.fn(),
-  });
-  await app.render();
-  complete();
-  await app.render();
-  expect(app.notifications).toHaveLength(1);
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-});
+it.each(["off", "sound", "focused", "denied", "archived"])(
+  "does not show visual alerts when %s",
+  async (condition) => {
+    await using app = setup();
+    if (condition === "off" || condition === "sound") state.mode = condition;
+    if (condition === "focused") focused = true;
+    if (condition === "denied") TestNotification.permission = "denied";
+    await app.render();
+    complete();
+    if (condition === "archived")
+      state.shells.set(
+        "one",
+        shell({
+          archivedAt: "2026-09-13T08:00:00Z",
+          hasPendingApprovals: true,
+        }),
+      );
+    await app.render();
+    expect(app.notifications).toHaveLength(0);
+    expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
+  },
+);
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",

@@ -1,5 +1,5 @@
 // Scient desktop wire contract. The website gateway consumes a generated copy.
-export const ANALYTICS_CONTRACT_REVISION = "5" as const;
+export const ANALYTICS_CONTRACT_REVISION = "6" as const;
 export const PRIVACY_LEVELS = ["essential", "product", "diagnostic", "contribution"] as const;
 
 export type PrivacyLevel = (typeof PRIVACY_LEVELS)[number];
@@ -163,6 +163,7 @@ const operationProperties = {
       "compute-run",
       "compute-artifact",
       "latex-build",
+      "latex-visual-edit",
       "document-export",
       "source-control",
       "built-in-skill",
@@ -536,6 +537,7 @@ export const EVENT_DEFINITIONS = {
           "custom-models",
           "voice",
           "skills",
+          "extensions",
           "integrations",
           "scheduled-tasks",
           "snap-shot",
@@ -563,7 +565,10 @@ export const EVENT_DEFINITIONS = {
   "feature.viewed": {
     privacyLevel: "product",
     properties: {
-      feature: { kind: "enum", values: ["search", "project-picker", "new-thread", "other"] },
+      feature: {
+        kind: "enum",
+        values: ["search", "project-picker", "new-thread", "latex-visual", "other"],
+      },
     },
   },
   "usage.availability": {
@@ -675,7 +680,7 @@ export function eventContractViolation(input: {
   const rules: Readonly<Record<string, PropertyRule>> = {
     appVersion,
     buildChannel,
-    contractRevision: { kind: "enum", values: ["1", "2", "3", "4", "5"], optional: true },
+    contractRevision: { kind: "enum", values: ["1", "2", "3", "4", "5", "6"], optional: true },
     ...definition.properties,
   };
   for (const key of Object.keys(input.properties)) {

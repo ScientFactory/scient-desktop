@@ -11,10 +11,19 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   "/settings/skills/external": "External skills",
   "/settings/skills/project": "Project skills",
   "/settings/open-source-licenses": "Open source licenses",
+  // SCIENT-FORK:START — Scient Extensions subpages
+  "/settings/extensions/installed": "Installed extensions",
+  "/settings/extensions/all": "All MCP servers",
+  // SCIENT-FORK:END
 };
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
+  // SCIENT-FORK:START — Extensions category and item pages fall back to the section.
+  if (normalizedPathname.startsWith("/settings/extensions/")) {
+    return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? "Extensions";
+  }
+  // SCIENT-FORK:END
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 

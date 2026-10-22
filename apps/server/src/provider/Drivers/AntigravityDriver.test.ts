@@ -386,6 +386,9 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader: `Bearer synthetic:${threadId}`,
     capabilities: new Set(["threads:read"] as const),
+    // SCIENT-FORK:START — Scient Extensions connectors.
+    connectors: [],
+    // SCIENT-FORK:END
   };
   yield* Effect.acquireRelease(sessions.set(mcp), () => sessions.clear(threadId));
   const session = yield* h.instance.orchestrationAdapter.openSession({

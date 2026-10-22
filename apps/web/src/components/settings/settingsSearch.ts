@@ -24,6 +24,9 @@ export type SettingsPath =
   | "/settings/custom-models"
   | "/settings/voice"
   | "/settings/skills"
+  // SCIENT-FORK:START — Scient Extensions
+  | "/settings/extensions"
+  // SCIENT-FORK:END
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
@@ -88,6 +91,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/custom-models": "Custom models",
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
+  // SCIENT-FORK:START — Scient Extensions
+  "/settings/extensions": "Extensions",
+  // SCIENT-FORK:END
   "/settings/scientific-computing": "Scientific Computing",
   "/settings/documents": "Documents",
   "/settings/keybindings": "Shortcuts",
@@ -524,6 +530,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
+  // SCIENT-FORK:START — the unread-answer app icon badge.
+  {
+    id: "app-icon-badge",
+    title: "App icon badge",
+    to: "/settings/general",
+    desktopOnly: true,
+    searchTerms: ["unread answers count dock taskbar badge notification"],
+  },
+  // SCIENT-FORK:END
   {
     id: "time-format",
     title: "Time format",
@@ -824,6 +839,38 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Skills",
     to: "/settings/skills",
   },
+  // SCIENT-FORK:START — Scient Extensions
+  {
+    id: "extensions",
+    title: "Extensions",
+    to: "/settings/extensions",
+    searchTerms: ["plugins connectors mcp servers add-ons tools"],
+  },
+  {
+    id: "extensions-connected-services",
+    title: "Connected services",
+    to: "/settings/extensions",
+    searchTerms: ["connectors remote mcp server oauth sign in api key token linear notion"],
+  },
+  {
+    id: "extensions-scient-plugins",
+    title: "Scient plugins",
+    to: "/settings/extensions",
+    searchTerms: ["bundle install built-in sources documents compute skills"],
+  },
+  {
+    id: "extensions-provider-plugins",
+    title: "Provider plugins",
+    to: "/settings/extensions",
+    searchTerms: ["codex claude marketplace mcp servers uninstall provider sign in"],
+  },
+  {
+    id: "extensions-discover",
+    title: "Discover MCP servers",
+    to: "/settings/extensions",
+    searchTerms: ["registry browse search install remote connector"],
+  },
+  // SCIENT-FORK:END
   {
     id: "agent-browser-access",
     title: "Agent browser access",
@@ -1170,6 +1217,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/custom-models": null,
   "/settings/voice": null,
   "/settings/skills": null,
+  // SCIENT-FORK:START — Scient Extensions
+  "/settings/extensions": null,
+  // SCIENT-FORK:END
   "/settings/integrations": null,
   "/settings/scheduled-tasks": null,
   "/settings/scientific-computing": null,

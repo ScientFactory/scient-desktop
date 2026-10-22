@@ -30,8 +30,10 @@ import * as Context from "effect/Context";
 
 /**
  * How the pinned asset is packed. `seven-zip-sfx` is upstream's Windows
- * format: a 7-Zip archive behind an executable stub. Scient reads the payload
- * out of it and never runs the stub. `tar-xz` is the macOS/Linux format.
+ * format: a 7-Zip archive behind 7-Zip's console self-extractor. Scient reads
+ * the payload out of it with the system tar, and runs the verified stub to
+ * unpack itself only where that tar cannot (see `LatexArchiveUnpacker`).
+ * `tar-xz` is the macOS/Linux format.
  */
 export type TinyTexArchiveKind = "seven-zip-sfx" | "tar-xz";
 

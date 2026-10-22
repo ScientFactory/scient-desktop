@@ -1,4 +1,4 @@
-import { act, render as _fixtureRender, type Screen } from "../../../test/render";
+import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
 
 import type { Editor } from "@tiptap/core";
@@ -110,6 +110,115 @@ async function mount(_fixture: _Fixture, source: string, name: string) {
   await expect.poll(() => pagedLayoutSettled(editor()!.view), { timeout: 25000 }).toBe(true);
   return editor()!;
 }
+
+it.each(["detached", "hidden", "briefly hidden"] as const)(
+  "retires a measurement continuation when its paper becomes %s and resumes when visible",
+  async (unavailable) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    const editor = await mount(
+      _fixture,
+      String.raw`\documentclass{article}
+\begin{document}
+First paragraph remains owned by the document.
+
+Second paragraph has not been measured when the paper disappears.
+
+Third paragraph must return with the same source after showing the paper.
+\end{document}`,
+      `measurement-${unavailable}`,
+    );
+    const view = editor.view;
+    const source = published;
+    const display = _fixture.host.style.display;
+    const restore = () => {
+      _fixture.host.style.display = display;
+      if (!_fixture.host.isConnected) document.body.append(_fixture.host);
+    };
+    using _restore = { [Symbol.dispose]: restore };
+    const visibleSize = Promise.withResolvers<void>();
+    const hiddenSize = Promise.withResolvers<void>();
+    let observedHidden = false;
+    const sizeObserver = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.contentRect.width > 0)) visibleSize.resolve();
+      if (entries.some((entry) => entry.contentRect.width === 0)) {
+        observedHidden = true;
+        hiddenSize.resolve();
+      }
+    });
+    sizeObserver.observe(view.dom);
+    using _sizeObserver = { [Symbol.dispose]: () => sizeObserver.disconnect() };
+    await visibleSize.promise;
+    await vi.waitFor(() => expect(pagedLayoutSettled(view)).toBe(true));
+    const previous = latexPagedKey.getState(editor.state)!;
+    {
+      using _timers = fakeTimers();
+      const continuations = new Map<number, FrameRequestCallback>();
+      let nextId = 0;
+      using _request = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        const id = --nextId;
+        continuations.set(id, callback);
+        return id;
+      });
+      using _cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+        continuations.delete(id);
+      });
+      let measuredTime = 0;
+      // Each measurement exhausts the cooperative work budget, independent of machine speed.
+      using _measurementClock = vi
+        .spyOn(performance, "now")
+        .mockImplementation(() => (measuredTime += 100));
+      const takeContinuation = () => {
+        expect(continuations.size).toBe(1);
+        const [id, callback] = continuations.entries().next().value!;
+        continuations.delete(id);
+        return callback;
+      };
+      view.dom.dispatchEvent(new Event("scient-latex-layout-config"));
+      takeContinuation()(0);
+      const resume = takeContinuation();
+      expect(pagedLayoutSettled(view)).toBe(false);
+      expect(latexPagedKey.getState(editor.state)).toBe(previous);
+      if (unavailable === "detached") _fixture.host.remove();
+      else _fixture.host.style.display = "none";
+      expect(editor.isDestroyed).toBe(false);
+      expect(view.dom.offsetWidth).toBe(0);
+      using geometry = vi.spyOn(view.dom, "getBoundingClientRect");
+      resume(0);
+      expect(geometry).not.toHaveBeenCalled();
+      expect(continuations.size).toBe(1);
+      expect(latexPagedKey.getState(editor.state)).toBe(previous);
+      expect(pagedLayoutSettled(view)).toBe(false);
+      const recovery = takeContinuation();
+      if (unavailable === "briefly hidden") {
+        restore();
+        // The full controlled clock gives the recovered pass an uninterrupted work budget.
+        _measurementClock.mockRestore();
+        recovery(0);
+        expect(pagedLayoutSettled(view)).toBe(true);
+      } else {
+        // An owned wake-up must park if the paper is still unavailable.
+        recovery(0);
+      }
+      expect(continuations.size).toBe(0);
+    }
+    if (unavailable !== "briefly hidden") {
+      await hiddenSize.promise;
+      restore();
+    }
+    await vi.waitFor(() => {
+      expect({ settled: pagedLayoutSettled(view), observedHidden }).toEqual({
+        settled: true,
+        observedHidden: unavailable !== "briefly hidden",
+      });
+      const presentation = latexPagedKey.getState(editor.state)!;
+      expect(presentation.revision).toBeGreaterThan(previous.revision);
+      expect(presentation.plan!.sheets!.length).toBeGreaterThan(0);
+      expect(presentation.plan!.sheets!.every((sheet) => Number.isFinite(sheet.top))).toBe(true);
+    });
+    expect(published).toBe(source);
+  },
+);
 
 it.each([
   ["15", template15, 2],

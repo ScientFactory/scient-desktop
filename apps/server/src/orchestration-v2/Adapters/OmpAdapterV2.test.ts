@@ -503,6 +503,15 @@ const decodeNativeBootstrap = Schema.decodeUnknownSync(
       endpoint: Schema.NullOr(Schema.String),
       authorization: Schema.NullOr(Schema.String),
       awareness: Schema.String,
+      connectors: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            serverName: Schema.String,
+            displayName: Schema.String,
+            url: Schema.String,
+          }),
+        ),
+      ),
     }),
   ),
 );
@@ -2290,6 +2299,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   authorizationHeader: token,
                   capabilities: new Set(["preview", "skills:read", "sources:read"]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
+                  connectors: [],
                 })
               : Effect.void,
           makeProcess: (options) =>
@@ -2331,6 +2341,83 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
+        // A session without connectors keeps the bootstrap's original shape.
+        assert.isUndefined(bootstrap.value.connectors);
+      }),
+    ),
+  );
+
+  it.effect("delivers every connector in the private OMP bootstrap under the session bearer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("native-bootstrap-connectors");
+        const token = "Bearer synthetic-scient-omp-connector-token";
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        const connectors = [
+          {
+            connectorId: "connector-github",
+            serverName: "github",
+            displayName: "GitHub",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-github",
+          },
+          {
+            connectorId: "connector-linear",
+            serverName: "linear_work",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+          },
+        ];
+        let launch: Parameters<typeof peer.makeProcess>[0] | undefined;
+        let source: string | undefined;
+        let bootstrap: ReturnType<typeof decodeNativeBootstrap> | undefined;
+        yield* harness(false, {
+          threadId,
+          prepareOpen: (input) =>
+            mcpSessions.set({
+              environmentId: EnvironmentId.make("connector-bootstrap-environment"),
+              threadId,
+              providerSessionId: "connector-bootstrap-session",
+              providerInstanceId: input.modelSelection.instanceId,
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: token,
+              capabilities: new Set(["preview"]),
+              connectors,
+            }),
+          makeProcess: (options) =>
+            Effect.gen(function* () {
+              launch = options;
+              const args = options.extraArgs ?? [];
+              const extension = args[args.indexOf("--extension") + 1];
+              if (!extension) return yield* Effect.die("Missing native Scient extension");
+              source = NodeFS.readFileSync(extension, "utf8");
+              const embedded = /\bSCIENT_BOOTSTRAP_PATH = ("(?:[^"\\]|\\.)*");/u.exec(source)?.[1];
+              if (!embedded) return yield* Effect.die("Missing native private bootstrap path");
+              const bootstrapPath = decodeImagePath(embedded);
+              assert.equal(NodeFS.statSync(bootstrapPath).mode & 0o777, 0o600);
+              bootstrap = decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8"));
+              NodeFS.unlinkSync(bootstrapPath);
+              return yield* peer.makeProcess(options);
+            }),
+        });
+        if (!launch || !source || !bootstrap)
+          return yield* Effect.die("Native bootstrap was not observed");
+        assert.equal(bootstrap.authorization, token);
+        assert.deepEqual(
+          bootstrap.connectors,
+          connectors.map(({ serverName, displayName, url }) => ({ serverName, displayName, url })),
+        );
+        // The connectors share the session bearer; no secret reaches argv, env or the source.
+        assert.notInclude(encodeDiagnostic(bootstrap.connectors), "synthetic-scient-omp");
+        assert.notInclude(encodeDiagnostic(launch.extraArgs), "synthetic-scient-omp");
+        assert.notInclude(encodeDiagnostic(launch.env), "synthetic-scient-omp");
+        assert.notInclude(source, "synthetic-scient-omp");
+        assert.notInclude(source, "/mcp/connectors/");
+        assert.include(launch.secrets ?? [], token);
       }),
     ),
   );
@@ -2363,6 +2450,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: "Bearer synthetic-foreign-native-token",
                   capabilities: new Set(["preview"]),
+                  connectors: [],
                 });
               }),
             makeProcess: (options) => {

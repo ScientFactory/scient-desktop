@@ -1,11 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { hasUnreadCompletedAnswer } from "@t3tools/shared/orchestrationV2ThreadShell";
 
 import {
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
 } from "../../components/Sidebar.logic";
-import { hasUnreadAnswer } from "../answerAttention/completion";
 
 /** Whether a thread belongs above inactive ones; it reads visits as the sidebar rows do. */
 export function placementEligible(
@@ -31,6 +31,8 @@ export function placementEligible(
       !Number.isFinite(Date.parse(visitedAt)) ||
       Date.parse(wokeAt) > Date.parse(visitedAt));
   return (
-    resolveSidebarThreadStatus(thread) !== "ready" || hasUnreadAnswer(thread, visitedAt) || woke
+    resolveSidebarThreadStatus(thread) !== "ready" ||
+    hasUnreadCompletedAnswer(thread, visitedAt) ||
+    woke
   );
 }

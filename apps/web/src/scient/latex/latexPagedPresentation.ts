@@ -1693,6 +1693,10 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             progress.pending = generation !== epoch || refresh;
             view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
           }
+          const canMeasure = () =>
+            view.dom.isConnected &&
+            view.dom.offsetWidth > 0 &&
+            view.dom.getBoundingClientRect().width > 0;
           function start() {
             frame = 0;
             if (disposed || view.isDestroyed) return;
@@ -1704,7 +1708,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             // Loading mutates the document every frame. Wait before requesting
             // geometry, otherwise the waiting loop lays out each growing slice.
             // Width observation resumes hidden panes and DOM-only tests.
-            if (!view.dom.offsetWidth || !view.dom.getBoundingClientRect().width) return;
+            if (!canMeasure()) return;
             const generation = epoch;
             const iterator = work(view.state.doc, generation);
             running = true;
@@ -1715,6 +1719,15 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 iterator.return();
                 running = false;
                 start();
+                return;
+              }
+              // React can detach the paper before Tiptap destroys its view. Hidden panes
+              // also lose geometry between yields; width observation starts a fresh pass.
+              if (!canMeasure()) {
+                iterator.return();
+                running = false;
+                // A hide/show within one rendering update may not emit a width change.
+                schedule();
                 return;
               }
               if (!iterator.next().done) frame = requestAnimationFrame(resume);

@@ -1,5 +1,5 @@
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
@@ -28,6 +28,8 @@ type StoredSourcePreviewAsset = RuntimeAssetUrlState & {
 
 export function SourcePdfPreview(props: {
   readonly readerScope?: string | undefined;
+  /** The conversation Ask in chat quotes into. */
+  readonly citeThread?: ScopedThreadRef | undefined;
   readonly attachmentId: string;
   readonly environmentId: EnvironmentId;
   readonly fileName: string;
@@ -115,13 +117,19 @@ export function SourcePdfPreview(props: {
           fileName: props.fileName,
           workspaceRoot: props.root,
           relativePath: sourceRelativePath,
+          origin: {
+            _tag: "source",
+            workspaceRoot: props.root,
+            sourceId: props.sourceId,
+            attachmentId: props.attachmentId,
+          },
         })
       : null;
   // Keyed by its inputs, not its identity: a reauthorization keeps the open reader.
   const requestedSourceKey =
     requestedSource === null
       ? null
-      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}`;
+      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}\0${props.sourceId}\0${props.attachmentId}`;
   const [retainedSource, setRetainedSource] = useState<{
     requestKey: string;
     sourceKey: string;
@@ -174,7 +182,12 @@ export function SourcePdfPreview(props: {
   }
   return (
     <Suspense fallback={null}>
-      <ScientPdfReader source={source} resolver={resolver} readerScope={props.readerScope} />
+      <ScientPdfReader
+        source={source}
+        resolver={resolver}
+        readerScope={props.readerScope}
+        citeThread={props.citeThread}
+      />
     </Suspense>
   );
 }

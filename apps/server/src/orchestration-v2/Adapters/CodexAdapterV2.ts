@@ -1412,6 +1412,19 @@ export function codexThreadRuntimeParams(input: {
                 Authorization: mcpSession.authorizationHeader,
               },
             },
+            // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL).
+            // Each connector is its own `mcp_servers.<name>` override, like the owned server
+            // above, so the user's MCP configuration stays in place beside them.
+            ...Object.fromEntries(
+              mcpSession.connectors.map((connector) => [
+                `mcp_servers.${connector.serverName}`,
+                {
+                  url: connector.url,
+                  http_headers: { Authorization: mcpSession.authorizationHeader },
+                },
+              ]),
+            ),
+            // SCIENT-FORK:END Scient Extensions connectors
           }),
     },
   };
@@ -1691,43 +1704,6 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
   defaultConfig: (): CodexSettings => DEFAULT_CODEX_SETTINGS,
   create: createCodexAdapterV2,
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | CodexAppServerClientFactory
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | IdAllocator.IdAllocatorV2
-  | McpProviderSessions.McpProviderSessions
-  | ServerConfig
-  | Path.Path
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const clientFactory = yield* CodexAppServerClientFactory;
-    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const crypto = yield* Crypto.Crypto;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const hostEnvironment = yield* HostProcess.Environment;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const serverConfig = yield* ServerConfig;
-
-    return yield* makeCodexAdapterV2({
-      instanceId: CODEX_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CODEX_SETTINGS,
-      environment: hostEnvironment,
-      clientFactory,
-      crypto,
-      path,
-      fileSystem,
-      idAllocator,
-      serverConfig,
-      continuationRequests,
-    });
-  }),
-);
 
 export interface CodexAdapterV2Options {
   readonly instanceId: ProviderInstanceId;

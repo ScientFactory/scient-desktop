@@ -441,6 +441,9 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader,
     capabilities: new Set<McpCapability>(["preview"]),
+    // SCIENT-FORK:START — Scient Extensions connectors.
+    connectors: [],
+    // SCIENT-FORK:END
   });
 
   it("leaves an absent allowlist absent when no MCP session exists", () => {
@@ -574,6 +577,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-claude-token",
       capabilities: new Set<McpCapability>(["preview"]),
+      // SCIENT-FORK:START — Scient Extensions connectors.
+      connectors: [],
+      // SCIENT-FORK:END
     };
 
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({

@@ -1,6 +1,7 @@
 import {
   ArtifactAuthority,
   LogicalDocumentKey,
+  type AttachmentPdfLocator,
   PdfSourceDescriptor,
   type PdfSourceActions,
   type PdfSourceDescriptor as PdfSourceDescriptorType,
@@ -60,6 +61,13 @@ export function workspacePdfSource(input: {
     readonly absolutePath: string;
     readonly threadId: string;
   };
+  /** The Sources item the file belongs to: provenance for quotes, never identity. */
+  readonly origin?: {
+    readonly _tag: "source";
+    readonly workspaceRoot: string;
+    readonly sourceId: string;
+    readonly attachmentId: string;
+  };
 }): PdfSourceDescriptorType {
   return PdfSourceDescriptor.make({
     _tag: "workspace-pdf",
@@ -73,6 +81,7 @@ export function workspacePdfSource(input: {
     workspaceRoot: input.workspaceRoot,
     relativePath: input.relativePath,
     ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
+    ...(input.origin ? { origin: input.origin } : {}),
   });
 }
 
@@ -92,6 +101,42 @@ export function environmentPdfSource(input: {
     fileName: environmentPdfFileName(input.fileName),
     capabilities: { canSaveCopy: true, canRevealSource: false },
     path: input.canonicalPath,
+  });
+}
+
+/**
+ * A save-as name the descriptor accepts for any attachment name: chat
+ * attachments may carry separators or no stem, which the title keeps.
+ */
+function attachmentPdfFileName(name: string): string {
+  const stem = name
+    // oxlint-disable-next-line no-control-regex -- NUL is one of the characters a file name may not hold.
+    .replace(/[\\/\x00]/gu, "_")
+    .replace(/\.pdf$/iu, "")
+    .trim();
+  // The suffix is added exactly once, so a stem that itself ends in ".pdf" stays a stem.
+  return `${(stem.length > 0 ? stem : "attachment").slice(0, 251)}.pdf`;
+}
+
+/** A chat attachment PDF, sent or still in the composer. */
+export function attachmentPdfSource(input: {
+  readonly environmentId: EnvironmentId;
+  readonly fileName: string;
+  readonly locator: AttachmentPdfLocator;
+}): PdfSourceDescriptorType {
+  const locator = input.locator;
+  return PdfSourceDescriptor.make({
+    _tag: "attachment-pdf",
+    authority: ArtifactAuthority.make(input.environmentId),
+    logicalDocumentKey: LogicalDocumentKey.make(
+      locator._tag === "sent"
+        ? `attachment:${locator.attachmentId}`
+        : `draft-attachment:${locator.threadId}:${locator.fileContextId}`,
+    ),
+    title: (input.fileName.trim() || "Attachment").slice(0, 512),
+    fileName: attachmentPdfFileName(input.fileName),
+    capabilities: { canSaveCopy: true, canRevealSource: false },
+    locator,
   });
 }
 
@@ -146,7 +191,8 @@ export const webPdfSourceResolver: PdfSourceResolver = {
   useResolve: usePdfSourceState,
 };
 
-export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetResource {
+/** Null for a draft attachment that has not been uploaded: only its local bytes exist. */
+export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetResource | null {
   switch (source._tag) {
     case "workspace-pdf":
       return {
@@ -173,6 +219,21 @@ export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetRe
         path: EnvironmentFilePath.make(source.path),
         access: "exact",
       };
+    case "attachment-pdf": {
+      const attachmentId =
+        source.locator._tag === "sent"
+          ? source.locator.attachmentId
+          : source.locator.uploadedAttachmentId;
+      return attachmentId === undefined
+        ? null
+        : {
+            _tag: "attachment",
+            attachmentId,
+            fileName: source.fileName,
+            mimeType: "application/pdf",
+            disposition: "inline",
+          };
+    }
   }
 }
 

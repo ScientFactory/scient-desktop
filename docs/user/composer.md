@@ -226,6 +226,13 @@ If it cannot verify a location, the quote remains intact and the recorded line
 opens with a notice. Existing rendered Markdown quotes keep their rendered-view
 reopening behavior.
 
+## Quote a PDF
+
+Select text in a PDF and choose **Ask in chat**. The quote keeps the PDF, the
+page and the exact text, and its chip reopens the PDF at the passage. See
+[PDF reader](pdf-reader.md#ask-in-chat-about-a-passage) for what can be quoted
+and what happens when the PDF has changed.
+
 ## Quote an assistant response
 
 On web and desktop, select text in an assistant response, then choose **Ask in chat** from the

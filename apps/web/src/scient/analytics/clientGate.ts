@@ -4,7 +4,7 @@ const UNAVAILABLE: ScientAnalyticsStatus = { available: false, consent: "off" };
 const MAX_IN_FLIGHT = 20;
 const STATUS_MAX_AGE_MS = 60_000;
 
-export type ScientUiOperationKind = "pdf-export" | "document-export";
+export type ScientUiOperationKind = "pdf-export" | "document-export" | "latex-visual-edit";
 export type ScientUiOperationOutcome = "completed" | "failed" | "cancelled" | null;
 export type FinishScientUiOperation = (outcome: ScientUiOperationOutcome) => void;
 const ignoreOperation: FinishScientUiOperation = () => {};

@@ -228,9 +228,35 @@ export const make = Effect.gen(function* () {
   const nativePublicationHelper = yield* Effect.promise(() =>
     resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
   );
-  const retentionStorageDirectory =
+  const configuredRetentionStorageDirectory =
     config.filePublicationRetentionRoot ??
     path.join(NodeOS.homedir(), ".scient-next", "file-publications");
+  // Resolve only ancestors: the final private directory must still reject a symlink.
+  // Missing optional storage stays absent until a publication provisions it.
+  const canonicalAncestor = async (directory: string): Promise<string> => {
+    try {
+      return await NodeFSP.realpath(directory);
+    } catch (cause) {
+      if (!isNodeError(cause, "ENOENT")) throw cause;
+      return path.join(await canonicalAncestor(path.dirname(directory)), path.basename(directory));
+    }
+  };
+  let canonicalRetentionStorageDirectory: string | undefined;
+  const resolveRetentionStorageDirectory = async () => {
+    if (canonicalRetentionStorageDirectory !== undefined) return canonicalRetentionStorageDirectory;
+    if (!path.isAbsolute(configuredRetentionStorageDirectory)) {
+      throw new RetainedMutationError(
+        "unavailable",
+        "Retention must be an absolute host-owned path.",
+        "storage",
+      );
+    }
+    const directory = path.join(
+      await canonicalAncestor(path.dirname(configuredRetentionStorageDirectory)),
+      path.basename(configuredRetentionStorageDirectory),
+    );
+    return (canonicalRetentionStorageDirectory ??= directory);
+  };
   const retentionDirectoryFor = async (_canonicalRoot: string, parentPath: string) => {
     const parent = await NodeFSP.lstat(parentPath, { bigint: true });
     if (!parent.isDirectory() || parent.isSymbolicLink()) {
@@ -243,9 +269,23 @@ export const make = Effect.gen(function* () {
         "storage",
       );
     }
-    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, retentionStorageDirectory);
+    const retentionStorageDirectory = await resolveRetentionStorageDirectory();
+    const preparedRoot = await ensureNativePrivateRetentionDirectory(
+      nativePublicationHelper,
+      retentionStorageDirectory,
+    );
     const directory = path.join(retentionStorageDirectory, `${parent.dev}-${parent.ino}`);
-    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, directory);
+    const preparedDirectory = await ensureNativePrivateRetentionDirectory(
+      nativePublicationHelper,
+      directory,
+    );
+    if (preparedRoot !== retentionStorageDirectory || preparedDirectory !== directory) {
+      throw new RetainedMutationError(
+        "target",
+        "Retained storage authority changed during preparation.",
+        "storage",
+      );
+    }
     const storage = await NodeFSP.lstat(directory, { bigint: true });
     if (storage.dev !== parent.dev) {
       throw new RetainedMutationError(
@@ -776,7 +816,7 @@ export const make = Effect.gen(function* () {
     workspaceEntries,
     readFile: (input) => readResolvedFile(input, "contained"),
     ...(nativePublicationHelper === undefined ? {} : { nativePublicationHelper }),
-    retentionStorageDirectory,
+    resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
     isProtectedPath: isInGitFolder,

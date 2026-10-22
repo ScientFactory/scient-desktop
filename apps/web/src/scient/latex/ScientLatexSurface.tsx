@@ -1,4 +1,5 @@
 import { LatexSelect } from "./LatexSelect";
+import { useScientAnalyticsView } from "~/scient/analytics/client";
 import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 import { File, Virtualizer } from "@pierre/diffs/react";
@@ -497,6 +498,8 @@ interface LatexViewerPaneProps {
   readonly toolchainMissing: boolean;
   readonly failureLine: string | null;
   readonly syncNavigation?: PdfSyncNavigation;
+  /** The conversation Ask in chat quotes into; a new, unsent conversation has none yet. */
+  readonly citeThread?: ScopedThreadRef | undefined;
 }
 
 /**
@@ -512,6 +515,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
   toolchainMissing,
   failureLine,
   syncNavigation,
+  citeThread,
 }: LatexViewerPaneProps) {
   return (
     <div className="scient-latex-pane">
@@ -522,6 +526,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
             key={readerKey}
             source={descriptor}
             readerScope={readerScope}
+            citeThread={citeThread}
             {...(syncNavigation === undefined ? {} : { syncNavigation })}
           />
         </Suspense>
@@ -1309,6 +1314,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const showEditor = mode === "source" || mode === "split";
   const activePreview = mode === "split" ? splitPreview : mode === "source" ? null : mode;
   const showVisual = activePreview === "visual";
+  useScientAnalyticsView(
+    showVisual ? { name: "feature.viewed", properties: { feature: "latex-visual" } } : null,
+    props.environmentId,
+  );
   const showRightPane = activePreview !== null;
   // Keep Visual's save sessions alive when hidden; only the chosen preview is visible.
   const [visualOpened, setVisualOpened] = useState(showVisual);
@@ -2116,6 +2125,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           toolchainMissing={status.toolchainMissing}
           requiredCompiler={compilerUnavailable ? selectedCompiler : null}
           downloadBytes={compilerState.report?.downloadBytes ?? null}
+          unusableToolchain={
+            build.toolchain?.unusable?.[0] ?? compilerState.report?.unusable?.[0] ?? null
+          }
           disabled={
             status.offline || status.busy || compilerEditBlocked || renaming || target === null
           }
@@ -2408,6 +2420,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       : props.composerDraftTarget.threadId
                   }
                   readerKey={readerKey}
+                  citeThread={
+                    typeof props.composerDraftTarget === "string"
+                      ? undefined
+                      : props.composerDraftTarget
+                  }
                   viewer={status.viewer}
                   toolchainMissing={status.toolchainMissing}
                   failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}

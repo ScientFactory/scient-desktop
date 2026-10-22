@@ -88,8 +88,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getClientPlatform: () => clientPlatform,
-  setUnreadAnswerCount: (count) =>
-    ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_COUNT_CHANNEL, count),
+  // SCIENT-FORK:START — the unread-answer app badge.
+  setUnreadAnswerBadge: (badge) =>
+    ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_BADGE_CHANNEL, badge),
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   takeOpenedConversationFiles: () =>
     ipcRenderer.invoke(IpcChannels.TAKE_OPENED_CONVERSATION_FILES_CHANNEL),

@@ -387,6 +387,9 @@ describe("MuseAdapterV2", () => {
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(["preview"]),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
@@ -422,6 +425,57 @@ describe("MuseAdapterV2", () => {
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
+  it.effect("connects each connector beside Scient's server with the thread's credential", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(THREAD_ID));
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        capabilities: new Set(["preview"]),
+        connectors: [
+          {
+            connectorId: "connector-github",
+            serverName: "github",
+            displayName: "GitHub",
+            url: "http://127.0.0.1:43210/mcp/connectors/connector-github",
+          },
+          {
+            connectorId: "connector-linear",
+            serverName: "linear",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43210/mcp/connectors/connector-linear",
+          },
+        ],
+      });
+      for (const nativeId of [undefined, "saved-native-session"]) {
+        const fake = yield* makeFakeMuse();
+        fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+        yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
+        const remote = (url: string) => ({
+          transport: "streamableHttp",
+          mode: "optional",
+          url,
+          headers: { Authorization: "Bearer thread-scoped-test-token" },
+        });
+        assert.deepStrictEqual(call.params.config, {
+          mcpServers: {
+            scient: remote("http://127.0.0.1:43210/mcp"),
+            github: remote("http://127.0.0.1:43210/mcp/connectors/connector-github"),
+            linear: remote("http://127.0.0.1:43210/mcp/connectors/connector-linear"),
+          },
+        });
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("uses optional host-owned runtime copy without changing the package default", () =>
     Effect.gen(function* () {
@@ -463,6 +517,9 @@ describe("MuseAdapterV2", () => {
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(["skills:read"]),
         agentDeviceEnvironment: { PATH: "/fake/device-shim", SCIENT_DEVICE_MARKER: "enabled" },
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
@@ -525,6 +582,9 @@ describe("MuseAdapterV2", () => {
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         capabilities: new Set(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       const fake = yield* makeFakeMuse();
       const outcome = yield* makeHarness(fake).pipe(Effect.result);

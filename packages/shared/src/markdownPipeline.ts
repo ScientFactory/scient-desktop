@@ -15,6 +15,7 @@ import { isWindowsDrivePathHref } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 // SCIENT-FORK:START — shared quote protocol owner.
 import { FILE_CITATION_PROTOCOL } from "./composerCitations.ts";
+import { PDF_CITATION_PROTOCOL } from "./pdfCitations.ts";
 // SCIENT-FORK:END
 
 type MarkdownImageHastNode = {
@@ -160,6 +161,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       // SCIENT-FORK:START — retain quote data for the validated citation renderer/index.
       // Protocol preservation is not navigation authority; consumers still parse the payload.
       FILE_CITATION_PROTOCOL,
+      PDF_CITATION_PROTOCOL,
       // SCIENT-FORK:END
       "t3-context",
       THREAD_LINK_PROTOCOL,

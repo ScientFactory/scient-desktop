@@ -41,6 +41,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             endpoint: "http://127.0.0.1:43123/mcp",
             authorizationHeader: "Bearer synthetic-live-peer",
             capabilities: new Set(["orchestration", "skills:read"] as const),
+            connectors: [],
           });
           yield* Effect.addFinalizer(() => sessions.clear(threadId));
           const transcript = makeCodexReplayTranscript({

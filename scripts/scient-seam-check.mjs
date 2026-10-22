@@ -11,6 +11,7 @@ const definitions = {
   analysis: { schema: 2, signals: "analysisDiffSignals" },
   latex: { schema: 2, signals: "latexDiffSignals" },
   omp: { schema: 2, signals: "ompDiffSignals" },
+  extensions: { schema: 2, signals: "extensionsDiffSignals" },
 };
 
 function git(cwd, args, env = process.env) {
@@ -207,6 +208,57 @@ function supportingPath(path, name) {
   );
 }
 
+function refinementSource(diff, additionsOnly) {
+  const lines = [];
+  let inHunk = false;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) inHunk = false;
+    else if (line.startsWith("@@ ")) {
+      inHunk = true;
+      const declaration = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?(.*)$/u.exec(line)?.[1];
+      if (!additionsOnly && declaration) lines.push(declaration);
+    } else if (inHunk && (line.startsWith("+") || (!additionsOnly && line.startsWith("-"))))
+      lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function diffMatchers(manifests, signalKey, manifestPath) {
+  const matchers = new Map();
+  for (const manifest of manifests) {
+    const signals = manifest[signalKey];
+    const refinements =
+      manifest.diffSignalRefinements === undefined ? [] : manifest.diffSignalRefinements;
+    if (
+      !Array.isArray(signals) ||
+      !signals.every((signal) => typeof signal === "string" && signal.length > 0) ||
+      !Array.isArray(refinements)
+    )
+      throw new Error(`Invalid diff signals in ${manifestPath}`);
+    for (const signal of signals) {
+      if (!matchers.has(signal))
+        matchers.set(signal, { signal: new RegExp(signal, "u"), refinements: [] });
+    }
+    for (const rule of refinements) {
+      if (
+        !rule ||
+        !signals.includes(rule.signal) ||
+        typeof rule.changed !== "string" ||
+        rule.changed.length === 0 ||
+        (rule.fileContext !== undefined &&
+          (typeof rule.fileContext !== "string" || rule.fileContext.length === 0)) ||
+        Object.keys(rule).some((key) => !["signal", "changed", "fileContext"].includes(key))
+      )
+        throw new Error(`Invalid diffSignalRefinements in ${manifestPath}`);
+      matchers.get(rule.signal).refinements.push({
+        changed: new RegExp(rule.changed, "u"),
+        fileContext: rule.fileContext === undefined ? null : new RegExp(rule.fileContext, "u"),
+      });
+    }
+  }
+  return [...matchers.values()];
+}
+
 function check(name, ctx) {
   const manifestPath = `scient-${name}-seams.json`;
   const definition = definitions[name];
@@ -253,7 +305,7 @@ function check(name, ctx) {
       findings: [{ kind: "failed", message: `Invalid or duplicate path in ${manifestPath}` }],
     };
   }
-  const signals = manifest[definition.signals].map((signal) => new RegExp(signal, "u"));
+  const signalManifests = [manifest];
   // A reviewed relocation removes the old declaration. Still recognize that
   // old path when auditing its removal, without retaining a dead mount forever.
   let previousRoots = [];
@@ -268,8 +320,11 @@ function check(name, ctx) {
     ];
     if (![...previousRoots, ...previousFiles].every(validPath))
       throw new Error(`Invalid base paths in ${manifestPath}`);
-    signals.push(...previous[definition.signals].map((signal) => new RegExp(signal, "u")));
+    signalManifests.push(previous);
   }
+  // Retain base signals and refinement alternatives, including when the current
+  // manifest removes one. A refinement applies only to its named signal.
+  const matchers = diffMatchers(signalManifests, definition.signals, manifestPath);
   for (const path of [...roots, ...files]) {
     if (!(files.includes(path) ? ctx.paths.has(path) : exists(ctx.paths, path)))
       report("review-needed", `Owned path missing: ${path}`);
@@ -314,7 +369,25 @@ function check(name, ctx) {
           .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
           .join("\n")
       : diff;
-    if (signals.some((signal) => signal.test(inspectedDiff))) {
+    let changedLines;
+    let fileContext;
+    const matches = matchers.some(({ signal, refinements }) => {
+      if (!signal.test(inspectedDiff)) return false;
+      if (!refinements.length) return true;
+      changedLines ??= refinementSource(diff, previouslyClassified);
+      return refinements.some((rule) => {
+        if (!rule.changed.test(changedLines)) return false;
+        if (!rule.fileContext) return true;
+        // An unchanged import, or a namespace removed with its last usage, still
+        // identifies the boundary. Read both immutable versions, not live files.
+        fileContext ??= [
+          ctx.basePaths.has(path) ? read(ctx.run, ctx.base, path) : "",
+          ctx.paths.has(path) ? read(ctx.run, ctx.tree, path) : "",
+        ].join("\n");
+        return rule.fileContext.test(fileContext);
+      });
+    });
+    if (matches) {
       report("review-needed", `Changed path is not classified in ${manifestPath}: ${path}`);
     }
   }

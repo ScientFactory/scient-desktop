@@ -102,6 +102,8 @@ import { ConversationExportService } from "./scient/conversationExport/Conversat
 import { ConversationForkService } from "./orchestration-v2/scient-fork/ConversationForkService.ts";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as ExtensionsServices from "./scient/extensions/ExtensionsServices.ts";
+import { ExtensionsChangeFeed } from "./scient/extensions/ExtensionsRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
@@ -313,6 +315,12 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProviderConnectionManager.ProviderConnectionManager)({}),
   Layer.mock(ProviderRuntimeManager.ProviderRuntimeManager)({}),
   Layer.mock(WorkspaceBindingResolver)({}),
+  Layer.mock(ExtensionsServices.ConnectorRuntime)({}),
+  Layer.mock(ExtensionsServices.ExtensionDeliveryReceipts)({}),
+  Layer.mock(ExtensionsServices.ExtensionsDiscover)({}),
+  Layer.mock(ExtensionsServices.ScientPluginRegistry)({}),
+  Layer.mock(ExtensionsServices.ProviderPluginManagement)({}),
+  Layer.mock(ExtensionsChangeFeed)({}),
   // SCIENT-FORK:END
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),

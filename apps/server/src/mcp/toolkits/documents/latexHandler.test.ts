@@ -827,6 +827,49 @@ describe("Scient LaTeX build handler", () => {
         },
       });
 
+      // A driver that exists but will not run reaches the agent by file name only.
+      const broken = snapshot({
+        state: "failed",
+        toolchain: {
+          ...toolchain,
+          kind: null,
+          executable: null,
+          version: null,
+          unusable: [
+            {
+              executable:
+                "C:\\Users\\Dana Levi\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe",
+              reason: "MiKTeX could not find the script engine 'perl'.",
+            },
+          ],
+        },
+        failureSummary:
+          "No working LaTeX toolchain found. MiKTeX's latexmk.exe did not run: MiKTeX could not find the script engine 'perl'.",
+      });
+      const brokenContext = yield* makeContext(
+        root,
+        makeBuildService({ initial: broken, requested: broken }),
+      );
+      const brokenResult = yield* runBuild(
+        buildScientLatexForInvocation(defaultInput),
+        brokenContext.context,
+      ).pipe(Effect.result);
+      expect(brokenResult).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          code: "toolchain-unavailable",
+          toolchain: {
+            unusable: [
+              {
+                executable: "latexmk.exe",
+                reason: "MiKTeX could not find the script engine 'perl'.",
+              },
+            ],
+          },
+        },
+      });
+      expect(JSON.stringify(brokenResult)).not.toContain("Dana Levi");
+
       const failed = snapshot({
         state: "failed",
         failureSummary: "LaTeX compilation failed.",

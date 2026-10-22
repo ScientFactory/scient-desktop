@@ -182,7 +182,7 @@ export const fileMutationFixture = Effect.fnUntraced(
         workspaceEntries,
         readFile,
         ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
-        retentionStorageDirectory: retentionRoot,
+        resolveRetentionStorageDirectory: async () => retentionRoot,
         retentionLimitBytes,
         retainedHooks: hooks,
         publicationEvents,

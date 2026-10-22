@@ -1572,6 +1572,9 @@ describe("PiAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer secret-pi-token",
         capabilities: new Set<string>(["preview"]),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       const fake = yield* makeFakePi;
       yield* openRuntime(fake);
@@ -1585,8 +1588,49 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      // SCIENT-FORK:START — Scient Extensions connectors stay unset without delivered connectors.
+      assert.isUndefined(spawn.env.T3_MCP_CONNECTORS);
+      // SCIENT-FORK:END
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
+
+  // SCIENT-FORK:START — Scient Extensions connectors delivered with the session credential.
+  it.effect("delivers Scient connectors to the Pi extension with the session credential", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-pi-mcp-connectors"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi-connectors",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-pi-token",
+        capabilities: new Set<string>(["preview"]),
+        connectors: [
+          {
+            connectorId: "connector-linear",
+            serverName: "linear",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+          },
+        ],
+      });
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake);
+      const spawn = fake.lastSpawn();
+      assert.deepEqual(JSON.parse(spawn.env.T3_MCP_CONNECTORS ?? "null"), [
+        { serverName: "linear", url: "http://127.0.0.1:43123/mcp/connectors/connector-linear" },
+      ]);
+      assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
+      assert.notInclude(spawn.args.join(" "), "secret-pi-token");
+    }).pipe(
+      Effect.ensuring(
+        McpProviderSessions.McpProviderSessions.use((sessions) => sessions.clear(THREAD_ID)),
+      ),
+      Effect.scoped,
+      Effect.provide(layerTest),
+    ),
+  );
+  // SCIENT-FORK:END
 
   it.effect("does not read or inject a stale MCP credential when the session disables MCP", () =>
     Effect.gen(function* () {
@@ -1598,6 +1642,9 @@ describe("PiAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer stale-pi-token",
         capabilities: new Set<string>(["preview"]),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       const fake = yield* makeFakePi;
       yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, undefined, undefined, false);

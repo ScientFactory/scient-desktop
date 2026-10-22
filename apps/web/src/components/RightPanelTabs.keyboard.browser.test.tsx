@@ -204,6 +204,8 @@ describe("right panel new-tab shortcut", () => {
   );
 
   it("uses a custom binding from a text field and closes on Escape", async () => {
+    // Closing must restore focus without waiting for Base UI's shared frame scheduler.
+    using _animations = stubGlobal("BASE_UI_ANIMATIONS_DISABLED", true);
     const input = document.createElement("input");
     await using screen = await renderPanel({
       keybindings: compileResolvedKeybindingsConfig([{ key: "mod+y", command: "rightPanel.new" }]),
@@ -211,24 +213,18 @@ describe("right panel new-tab shortcut", () => {
     document.body.append(input);
     using _input = { [Symbol.dispose]: () => input.remove() };
     await userEvent.click(input);
+    expect(document.hasFocus()).toBe(true);
     expect(document.activeElement).toBe(input);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
     await pressNative("{Meta>}y{/Meta}");
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
     await pressNative("{Escape}");
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
-    // The menu hands focus back to its trigger once its close finishes, a few frames later.
-    // Timers are fake here, so advance them instead of polling in real time.
-    // SCIENT-FORK: a loaded runner can also need real time, so poll while advancing frames.
     const trigger = screen.container.querySelector('[aria-label="Add panel surface"]');
-    await vi.waitFor(
-      async () => {
-        await act(() => vi.advanceTimersToNextFrame());
-        expect(document.activeElement).toBe(trigger);
-      },
-      { timeout: 5_000 },
-    );
-    input.remove();
+    expect(trigger).not.toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("does not open over another popup or during text composition", async () => {

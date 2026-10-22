@@ -489,10 +489,12 @@ export function ComposerAttachmentFileList({
 
 export function ComposerFilePreviewDialog({
   file,
+  draftPdf,
   onRemove,
   onPreviewFileIdChange,
 }: {
   readonly file: ComposerFileAttachment;
+  readonly draftPdf: NonNullable<ComponentProps<typeof AttachmentFilePreview>["draftPdf"]>;
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
@@ -516,6 +518,7 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
+          draftPdf={draftPdf}
           origin="Draft"
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {

@@ -76,6 +76,8 @@ import {
   ScientLatexStatusRequest,
   ScientLatexToolchainReport,
   ScientLatexToolchainRequest,
+  ScientCurrentDocumentRequest,
+  ScientCurrentDocumentResult,
 } from "../scientLatex.ts";
 import {
   ScientMarkdownImageConflictError,
@@ -456,6 +458,16 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientLatexPageAnchorsRequest,
         success: ScientLatexPageAnchorsResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      // A quote names a generated PDF's revision; once retention drops that
+      // revision the quote reopens the document's current one instead.
+      HttpApiEndpoint.post("currentDocument", "/api/scient/documents/current", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCurrentDocumentRequest,
+        success: ScientCurrentDocumentResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

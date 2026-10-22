@@ -75,6 +75,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 // SCIENT-FORK:START
+import { AppBadgeSettings } from "../../scient/answerAttention/AppBadgeSettings";
 import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
 // SCIENT-FORK: Restart installs directly, sharing the sidebar's install path.
 import { installDesktopUpdateNow } from "../../scient/desktopUpdate/updateReadyNotice";
@@ -837,6 +838,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        {/* SCIENT-FORK: the unread-answer app icon badge. */}
+        <AppBadgeSettings />
         <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."

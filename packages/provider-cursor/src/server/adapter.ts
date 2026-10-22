@@ -219,6 +219,18 @@ export function cursorMcpServers(
         Authorization: session.authorizationHeader,
       },
     },
+    // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
+    ...Object.fromEntries(
+      session.connectors.map((connector): [string, McpServerConfig] => [
+        connector.serverName,
+        {
+          type: "http",
+          url: connector.url,
+          headers: { Authorization: session.authorizationHeader },
+        },
+      ]),
+    ),
+    // SCIENT-FORK:END
   };
 }
 

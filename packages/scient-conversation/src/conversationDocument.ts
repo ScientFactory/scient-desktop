@@ -987,6 +987,26 @@ function renderReference(
         reference.comment,
       );
     }
+    case "pdf-excerpt": {
+      sink.citations.push({
+        _tag: "pdf-excerpt",
+        id: `c${sink.citations.length + 1}`,
+        document: reference.document,
+        firstPage: reference.firstPage,
+        lastPage: reference.lastPage,
+        text: reference.text,
+        comment: reference.comment,
+      });
+      const pages =
+        reference.firstPage === reference.lastPage
+          ? `page ${reference.firstPage}`
+          : `pages ${reference.firstPage}–${reference.lastPage}`;
+      return excerpt(
+        `**Quote from ${inlineCode(reference.document)}**, ${pages}:`,
+        reference.text,
+        reference.comment,
+      );
+    }
     case "message-excerpt":
       sink.citations.push({
         _tag: "message-excerpt",

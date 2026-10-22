@@ -16,6 +16,7 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+    "apps/server/src/scient/extensions/plugins/BuiltInPlugins.ts",
     "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
@@ -36,7 +37,11 @@
     "scripts/generate-math-symbol-glyphs.mjs",
     "apps/web/latex-visual-benchmark.html",
     "apps/web/latexVisualBenchmark.config.ts",
-    "apps/web/scripts/latex-visual-benchmark.ts"
+    "apps/web/scripts/latex-visual-benchmark.ts",
+    "packages/contracts/src/fileCitations.ts",
+    "packages/shared/src/composerCitations.ts",
+    "packages/shared/src/pdfCitations.ts",
+    "packages/contracts/src/scientConversationExport.ts"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -117,7 +122,7 @@
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
       "anchor": "export function EditableFileEditor",
-      "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor."
+      "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor; let its PDF reader quote into the panel's conversation (citeThread, Ask in chat)."
     },
     {
       "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
@@ -178,6 +183,31 @@
       "path": "apps/web/src/components/settings/FoldedSettingsSection.tsx",
       "anchor": "[&>:not(:first-child)]:border-t",
       "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
+    },
+    {
+      "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+      "anchor": "attachmentPdfMount",
+      "purpose": "Open chat attachment PDFs in Scient's PDF reader (find, outline, zoom, Ask in chat) instead of Chromium's built-in viewer; other kinds keep their generic previews."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "draftPdf={{",
+      "purpose": "Name a draft attachment (thread and composer file context id) to Scient's PDF reader; the prop affects only PDF previews."
+    },
+    {
+      "path": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+      "anchor": "PdfCitationHoverCard",
+      "purpose": "Render PDF quotes in the shared citation chip: label, hover card, removal label and navigation to the quoted page."
+    },
+    {
+      "path": "packages/shared/src/markdownPipeline.ts",
+      "anchor": "PDF_CITATION_PROTOCOL",
+      "purpose": "Keep PDF quote links through sanitization so the validated citation renderer can parse them; preserving the protocol grants no navigation authority."
+    },
+    {
+      "path": "packages/shared/package.json",
+      "anchor": "./pdfCitations",
+      "purpose": "Export Scient's PDF quote link format and agent projection to web, mobile and export consumers."
     }
   ]
 }

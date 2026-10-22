@@ -67,6 +67,7 @@
     "onboarding:seams:check": "node scripts/verify-scient-onboarding-seams.mjs",
     "skills:seams:check": "node scripts/verify-scient-skills-seams.mjs",
     "latex:seams:check": "node scripts/verify-scient-latex-seams.mjs",
+    "extensions:seams:check": "node scripts/verify-scient-extensions-seams.mjs",
     "upstream:provenance:check": "node scripts/verify-upstream-provenance.mjs",
     "alignment:seams:check": "node scripts/scient-seam-check.mjs",
     "alignment:checks": "node scripts/scient-alignment-checks.mjs",

@@ -12,6 +12,10 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+// SCIENT-FORK:START — Scient Extensions: connectors delivered with the session credential.
+/** JSON array of `{ serverName, url }`; set only when the session delivers connectors. */
+export const T3_MCP_CONNECTORS_ENV = "T3_MCP_CONNECTORS";
+// SCIENT-FORK:END
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -25,6 +29,9 @@ export const makePiMcpExtensionSource = (
 ): string => {
   return /* SCIENT-FORK:END */ `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+// SCIENT-FORK:START — Scient Extensions: hashed aliases for Scient connector tool names.
+import * as NodeCrypto from "node:crypto";
+// SCIENT-FORK:END
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -33,6 +40,9 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+// SCIENT-FORK:START — Scient Extensions: connector list; authenticated with TOKEN_ENV.
+const CONNECTORS_ENV = ${JSON.stringify(T3_MCP_CONNECTORS_ENV)};
+// SCIENT-FORK:END
 const RUNTIME_GUIDANCE_ENV = "PI_RUNTIME_GUIDANCE";
 const TOOL_NAME_MAP_ENV = "PI_TOOL_NAME_MAP";
 const ORCHESTRATION_INSTRUCTIONS = ${
@@ -85,20 +95,87 @@ function toolInputSummary(input: unknown): string {
   }
 }
 
-function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
-  if (contentType.includes("text/event-stream")) {
-    for (const line of body.split("\\n")) {
-      const trimmed = line.startsWith("data:") ? line.slice(5).trim() : "";
-      if (trimmed.length === 0) continue;
-      const parsed = JSON.parse(trimmed) as JsonRpcResponse;
-      if (parsed.id !== undefined || parsed.result !== undefined || parsed.error !== undefined) {
-        return parsed;
+// SCIENT-FORK:START — Scient Extensions: incremental, request-correlated response reader. Remote Streamable
+// HTTP servers (Scient connectors) split one JSON message across several data lines and
+// may keep the event stream open after answering, so read events as they complete and
+// stop at the message answering this request.
+async function readJsonRpcResponse(
+  response: Response,
+  id: number,
+  method: string,
+): Promise<JsonRpcResponse | undefined> {
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const body = await response.text();
+    return body.length === 0 ? undefined : (JSON.parse(body) as JsonRpcResponse);
+  }
+  const ended = \`MCP \${method} event stream ended without its response.\`;
+  if (response.body === null) throw new Error(ended);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const lineBreak = /\\r\\n|\\r|\\n/g;
+  let buffer = "";
+  // A CR ends its line at once; an LF arriving next completes the same CRLF.
+  let skipLf = false;
+  let data: string[] = [];
+  const dispatch = (): JsonRpcResponse | undefined => {
+    const payload = data.join("\\n");
+    data = [];
+    // An event without data carries no message.
+    if (payload === "") return undefined;
+    let message: unknown;
+    try {
+      message = JSON.parse(payload);
+    } catch {
+      throw new Error(\`MCP \${method} event stream sent a message that is not JSON.\`);
+    }
+    // Notifications, server requests (which may reuse this id: the server numbers its own
+    // requests) and other requests' responses are not this answer.
+    if (typeof message !== "object" || message === null || "method" in message) return undefined;
+    const response = message as JsonRpcResponse;
+    return response.id === id && ("result" in response || "error" in response)
+      ? response
+      : undefined;
+  };
+  // A blank line completes an event; only data fields carry the message.
+  const consume = (line: string): JsonRpcResponse | undefined => {
+    if (line.length === 0) return dispatch();
+    const colon = line.indexOf(":");
+    if ((colon === -1 ? line : line.slice(0, colon)) !== "data") return undefined;
+    const value = colon === -1 ? "" : line.slice(colon + 1);
+    data.push(value.startsWith(" ") ? value.slice(1) : value);
+    return undefined;
+  };
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      let text = decoder.decode(chunk.value, { stream: !chunk.done });
+      if (skipLf && text.length > 0) {
+        skipLf = false;
+        if (text.startsWith("\\n")) text = text.slice(1);
+      }
+      buffer += text;
+      let start = 0;
+      lineBreak.lastIndex = 0;
+      for (let match = lineBreak.exec(buffer); match !== null; match = lineBreak.exec(buffer)) {
+        const matched = consume(buffer.slice(start, match.index));
+        start = lineBreak.lastIndex;
+        if (matched !== undefined) return matched;
+      }
+      if (start > 0 && start === buffer.length && buffer.endsWith("\\r")) skipLf = true;
+      buffer = buffer.slice(start);
+      if (chunk.done) {
+        // Accept a final event whose closing blank line never arrived.
+        const matched = consume(buffer) ?? dispatch();
+        if (matched !== undefined) return matched;
+        throw new Error(ended);
       }
     }
-    throw new Error("MCP SSE response had no JSON-RPC payload.");
+  } finally {
+    // Best effort: an answered stream may stay open, and nothing else will drain it.
+    reader.cancel().catch(() => undefined);
   }
-  return JSON.parse(body) as JsonRpcResponse;
 }
+// SCIENT-FORK:END
 
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
@@ -205,12 +282,14 @@ function createMcpClient(endpoint: string, token: string) {
     });
     const nextSession = response.headers.get("mcp-session-id");
     if (nextSession) sessionId = nextSession;
-    const body = await response.text();
+    // SCIENT-FORK:START — Scient Extensions: read only until this request's response; streams may stay open.
     if (!response.ok) {
+      const body = await response.text();
       throw new Error(\`MCP \${method} failed (\${response.status}): \${body.slice(0, 400)}\`);
     }
-    if (body.length === 0) return undefined;
-    const parsed = parseSseOrJson(body, response.headers.get("content-type") ?? "");
+    const parsed = await readJsonRpcResponse(response, id, method);
+    if (parsed === undefined) return undefined;
+    // SCIENT-FORK:END
     if (parsed.error) {
       throw new Error(parsed.error.message ?? \`MCP \${method} returned an error\`);
     }
@@ -258,6 +337,59 @@ function createMcpClient(endpoint: string, token: string) {
     },
   };
 }
+
+// SCIENT-FORK:START — Scient Extensions: connectors: extra proxied MCP servers sharing the session credential.
+type ConnectorClient = {
+  readonly connect: (signal?: AbortSignal) => Promise<void>;
+  readonly listTools: (signal?: AbortSignal) => Promise<McpTool[]>;
+  readonly callTool: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<JsonValue | undefined>;
+};
+
+type ConnectorSession = {
+  readonly serverName: string;
+  readonly client: ConnectorClient;
+  catalog: ReadonlyArray<McpTool>;
+  started: Promise<void> | undefined;
+};
+
+function connectorSessionsFromEnv(token: string): ConnectorSession[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(env(CONNECTORS_ENV) ?? "[]");
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const sessions: ConnectorSession[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { serverName, url } = entry as Record<string, unknown>;
+    if (typeof serverName !== "string" || !/^[a-z0-9_-]{1,48}$/.test(serverName)) continue;
+    if (typeof url !== "string" || url.length === 0) continue;
+    if (sessions.some((session) => session.serverName === serverName)) continue;
+    sessions.push({ serverName, client: createMcpClient(url, token), catalog: [], started: undefined });
+  }
+  return sessions;
+}
+
+/**
+ * Model-facing name for a connector tool, valid for every model API:
+ * ^[A-Za-z_][A-Za-z0-9_-]{0,63}$. A name that is too long or already taken
+ * becomes a stable alias hashed from the exact server and tool names.
+ */
+function connectorToolName(
+  serverName: string,
+  toolName: string,
+  isTaken: (name: string) => boolean,
+): string | undefined {
+  const sanitized = serverName + "__" + toolName.replace(/[^A-Za-z0-9_-]/g, "_");
+  const base = /^[A-Za-z_]/.test(sanitized) ? sanitized : "_" + sanitized;
+  if (base.length <= 64 && !isTaken(base)) return base;
+  const hash = NodeCrypto.createHash("sha256").update(serverName + "\\u0000" + toolName).digest("hex").slice(0, 8);
+  const alias = base.slice(0, 55) + "_" + hash;
+  return isTaken(alias) ? undefined : alias;
+}
+// SCIENT-FORK:END
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
   // Runs even when MCP is disabled: native model input still includes system
@@ -327,9 +459,15 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
 
   const readOnlyMcpTools = new Set<string>();
+  // SCIENT-FORK:START — Scient Extensions: model tool name -> "server/tool" for Scient connector tools.
+  const connectorToolOwners = new Map<string, string>();
+  // SCIENT-FORK:END
   const isReadOnlyMcpTool = (name: string) => {
     const extensionPath = env(EXTENSION_PATH_ENV);
     if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
+    // SCIENT-FORK:START — Scient Extensions: connector tools never inherit Scient's read-only approvals.
+    if (connectorToolOwners.has(name)) return false;
+    // SCIENT-FORK:END
     // A user extension may own the same name. Only our registered HTTP bridge
     // may inherit the canonical T3 server's read-only annotation.
     return pi.getAllTools().some((tool) => tool.name === name &&
@@ -401,6 +539,90 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         "isError" in details && details.isError === true) return { isError: true };
   });
   let started: Promise<void> | undefined;
+  // SCIENT-FORK:START — Scient Extensions: each Scient connector is its own MCP client on the same credential.
+  // Its tools are "<server>__<tool>" (or a hashed alias), always deferrable, and
+  // always confirmed like any non-Scient tool. A failing connector never blocks the others.
+  const connectors = connectorSessionsFromEnv(token);
+  // "server/tool" -> model tool name, stable across re-registration.
+  const connectorToolNames = new Map<string, string>();
+
+  // Connectors in delivered order and tools in listed order keep names
+  // deterministic. Calls always use the server's own tool name.
+  const registerConnectorTools = () => {
+    const scientToolNames = new Set([
+      ...Object.values(toolNameMap),
+      ...catalog.map((scientTool) => modelToolName(scientTool.name)),
+    ]);
+    for (const connector of connectors) {
+      for (const tool of connector.catalog) {
+        if (typeof tool?.name !== "string" || tool.name.length === 0) continue;
+        const owner = connector.serverName + "/" + tool.name;
+        let name = connectorToolNames.get(owner);
+        if (name !== undefined && scientToolNames.has(name)) {
+          connectorToolNames.delete(owner);
+          connectorToolOwners.delete(name);
+          name = undefined;
+        }
+        if (name === undefined) {
+          name = connectorToolName(
+            connector.serverName,
+            tool.name,
+            (candidate) => scientToolNames.has(candidate) || connectorToolOwners.has(candidate),
+          );
+          if (name === undefined) continue;
+        }
+        const modelName = name;
+        try {
+          pi.registerTool({
+            name: modelName,
+            label: modelName,
+            description: tool.description ?? modelName,
+            parameters: jsonSchemaToTypebox(tool.inputSchema),
+            ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
+            ...(supportsExposure ? { exposure: deferOptionalTools ? "deferred" : "direct" } : {}),
+            async execute(_toolCallId, params, signal) {
+              const result = await connector.client.callTool(
+                tool.name,
+                (params ?? {}) as Record<string, unknown>,
+                signal,
+              );
+              const content = mcpModelContent(result);
+              if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
+                content.push({ type: "text", text: "MCP tool " + owner + " returned an error" });
+              }
+              return {
+                content,
+                structuredContent: mcpScriptResult(result),
+                details: { server: connector.serverName, tool: tool.name, isError: isMcpToolError(result) },
+                ...(isMcpToolError(result) ? { isError: true } : {}),
+              };
+            },
+          });
+        } catch {
+          continue;
+        }
+        connectorToolNames.set(owner, modelName);
+        connectorToolOwners.set(modelName, owner);
+        registeredToolNames.add(modelName);
+      }
+    }
+  };
+
+  const ensureConnector = (connector: ConnectorSession) => {
+    if (connector.started !== undefined) return connector.started;
+    const attempt = (async () => {
+      const signal = AbortSignal.timeout(10_000);
+      await connector.client.connect(signal);
+      const tools: unknown = await connector.client.listTools(signal);
+      connector.catalog = Array.isArray(tools) ? tools : [];
+    })();
+    connector.started = attempt;
+    void attempt.catch(() => {
+      if (connector.started === attempt) connector.started = undefined;
+    });
+    return attempt;
+  };
+  // SCIENT-FORK:END
 
   const registerTools = () => {
     // The host supplies its canonical Scient projection; the MCP call itself
@@ -474,6 +696,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // of a tool name. Register now so the bridge owns canonical tool names even when
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
+  // SCIENT-FORK:START — Scient Extensions: connectors register after Scient so its tool names always win,
+  // and only once all have settled so their names never depend on response order.
+  await Promise.all(connectors.map((connector) => ensureConnector(connector).catch(() => undefined)));
+  registerConnectorTools();
+  // SCIENT-FORK:END
 
   const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
     if (!supportsExposure) return;
@@ -482,6 +709,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const exposureChanged = deferOptionalTools !== hasToolSearch;
     deferOptionalTools = hasToolSearch;
     if (exposureChanged) registerTools();
+    // SCIENT-FORK:START — Scient Extensions: connector tools follow the same exposure.
+    if (exposureChanged) registerConnectorTools();
+    // SCIENT-FORK:END
     const active = pi.getActiveTools();
     // Completion gateways can silently drop calls to undeclared tools named
     // in history or guidance. Eagerly load bridge schemas, including after tree
@@ -490,6 +720,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const required = [
       ...(hasToolSearch ? ["tool_search"] : []),
       ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => modelToolName(tool.name)) : []),
+      // SCIENT-FORK:START — Scient Extensions: declare connector tools to completion gateways too.
+      // Only projected names, which every model API accepts.
+      ...(ctx.model?.api === "openai-completions" ? connectorToolOwners.keys() : []),
+      // SCIENT-FORK:END
     ];
     const missing = required.filter((name) => !active.includes(name));
     if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
@@ -510,6 +744,19 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(\`Scient MCP unavailable: \${message}\`, "warning");
     }
+    // SCIENT-FORK:START — Scient Extensions: retry failed connectors; report the server name only. Re-register
+    // afterwards so newly loaded connectors and Scient tools resolve names in order.
+    await Promise.all(
+      connectors.map(async (connector) => {
+        try {
+          await ensureConnector(connector);
+        } catch {
+          ctx.ui.notify("Scient connector " + connector.serverName + " unavailable.", "warning");
+        }
+      }),
+    );
+    registerConnectorTools();
+    // SCIENT-FORK:END
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.

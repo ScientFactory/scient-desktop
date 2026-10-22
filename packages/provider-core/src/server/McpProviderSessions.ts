@@ -77,6 +77,15 @@ const matchingPageIndex = (
   return matches.length === 1 ? matches[0]! : -1;
 };
 
+// SCIENT-FORK:START Scient Extensions connectors
+/** Callers hold `ReadonlySet`/`ReadonlyArray` views only at compile time; never share the backing objects. */
+const copyConfig = (config: McpProviderSessionConfig): McpProviderSessionConfig => ({
+  ...config,
+  capabilities: new Set(config.capabilities),
+  connectors: config.connectors.map((connector) => ({ ...connector })),
+});
+// SCIENT-FORK:END
+
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
@@ -90,18 +99,19 @@ const make = Effect.gen(function* () {
           return next;
         });
       }
+      // SCIENT-FORK:START Scient Extensions connectors
       yield* Ref.update(sessions, (current) =>
-        new Map(current).set(config.threadId, {
-          ...config,
-          capabilities: new Set(config.capabilities),
-        }),
+        new Map(current).set(config.threadId, copyConfig(config)),
       );
+      // SCIENT-FORK:END
     }),
     read: (threadId) =>
       Ref.get(sessions).pipe(
         Effect.map((current) => {
           const config = current.get(threadId);
-          return config ? { ...config, capabilities: new Set(config.capabilities) } : undefined;
+          // SCIENT-FORK:START Scient Extensions connectors
+          return config ? copyConfig(config) : undefined;
+          // SCIENT-FORK:END
         }),
       ),
 

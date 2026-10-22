@@ -15,6 +15,12 @@ import {
   type LatexVisualEditRequest,
 } from "./latexSourceEditPlan";
 
+const { analyticsBegin, analyticsFinish } = vi.hoisted(() => {
+  const analyticsFinish = vi.fn();
+  return { analyticsFinish, analyticsBegin: vi.fn(() => analyticsFinish) };
+});
+vi.mock("~/scient/analytics/client", () => ({ beginScientUiOperation: analyticsBegin }));
+
 const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() => ({
   // Text another editor holds for a file and has not saved yet.
   optimistic: new Map<string, string>(),
@@ -281,6 +287,8 @@ describe("retiring the project's recovery copy", () => {
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.stack.use(await _fixtureRender(null, { router: false }));
     _fixture.cleanup.use(fakeTimers());
+    analyticsBegin.mockClear();
+    analyticsFinish.mockClear();
     cwd = `/synthetic-retirement-${(workspace += 1)}`;
     KEY = `${environmentId}\0${cwd}\0project-visual:${path}`;
     SLOT = `scient:latex-visual-draft:source:${KEY}`;
@@ -343,6 +351,43 @@ describe("retiring the project's recovery copy", () => {
     return async (next: React.ReactElement) => await act(async () => await root.rerender(next));
   }
   const settle = async (ms: number) => await act(() => vi.advanceTimersByTimeAsync(ms));
+
+  it.each(["selected", "included"] as const)(
+    "observes confirmed Visual saves of the %s source owner",
+    async (owner) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      disk.set(path, { source: tex("Root text.\n\n\\input{chapter}"), revision: "r1" });
+      disk.set("chapter.tex", { source: "Chapter text.\n", revision: "c1" });
+      const selected = acquire(path);
+      const edited = owner === "selected" ? selected : acquire("chapter.tex");
+      await mount(_fixture, <Surface lease={selected} />);
+      await settle(20);
+      expect(analyticsBegin).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(
+          replaceVisualText(
+            visual.props!.source,
+            owner === "selected" ? "Root text." : "Chapter text.",
+            "Edited text.",
+          ).accepted,
+        ).toBe(true);
+      });
+      expect(analyticsBegin).toHaveBeenCalledExactlyOnceWith(environmentId, "latex-visual-edit");
+      expect(analyticsFinish).not.toHaveBeenCalled();
+      let flushed!: Promise<boolean>;
+      await act(() => {
+        flushed = edited.flushNow();
+      });
+      await act(async () => {
+        await acknowledge();
+        expect(await flushed).toBe(true);
+      });
+      expect(analyticsFinish).toHaveBeenCalledExactlyOnceWith("completed");
+    },
+  );
 
   it("keeps a prepared owned edit and its exact undo across a same-owner filename rename", async () => {
     await using _fixture = _createFixture();
