@@ -161,20 +161,26 @@ const RetainedCopy = Schema.Struct({
   retainedAt: IsoTime,
   /** The connection's completed-sync count when retained; release needs a later one. */
   retainedAtSyncCount: Count,
-  /** Where the copy is, relative to the retention folder: `<apply>/files/<step>/<leaf>`. */
+  /**
+   * The file's main kept version, relative to the retention folder
+   * (`<apply>/files/<step>/<leaf>`). A step may keep further versions of the
+   * same path beside it; they are found on disk, under the same apply.
+   */
   kept: Schema.String.check(
     Schema.isPattern(
       /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
     ),
   ),
+  /** The kept bytes were Scient conflict material still unresolved when kept. */
+  markers: Schema.Boolean,
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
 const isUnresolved = (outcome: OverleafAttemptOutcome) =>
   outcome === "unknown" || outcome === "superseded-unresolved";
 
-/** One record per kept file: a step can keep more than one version of the same path. */
-const retainedKey = (copy: RetainedCopy) => `${copy.applyId}\0${copy.kept}`;
+/** One record per file an apply kept; further versions of it are found on disk. */
+const retainedKey = (copy: RetainedCopy) => `${copy.applyId}\0${copy.relativePath}`;
 
 /** Structural equality of decoded JSON values, independent of key order. */
 function sameJson(left: unknown, right: unknown): boolean {
@@ -432,7 +438,8 @@ export function overleafTransitionViolation(
       kept.revision !== copy.revision ||
       kept.retainedAt !== copy.retainedAt ||
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
-      kept.relativePath !== copy.relativePath ||
+      kept.kept !== copy.kept ||
+      kept.markers !== copy.markers ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
       (kept.state === "releasable" && copy.state !== "releasable")
     )

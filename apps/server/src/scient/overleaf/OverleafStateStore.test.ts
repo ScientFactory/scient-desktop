@@ -285,6 +285,7 @@ describe("OverleafStateStore", () => {
                 retainedAt: "2026-10-12T12:00:00.000Z",
                 retainedAtSyncCount: 0,
                 kept: "apply-1/files/step-0/retained",
+                markers: false,
               },
             ],
           },

@@ -35,7 +35,7 @@ import { makeOverleafReviewRegistry } from "./OverleafReviewRegistry.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
-import type { MutationPoint } from "../workspace/RetainedFileMutation.ts";
+import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
 
 const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
@@ -62,6 +62,8 @@ const world = (input: {
   readonly remote: Record<string, string>;
   /** Files only in the folder, recorded as local-only. */
   readonly localOnly?: Record<string, string>;
+  /** Paths recorded as holding Scient conflict material. */
+  readonly markerPaths?: ReadonlyArray<string>;
   readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
   readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
@@ -168,6 +170,7 @@ const world = (input: {
       completedSyncCount: 1,
       managedPaths: Object.keys(input.synced),
       localOnlyPaths: Object.keys(input.localOnly ?? {}),
+      markerPaths: [...(input.markerPaths ?? [])],
       retention: { vaultIdentity: retention.identity, copies: [] },
     });
 
@@ -617,8 +620,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
   });
 
   // Interference in the native layer can leave more than one version of one path
-  // (a staged and a provisional copy, say); every one is evidence.
-  it.live("records every version a step kept of one file", () =>
+  // (a staged and a provisional copy, say); every one stays listed and restorable,
+  // under one record per path.
+  it.live("lists every version a step kept of one file", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world({
@@ -628,34 +632,54 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             WorkspaceApplier.of({
               apply: (input) =>
                 real.apply(input).pipe(
-                  Effect.map((result) => {
+                  Effect.flatMap((result) => {
                     const [first] = result.retained;
-                    if (first === undefined) return result;
-                    return {
-                      ...result,
-                      retained: [
-                        ...result.retained,
-                        {
-                          ...first,
-                          retainedPath: NodePath.join(
-                            NodePath.dirname(first.retainedPath!),
-                            "provisional",
-                          ),
-                          retainedRevision: "sha256:" + "d".repeat(64),
-                          changed: true,
-                        },
-                      ],
-                    };
+                    if (first === undefined) return Effect.succeed(result);
+                    const provisional = NodePath.join(
+                      NodePath.dirname(first.retainedPath!),
+                      "provisional",
+                    );
+                    return Effect.promise(async () => {
+                      await NodeFSP.writeFile(provisional, "D");
+                      return {
+                        ...result,
+                        retained: [
+                          ...result.retained,
+                          {
+                            ...first,
+                            retainedPath: provisional,
+                            retainedRevision: bytesRevision(new TextEncoder().encode("D")),
+                            changed: true,
+                          },
+                        ],
+                      };
+                    });
                   }),
                 ),
             }),
         });
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
-        const copies = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).filter(
-          (copy) => copy.relativePath === "main.tex",
-        );
-        expect(copies).toHaveLength(2);
-        expect(copies.map((copy) => copy.state).sort()).toEqual(["changed", "releasable"]);
+        expect((yield* w.connection).retention.copies).toMatchObject([
+          { relativePath: "main.tex", state: "changed" },
+        ]);
+        const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(listed.map((copy) => copy.kept.split("/").pop()).sort()).toEqual([
+          "provisional",
+          "slot",
+        ]);
+        // The extra version restores like the main one.
+        const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: extra.applyId,
+            kept: extra.kept,
+            keptRevision: extra.keptRevision!,
+            currentRevision: extra.currentRevision,
+          }),
+        ).toMatchObject({ _tag: "restored" });
+        expect(yield* read(w.folder, "main.tex")).toBe("D");
       }),
     ),
   );
@@ -689,9 +713,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
       Effect.gen(function* () {
         const { w, copy } = yield* syncedThenListed();
         const current = yield* w.connection;
-        const filler = Array.from({ length: 4_094 - current.retention.copies.length }, (_, n) => ({
+        const filler = Array.from({ length: 4_096 - current.retention.copies.length }, (_, n) => ({
           ...current.retention.copies[0]!,
-          kept: `filler/files/step-${n}/retained`,
+          relativePath: `filler-${n}.tex`,
         }));
         yield* w.store.replaceConnection({
           expectedRevision: current.revision,
@@ -786,6 +810,136 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           }),
         ).toMatchObject({ _tag: "applied" });
         expect((yield* w.connection).localOnlyPaths).toEqual(["scratch.tex"]);
+      }),
+    ),
+  );
+
+  it.live("marks an older kept copy changed when a later sync finds it rewritten", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "B" } });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const [copy] = (yield* w.connection).retention.copies;
+        expect(copy!.state).toBe("releasable");
+        const vault = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION }))[0]!;
+        yield* Effect.promise(async () => {
+          const found = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
+            path.endsWith(vault.kept),
+          );
+          await NodeFSP.writeFile(NodePath.join(w.stateRoot, found!), "late write");
+        });
+        w.setRemote({ "main.tex": "B", "other.tex": "O" });
+        expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
+        expect(
+          (yield* w.connection).retention.copies.find((entry) => entry.applyId === copy!.applyId)!
+            .state,
+        ).toBe("changed");
+      }),
+    ),
+  );
+
+  it.live("tracks restored conflict material as unresolved again", () =>
+    run(
+      Effect.gen(function* () {
+        const marked = "<<<<<<< mine\nours\n=======\ntheirs\n>>>>>>> theirs\n";
+        const w = yield* world({
+          synced: { "main.tex": marked, "other.tex": "O" },
+          remote: { "main.tex": "resolved", "other.tex": "O" },
+          markerPaths: ["main.tex"],
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        // A later sync finds the material gone and stops tracking it.
+        w.setRemote({ "main.tex": "resolved", "other.tex": "O2" });
+        expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).markerPaths).toEqual([]);
+        const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
+          (entry) => entry.relativePath === "main.tex",
+        )!;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        ).toMatchObject({ _tag: "restored" });
+        expect((yield* w.connection).markerPaths).toEqual(["main.tex"]);
+      }),
+    ),
+  );
+
+  it.live("keeps a restored local-only file local-only", () =>
+    run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed();
+        const current = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            managedPaths: current.managedPaths.filter((path) => path !== "main.tex"),
+            localOnlyPaths: ["main.tex"],
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        ).toMatchObject({ _tag: "restored" });
+        const after = yield* w.connection;
+        expect(after.localOnlyPaths).toEqual(["main.tex"]);
+        expect(after.managedPaths).not.toContain("main.tex");
+      }),
+    ),
+  );
+
+  it.live("refuses to bring a file back beyond the managed-path limit", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "M", "old.tex": "kept text" },
+          remote: { "main.tex": "M" },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
+          (entry) => entry.relativePath === "old.tex",
+        )!;
+        const current = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            managedPaths: Array.from({ length: 2_000 }, (_, n) => `file-${n}.tex`),
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        const refused = yield* Effect.exit(
+          w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: null,
+          }),
+        );
+        expect(refused).toMatchObject(
+          Exit.fail(
+            expect.objectContaining({ _tag: "OverleafRetainedLimitError", limit: "managed-paths" }),
+          ),
+        );
+        expect(yield* read(w.folder, "old.tex")).toBeNull();
+        expect((yield* w.connection).activeApply).toBeNull();
       }),
     ),
   );
