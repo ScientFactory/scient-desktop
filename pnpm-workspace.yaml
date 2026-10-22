@@ -237,6 +237,7 @@ overrides:
   # silently drop them. Bump only together with re-qualified patches.
   expo-modules-core: 58.0.22
   expo-notifications: 58.1.5
+  "@expo/fingerprint": 0.21.5
   # @pierre/diffs ships hast 3.0.4 declarations inside its dist; one copy keeps
   # its trees assignable to hast-util-to-jsx-runtime and the mdx augmentation.
   "@types/hast": 3.0.4
