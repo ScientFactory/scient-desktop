@@ -263,6 +263,10 @@
       "types": "./src/composerCitations.ts",
       "import": "./src/composerCitations.ts"
     },
+    "./pdfCitations": {
+      "types": "./src/pdfCitations.ts",
+      "import": "./src/pdfCitations.ts"
+    },
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"

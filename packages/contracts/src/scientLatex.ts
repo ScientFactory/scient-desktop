@@ -1,6 +1,7 @@
 import {
   ArtifactId,
   ArtifactRevisionId,
+  LogicalDocumentKey,
   PdfSourceDescriptor,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
@@ -390,6 +391,18 @@ export const ScientLatexPageAnchorsResult = Schema.Union([
   ScientLatexSyncUnavailable,
 ]);
 export type ScientLatexPageAnchorsResult = typeof ScientLatexPageAnchorsResult.Type;
+
+/** The current revision of a generated document, by its logical key. */
+export const ScientCurrentDocumentRequest = Schema.Struct({
+  logicalDocumentKey: LogicalDocumentKey,
+});
+export type ScientCurrentDocumentRequest = typeof ScientCurrentDocumentRequest.Type;
+
+/** Null when this environment has no such document (never produced, or another authority's). */
+export const ScientCurrentDocumentResult = Schema.Struct({
+  descriptor: Schema.NullOr(PdfSourceDescriptor),
+});
+export type ScientCurrentDocumentResult = typeof ScientCurrentDocumentResult.Type;
 
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,

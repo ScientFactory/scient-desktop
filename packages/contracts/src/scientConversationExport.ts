@@ -160,6 +160,15 @@ export const ConversationInlineReference = Schema.Union([
     text: Schema.String,
     comment: Schema.NullOr(Schema.String),
   }),
+  /** A quote from a PDF. `document` is a project-relative path or the PDF's name. */
+  Schema.TaggedStruct("pdf-excerpt", {
+    ...referenceBase,
+    document: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    firstPage: PositiveInt,
+    lastPage: PositiveInt,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
   Schema.TaggedStruct("terminal", {
     ...referenceBase,
     terminal: ShortText(255),
@@ -644,6 +653,15 @@ export const DocumentCitation = Schema.Union([
   /** A quote of an earlier assistant message. */
   Schema.TaggedStruct("message-excerpt", {
     id: TrimmedNonEmptyString,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  /** A quote from a PDF: the quotation plus the document and pages it came from. */
+  Schema.TaggedStruct("pdf-excerpt", {
+    id: TrimmedNonEmptyString,
+    document: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    firstPage: PositiveInt,
+    lastPage: PositiveInt,
     text: Schema.String,
     comment: Schema.NullOr(Schema.String),
   }),

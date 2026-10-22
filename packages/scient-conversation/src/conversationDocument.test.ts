@@ -219,6 +219,73 @@ describe("conversation document", () => {
     }
   });
 
+  it("renders a PDF quote by its project path and pages, never a local path", () => {
+    const quote = "the coupling constant";
+    const citation = {
+      kind: "pdf",
+      version: 1,
+      environmentId: "environment-local",
+      threadId: "thread-1",
+      target: {
+        version: 1,
+        document: {
+          authority: "environment-local",
+          logicalDocumentKey: "workspace:/Users/someone/project/papers/smith.pdf",
+          title: "smith.pdf",
+          fileName: "smith.pdf",
+          locator: {
+            _tag: "workspace",
+            workspaceRoot: "/Users/someone/project",
+            relativePath: "papers/smith.pdf",
+          },
+        },
+        material: null,
+        extractor: { profile: "pdfjs-text-layer-utf16-eol-v1", version: "6.2.108" },
+        selector: {
+          type: "text",
+          pages: [
+            {
+              page: 3,
+              viewBox: [0, 0, 612, 792],
+              rotation: 0,
+              userUnit: 1,
+              pageTextHash: "c".repeat(64),
+              start: 0,
+              end: quote.length,
+              quote,
+              prefix: "",
+              suffix: " scales",
+            },
+          ],
+        },
+      },
+      comment: "Is it?",
+    };
+    const href = `scient-pdf-citation://v1/?${new URLSearchParams({ data: JSON.stringify(citation) })}`;
+    const snapshot = snapshotOf(
+      thread({
+        messages: [message({ id: "m1", role: "user", text: `See [PDF quote](${href}) here` })],
+      }),
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("/Users/someone");
+    const { markdown, document } = exportMarkdown(snapshot, { packaging: "with-attachments" });
+    expect(markdown).toContain("**Quote from `papers/smith.pdf`**, page 3:");
+    expect(markdown).toContain("> the coupling constant");
+    expect(markdown).toContain("Comment: Is it?");
+    expect(markdown).not.toContain("scient-pdf-citation:");
+    expect(document.bundle.citations).toEqual([
+      {
+        _tag: "pdf-excerpt",
+        id: "c1",
+        document: "papers/smith.pdf",
+        firstPage: 3,
+        lastPage: 3,
+        text: quote,
+        comment: "Is it?",
+      },
+    ]);
+  });
+
   it("renders inline references readably and records file-excerpt citations", () => {
     const citation = {
       kind: "file",

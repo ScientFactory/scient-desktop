@@ -4,7 +4,7 @@ import type {
   PdfSourceResolution,
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -92,6 +92,15 @@ export function AttachmentPdfPreview(props: {
         resolver={resolver}
         actions={attachmentPdfActions}
         readerScope={props.locator.threadId}
+        // A draft travels with the message being written; only sent attachments are quoted.
+        citeThread={
+          props.locator._tag === "sent"
+            ? {
+                environmentId: props.environmentId,
+                threadId: ThreadId.make(props.locator.threadId),
+              }
+            : undefined
+        }
       />
     </Suspense>
   );

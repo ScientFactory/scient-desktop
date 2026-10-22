@@ -187,6 +187,8 @@ export const AttachmentPdfLocator = Schema.Union([
   Schema.TaggedStruct("sent", {
     threadId: AttachmentIdentifier,
     attachmentId: AttachmentIdentifier,
+    /** Lets a quote reopen the attachment with its real size. */
+    sizeBytes: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   }),
   Schema.TaggedStruct("draft", {
     threadId: AttachmentIdentifier,
@@ -196,6 +198,12 @@ export const AttachmentPdfLocator = Schema.Union([
 ]);
 export type AttachmentPdfLocator = typeof AttachmentPdfLocator.Type;
 
+const WorkspacePdfSourceOrigin = Schema.TaggedStruct("source", {
+  workspaceRoot: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  sourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  attachmentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+});
+
 export const PdfSourceDescriptor = Schema.Union([
   Schema.TaggedStruct("workspace-pdf", {
     ...PdfSourceBase,
@@ -204,6 +212,8 @@ export const PdfSourceDescriptor = Schema.Union([
     // Old servers resolve workspace assets through a thread. This compatibility
     // hint never contributes to document identity and can be omitted by producers.
     legacyLocator: Schema.optional(WorkspacePdfLegacyLocator),
+    /** The Sources item this file is attached to: provenance, never material identity. */
+    origin: Schema.optional(WorkspacePdfSourceOrigin),
   }),
   Schema.TaggedStruct("generated-pdf", {
     ...PdfSourceBase,

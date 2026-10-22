@@ -61,6 +61,13 @@ export function workspacePdfSource(input: {
     readonly absolutePath: string;
     readonly threadId: string;
   };
+  /** The Sources item the file belongs to: provenance for quotes, never identity. */
+  readonly origin?: {
+    readonly _tag: "source";
+    readonly workspaceRoot: string;
+    readonly sourceId: string;
+    readonly attachmentId: string;
+  };
 }): PdfSourceDescriptorType {
   return PdfSourceDescriptor.make({
     _tag: "workspace-pdf",
@@ -74,6 +81,7 @@ export function workspacePdfSource(input: {
     workspaceRoot: input.workspaceRoot,
     relativePath: input.relativePath,
     ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
+    ...(input.origin ? { origin: input.origin } : {}),
   });
 }
 
@@ -102,6 +110,7 @@ export function environmentPdfSource(input: {
  */
 function attachmentPdfFileName(name: string): string {
   const stem = name
+    // oxlint-disable-next-line no-control-regex -- NUL is one of the characters a file name may not hold.
     .replace(/[\\/\x00]/gu, "_")
     .replace(/\.pdf$/iu, "")
     .trim();

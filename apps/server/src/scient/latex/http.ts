@@ -13,6 +13,7 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { uploadWorkspaceLatexImage } from "../assets/WorkspaceImageFiles.ts";
+import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
 import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
@@ -41,6 +42,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const managed = yield* LatexManagedToolchain;
     const syncTex = yield* LatexSyncTex;
     const artwork = yield* LatexTikzPreview;
+    const documents = yield* GeneratedDocumentStore;
 
     /** Cached driver/compiler probes plus this server's managed-install facts. */
     const toolchainReport = (refresh: boolean) =>
@@ -143,6 +145,23 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
           AuthOrchestrationReadScope,
           "scient_latex_navigation_failed",
           syncTex.pageAnchors(args.payload),
+        ),
+      )
+      .handle("currentDocument", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_build_failed",
+          documents.getDescriptor(args.payload.logicalDocumentKey).pipe(
+            Effect.map((descriptor) => ({ descriptor })),
+            // An unknown document is an answer, not a failure.
+            Effect.catchTags({
+              GeneratedDocumentStoreError: (error) =>
+                error.reason === "missing-binding" || error.reason === "missing-revision"
+                  ? Effect.succeed({ descriptor: null })
+                  : Effect.fail(error),
+            }),
+          ),
         ),
       )
       .handle("toolchain", (args) =>

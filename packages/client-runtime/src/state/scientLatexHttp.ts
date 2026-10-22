@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientCurrentDocumentRequest,
   ScientLatexBuildRequest,
   ScientLatexArtworkRequest,
   ScientLatexCancelRequest,
@@ -227,6 +228,30 @@ export const getEnvironmentLatexInverseSync = Effect.fn(
     group: "scientLatex",
     request: ({ client, headers }) =>
       client.inverseSync({
+        headers,
+        payload: input.request,
+      }),
+  });
+});
+
+export const getEnvironmentCurrentDocument = Effect.fn(
+  "clientRuntime.state.getEnvironmentCurrentDocument",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientCurrentDocumentRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.currentDocument(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientLatex",
+    request: ({ client, headers }) =>
+      client.currentDocument({
         headers,
         payload: input.request,
       }),

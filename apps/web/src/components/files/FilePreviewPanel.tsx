@@ -2490,6 +2490,9 @@ export default function FilePreviewPanel({
                 source={pdfSource}
                 readerScope={threadRef.threadId}
                 refreshKey={viewerRefreshKey}
+                // SCIENT-FORK:START — Ask in chat quotes this PDF into the panel's conversation.
+                citeThread={threadRef}
+                // SCIENT-FORK:END
               />
             </ScientSurfaceSuspense>
           ) : relativePath && renderBrowserFile && absolutePath ? (
