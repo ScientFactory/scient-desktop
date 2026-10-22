@@ -58,6 +58,21 @@ objection. All six actual-index seam checks pass against the captured owned-main
 base; the connector signal refinement distinguishes tunnel vocabulary while
 retaining positive boundary/removal fixtures and base evidence.
 
+The owned-main catch-up is committed as `fa00e464e9368f474b696c88f19eb2f809529a0e`,
+with the literal extension first and captured owned main second. The first complete
+root-build attempt failed before Astro because the extension restored an upstream
+installer-staging command while preserving Scient's deliberate exclusion of those
+T3 installers. Direct Astro development/build commands restore the owned release
+boundary; command-dispatch checks pass, but a complete rebuild is still required.
+
+Actual chat review exposed Pele SVGs stretched beyond their intrinsic dimensions.
+The inline-only sizing repair preserves intrinsic width and shrinks wide diagrams;
+dialog zoom and exported SVG/PNG dimensions keep their existing owners. Six real
+Pele sizing cases fail before repair and pass afterward, alongside four zoom/export
+and wide-diagram controls. The affected eight-file browser group passes 260 cases;
+final ten-case regressions, web typecheck, scoped lint and formatting pass. Independent
+review found no blocking objection. Final application screenshots remain required.
+
 Final aggregate, complete build and native/visual acceptance remain pending.
 The interim visual review captured 22 screenshots and exposed the save failure;
 it does not establish final acceptance. Covered aggregates run in CI under the

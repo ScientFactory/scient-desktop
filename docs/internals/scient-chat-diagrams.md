@@ -74,9 +74,9 @@ addresses; explicit web links in that note open separately with
 `noopener noreferrer`. Those links are not diagram-authored interactive SVG.
 Appearance values are frozen into the snapshot for the dialog and native
 image exports. Each consumer receives unique SVG IDs with rewritten fragment
-and ARIA references. Inline SVG scales with its container without changing
-source or export inputs; the card retains its intrinsic placeholder and
-`content-visibility` behavior for long conversations.
+and ARIA references. Inline SVG retains its intrinsic width and shrinks to fit
+its container without changing source or export inputs; the card retains its
+intrinsic placeholder and `content-visibility` behavior for long conversations.
 
 The PDF page uses this same resource-disabled renderer, not a separate page
 mode. Omitted addresses become export warnings. Typed Pele syntax, unknown-family,

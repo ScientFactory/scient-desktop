@@ -1500,6 +1500,10 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
+The inherited marketing workspace runs Astro directly for development and builds.
+Its upstream installer-staging hook and T3 `install.sh`/`install.ps1` launchers
+remain absent; Scient's release assets and pinned server launchers own distribution.
+
 Scient exposes Stable and Beta desktop update tracks. Stable retains its owned
 feed; Beta uses the isolated `ScientFactory/scient-desktop-beta` artifact
 repository and separate publication gates. Preserve the explicit saved

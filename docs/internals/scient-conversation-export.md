@@ -267,22 +267,22 @@ path from the client or fetches a remote resource for this step. Diagram IDs has
 Pandoc reads it (carriage returns dropped; the read pass keeps tabs), so CRLF and tab-indented fences
 match their captured image.
 
-Mermaid draws into a live document before its SVG can be inspected, and in strict mode it still
-creates what a diagram asks for (an `<img>` in a label, an image shape, a sequence-actor icon, CSS
-`url()`). Word capture therefore draws in a hidden same-origin frame (`diagrams/isolatedMermaid.ts`, shared with chat)
-whose Content Security Policy allows only Mermaid's self-contained script, inline styles, and
-`data:`/`blob:` images and fonts; the browser refuses every other load before a request is made, and
-a refused load makes that diagram fall back. The frame loads Mermaid's standalone build only when an
-export has diagrams, and draws with the settings chat uses (`mermaidRenderConfig`). As a second layer,
-`wordExport/diagramSafety.ts` refuses, before drawing, styling statements (`style`, `classDef`,
-`linkStyle`, `cssClass`) with CSS fetch functions and configuration outside the theme, layout, and
-per-diagram options, read as Mermaid parsed it from front matter and `%%{init}%%`; each styling
-statement ends at a newline or an unquoted `;` (keeping a style list's later declarations), and label
-text is not inspected. Sources over chat's render limit (50,000 characters) are not drawn, because
-Mermaid would substitute a small "text size exceeded" diagram; its own error diagram also falls back. The rasteriser inspects the SVG again before drawing. Any diagram that is refused, needed
-an outside resource, fails to render or encode, or exceeds the PNG budget is captured as
-`render-failed`: Word shows its labeled Mermaid source with a warning, and the export continues. A
-server-only Word caller that supplies no capture retains the same fallback.
+Word capture uses the same lazy, resource-disabled Pele renderer and original-first
+recovery as chat; see [chat diagrams](./scient-chat-diagrams.md). The renderer mounts
+an offscreen host with images and links disabled, waits for bundled fonts, captures
+a sanitized SVG, and destroys the mount. Authored resource fields and output
+sanitization preserve notices
+for omitted resources even when Pele leaves them out of its SVG.
+
+Before rendering, `wordExport/diagramSafety.ts` checks authored CSS-bearing styling
+statements and each decoded frontmatter or init configuration independently. Unsafe
+fetch values, unsupported settings, empty input and source over the shared 50,000-character
+limit fall back to source. Labels and comments that merely mention resource-like text
+do not cause a refusal. Recovered source must pass the same checks. Any omitted resource,
+rendering or rasterization failure, or exceeded PNG budget yields `render-failed`:
+Word shows the original labelled Mermaid source with a warning and continues exporting.
+The server rechecks the selected source digest and diagram IDs before publication.
+A server-only Word caller that supplies no capture retains the same fallback.
 The two Word export POST routes cap request bodies at 12 MiB before JSON parsing; the PNG budget is
 2 MiB per diagram and 8 MiB in total. An oversized chunked request may have its connection reset
 by the Node HTTP adapter as it stops reading the body.
