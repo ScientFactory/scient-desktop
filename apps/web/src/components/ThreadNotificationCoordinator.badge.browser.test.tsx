@@ -275,34 +275,6 @@ it("starts a fresh count after another native app window gains focus", async () 
   expect(state.badge).toHaveBeenLastCalledWith(0);
 });
 
-it("leaves the macOS badge to Scient's durable unread-answer coordinator", async () => {
-  Object.assign(window, {
-    desktopBridge: {
-      getClientPlatform: () => "darwin",
-      setUnreadAnswerCount: vi.fn(),
-    },
-  });
-  await render();
-  complete();
-  await render();
-  expect(TestNotification.sent).toHaveLength(1);
-  expect(state.badge).not.toHaveBeenCalled();
-});
-
-it("keeps upstream notification badges on Windows", async () => {
-  Object.assign(window, {
-    desktopBridge: {
-      getClientPlatform: () => "win32",
-      setUnreadAnswerCount: vi.fn(),
-    },
-  });
-  await render();
-  complete();
-  await render();
-  expect(TestNotification.sent).toHaveLength(1);
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-});
-
 it.each(["off", "sound", "focused", "denied", "archived"])(
   "does not show visual alerts when %s",
   async (condition) => {

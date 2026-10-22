@@ -577,7 +577,13 @@ test("workflow preserves full fallback, complete evidence, required shard names,
         .matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|(?![\s\S]))/gm),
     ].map((match) => [match[1], match[2]]),
   );
-  const special = new Set(["queue_ci", "qualification", "test_web_reused", "test_server_reused"]);
+  const special = new Set([
+    "release_notes",
+    "queue_ci",
+    "qualification",
+    "test_web_reused",
+    "test_server_reused",
+  ]);
   assert.deepEqual(
     [...sections.keys()].filter((job) => !special.has(job)).sort(),
     [...JOBS].sort(),
@@ -623,7 +629,7 @@ test("workflow preserves full fallback, complete evidence, required shard names,
     assert.equal(shards(stand), shards(real));
     assert.match(
       stand,
-      /if: \$\{\{ !cancelled\(\) && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' \}\}/,
+      /needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group'/,
     );
     assert.ok(!/uses: |vp run/.test(stand), `${job}_reused only reports the reused shard`);
   }

@@ -48,7 +48,8 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
         event.collectionContext === undefined ||
         event.collectionContext !== current.collectionContext ||
         (event.properties.operationKind !== "pdf-export" &&
-          event.properties.operationKind !== "document-export")
+          event.properties.operationKind !== "document-export" &&
+          event.properties.operationKind !== "latex-visual-edit")
       )
         return { accepted: false } as const;
     }

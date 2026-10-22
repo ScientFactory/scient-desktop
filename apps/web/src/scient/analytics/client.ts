@@ -37,17 +37,18 @@ export function useScientAnalyticsView(
   const primary = usePrimaryEnvironmentId();
   const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
   const prepared = usePreparedConnection(environmentId);
-  const observationTarget = { prepared, key: JSON.stringify(event) };
+  const connection = Option.getOrNull(prepared);
+  const eventKey = JSON.stringify(event);
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
   useEffect(() => {
-    if (Option.isNone(observationTarget.prepared)) return;
-    const observation = gate.observeView(observationTarget.prepared.value, () => read());
+    if (connection === null || eventKey === "null") return;
+    const observation = gate.observeView(connection, () => read());
     document.addEventListener("visibilitychange", observation.refresh);
     return () => {
       observation.dispose();
       document.removeEventListener("visibilitychange", observation.refresh);
     };
-  }, [observationTarget]);
+  }, [connection, eventKey]);
 }
 
 export function beginScientUiOperation(
