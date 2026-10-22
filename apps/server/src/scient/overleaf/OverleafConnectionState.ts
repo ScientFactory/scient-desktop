@@ -92,7 +92,8 @@ const ApplyLink = Schema.Struct({
   intentTree: Oid,
   /** What adoption needs that the applier does not keep, so recovery can adopt without the review. */
   remoteCommit: Oid,
-  newLocalOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
+  localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 });
 
@@ -172,7 +173,8 @@ type RetainedCopy = typeof RetainedCopy.Type;
 const isUnresolved = (outcome: OverleafAttemptOutcome) =>
   outcome === "unknown" || outcome === "superseded-unresolved";
 
-const retainedKey = (copy: RetainedCopy) => `${copy.applyId}\0${copy.relativePath}`;
+/** One record per kept file: a step can keep more than one version of the same path. */
+const retainedKey = (copy: RetainedCopy) => `${copy.applyId}\0${copy.kept}`;
 
 /** Structural equality of decoded JSON values, independent of key order. */
 function sameJson(left: unknown, right: unknown): boolean {
@@ -430,7 +432,7 @@ export function overleafTransitionViolation(
       kept.revision !== copy.revision ||
       kept.retainedAt !== copy.retainedAt ||
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
-      kept.kept !== copy.kept ||
+      kept.relativePath !== copy.relativePath ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
       (kept.state === "releasable" && copy.state !== "releasable")
     )

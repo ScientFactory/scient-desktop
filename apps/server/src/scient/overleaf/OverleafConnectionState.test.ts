@@ -224,7 +224,7 @@ describe("overleafTransitionViolation", () => {
       baseGeneration: 1,
       intentTree: oid("5"),
       remoteCommit: oid("7"),
-      newLocalOnly: [],
+      localOnly: [],
       priorMarkers: [],
     };
     const applying = next(first, { activeApply: link });
@@ -280,7 +280,7 @@ describe("overleafTransitionViolation", () => {
       baseGeneration: 1,
       intentTree: oid("5"),
       remoteCommit: oid("7"),
-      newLocalOnly: [],
+      localOnly: [],
       priorMarkers: [],
     };
     const applying = next(synced, { activeApply: link });
@@ -323,7 +323,7 @@ describe("overleafTransitionViolation", () => {
         baseGeneration: 1,
         intentTree: oid("5"),
         remoteCommit: oid("7"),
-        newLocalOnly: [],
+        localOnly: [],
         priorMarkers: [],
       },
     });

@@ -60,9 +60,13 @@ const read = (folder: string, path: string) =>
 const world = (input: {
   readonly synced: Record<string, string>;
   readonly remote: Record<string, string>;
+  /** Files only in the folder, recorded as local-only. */
+  readonly localOnly?: Record<string, string>;
   readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
-  readonly native?: (point: MutationPoint, folder: string) => Promise<void>;
+  readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
+  /** Wraps the real applier, to shape what it reports. */
+  readonly applier?: (real: WorkspaceApplier["Service"]) => WorkspaceApplier["Service"];
 }) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -82,6 +86,7 @@ const world = (input: {
       await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
     });
     yield* write(folder, input.synced);
+    yield* write(folder, input.localOnly ?? {});
 
     const helper = yield* Effect.promise(() => filePublicationTestHelper());
     // The retention probe runs the exchange helper; the applier publishes through the other.
@@ -97,7 +102,7 @@ const world = (input: {
     const files = yield* makeApplierFiles({
       root,
       helper,
-      retainedHooks: { at: async (point) => input.native?.(point, folder) },
+      retainedHooks: { at: async (point) => input.native?.(point, folder, stateRoot) },
     });
     const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
     const barrier = makeCheckoutBarrier();
@@ -162,6 +167,7 @@ const world = (input: {
       base: { commit: syncedCommit, tree: syncedTree, generation: 1 },
       completedSyncCount: 1,
       managedPaths: Object.keys(input.synced),
+      localOnlyPaths: Object.keys(input.localOnly ?? {}),
       retention: { vaultIdentity: retention.identity, copies: [] },
     });
 
@@ -175,7 +181,7 @@ const world = (input: {
     }).pipe(
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),
       Effect.provideService(OverleafRepository.OverleafRepository, repos),
-      Effect.provideService(WorkspaceApplier, applier),
+      Effect.provideService(WorkspaceApplier, input.applier?.(applier) ?? applier),
       Effect.provideService(CheckoutBarrier, barrier),
     );
     const connection = Effect.gen(function* () {
@@ -198,6 +204,7 @@ const world = (input: {
       });
     return {
       store,
+      stateRoot,
       checkout,
       folder,
       repo,
@@ -530,7 +537,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           connectionId: CONNECTION,
           requestId: "restore-1",
           applyId: copy.applyId,
-          relativePath: copy.relativePath,
+          kept: copy.kept,
           keptRevision: copy.keptRevision!,
           currentRevision: copy.currentRevision,
         });
@@ -562,7 +569,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             connectionId: CONNECTION,
             requestId: "restore-1",
             applyId: copy.applyId,
-            relativePath: copy.relativePath,
+            kept: copy.kept,
             keptRevision: copy.keptRevision!,
             currentRevision: copy.currentRevision,
           }),
@@ -589,7 +596,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
                 connectionId: CONNECTION,
                 requestId: "restore-1",
                 applyId: copy.applyId,
-                relativePath: copy.relativePath,
+                kept: copy.kept,
                 keptRevision: copy.keptRevision!,
                 currentRevision: copy.currentRevision,
               }),
@@ -608,4 +615,178 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
       }),
     );
   });
+
+  // Interference in the native layer can leave more than one version of one path
+  // (a staged and a provisional copy, say); every one is evidence.
+  it.live("records every version a step kept of one file", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          applier: (real) =>
+            WorkspaceApplier.of({
+              apply: (input) =>
+                real.apply(input).pipe(
+                  Effect.map((result) => {
+                    const [first] = result.retained;
+                    if (first === undefined) return result;
+                    return {
+                      ...result,
+                      retained: [
+                        ...result.retained,
+                        {
+                          ...first,
+                          retainedPath: NodePath.join(
+                            NodePath.dirname(first.retainedPath!),
+                            "provisional",
+                          ),
+                          retainedRevision: "sha256:" + "d".repeat(64),
+                          changed: true,
+                        },
+                      ],
+                    };
+                  }),
+                ),
+            }),
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const copies = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).filter(
+          (copy) => copy.relativePath === "main.tex",
+        );
+        expect(copies).toHaveLength(2);
+        expect(copies.map((copy) => copy.state).sort()).toEqual(["changed", "releasable"]);
+      }),
+    ),
+  );
+
+  it.live("refuses a bulk change while a connection record cannot be read", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+        const records = NodePath.join(w.stateRoot, "connections");
+        const [file] = (yield* Effect.promise(() => NodeFSP.readdir(records))).filter((name) =>
+          name.endsWith(".json"),
+        );
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(records, file!), "{ broken"));
+        let mutated = false;
+        const refused = yield* Effect.exit(
+          w.barrier.bulk(
+            w.checkout,
+            Effect.sync(() => {
+              mutated = true;
+            }),
+          ),
+        );
+        expect(String(refused)).toContain("CheckoutRecoveryRequiredError");
+        expect(mutated).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("refuses a restore with no room left to keep what it replaces", () =>
+    run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed();
+        const current = yield* w.connection;
+        const filler = Array.from({ length: 4_094 - current.retention.copies.length }, (_, n) => ({
+          ...current.retention.copies[0]!,
+          kept: `filler/files/step-${n}/retained`,
+        }));
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            retention: {
+              ...current.retention,
+              copies: [...current.retention.copies, ...filler],
+            },
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        const refused = yield* Effect.exit(
+          w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        );
+        expect(String(refused)).toContain("OverleafRetainedLimitError");
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        expect((yield* w.connection).activeApply).toBeNull();
+      }),
+    ),
+  );
+
+  it.live("makes a restored file that a sync deleted part of the next review", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "M", "old.tex": "kept text" },
+          remote: { "main.tex": "M" },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        expect(yield* read(w.folder, "old.tex")).toBeNull();
+        const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
+          (entry) => entry.relativePath === "old.tex",
+        )!;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: null,
+          }),
+        ).toMatchObject({ _tag: "restored" });
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.outgoing).toContainEqual(
+          expect.objectContaining({ kind: "added", path: "old.tex" }),
+        );
+      }),
+    ),
+  );
+
+  it.live("adopts the local-only set the review counted, without a collision it read in", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M", "notes.tex": "theirs" },
+          localOnly: { "notes.tex": "mine", "scratch.tex": "S" },
+        });
+        const first = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (first._tag !== "review") return yield* Effect.die(first);
+        expect(first.review.binding.collisionPaths).toEqual(["notes.tex"]);
+        const choices = new Map(
+          first.review.conflicts.map((conflict) => [conflict.key, conflict.allowed[0]!] as const),
+        );
+        const chosen = yield* w.coordinator.prepare({
+          connectionId: CONNECTION,
+          selections: {
+            selectedAdditions: [],
+            collisionPaths: first.review.binding.collisionPaths,
+            choices,
+          },
+        });
+        if (chosen._tag !== "review") return yield* Effect.die(chosen);
+        expect(
+          yield* w.coordinator.confirm({
+            connectionId: CONNECTION,
+            requestId: "request-1",
+            reviewId: chosen.review.id,
+            digest: chosen.review.digest,
+            acknowledgements: chosen.review.binding.acknowledgements,
+          }),
+        ).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).localOnlyPaths).toEqual(["scratch.tex"]);
+      }),
+    ),
+  );
 });

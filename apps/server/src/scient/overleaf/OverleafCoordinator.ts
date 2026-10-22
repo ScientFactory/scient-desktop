@@ -164,6 +164,8 @@ export type OverleafConfirmResult =
 /** One kept copy compared with what stands now. */
 export interface OverleafKeptCopy {
   readonly applyId: string;
+  /** Identifies the copy: a step may keep more than one version of one path. */
+  readonly kept: string;
   readonly relativePath: string;
   readonly state: OverleafConnectionDocument["retention"]["copies"][number]["state"];
   readonly retainedAt: string;
@@ -230,6 +232,8 @@ const RETAINED_COPY_LIMIT = 4_096;
 /** A kept copy's place in the retention folder, as `OverleafConnectionState` records it. */
 const KEPT_PATH =
   /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u;
+/** Versions one changed path can keep: the displaced file, a staged copy, a provisional capture. */
+const KEPT_PER_PATH = 3;
 /** The largest kept file a restore reads back. */
 const RESTORE_MAX_BYTES = 50 * 1024 * 1024;
 const PRIOR_BASE_LIMIT = 20;
@@ -274,7 +278,8 @@ export class OverleafCoordinator extends Context.Service<
       readonly connectionId: string;
       readonly requestId: string;
       readonly applyId: string;
-      readonly relativePath: string;
+      /** The copy's place in the retention folder, as `keptCopies` lists it. */
+      readonly kept: string;
       readonly keptRevision: string;
       readonly currentRevision: string | null;
     }) => Effect.Effect<OverleafRestoreResult, OverleafCoordinatorError>;
@@ -473,12 +478,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
         for (const kept of result.retained) {
           const where = keptAt(kept.retainedPath);
           if (kept.retainedRevision === null || where === null) continue;
-          if (
-            copies.some(
-              (copy) => copy.applyId === link.applyId && copy.relativePath === kept.relativePath,
-            )
-          )
-            continue;
+          if (copies.some((copy) => copy.applyId === link.applyId && copy.kept === where)) continue;
           copies.push({
             applyId: link.applyId,
             relativePath: kept.relativePath,
@@ -489,9 +489,15 @@ export const make = (options: OverleafCoordinatorOptions) =>
             kept: where,
           });
         }
+        // The restored file takes part in the sync again, so the next review sends it.
+        const restored = (yield* repos.readTree({ repo, tree: link.intentTree })).map(
+          (entry) => entry.path,
+        );
         return {
           ...connection,
           revision: connection.revision + 1,
+          managedPaths: unique([...connection.managedPaths, ...restored]),
+          localOnlyPaths: connection.localOnlyPaths.filter((path) => !restored.includes(path)),
           stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
           retention: { ...connection.retention, copies },
           activeApply: null,
@@ -507,22 +513,20 @@ export const make = (options: OverleafCoordinatorOptions) =>
       const candidate = yield* repos.readTree({ repo, tree: link.intentTree });
       const completedSyncCount =
         connection.completedSyncCount + (result.outcome === "complete" ? 1 : 0);
+      // One record per kept file: a step may keep more than one version of a path.
       const copies = new Map(
-        connection.retention.copies.map((copy) => [`${copy.applyId}\0${copy.relativePath}`, copy]),
+        connection.retention.copies.map((copy) => [`${copy.applyId}\0${copy.kept}`, copy]),
       );
       for (const kept of result.retained) {
         const where = keptAt(kept.retainedPath);
         if (kept.retainedRevision === null || where === null) continue;
-        const key = `${link.applyId}\0${kept.relativePath}`;
+        const key = `${link.applyId}\0${where}`;
         const state = kept.changed
           ? ("changed" as const)
           : result.interrupted.some((group) => group.includes(kept.relativePath))
             ? ("interrupted" as const)
             : ("releasable" as const);
-        const earlier = copies.get(key);
-        // One record per file; a changed or interrupted leaf outranks a releasable one.
-        if (earlier !== undefined && (earlier.state !== "releasable" || state === "releasable"))
-          continue;
+        if (copies.has(key)) continue;
         copies.set(key, {
           applyId: link.applyId,
           relativePath: kept.relativePath,
@@ -557,7 +561,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
           ...candidate.map((entry) => entry.path),
           ...result.interrupted.flat(),
         ]),
-        localOnlyPaths: unique([...connection.localOnlyPaths, ...link.newLocalOnly]),
+        localOnlyPaths: unique(link.localOnly),
         forcedConflicts: result.interrupted.map((group) => unique(group)),
         markerPaths: unique([...result.markerPaths, ...link.priorMarkers]),
         stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
@@ -612,7 +616,9 @@ export const make = (options: OverleafCoordinatorOptions) =>
         outcome: result.outcome,
         interrupted: result.interrupted,
         markerPaths: result.markerPaths,
-        baseGeneration: connection.base.generation + (result.outcome === "replan" ? 0 : 1),
+        baseGeneration:
+          connection.base.generation +
+          (result.outcome === "replan" || link.kind === "retained-restore" ? 0 : 1),
       } satisfies OverleafAdopted;
     });
 
@@ -679,7 +685,9 @@ export const make = (options: OverleafCoordinatorOptions) =>
             requestId: input.requestId,
             kind: "confirm",
             payloadDigest: sha256(
-              [input.reviewId, input.digest, ...[...input.acknowledgements].sort(byPath)].join(" "),
+              [input.reviewId, input.digest, ...[...input.acknowledgements].sort(byPath)].join(
+                "\0",
+              ),
             ),
             operationId,
             status: "running",
@@ -745,12 +753,22 @@ export const make = (options: OverleafCoordinatorOptions) =>
                   registry.offer(fresh.review, yield* now);
                   return { _tag: "stale" as const, reason: stale, review: fresh.review };
                 }
-                // Every captured file the plan replaces or deletes may leave a kept copy.
-                const replaced = [...review.applyPlan.captured].filter(([path, revision]) => {
-                  const target = review.applyPlan.target.get(path);
-                  return target === undefined || bytesRevision(target.bytes) !== revision;
-                }).length;
-                if (connection.retention.copies.length + replaced > RETAINED_COPY_LIMIT)
+                // Every path the plan changes may keep up to three versions (the displaced
+                // file, a staged copy, a provisional capture): room is checked before writing.
+                const plan = review.applyPlan;
+                const changed = new Set(
+                  [...plan.captured.keys(), ...plan.target.keys()].filter((path) => {
+                    const target = plan.target.get(path);
+                    return (
+                      (target === undefined ? undefined : bytesRevision(target.bytes)) !==
+                      plan.captured.get(path)
+                    );
+                  }),
+                ).size;
+                if (
+                  connection.retention.copies.length + KEPT_PER_PATH * changed >
+                  RETAINED_COPY_LIMIT
+                )
                   return yield* new OverleafRetainedLimitError({
                     connectionId: input.connectionId,
                   });
@@ -772,7 +790,13 @@ export const make = (options: OverleafCoordinatorOptions) =>
                     baseGeneration: connection.base.generation,
                     intentTree: review.binding.candidateTree,
                     remoteCommit: review.binding.remoteCommit,
-                    newLocalOnly: review.binding.newLocalOnly,
+                    // What the review counted: kept entries less promoted collisions, plus new ones.
+                    localOnly: unique([
+                      ...connection.localOnlyPaths.filter(
+                        (path) => !review.binding.collisionPaths.includes(path),
+                      ),
+                      ...review.binding.newLocalOnly,
+                    ]),
                     priorMarkers: review.binding.unresolvedMarkers,
                   },
                   updatedAt: DateTime.formatIso(yield* DateTime.now),
@@ -822,6 +846,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
           Effect.gen(function* () {
             return {
               applyId: copy.applyId,
+              kept: copy.kept,
               relativePath: copy.relativePath,
               state: copy.state,
               retainedAt: copy.retainedAt,
@@ -847,7 +872,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
             payloadDigest: sha256(
               [
                 input.applyId,
-                input.relativePath,
+                input.kept,
                 input.keptRevision,
                 input.currentRevision ?? "absent",
               ].join("\0"),
@@ -888,11 +913,14 @@ export const make = (options: OverleafCoordinatorOptions) =>
                   });
                 yield* verifyFolders(connection);
                 const copy = connection.retention.copies.find(
-                  (entry) =>
-                    entry.applyId === input.applyId && entry.relativePath === input.relativePath,
+                  (entry) => entry.applyId === input.applyId && entry.kept === input.kept,
                 );
                 if (copy === undefined || connection.base.commit === null)
                   return { _tag: "unknown-copy" as const };
+                if (connection.retention.copies.length + KEPT_PER_PATH > RETAINED_COPY_LIMIT)
+                  return yield* new OverleafRetainedLimitError({
+                    connectionId: input.connectionId,
+                  });
                 const vault = yield* vaultOf(connection);
                 const keptPath = NodePath.join(vault, copy.kept);
                 const target = NodePath.join(folderOf(connection), copy.relativePath);
@@ -925,7 +953,7 @@ export const make = (options: OverleafCoordinatorOptions) =>
                     baseGeneration: connection.base.generation,
                     intentTree,
                     remoteCommit: connection.base.commit,
-                    newLocalOnly: [],
+                    localOnly: connection.localOnlyPaths,
                     priorMarkers: [],
                   },
                   updatedAt: DateTime.formatIso(yield* DateTime.now),
@@ -968,23 +996,27 @@ export const make = (options: OverleafCoordinatorOptions) =>
 
     // A bulk change of a checkout first settles an apply left pending in it, when
     // nothing else holds that connection (owner decision 3); otherwise it refuses.
+    // It fails closed: a connection it cannot read could be one with work pending
+    // here, so an unreadable record refuses every bulk change until it is
+    // quarantined or repaired.
     yield* barrier.settleBeforeBulk((section) =>
       Effect.gen(function* () {
-        const connectionIds = yield* store.listConnections.pipe(
-          Effect.orElseSucceed((): ReadonlyArray<string> => []),
-        );
+        const refuse = new CheckoutRecoveryRequiredError({ checkout: section.root });
+        const connectionIds = yield* store.listConnections.pipe(Effect.mapError(() => refuse));
         for (const connectionId of connectionIds) {
           const read = yield* store
             .readConnection(connectionId)
-            .pipe(Effect.orElseSucceed(() => ({ _tag: "missing" as const })));
-          if (read._tag !== "ready" || read.document.state !== "active") continue;
+            .pipe(Effect.mapError(() => refuse));
+          // Removed between listing and reading: nothing pending there.
+          if (read._tag === "missing") continue;
+          if (read._tag !== "ready") return yield* refuse;
+          if (read.document.state !== "active") continue;
           const connection = read.document;
           // The connection's checkout, or one enclosing it, is the one changing.
           const held = yield* barrier
             .current(folderOf(connection))
-            .pipe(Effect.orElseSucceed(() => null));
-          if (held === null || !held.keys.includes(section.key)) continue;
-          const refuse = new CheckoutRecoveryRequiredError({ checkout: section.root });
+            .pipe(Effect.mapError(() => refuse));
+          if (!held.keys.includes(section.key)) continue;
           // Structural source copies sit in the folder; a bulk change could erase them.
           if (connection.stagingPaths.length > 0) return yield* refuse;
           if (connection.activeApply === null) continue;
