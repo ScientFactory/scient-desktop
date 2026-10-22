@@ -167,21 +167,46 @@ describe("plugin bundle snapshot boundary", () => {
     ).toContain("not a regular file");
   });
 
-  it("refuses a file that grows after it was listed", async () => {
+  it("rejects a directory recreated after its parent was listed", async () => {
+    const root = await directoryWith({ "resources/one.txt": "inside" });
+    const message = await rejection(
+      snapshotBundle(root, {
+        beforeRead: async (relativePath, kind) => {
+          if (kind !== "directory" || relativePath !== "resources") return;
+          const directory = NodePath.join(root, relativePath);
+          await NodeFSP.rm(directory, { recursive: true });
+          await NodeFSP.mkdir(directory);
+          await NodeFSP.writeFile(NodePath.join(directory, "one.txt"), SECRET);
+        },
+      }),
+    );
+    expect(message).toContain("changed while the bundle was read");
+  });
+
+  it("refuses a file rewritten in place after it was listed", async () => {
     const root = await directoryWith({ "notes.txt": "small" });
     const message = await rejection(
       snapshotBundle(root, {
-        limits: { ...DEFAULT_BUNDLE_LIMITS, fileBytes: 100 },
         beforeRead: async (relativePath) => {
           if (relativePath === "notes.txt") {
-            await NodeFSP.appendFile(NodePath.join(root, relativePath), "x".repeat(200_000));
+            await NodeFSP.appendFile(NodePath.join(root, relativePath), SECRET);
           }
         },
       }),
     );
-    // Growth changes the file's ctime, so the identity check refuses it before
-    // the streamed per-file bound would.
-    expect(message).toMatch(/changed while the bundle was read|per-file limit/);
+    expect(message).toContain("changed while the bundle was read");
+  });
+
+  it("keeps reading when an ignored entry appears beside the bundle's files", async () => {
+    // Finder writes `.DS_Store` into folders it shows; that must not refuse the bundle.
+    const root = await directoryWith({ "a.txt": "a", "b.txt": "b" });
+    const snapshot = await snapshotBundle(root, {
+      beforeRead: async (relativePath) => {
+        if (relativePath === "b.txt")
+          await NodeFSP.writeFile(NodePath.join(root, ".DS_Store"), "x");
+      },
+    });
+    expect(snapshot.files.map((file) => file.relativePath)).toEqual(["a.txt", "b.txt"]);
   });
 
   it("rejects hard links, including one to a file outside the bundle", async () => {
