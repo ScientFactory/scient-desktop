@@ -48,9 +48,12 @@ import * as ServerConfig from "../config.ts";
 // SCIENT-FORK:START overleaf-checkout-barrier
 import {
   CheckoutBarrier,
+  CheckoutLookupError,
   CheckoutRecoveryRequiredError,
 } from "../scient/workspace/CheckoutBarrier.ts";
-const isCheckoutRecoveryRequired = Schema.is(CheckoutRecoveryRequiredError);
+const isCheckoutRefusal = Schema.is(
+  Schema.Union([CheckoutRecoveryRequiredError, CheckoutLookupError]),
+);
 // SCIENT-FORK:END overleaf-checkout-barrier
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -917,7 +920,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     checkoutBarrier
       .bulk(path, effect, { missing })
       .pipe(
-        Effect.catchIf(isCheckoutRecoveryRequired, (error) =>
+        Effect.catchIf(isCheckoutRefusal, (error) =>
           Effect.fail(
             new GitCommandError({ operation, command: "git", cwd, detail: error.message }),
           ),
@@ -4186,7 +4189,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         bulkChange(
           "GitVcsDriver.removeWorktree",
           input.cwd,
-          input.path,
+          // Git resolves a relative worktree path against the repository, not the server.
+          path.resolve(input.cwd, input.path),
           removeWorktree(input),
           "skip",
         ),

@@ -965,6 +965,7 @@ const make = Effect.gen(function* () {
             Effect.catchTags({
               CheckoutRecoveryRequiredError: () =>
                 Effect.succeed("an unfinished Overleaf sync needs recovery first"),
+              CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
             }),
           );
         if (isolationChanges !== null) return keep(isolationChanges);
