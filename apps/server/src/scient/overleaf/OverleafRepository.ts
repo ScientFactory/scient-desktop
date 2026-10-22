@@ -191,6 +191,11 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly tree: string;
     }) => Effect.Effect<ReadonlyArray<TreeEntry>, OverleafRepositoryError | OverleafGitError>;
+    /** Byte size of every file in a tree, so limits apply before any blob is read. */
+    readonly treeSizes: (input: {
+      readonly repo: string;
+      readonly tree: string;
+    }) => Effect.Effect<ReadonlyMap<string, number>, OverleafRepositoryError | OverleafGitError>;
     readonly readBlob: (input: {
       readonly repo: string;
       readonly oid: string;
@@ -381,6 +386,20 @@ export const make = Effect.gen(function* () {
       });
     }
     return entries;
+  });
+
+  const treeSizes: OverleafRepository["Service"]["treeSizes"] = Effect.fn(
+    "OverleafRepository.treeSizes",
+  )(function* (input) {
+    const result = yield* run(input.repo, ["ls-tree", "-r", "-z", "-l", "--full-tree", input.tree]);
+    const sizes = new Map<string, number>();
+    for (const record of text(result.stdout).split("\0")) {
+      if (record === "") continue;
+      const match = /^\d{6} blob [0-9a-f]+ +(\d+)\t(.*)$/su.exec(record);
+      if (!match) return yield* unreadable("git ls-tree returned an unreadable size");
+      sizes.set(match[2] as string, Number(match[1]));
+    }
+    return sizes;
   });
 
   const writeTree: OverleafRepository["Service"]["writeTree"] = Effect.fn(
@@ -586,6 +605,7 @@ export const make = Effect.gen(function* () {
     writeBlobsFromFiles,
     writeTree,
     readTree,
+    treeSizes,
     readBlob,
     commit,
     treeOf,
