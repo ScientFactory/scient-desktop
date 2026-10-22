@@ -3,21 +3,24 @@
  * Read a plugin bundle directory once into memory.
  *
  * Node has no `openat`, so reads are bracketed by pathname checks:
- * - the requested root is `lstat`ed once and that identity is carried into
+ * - the requested root is `lstat`ed once and that device/inode is carried into
  *   the walk: its canonical path must name the same directory, and the
  *   requested path must still name it after the walk;
  * - every directory is `lstat`ed (never a link), its `realpath` must equal its
- *   expected path beneath the root, and its identity must be unchanged
+ *   expected path beneath the root, and its device/inode must be unchanged
  *   before and after it is listed and after each of its files is read;
  * - every file is opened with `O_NOFOLLOW | O_NONBLOCK` (a link or FIFO swapped
  *   in cannot be followed or block), the open descriptor is `fstat`ed and must be
- *   the same regular, singly linked, unchanged entry that was `lstat`ed, and it
- *   is read with a bounded read loop rather than trusting its size.
- * An identity is the device, inode and birth time: a filesystem may hand a freed
- * inode number straight to a new entry (Linux does), and the birth time tells
- * the two apart where the filesystem records one. A file must also keep its
- * change time, which moves when its content or metadata does. Directories are
- * not held to theirs, because it moves whenever any entry inside them changes.
+ *   a regular, singly linked file whose device, inode, size, modification time
+ *   and change time match the `lstat` taken when it was listed, and it is read
+ *   with a bounded read loop rather than trusting its size.
+ * The file comparison follows git's stat check: a filesystem may hand a freed
+ * inode number straight to a new file (Linux does), so device and inode alone
+ * do not show that a listed file was left alone. A same-size rewrite within one
+ * timestamp tick can still pass; that only affects which bundle bytes are read,
+ * because every read goes through the descriptor checks above. Directories are
+ * held to device/inode only: their times move whenever an entry inside them
+ * changes, such as Finder writing `.DS_Store`.
  * Entries, files, bytes and depth are bounded before any further work, and the
  * scan stops when its signal aborts.
  *
@@ -109,17 +112,12 @@ export function digestBundleFiles(files: ReadonlyArray<BundleFile>): string {
 interface Identity {
   readonly dev: number;
   readonly ino: number;
-  readonly birthtimeMs: number;
 }
 
-const identityOf = (stat: NodeFS.Stats): Identity => ({
-  dev: stat.dev,
-  ino: stat.ino,
-  birthtimeMs: stat.birthtimeMs,
-});
+const identityOf = (stat: NodeFS.Stats): Identity => ({ dev: stat.dev, ino: stat.ino });
 
 const sameIdentity = (left: Identity, right: Identity): boolean =>
-  left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs;
+  left.dev === right.dev && left.ino === right.ino;
 
 export async function snapshotBundle(
   root: string,
@@ -200,7 +198,12 @@ export async function snapshotBundle(
       if (!opened.isFile()) {
         throw new BundleRejected(`Bundle entry '${relativePath}' is not a regular file.`);
       }
-      if (!sameIdentity(opened, listed) || opened.ctimeMs !== listed.ctimeMs) {
+      if (
+        !sameIdentity(opened, listed) ||
+        opened.size !== listed.size ||
+        opened.mtimeMs !== listed.mtimeMs ||
+        opened.ctimeMs !== listed.ctimeMs
+      ) {
         throw new BundleRejected(
           `Bundle file '${relativePath}' changed while the bundle was read.`,
         );

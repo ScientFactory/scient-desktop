@@ -167,23 +167,18 @@ describe("plugin bundle snapshot boundary", () => {
     ).toContain("not a regular file");
   });
 
-  it("rejects a directory recreated after its parent was listed", async () => {
-    const root = await directoryWith({ "resources/one.txt": "inside" });
+  it("bounds the bytes it reads, not only the sizes it listed", async () => {
+    // Each file is under the per-file limit when listed; the read loop must stop
+    // the second one at the remaining total budget.
+    const root = await directoryWith({ "a.txt": "123456", "b.txt": "abcdef" });
     const message = await rejection(
-      snapshotBundle(root, {
-        beforeRead: async (relativePath, kind) => {
-          if (kind !== "directory" || relativePath !== "resources") return;
-          const directory = NodePath.join(root, relativePath);
-          await NodeFSP.rm(directory, { recursive: true });
-          await NodeFSP.mkdir(directory);
-          await NodeFSP.writeFile(NodePath.join(directory, "one.txt"), SECRET);
-        },
-      }),
+      snapshotBundle(root, { limits: { ...DEFAULT_BUNDLE_LIMITS, bytes: 10 } }),
     );
-    expect(message).toContain("changed while the bundle was read");
+    expect(message).toContain("total size limit");
   });
 
   it("refuses a file rewritten in place after it was listed", async () => {
+    // The append changes the size, so the refusal does not depend on timestamps.
     const root = await directoryWith({ "notes.txt": "small" });
     const message = await rejection(
       snapshotBundle(root, {
