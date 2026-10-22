@@ -63,7 +63,9 @@ with the literal extension first and captured owned main second. The first compl
 root-build attempt failed before Astro because the extension restored an upstream
 installer-staging command while preserving Scient's deliberate exclusion of those
 T3 installers. Direct Astro development/build commands restore the owned release
-boundary; command-dispatch checks pass, but a complete rebuild is still required.
+boundary. The subsequent complete uncached root build on `45ac324a1e` passes all
+six tasks in 22.4 seconds with 10,265 source inputs unchanged. Pinned Electron
+44.9.3 smoke passes with clean shutdown, unchanged outputs and no owned survivors.
 
 Actual chat review exposed Pele SVGs stretched beyond their intrinsic dimensions.
 The inline-only sizing repair preserves intrinsic width and shrinks wide diagrams;
@@ -71,11 +73,41 @@ dialog zoom and exported SVG/PNG dimensions keep their existing owners. Six real
 Pele sizing cases fail before repair and pass afterward, alongside four zoom/export
 and wide-diagram controls. The affected eight-file browser group passes 260 cases;
 final ten-case regressions, web typecheck, scoped lint and formatting pass. Independent
-review found no blocking objection. Final application screenshots remain required.
+review found no blocking objection. Subsequent application review exercised the
+shared diagram path; the owner reports visual review passed and asks to proceed.
 
-Final aggregate, complete build and native/visual acceptance remain pending.
-The interim visual review captured 22 screenshots and exposed the save failure;
-it does not establish final acceptance. Covered aggregates run in CI under the
+The owner's manual visual acceptance is separate from partial automated coverage.
+The later browser review captured 78 screenshots; its scripted provider does not
+qualify live Codex, whose isolated profile is signed out. Fresh native backend
+and window readiness and synthetic process environment were verified. Native
+automation later encountered inconsistent accessibility and screenshot binding;
+it is not a completed native feature pass. The initial 22-screenshot review and
+its save finding are superseded only by the explicitly recorded repairs/checks.
+
+File-tab review also exposed two reading-position defects. An unchanged page
+field could navigate again on blur after Enter; only an outstanding user edit
+now commits on blur. The retained LaTeX reading owner also retired on an early
+resize event before progressive loading and pagination finished. It now waits
+for their existing completion state. The real Hebrew two-column remount fails
+before repair and preserves the same source heading within two pixels afterward,
+without source edits. Independent review found that explicit header zoom could
+retain the opening restoration callback. A controlled actual-editor case
+reproduces its later overwrite of the point preserved by zoom. The existing
+restoration owner now cancels its listeners and queued frame on reader zoom,
+pinch, page navigation or opening-effect cleanup. The same case passes after
+repair; no pagination algorithm or source/selection contract changes.
+
+All 41 affected browser cases, the final two causal cases, uncached web typecheck
+and formatting pass on the diagnostic-free patch. Scoped lint has no new warnings
+or errors; 12 existing editor warnings remain on unchanged lines. The final
+six-task root build passes in 14.0 seconds with all 10,266 source inputs unchanged;
+pinned Electron 44.9.3 smoke again passes with clean shutdown, unchanged build
+outputs and no owned survivors. A preceding interrupted build logged six
+successful tasks but lost its terminal receipt and remains unqualified. Later
+receipt-only edits do not change the qualified runtime inputs. This focused
+repair does not rerun or enlarge the owner's accepted visual review.
+
+Final hosted aggregate qualification remains pending. Covered aggregates run in CI under the
 owner-approved split; known failures, affected checks, uncovered macOS behavior,
 the complete root build and isolated native smoke remain local. The absent
 server-generator result remains unqualified. Original integration evidence below
@@ -923,7 +955,9 @@ shard weights retain the exact official `21da3061aa` table instead of rejected
 local measurements. They balance runners, not test inclusion or assertions.
 Final aggregate qualification follows the main catch-up: covered gates run in
 CI, while focused regressions and uncovered macOS/build checks remain local.
-Known browser failures remain blockers; no correctness gate is waived.
+Known browser failures at this checkpoint remained blockers; later repairs and
+acceptance are recorded in the extension integration section. No correctness
+gate is waived.
 The first Python review attempt stopped because its model provider was
 unreachable; it produced no acceptance or findings. The successful re-review
 independently conserved the original 51 native and 175 browser assertions.

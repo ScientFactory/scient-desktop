@@ -112,6 +112,45 @@ describe("shared PDF and Visual controls", () => {
       _fixture.host.querySelector<HTMLButtonElement>('button[aria-label="Next page"]')!.disabled,
     ).toBe(true);
   });
+  it("does not navigate again when a committed page display loses focus", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const onPage = vi.fn();
+    await render(_fixture, { page: 4, pageCount: 8, onPage });
+    const field = _fixture.host.querySelector<HTMLInputElement>('input[aria-label="Page number"]')!;
+    await act(() => field.focus());
+    await enterPage(_fixture, "5");
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(5);
+    await render(_fixture, { page: 5, pageCount: 8, onPage });
+    // The next sheet's leading margin can still report the preceding visible page.
+    await render(_fixture, { page: 4, pageCount: 8, onPage });
+    expect(field.value).toBe("4");
+    await act(() => field.blur());
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(5);
+  });
+  it("commits edited page input on blur but leaves an untouched display alone", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const onPage = vi.fn();
+    await render(_fixture, { page: 2, onPage });
+    const field = _fixture.host.querySelector<HTMLInputElement>('input[aria-label="Page number"]')!;
+    await act(() => {
+      field.focus();
+      field.blur();
+    });
+    expect(onPage).not.toHaveBeenCalled();
+    await act(() => {
+      field.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "3");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() => field.blur());
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(3);
+  });
   it("searches in a quiet field: focus on request, count, arrows, keys and Escape", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

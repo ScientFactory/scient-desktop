@@ -6,10 +6,12 @@ export function useLatexPinchZoom(
   scrollRef: RefObject<HTMLDivElement | null>,
   zoom: number,
   onZoom: (zoom: number) => void,
+  onNavigation: () => void,
 ) {
-  const latest = useRef({ zoom, onZoom });
+  const latest = useRef({ zoom, onZoom, onNavigation });
   const anchor = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
   const changeZoom = (scale: number, apply?: () => void) => {
+    latest.current.onNavigation();
     const current = latest.current.zoom;
     const next = apply ? scale : normalizePdfZoom(scale);
     const scroll = scrollRef.current;
@@ -31,7 +33,7 @@ export function useLatexPinchZoom(
     else latest.current.onZoom(next);
   };
   useLayoutEffect(() => {
-    latest.current = { zoom, onZoom };
+    latest.current = { zoom, onZoom, onNavigation };
     const point = anchor.current;
     anchor.current = null;
     const scroll = scrollRef.current;
@@ -41,7 +43,7 @@ export function useLatexPinchZoom(
     const bounds = stage.getBoundingClientRect();
     scroll.scrollLeft += bounds.left + point.x * zoom - point.clientX;
     scroll.scrollTop += bounds.top + point.y * zoom - point.clientY;
-  }, [zoom, onZoom, scrollRef]);
+  }, [zoom, onZoom, onNavigation, scrollRef]);
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -64,6 +66,7 @@ export function useLatexPinchZoom(
         const next = normalizePdfZoom(current * factor);
         factor = 1;
         if (next === current) return;
+        latest.current.onNavigation();
         const stage = scroll.querySelector<HTMLElement>(".scient-latex-page-stage");
         if (!stage) return;
         const bounds = stage.getBoundingClientRect();

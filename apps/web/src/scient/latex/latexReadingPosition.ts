@@ -1,10 +1,16 @@
 import type { EditorView } from "@tiptap/pm/view";
-import { readLatexVisibleReadingTarget } from "./latexPagedGeometry";
+import { pagedLayoutSettled, readLatexVisibleReadingTarget } from "./latexPagedGeometry";
 
 /** Where each recently read document was, for this session: its first visible
  * top-level block and that block's offset from the top of the reading area. */
 const positions = new Map<string, { readonly block: number; readonly offset: number }>();
 const LIMIT = 32;
+const READER_NAVIGATION = "scient-latex-reader-navigation";
+
+/** Header controls live outside the editor DOM but own the reader's next position. */
+export function cancelLatexReadingPosition(view: EditorView): void {
+  view.dom.dispatchEvent(new Event(READER_NAVIGATION));
+}
 
 function scroller(view: EditorView) {
   return view.dom.closest<HTMLElement>(".scient-latex-visual-scroll");
@@ -57,22 +63,24 @@ export function restoreLatexReadingPosition(key: string, view: EditorView, block
     return scroll.scrollTop;
   };
   const set = apply();
-  // The first page plan can arrive after the ordinary two-frame restoration.
+  let frame = 0;
+  // Stage resize can precede the final page plan while opening blocks are added.
   const finished = () => {
+    cancelAnimationFrame(frame);
     view.dom.removeEventListener("scient-latex-layout", laidOut);
-    for (const name of ["wheel", "pointerdown", "keydown"])
+    for (const name of ["wheel", "pointerdown", "keydown", READER_NAVIGATION])
       view.dom.removeEventListener(name, finished);
   };
   const laidOut = () => {
     if (element.isConnected) apply();
-    finished();
+    if (view.dom.dataset.latexLoading !== "true" && pagedLayoutSettled(view)) finished();
   };
   view.dom.addEventListener("scient-latex-layout", laidOut);
-  for (const name of ["wheel", "pointerdown", "keydown"])
+  for (const name of ["wheel", "pointerdown", "keydown", READER_NAVIGATION])
     view.dom.addEventListener(name, finished, { once: true });
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
+  frame = requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => {
       if (element.isConnected && Math.abs(scroll.scrollTop - set) < 1) apply();
-    }),
-  );
+    });
+  });
 }

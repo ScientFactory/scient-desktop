@@ -191,6 +191,7 @@ export function DocumentReaderControls(props: {
   search?: ReaderSearch | undefined;
 }) {
   const [pageInput, setPageInput] = useState(String(props.page));
+  const [pageInputEdited, setPageInputEdited] = useState(false);
   const pendingSearch = useRef<(() => void) | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [menuRow, setMenuRow] = useState<HTMLElement | null>(null);
@@ -199,6 +200,7 @@ export function DocumentReaderControls(props: {
   if (previousPage !== props.page) {
     setPreviousPage(props.page);
     setPageInput(String(props.page));
+    setPageInputEdited(false);
   }
   const host = useContext(ReaderBarHostContext);
   const hostSlot = host?.slot ?? null;
@@ -209,6 +211,7 @@ export function DocumentReaderControls(props: {
     return () => onHosted(false);
   }, [onHosted, hostSlot]);
   const commitPage = () => {
+    setPageInputEdited(false);
     const page = parsePdfPageInput(pageInput, props.pageCount);
     if (page === null) setPageInput(String(props.page));
     else props.onPage(page);
@@ -248,8 +251,13 @@ export function DocumentReaderControls(props: {
               // As wide as the longest page number, with two digits as the minimum.
               style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
               disabled={!props.ready}
-              onChange={(event) => setPageInput(event.target.value)}
-              onBlur={commitPage}
+              onChange={(event) => {
+                setPageInput(event.target.value);
+                setPageInputEdited(true);
+              }}
+              onBlur={() => {
+                if (pageInputEdited) commitPage();
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") commitPage();
               }}
