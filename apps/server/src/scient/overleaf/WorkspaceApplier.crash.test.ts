@@ -276,21 +276,10 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     }),
   );
 
-  // After a crash before staging, settling the record without its bytes closes it as
-  // skipped; the apply ends with nothing published and the next review plans again.
-  it.live("publishes nothing and stays recoverable after a crash at intent", () =>
-    fixture(async (h) => {
-      await crashAt(h, "intent");
-      await h.restart();
-      const result = await h.apply("crash");
-      expect(result.interrupted).toEqual([]);
-      expect([...result.base]).toEqual(Object.entries(revisions(edit.captured)));
-      expect(await read(h.cwd, "a.tex")).toBe("base");
-      expect((await h.apply("crash")).interrupted).toEqual([]);
-    }),
-  );
-
-  it.live.each(["prepared", "displaced"] as const)(
+  // Settling a step killed before staging closes it without its bytes; the apply
+  // tries it again from its plan. One killed just before or after its native call
+  // goes on from what the call left.
+  it.live.each(["intent", "prepared", "checked", "called", "displaced"] as const)(
     "finishes the unit after a crash at %s when nothing else changed",
     (point) =>
       fixture(async (h) => {
@@ -314,11 +303,21 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     }),
   );
 
-  // Every shape of unit, killed while a step is staged: unchanged, recovery finishes it;
-  // with the guard changed, the first step publishes nothing and later ones are reported.
+  // Every shape of unit, killed while a step is staged or just before or after its
+  // native call: unchanged, recovery finishes it. With the guard changed, a first step
+  // not yet published publishes nothing; a published one is reported. A create leaves
+  // nothing in its record to show it ran, so one killed just after its call (`create`)
+  // stays for review: the file there could be another writer's.
   const shapes = [
     {
+      name: "an edit",
+      occurrence: 1,
+      captured: { "a.tex": "base", "guard.tex": "guard" },
+      target: { "a.tex": "remote", "guard.tex": "guard" },
+    },
+    {
       name: "a rename's destination",
+      create: true,
       occurrence: 1,
       captured: { "old.tex": "base", "guard.tex": "guard" },
       target: { "new.tex": "remote", "guard.tex": "guard" },
@@ -339,6 +338,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     },
     {
       name: "a file in a folder replacing a file",
+      create: true,
       occurrence: 2,
       captured: { notes: "base", "guard.tex": "guard" },
       target: { "notes/a.tex": "remote", "notes/b.tex": "B", "guard.tex": "guard" },
@@ -351,7 +351,14 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     },
     {
       name: "a file replacing a folder",
+      create: true,
       occurrence: 4,
+      captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
+      target: { notes: "remote", "guard.tex": "guard" },
+    },
+    {
+      name: "a folder's removal",
+      occurrence: 3,
       captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
       target: { notes: "remote", "guard.tex": "guard" },
     },
@@ -362,29 +369,36 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       target: { "guard.tex": "guard" },
     },
   ];
-  it.live.each(shapes.flatMap((shape) => [false, true].map((changed) => ({ ...shape, changed }))))(
-    "recovers $name killed while staged, guard changed: $changed",
-    (shape) =>
-      fixture(async (h) => {
-        await crashAt(h, "prepared", shape, shape.occurrence);
-        if (shape.changed) await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
-        await h.restart();
-        await editorReads(h);
-        const result = await h.apply("crash");
-        if (!shape.changed) {
-          expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
-          for (const [name, text] of Object.entries(shape.target))
-            expect(await read(h.cwd, name)).toBe(text);
-          return;
-        }
-        expect(await read(h.cwd, "guard.tex")).toBe("later");
-        expect(Object.fromEntries(result.base)).toEqual(revisions(shape.captured));
-        if (shape.occurrence === 1) {
-          expect(result.interrupted).toEqual([]);
-          for (const [name, text] of Object.entries(shape.captured))
-            if (name !== "guard.tex") expect(await read(h.cwd, name)).toBe(text);
-        } else expect(result.interrupted).toHaveLength(1);
-      }),
+  it.live.each(
+    (["prepared", "checked", "called"] as const).flatMap((point) =>
+      shapes.flatMap((shape) => [false, true].map((changed) => ({ ...shape, point, changed }))),
+    ),
+  )("recovers $name killed at $point, guard changed: $changed", (shape) =>
+    fixture(async (h) => {
+      await crashAt(h, shape.point, shape, shape.occurrence);
+      if (shape.changed) await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
+      await h.restart();
+      await editorReads(h);
+      const result = await h.apply("crash");
+      if (shape.point === "called" && "create" in shape) {
+        expect(result.outcome).toBe("attention");
+        expect(result.interrupted).toHaveLength(1);
+        return;
+      }
+      if (!shape.changed) {
+        expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
+        for (const [name, text] of Object.entries(shape.target))
+          expect(await read(h.cwd, name)).toBe(text);
+        return;
+      }
+      expect(await read(h.cwd, "guard.tex")).toBe("later");
+      expect(Object.fromEntries(result.base)).toEqual(revisions(shape.captured));
+      if (shape.occurrence === 1 && shape.point !== "called") {
+        expect(result.interrupted).toEqual([]);
+        for (const [name, text] of Object.entries(shape.captured))
+          if (name !== "guard.tex") expect(await read(h.cwd, name)).toBe(text);
+      } else expect(result.interrupted).toHaveLength(1);
+    }),
   );
 
   // Removing a folder's last file leaves the folder until the file replacing it is written;
@@ -424,25 +438,98 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
 
   // With every file of the unit changing, nothing else reads the folder before the
   // apply resumes; the apply settles the pending step itself.
+  const both: Scenario = {
+    captured: { "a.tex": "base A", "b.tex": "base B" },
+    target: { "a.tex": "remote A", "b.tex": "remote B" },
+  };
   it.live.each(
-    (["prepared", "displaced"] as const).flatMap((point) =>
-      [false, true].map((editorFirst) => ({ point, editorFirst })),
+    (["intent", "prepared", "checked", "called", "displaced"] as const).flatMap((point) =>
+      [1, 2].flatMap((occurrence) =>
+        [false, true].map((editorFirst) => ({ point, occurrence, editorFirst })),
+      ),
     ),
-  )("finishes a unit whose every file changes after a crash at $point", ({ point, editorFirst }) =>
+  )(
+    "finishes a unit whose every file changes after a crash at $point #$occurrence, editor first: $editorFirst",
+    ({ point, occurrence, editorFirst }) =>
+      fixture(async (h) => {
+        await crashAt(h, point, both, occurrence);
+        await h.restart();
+        if (editorFirst) await editorReads(h);
+        expect(await h.apply("crash")).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await read(h.cwd, "b.tex")).toBe("remote B");
+      }),
+  );
+
+  // The later step is tried again, and still refuses a file changed since the review.
+  it.live("tries a later step again after a crash at intent, refusing a changed file", () =>
     fixture(async (h) => {
-      const both: Scenario = {
-        captured: { "a.tex": "base A", "b.tex": "base B" },
-        target: { "a.tex": "remote A", "b.tex": "remote B" },
-      };
-      await crashAt(h, point, both);
+      await crashAt(h, "intent", both, 2);
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "b.tex"), "later");
       await h.restart();
-      if (editorFirst) await editorReads(h);
-      expect(await h.apply("crash")).toMatchObject({
-        outcome: "complete",
-        matchesTarget: true,
-        interrupted: [],
-      });
-      expect(await read(h.cwd, "b.tex")).toBe("remote B");
+      const result = await h.apply("crash");
+      expect(result.interrupted).toHaveLength(1);
+      expect(await read(h.cwd, "a.tex")).toBe("remote A");
+      expect(await read(h.cwd, "b.tex")).toBe("later");
+    }),
+  );
+
+  // An empty folder giving way to a file is removed under the group's checks too.
+  const folded: Scenario = {
+    captured: { "guard.tex": "guard" },
+    target: { notes: "new", "guard.tex": "guard" },
+  };
+  it.live.each(["checked", "called"] as const)(
+    "keeps a group whose file changed after a crash at the folder removal's %s",
+    (point) =>
+      fixture(async (h) => {
+        await NodeFSP.mkdir(NodePath.join(h.cwd, "notes"));
+        await crashAt(h, point, folded);
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
+        await h.restart();
+        await editorReads(h);
+        const result = await h.apply("crash");
+        expect(await read(h.cwd, "guard.tex")).toBe("later");
+        expect(await read(h.cwd, "notes")).toBeNull();
+        if (point === "checked") {
+          // Nothing was removed: the folder stays and the group is not reported.
+          expect((await NodeFSP.lstat(NodePath.join(h.cwd, "notes"))).isDirectory()).toBe(true);
+          expect(result.interrupted).toEqual([]);
+        } else {
+          // The folder was already removed: the group is reported.
+          expect(result.interrupted).toHaveLength(1);
+        }
+      }),
+  );
+
+  // A create leaves no trace in its record, only in the folder it adds to; a folder
+  // changed since leaves the call's fate unknown, and the step is kept for review.
+  const added: Scenario = {
+    captured: { "guard.tex": "guard" },
+    target: { "a.tex": "new", "guard.tex": "guard" },
+  };
+  it.live("keeps an added file for review when its folder changed after a crash before it", () =>
+    fixture(async (h) => {
+      await crashAt(h, "checked", added);
+      await put(h.cwd, { "other.tex": "other" });
+      await h.restart();
+      const result = await h.apply("crash");
+      expect(result.interrupted).toHaveLength(1);
+      expect(await read(h.cwd, "a.tex")).toBeNull();
+    }),
+  );
+  it.live("does not add a file again once removed after a crash just after adding it", () =>
+    fixture(async (h) => {
+      await crashAt(h, "called", added);
+      expect(await read(h.cwd, "a.tex")).toBe("new");
+      await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
+      await h.restart();
+      const result = await h.apply("crash");
+      expect(result.interrupted).toHaveLength(1);
+      expect(await read(h.cwd, "a.tex")).toBeNull();
     }),
   );
 

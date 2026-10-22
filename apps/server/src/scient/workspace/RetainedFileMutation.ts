@@ -86,6 +86,11 @@ const Journal = Schema.Struct({
   ),
   binding: Schema.NullOr(Binding),
   destinationBinding: Schema.NullOr(Binding),
+  /**
+   * Change time (nanoseconds) of the target's folder just before a create's native
+   * call. A create leaves no trace in this record's folder, so recovery reads it here.
+   */
+  parentChange: Schema.optionalKey(Schema.String),
   phase: Schema.Literals([
     "preparing",
     "prepared",
@@ -184,6 +189,7 @@ export type MutationPoint =
   | "staged"
   | "prepared"
   | "checked"
+  | "called"
   | "displaced"
   | "install-intent"
   | "installed"
@@ -944,6 +950,48 @@ async function run(
       return false;
     return snapshot.revision === record.expected;
   };
+  const entryIdentity = async (path: string): Promise<Identity | null> => {
+    const stat = await NodeFSP.lstat(path, { bigint: true }).catch((e: unknown) => {
+      if (absent(e)) return null;
+      throw e;
+    });
+    return stat && { dev: String(stat.dev), ino: String(stat.ino) };
+  };
+  /** Whether a `publishing` record's call ran: false if not, the phase it reached if so, null if unknown. */
+  const publicationRan = async (): Promise<false | Partial<RetainedRecord> | null> => {
+    if (record.publication === "exchange") {
+      // An exchange swaps the staged copy with the live file.
+      const held = await fileIdentity(slot);
+      if (sameIdentity(held, record.stagedIdentity)) return false;
+      return held && sameIdentity(await fileIdentity(target), record.stagedIdentity)
+        ? { phase: "displaced", capturedIdentity: held }
+        : null;
+    }
+    if (record.publication === "capture") {
+      // A capture moves the live entry into this record's folder.
+      const held = await entryIdentity(retained);
+      return held === null ? false : { phase: "displaced", capturedIdentity: held };
+    }
+    // A create clones the staged copy and leaves it in place, so only the target's
+    // folder shows it ran: unchanged since, with nothing at the target, it did not.
+    // A file there may be the clone or another writer's; same bytes prove nothing.
+    if ((await entryIdentity(target)) !== null) return null;
+    const folder = await NodeFSP.lstat(NodePath.dirname(target), { bigint: true }).catch(
+      (e: unknown) => {
+        if (absent(e)) return null;
+        throw e;
+      },
+    );
+    return record.parentChange !== undefined &&
+      folder?.isDirectory() &&
+      String(folder.ctimeNs) === record.parentChange &&
+      sameIdentity(
+        { dev: String(folder.dev), ino: String(folder.ino) },
+        record.binding?.parentIdentity,
+      )
+      ? false
+      : null;
+  };
   const peersIntact = async () => {
     const root = input.binding.rootPath;
     const planned = new Set([
@@ -961,6 +1009,27 @@ async function run(
     }
     return true;
   };
+  // A crash between recording `publishing` and making the native call leaves the
+  // record there. A lease outlives a dying server only until its call retires, so
+  // what stands now is final: the call either ran or never will. Untouched, the
+  // step is prepared again and every check runs afresh; run, recovery goes on from
+  // where the call left it; anything else stays for review below.
+  if (record.phase === "publishing") {
+    const ran = await publicationRan();
+    if (ran === false) await save({ phase: "prepared", sourceMutation: false });
+    else if (ran !== null) await save(ran);
+  }
+  // A fenced publication is made only by its own caller, which checks the
+  // workspace epoch under the root lease first. Recovery, which has no bytes,
+  // cannot check it, so it never makes one: nothing was published, and the
+  // caller's next attempt starts afresh.
+  if (
+    input.bytes === undefined &&
+    record.expectedMutationEpoch !== undefined &&
+    record.sourceMutation === false &&
+    (record.phase === "preparing" || record.phase === "prepared")
+  )
+    return finish("skipped", "revision");
   // This durable refusal is definitive: no native source syscall was admitted.
   if (
     record.sourceMutation === false &&
@@ -1207,10 +1276,14 @@ async function run(
       publishedIdentity: null,
       publishedRevision: null,
       sourceMutation: true,
+      parentChange: String(
+        (await NodeFSP.lstat(NodePath.dirname(target), { bigint: true })).ctimeNs,
+      ),
     });
     await point("checked");
     await point("install-intent");
     const reply = await command("create", "slot", NodePath.basename(target));
+    await point("called");
     if (reply.outcome === "unchanged") {
       await save({ sourceMutation: false });
       return finish("skipped", reply.code === 17 ? "exists" : "unavailable");
@@ -1237,6 +1310,7 @@ async function run(
     await save({ phase: "publishing", sourceMutation: true });
     await point("checked");
     const reply = await command("exchange", "slot", NodePath.basename(target));
+    await point("called");
     if (reply.outcome === "unchanged") {
       await save({ sourceMutation: false });
       return finish("skipped", "target");
@@ -1261,6 +1335,7 @@ async function run(
   await save({ phase: "publishing", sourceMutation: true });
   await point("checked");
   const capture = await command("capture", NodePath.basename(target), "retained");
+  await point("called");
   if (capture.outcome === "unchanged") {
     await save({ sourceMutation: false });
     return finish("skipped", "target");
