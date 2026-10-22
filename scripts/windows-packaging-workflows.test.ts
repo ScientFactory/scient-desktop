@@ -12,8 +12,8 @@ it("requires applicable Windows qualification through the existing Test check", 
       outputs: { changed: "${{ steps.detect.outputs.changed }}" },
     },
     windows_packaging: {
-      needs: ["queue_ci", "windows_packaging_changes"],
-      if: "${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}",
+      needs: ["queue_ci", "release_notes", "windows_packaging_changes"],
+      if: "${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}",
       uses: "./.github/workflows/windows-packaging.yml",
     },
     test: {
