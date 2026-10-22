@@ -742,17 +742,22 @@ see a different `latexDir` (`latexStateLocation.ts`, provided only to them in
 not find its own `texmf.cnf` (a single "ü" is enough), and `latexmk` converts
 every path argument to the system code page, so Hebrew or Cyrillic become "?".
 8.3 short names do not help, because kpathsea expands them back. The
-replacement is `%ProgramData%\scient-latex-<16 hex>`: created under a fresh
-random name, stripped of inherited access and granted only to the account (by
-SID, from `whoami`), SYSTEM and Administrators with `icacls`, then checked to be
-still empty before anything goes in it. `%ProgramData%` does not let other
-accounts delete what they did not create, so the folder cannot be swapped
-afterwards. Its path is recorded in `<profile latexDir>/tex-location.json` and
-reused while it exists; a recorded path is honored only if it is a direct child
-of `%ProgramData%` with that name pattern. Build evidence and SyncTeX indexes
-already in the profile folder are moved across. If any step fails, the profile
-`latexDir` stays in use, which is the earlier behavior. ASCII paths and other
-platforms are untouched. Every compile writes into
+replacement is `%ProgramData%\scient-latex-<16 hex>`. No other account can
+ever reach it. It is made inside the profile `latexDir`, where only this account
+can open it, locked there with `icacls` (inherited access removed, full control
+for the account's SID from `whoami`, SYSTEM and Administrators), and only then
+moved into `%ProgramData%`. A same-volume move keeps the folder's protected
+access list, so it arrives private. A profile on another drive cannot be moved,
+and nothing changes. `%ProgramData%` lets accounts delete only what they created,
+so the folder cannot be removed or replaced afterwards. Its path and NTFS
+identity (`dev:ino`) are recorded in `<profile latexDir>/tex-location.json`. A
+later start reuses it only if the path is a direct child of `%ProgramData%` with
+that name pattern and the same real folder (not a link) is still there; a folder
+recreated under the name has a different identity and is ignored. Build evidence
+and SyncTeX indexes in the profile folder move across entry by entry, never over
+an existing entry, and anything left moves on a later start. If any step fails,
+or resolving takes more than 30 seconds, the profile `latexDir` stays in use,
+which is the earlier behavior. ASCII paths and other platforms are untouched. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.

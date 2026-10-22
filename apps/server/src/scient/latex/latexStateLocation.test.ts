@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { ChildProcessSpawner } from "effect/process";
@@ -54,7 +55,7 @@ const harness = (
   options: {
     readonly platform?: NodeJS.Platform;
     readonly profileName?: string;
-    readonly programData?: "present" | "absent";
+    readonly programData?: "present" | "absent" | "missing";
     readonly respond?: (
       input: ProcessRunner.ProcessRunInput,
     ) => Effect.Effect<ProcessRunner.ProcessRunOutput>;
@@ -67,7 +68,7 @@ const harness = (
     const latexDir = path.join(root, options.profileName ?? "יעקב", "latex");
     const programData = path.join(root, "ProgramData");
     yield* fileSystem.makeDirectory(latexDir, { recursive: true });
-    yield* fileSystem.makeDirectory(programData);
+    if (options.programData !== "missing") yield* fileSystem.makeDirectory(programData);
     const calls = yield* Ref.make<ReadonlyArray<ProcessRunner.ProcessRunInput>>([]);
     const respond = options.respond ?? windowsTools;
     const services = Layer.mergeAll(
@@ -90,7 +91,20 @@ const harness = (
     const privateFolders = fileSystem
       .readDirectory(programData)
       .pipe(Effect.map((entries) => entries.map((entry) => path.join(programData, entry))));
-    return { latexDir, programData, calls, resolve, privateFolders };
+    const privateFoldersOrNone = fileSystem
+      .exists(programData)
+      .pipe(Effect.flatMap((present) => (present ? privateFolders : Effect.succeed([]))));
+    const stagingLeftovers = fileSystem
+      .readDirectory(latexDir)
+      .pipe(Effect.map((entries) => entries.filter((entry) => entry.startsWith(".scient-latex-"))));
+    return {
+      latexDir,
+      programData,
+      calls,
+      resolve,
+      privateFolders: privateFoldersOrNone,
+      stagingLeftovers,
+    };
   });
 
 describe("isTexSafePath", () => {
@@ -159,7 +173,7 @@ describe("resolveLatexStateDirectory", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("moves a non-ASCII profile into a private folder, locked before it is used", () =>
+  it.effect("locks the folder inside the profile, then moves it into ProgramData", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -169,15 +183,23 @@ describe("resolveLatexStateDirectory", () => {
       expect(path.basename(directory)).toMatch(/^scient-latex-[0-9a-f]{16}$/u);
       expect(isTexSafePath(path.basename(directory))).toBe(true);
       expect(yield* fixture.privateFolders).toEqual([directory]);
+      // The lock is applied where only this account can reach the folder.
+      const staging = path.join(fixture.latexDir, `.${path.basename(directory)}`);
       const calls = yield* Ref.get(fixture.calls);
       expect(calls.map((call) => [call.command, call.args])).toEqual([
         ["C:\\Windows\\System32\\whoami.exe", ["/user", "/fo", "csv", "/nh"]],
-        ["C:\\Windows\\System32\\icacls.exe", privateFolderLockArguments(directory, SID)],
+        ["C:\\Windows\\System32\\icacls.exe", privateFolderLockArguments(staging, SID)],
       ]);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
+      const info = yield* fileSystem.stat(directory);
       const recorded = JSON.parse(
         yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE)),
       );
-      expect(recorded).toEqual({ schemaVersion: 1, directory });
+      expect(recorded).toEqual({
+        schemaVersion: 1,
+        directory,
+        identity: `${String(info.dev)}:${String(Option.getOrThrow(info.ino))}`,
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -204,6 +226,36 @@ describe("resolveLatexStateDirectory", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("ignores a folder someone recreated under the recorded name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* harness();
+      const first = yield* fixture.resolve;
+      yield* fileSystem.remove(first, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(first, "managed"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(first, "managed", "managed-state.json"), "{}");
+      const second = yield* fixture.resolve;
+      expect(second).not.toBe(first);
+      expect(path.dirname(second)).toBe(fixture.programData);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("ignores a link left at the recorded name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* harness();
+      const first = yield* fixture.resolve;
+      const elsewhere = path.join(path.dirname(fixture.programData), "elsewhere");
+      yield* fileSystem.rename(first, elsewhere);
+      yield* fileSystem.symlink(elsewhere, first);
+      // Same identity behind the link, which is exactly why a link is refused.
+      const second = yield* fixture.resolve;
+      expect(second).not.toBe(first);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("never adopts a recorded folder it could not have made", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -214,9 +266,14 @@ describe("resolveLatexStateDirectory", () => {
         "scient-latex-0123456789abcdef",
       );
       yield* fileSystem.makeDirectory(elsewhere);
+      const info = yield* fileSystem.stat(elsewhere);
       yield* fileSystem.writeFileString(
         path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE),
-        JSON.stringify({ schemaVersion: 1, directory: elsewhere }),
+        JSON.stringify({
+          schemaVersion: 1,
+          directory: elsewhere,
+          identity: `${String(info.dev)}:${String(Option.getOrThrow(info.ino))}`,
+        }),
       );
       const directory = yield* fixture.resolve;
       expect(directory).not.toBe(elsewhere);
@@ -238,6 +295,7 @@ describe("resolveLatexStateDirectory", () => {
       });
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
       expect(yield* fixture.privateFolders).toEqual([]);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
       expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE))).toBe(
         false,
       );
@@ -254,26 +312,19 @@ describe("resolveLatexStateDirectory", () => {
       });
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
       expect(yield* fixture.privateFolders).toEqual([]);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
       expect((yield* Ref.get(fixture.calls)).map((call) => call.command)).toEqual([
         "C:\\Windows\\System32\\whoami.exe",
       ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("refuses a folder something was put in before the lock took hold", () =>
+  it.effect("stays in the profile when the locked folder cannot be moved there", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const fixture = yield* harness({
-        respond: (input) =>
-          input.command.endsWith("icacls.exe")
-            ? fileSystem
-                .writeFileString(path.join(input.args[0] ?? "", "version.dll"), "planted")
-                .pipe(Effect.orDie, Effect.andThen(windowsTools(input)))
-            : windowsTools(input),
-      });
+      // As on a profile kept on another drive: the move is refused.
+      const fixture = yield* harness({ programData: "missing" });
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
-      expect(yield* fixture.privateFolders).toEqual([]);
+      expect(yield* fixture.stagingLeftovers).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -285,26 +336,39 @@ describe("resolveLatexStateDirectory", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("carries build evidence and SyncTeX indexes over, never over newer ones", () =>
+  it.effect("carries evidence and SyncTeX indexes over entry by entry, never over newer ones", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const fixture = yield* harness();
       yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "{}");
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "old a");
       yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "synctex", "artifact"), {
         recursive: true,
       });
       const directory = yield* fixture.resolve;
-      expect(yield* fileSystem.exists(path.join(directory, "evidence", "a.json"))).toBe(true);
+      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
+        "old a",
+      );
       expect(yield* fileSystem.exists(path.join(directory, "synctex", "artifact"))).toBe(true);
       expect(yield* fileSystem.exists(path.join(fixture.latexDir, "evidence"))).toBe(false);
+      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "synctex"))).toBe(false);
 
-      // A second copy appearing in the profile later does not replace the moved one.
+      // Left behind by an earlier, interrupted start: what is new moves, what
+      // the folder in use already has is not replaced.
       yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "stale");
+      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "b.json"), "b");
       yield* fixture.resolve;
-      expect(yield* fileSystem.exists(path.join(directory, "evidence", "a.json"))).toBe(true);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "evidence"))).toBe(true);
+      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
+        "old a",
+      );
+      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "b.json"))).toBe(
+        "b",
+      );
+      expect(yield* fileSystem.readDirectory(path.join(fixture.latexDir, "evidence"))).toEqual([
+        "a.json",
+      ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -14,14 +14,21 @@
  *
  * So on Windows, when `latexDir` is not plain ASCII, the LaTeX services get a
  * different one: a folder of this user's own directly under `%ProgramData%`,
- * which is ASCII on every Windows. That is a shared location, so the folder is
- * made private before anything goes in it: a fresh random name nobody can have
- * prepared, inherited access removed, access granted only to this user, SYSTEM
- * and Administrators, and then a check that it is still empty, so nothing
- * another account slipped in before the lock can stay. Other accounts cannot
- * remove or rename it afterwards, because `%ProgramData%` only lets them delete
- * what they created. Its path is recorded in the original `latexDir`, inside
- * the user's private profile, so every start finds the same folder.
+ * which is ASCII on every Windows. That is a shared location, so no other
+ * account may ever reach the folder:
+ *
+ * - It is made and locked inside the profile `latexDir`, which only this user
+ *   can open — inherited access removed, full control for this user, SYSTEM
+ *   and Administrators only — and then moved into `%ProgramData%`. A move on
+ *   one volume keeps the folder's own access list, so it arrives already
+ *   private; no other account could have opened it in between. Where the
+ *   profile is on another drive the move fails and nothing changes.
+ * - `%ProgramData%` lets accounts delete only what they created, so nobody
+ *   else can remove, rename or replace it afterwards.
+ * - Its path and its NTFS identity (volume and file ID) are recorded in the
+ *   profile `latexDir`. A later start uses it only while that same folder,
+ *   not a link, is still there. A folder someone recreated under the same
+ *   name after it was deleted has a different identity and is ignored.
  *
  * Everywhere else, and on any Windows whose path is already ASCII, nothing
  * changes. If the private folder cannot be made, the original stays in use:
@@ -34,6 +41,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -46,6 +54,8 @@ export const LATEX_STATE_LOCATION_FILE = "tex-location.json";
 const PRIVATE_FOLDER_PATTERN = /^scient-latex-[0-9a-f]{16}$/u;
 const TOOL_TIMEOUT = "10 seconds";
 const TOOL_MAX_OUTPUT_BYTES = 64 * 1024;
+/** Server start waits for this at most; past it, the profile folder is used. */
+const RESOLVE_TIMEOUT = "30 seconds";
 /**
  * What earlier builds left that is worth keeping: build evidence and the
  * SyncTeX indexes of published PDFs. Everything else there is rebuilt.
@@ -55,6 +65,8 @@ const CARRIED_OVER = ["evidence", "synctex"] as const;
 const LatexStateLocationRecord = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   directory: Schema.String,
+  /** `dev:ino` of the folder as made; a different folder at the path differs. */
+  identity: Schema.String,
 });
 const LatexStateLocationJson = Schema.fromJsonString(LatexStateLocationRecord);
 const decodeLocation = Schema.decodeUnknownEffect(LatexStateLocationJson);
@@ -155,14 +167,26 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
           ),
         );
 
+    /**
+     * `dev:ino` of a real folder at `directory`, or `null` for anything else.
+     * A link answers `readLink`; a folder does not.
+     */
+    const folderIdentity = (directory: string) =>
+      Effect.gen(function* () {
+        if (Option.isSome(yield* fileSystem.readLink(directory).pipe(Effect.option))) return null;
+        const info = yield* fileSystem.stat(directory);
+        if (info.type !== "Directory" || Option.isNone(info.ino)) return null;
+        return `${String(info.dev)}:${String(info.ino.value)}`;
+      }).pipe(Effect.orElseSucceed(() => null));
+
     const makePrivateFolder = (programData: string) =>
       Effect.gen(function* () {
-        const directory = path.join(
-          programData,
-          `scient-latex-${NodeCrypto.randomBytes(8).toString("hex")}`,
-        );
+        const name = `scient-latex-${NodeCrypto.randomBytes(8).toString("hex")}`;
+        const staging = path.join(latexDir, `.${name}`);
+        const directory = path.join(programData, name);
         // Not recursive: an existing folder is refused rather than adopted.
-        yield* fileSystem.makeDirectory(directory);
+        yield* fileSystem.makeDirectory(staging);
+        let moved = false;
         return yield* Effect.gen(function* () {
           const whoami = yield* runTool(`${system32}\\whoami.exe`, ["/user", "/fo", "csv", "/nh"]);
           const sid = windowsUserSid(whoami.stdout);
@@ -171,13 +195,16 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
               detail: "whoami did not name this account's SID.",
             });
           }
-          yield* runTool(`${system32}\\icacls.exe`, privateFolderLockArguments(directory, sid));
-          if ((yield* fileSystem.readDirectory(directory)).length > 0) {
+          yield* runTool(`${system32}\\icacls.exe`, privateFolderLockArguments(staging, sid));
+          yield* fileSystem.rename(staging, directory);
+          moved = true;
+          const identity = yield* folderIdentity(directory);
+          if (identity === null) {
             return yield* new LatexStateLocationError({
-              detail: "Something was put in the new folder before it was made private.",
+              detail: "The moved folder could not be identified.",
             });
           }
-          const contents = yield* encodeLocation({ schemaVersion: 1, directory });
+          const contents = yield* encodeLocation({ schemaVersion: 1, directory, identity });
           yield* writeFileStringAtomically({ filePath: locationPath, contents });
           yield* Effect.logInfo("scient latex state moved to a private ASCII folder", {
             directory,
@@ -186,11 +213,37 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
         }).pipe(
           Effect.onError(() =>
             fileSystem
-              .remove(directory, { recursive: true, force: true })
+              .remove(moved ? directory : staging, { recursive: true, force: true })
               .pipe(Effect.ignoreCause()),
           ),
         );
       });
+
+    /**
+     * Moves what is worth keeping, one entry at a time, never over an entry
+     * already there. Best effort and repeatable: whatever fails moves on a
+     * later start, and nothing here can fail one.
+     */
+    const carryOver = (directory: string) =>
+      Effect.forEach(
+        CARRIED_OVER,
+        (folder) =>
+          Effect.gen(function* () {
+            const from = path.join(latexDir, folder);
+            if (!(yield* fileSystem.exists(from))) return;
+            const to = path.join(directory, folder);
+            yield* fileSystem.makeDirectory(to, { recursive: true });
+            for (const entry of yield* fileSystem.readDirectory(from)) {
+              const target = path.join(to, entry);
+              if (yield* fileSystem.exists(target)) continue;
+              yield* fileSystem.rename(path.join(from, entry), target).pipe(Effect.ignoreCause());
+            }
+            if ((yield* fileSystem.readDirectory(from)).length === 0) {
+              yield* fileSystem.remove(from, { recursive: true });
+            }
+          }).pipe(Effect.ignoreCause()),
+        { discard: true },
+      );
 
     return yield* Effect.gen(function* () {
       const programData =
@@ -207,33 +260,21 @@ export const resolveLatexStateDirectory = Effect.fn("scient.latex.resolveLatexSt
       }
       const recorded = yield* fileSystem.readFileString(locationPath).pipe(
         Effect.flatMap(decodeLocation),
-        Effect.map((record) => record.directory),
         Effect.orElseSucceed(() => null),
       );
       const reusable =
         recorded !== null &&
-        isPrivateLatexStateFolder({ directory: recorded, programData, path }) &&
-        (yield* fileSystem.stat(recorded).pipe(
-          Effect.map((info) => info.type === "Directory"),
-          Effect.orElseSucceed(() => false),
-        ));
-      const directory = reusable ? recorded : yield* makePrivateFolder(programData);
-      // Best effort and repeatable: a start interrupted before this ran
-      // carries the rest over next time, and nothing here can fail a start.
-      yield* Effect.forEach(
-        CARRIED_OVER,
-        (entry) =>
-          Effect.gen(function* () {
-            const from = path.join(latexDir, entry);
-            const to = path.join(directory, entry);
-            if ((yield* fileSystem.exists(from)) && !(yield* fileSystem.exists(to))) {
-              yield* fileSystem.rename(from, to);
-            }
-          }).pipe(Effect.ignoreCause()),
-        { discard: true },
-      );
+        isPrivateLatexStateFolder({ directory: recorded.directory, programData, path }) &&
+        (yield* folderIdentity(recorded.directory)) === recorded.identity;
+      const directory = reusable ? recorded.directory : yield* makePrivateFolder(programData);
+      yield* carryOver(directory);
       return directory;
     }).pipe(
+      Effect.timeoutOrElse({
+        duration: RESOLVE_TIMEOUT,
+        orElse: () =>
+          Effect.fail(new LatexStateLocationError({ detail: "Finding the folder took too long." })),
+      }),
       Effect.catch((cause) =>
         Effect.logWarning("scient latex state stays in the profile folder", {
           latexDir,
