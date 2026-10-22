@@ -494,6 +494,13 @@ export const make = (hooks: ApplierHooks = {}) =>
           const planned = [
             ...new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
           ];
+          // Settle any step a crash left pending before deciding anything: settlement
+          // checks each step's group, and a step left pending is otherwise replayed as
+          // if it never started.
+          if (state.phase === "applying")
+            yield* files
+              .withSettledWorkspaceRead({ cwd: state.cwd }, () => Effect.void)
+              .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
           if (state.phase === "applying")
             for (const [unitIndex, unit] of state.plan.units.entries()) {
               if (state.outcomes[unitIndex] !== "pending") continue;

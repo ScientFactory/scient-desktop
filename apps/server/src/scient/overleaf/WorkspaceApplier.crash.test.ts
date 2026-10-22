@@ -422,6 +422,90 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       }),
   );
 
+  // With every file of the unit changing, nothing else reads the folder before the
+  // apply resumes; the apply settles the pending step itself.
+  it.live.each(
+    (["prepared", "displaced"] as const).flatMap((point) =>
+      [false, true].map((editorFirst) => ({ point, editorFirst })),
+    ),
+  )("finishes a unit whose every file changes after a crash at $point", ({ point, editorFirst }) =>
+    fixture(async (h) => {
+      const both: Scenario = {
+        captured: { "a.tex": "base A", "b.tex": "base B" },
+        target: { "a.tex": "remote A", "b.tex": "remote B" },
+      };
+      await crashAt(h, point, both);
+      await h.restart();
+      if (editorFirst) await editorReads(h);
+      expect(await h.apply("crash")).toMatchObject({
+        outcome: "complete",
+        matchesTarget: true,
+        interrupted: [],
+      });
+      expect(await read(h.cwd, "b.tex")).toBe("remote B");
+    }),
+  );
+
+  // The last step turns the emptied folder into a file, capturing the folder first.
+  it.live.each([3, 4])(
+    "finishes removing a captured folder after a crash (displaced #%s)",
+    (occurrence) =>
+      fixture(async (h) => {
+        const folded = emptied("notes/deep/old.tex");
+        await crashAt(h, "displaced", folded, occurrence);
+        await h.restart();
+        await editorReads(h);
+        expect(await h.apply("crash")).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await read(h.cwd, "notes")).toBe("new");
+      }),
+  );
+
+  // Empty folders left by earlier deletions are no one's files.
+  it.live.each(["notes/empty", "notes/deep/empty"])(
+    "folds a folder that also holds an empty folder (%s)",
+    (empty) =>
+      fixture(async (h) => {
+        const folded = emptied("notes/deep/old.tex");
+        await put(h.cwd, folded.captured);
+        await NodeFSP.mkdir(NodePath.join(h.cwd, empty), { recursive: true });
+        expect(await h.apply("folded", planOf(folded))).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await read(h.cwd, "notes")).toBe("new");
+      }),
+  );
+
+  it.live("folds a folder after an earlier sync deleted a file below it", () =>
+    fixture(async (h) => {
+      const first: Scenario = {
+        captured: {
+          "a.tex": "base",
+          "notes/obsolete/deleted.tex": "obsolete",
+          "notes/live/old.tex": "old",
+        },
+        target: { "a.tex": "base", "notes/live/old.tex": "old" },
+      };
+      const second: Scenario = {
+        captured: { "a.tex": "base", "notes/live/old.tex": "old" },
+        target: { "a.tex": "remote", notes: "new" },
+      };
+      await put(h.cwd, first.captured);
+      expect(await h.apply("first", planOf(first))).toMatchObject({ outcome: "complete" });
+      expect(await h.apply("second", planOf(second))).toMatchObject({
+        outcome: "complete",
+        matchesTarget: true,
+        interrupted: [],
+      });
+      expect(await read(h.cwd, "notes")).toBe("new");
+    }),
+  );
+
   // Without a crash: a peer that changes while the step is staged stops it before publishing.
   it.live("publishes nothing when a peer changes while the step is staged", () => {
     let folder = "";

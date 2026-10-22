@@ -346,23 +346,22 @@ async function peerEntry(
   return { kind: "other" };
 }
 /**
- * Whether the folder `path` below `root` holds nothing but `only`, the folders
- * leading to them included, without following links.
+ * Whether the folder `path` below `root` holds no file but those in `only`:
+ * folders, empty ones included, may lead anywhere; any other file, link or
+ * special entry fails. Links are never followed.
  */
 async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
   const allowed = new Set(only);
-  const folders = new Set(
-    only.flatMap((name) => {
-      const segments = name.split("/");
-      return segments.slice(1).map((_, index) => segments.slice(0, index + 1).join("/"));
-    }),
-  );
   const pending = [path];
+  // Bounded: a folder the group empties holds its files and some folders, not a tree.
+  let seen = 0;
   for (let folder = pending.pop(); folder !== undefined; folder = pending.pop()) {
     const entries = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
+    seen += entries.length;
+    if (seen > allowed.size + 10_000) return false;
     for (const entry of entries) {
       const name = `${folder}/${entry.name}`;
-      if (entry.isDirectory() && folders.has(name)) pending.push(name);
+      if (entry.isDirectory()) pending.push(name);
       else if (!(entry.isFile() && allowed.has(name))) return false;
     }
   }
@@ -1108,6 +1107,31 @@ async function run(
       (await guarded(retained))
     )
       return finish("done");
+    // A folder captured for pruning sits in this private record until removed: finish
+    // removing it if still empty, put it back if anything appeared in it. Once the
+    // capture is recorded, its absence here means the removal already happened.
+    if (kind === "prune" && ["publishing", "displaced"].includes(record.phase)) {
+      const held = await NodeFSP.lstat(retained, { bigint: true }).catch((e: unknown) => {
+        if (absent(e)) return null;
+        throw e;
+      });
+      if (held === null) {
+        if (record.phase === "displaced") return finish("done");
+      } else if (
+        held.isDirectory() &&
+        (record.capturedIdentity === null ||
+          (String(held.dev) === record.capturedIdentity.dev &&
+            String(held.ino) === record.capturedIdentity.ino))
+      ) {
+        if ((await NodeFSP.readdir(retained)).length === 0) {
+          const removed = await command("rmdir", "retained", "retained");
+          return good(removed) ? finish("done") : finish("attention", "recovery");
+        }
+        await save({ phase: "restoring", failure: "target" });
+        const restored = await command("restore", "retained", NodePath.basename(target));
+        return finish("attention", good(restored) ? "target" : "recovery");
+      }
+    }
     if (
       (record.phase === "installing" || record.phase === "installed") &&
       record.publishedIdentity &&
