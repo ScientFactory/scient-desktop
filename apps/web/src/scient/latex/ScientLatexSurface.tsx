@@ -1,4 +1,5 @@
 import { LatexSelect } from "./LatexSelect";
+import { useScientAnalyticsView } from "~/scient/analytics/client";
 import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 import { File, Virtualizer } from "@pierre/diffs/react";
@@ -1313,6 +1314,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const showEditor = mode === "source" || mode === "split";
   const activePreview = mode === "split" ? splitPreview : mode === "source" ? null : mode;
   const showVisual = activePreview === "visual";
+  useScientAnalyticsView(
+    showVisual ? { name: "feature.viewed", properties: { feature: "latex-visual" } } : null,
+    props.environmentId,
+  );
   const showRightPane = activePreview !== null;
   // Keep Visual's save sessions alive when hidden; only the chosen preview is visible.
   const [visualOpened, setVisualOpened] = useState(showVisual);

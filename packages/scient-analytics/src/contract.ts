@@ -173,6 +173,7 @@ const OPERATION_KINDS = new Set([
   "compute-run",
   "compute-artifact",
   "latex-build",
+  "latex-visual-edit",
   "document-export",
   "source-control",
   "built-in-skill",

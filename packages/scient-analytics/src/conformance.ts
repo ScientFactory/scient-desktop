@@ -93,6 +93,31 @@ export function buildAnalyticsConformanceFixture() {
       };
     }),
   );
+  for (const name of [
+    "feature.viewed",
+    "scient.operation.started",
+    "scient.operation.completed",
+    "scient.operation.failed",
+    "scient.operation.cancelled",
+  ] as const) {
+    const event = normalizeInheritedEvent(
+      name,
+      {
+        ...representativeProperties,
+        feature: "latex-visual",
+        operationKind: "latex-visual-edit",
+        trigger: "user",
+      },
+      context,
+    )!;
+    cases.push({
+      case: `${name}:latex-visual`,
+      name: event.name,
+      privacyLevel: event.privacyLevel,
+      consentLevel: event.privacyLevel,
+      properties: event.properties,
+    });
+  }
   return {
     schemaVersion: ANALYTICS_SCHEMA_VERSION,
     contractRevision: ANALYTICS_CONTRACT_REVISION,

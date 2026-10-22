@@ -6,6 +6,7 @@
  * Usage: node WorkspaceApplier.crash-child.ts <job.json>
  */
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
@@ -22,6 +23,11 @@ export interface CrashJob {
   readonly killAt: MutationPoint;
   /** Which time `killAt` is reached that kills the child: 1 for the first step. */
   readonly occurrence?: number;
+  /**
+   * Instead of a hook, die inside a file operation: just before renaming onto,
+   * or just after opening, a path ending in `suffix`. Reaches windows between hooks.
+   */
+  readonly killIn?: { readonly operation: "rename" | "open"; readonly suffix: string };
   readonly plan: {
     readonly base: Record<string, string>;
     readonly remote: Record<string, string>;
@@ -38,6 +44,28 @@ const jobPath = process.argv[2];
 if (jobPath !== undefined) {
   const job: CrashJob = JSON.parse(await NodeFSP.readFile(jobPath, "utf8"));
   let reached = 0;
+  const killIn = job.killIn;
+  // The module's mutable default export; `syncBuiltinESMExports` carries changes to imports.
+  const MutableFSP = (
+    NodeFSP as unknown as {
+      default: { rename: typeof NodeFSP.rename; open: typeof NodeFSP.open };
+    }
+  ).default;
+  if (killIn?.operation === "rename") {
+    const rename = MutableFSP.rename;
+    MutableFSP.rename = async (from, to) => {
+      if (String(to).endsWith(killIn.suffix)) process.kill(process.pid, "SIGKILL");
+      return rename(from, to);
+    };
+  } else if (killIn?.operation === "open") {
+    const open = MutableFSP.open;
+    MutableFSP.open = async (path, ...rest) => {
+      const handle = await open(path, ...rest);
+      if (String(path).endsWith(killIn.suffix)) process.kill(process.pid, "SIGKILL");
+      return handle;
+    };
+  }
+  NodeModule.syncBuiltinESMExports();
   const plan: WorkspaceApplyPlan = {
     base: new Map(Object.entries(job.plan.base)),
     remote: new Map(Object.entries(job.plan.remote)),

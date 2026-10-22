@@ -22,6 +22,9 @@ import {
 } from "./latexSourceEditPlan";
 import { LATEX_COMPILATION_STORAGE_KEY } from "./latexCompilation";
 
+const analyticsView = vi.hoisted(() => vi.fn());
+vi.mock("~/scient/analytics/client", () => ({ useScientAnalyticsView: analyticsView }));
+
 const {
   notifyLatexBindingChange,
   requestLatexRebuild,
@@ -280,6 +283,7 @@ describe("the LaTeX surface on a document session", () => {
     vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
+    analyticsView.mockClear();
     notifyLatexBindingChange.mockReset();
     build.snapshot = null;
     build.toolchain = null;
@@ -378,6 +382,21 @@ describe("the LaTeX surface on a document session", () => {
     flushVisualDraft(draftKey);
     return readPersistedVisualDraft(draftKey);
   };
+
+  it("observes Visual and Split/Visual, but not a retained editor hidden in Source", async () => {
+    await mount("visual");
+    expect(analyticsView).toHaveBeenLastCalledWith(
+      { name: "feature.viewed", properties: { feature: "latex-visual" } },
+      environmentId,
+    );
+    await mount("source");
+    expect(analyticsView).toHaveBeenLastCalledWith(null, environmentId);
+    await mount("split");
+    expect(analyticsView).toHaveBeenLastCalledWith(
+      { name: "feature.viewed", properties: { feature: "latex-visual" } },
+      environmentId,
+    );
+  });
 
   it.each(["source", "visual"] as const)(
     "owns Save in %s even when the composer's global listener mounted first",

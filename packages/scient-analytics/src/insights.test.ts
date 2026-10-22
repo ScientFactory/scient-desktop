@@ -4,6 +4,38 @@ import { eventContractViolation } from "./wireContract.ts";
 
 const context = { appVersion: "0.6.10", buildChannel: "stable" } as const;
 describe("product insight contract", () => {
+  it("preserves Visual LaTeX categories but strips document content and identifiers", () => {
+    for (const [name, properties] of [
+      ["feature.viewed", { feature: "latex-visual" }],
+      ["scient.operation.started", { operationKind: "latex-visual-edit", trigger: "user" }],
+      ["scient.operation.completed", { operationKind: "latex-visual-edit", durationMs: 100 }],
+      ["scient.operation.failed", { operationKind: "latex-visual-edit", failureClass: "unknown" }],
+    ] as const) {
+      const event = normalizeInheritedEvent(
+        name,
+        {
+          ...properties,
+          source: "PRIVATE",
+          path: "PRIVATE",
+          documentId: "PRIVATE",
+          revision: "PRIVATE",
+          error: "PRIVATE",
+        },
+        context,
+      )!;
+      expect(event.properties).toMatchObject(
+        "feature" in properties
+          ? { feature: "latex-visual" }
+          : { operationKind: "latex-visual-edit" },
+      );
+      expect(JSON.stringify(event)).not.toContain("PRIVATE");
+      expect(eventContractViolation({ ...event, consentLevel: event.privacyLevel })).toBeNull();
+      expect(consentAllows("off", event.privacyLevel)).toBe(false);
+      expect(consentAllows("essential", event.privacyLevel)).toBe(
+        name === "scient.operation.failed",
+      );
+    }
+  });
   it("recognizes bounded public namespaces and Antigravity variants without private labels", () => {
     expect(modelKey("openai/gpt-5.4")).toBe("gpt-5.4");
     expect(modelKey("anthropic/claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
