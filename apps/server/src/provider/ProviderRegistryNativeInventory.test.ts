@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -215,6 +216,7 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-provider-native-inventory-" }),
       ),
       Layer.provideMerge(ModelManifest.layerTest),
+      Layer.provideMerge(ProviderLatestVersions.layer),
       Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
       Layer.provideMerge(NodeServices.layer),
     ),

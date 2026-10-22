@@ -568,6 +568,9 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader: "Bearer instruction-compaction-token",
     capabilities: new Set(["browser"]),
+    // SCIENT-FORK:START — Scient Extensions connectors.
+    connectors: [],
+    // SCIENT-FORK:END
   });
   const adapter = yield* makeAcpAdapterV2({
     instanceId,

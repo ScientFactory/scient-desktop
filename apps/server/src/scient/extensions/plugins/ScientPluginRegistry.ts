@@ -490,43 +490,45 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
    * Encode the full state, preserved entries included. It must fit the startup
    * reader's budget, otherwise the next start could not read it.
    */
-  const encodeWithinBudget = (plugins: ReadonlyArray<InstalledPlugin>) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(state);
-      const contents = yield* encodePersistedPluginsState({
-        formatVersion: 1,
-        plugins: [...plugins.map((plugin) => plugin.record), ...current.preserved],
-      }).pipe(
-        Effect.mapError(
-          () =>
-            new ExtensionsError({
-              reason: "state-unavailable",
-              message: "Scient plugin state could not be encoded.",
-            }),
-        ),
-      );
-      if (Buffer.byteLength(contents, "utf8") > MAX_STATE_BYTES) {
-        return yield* new ExtensionsError({
-          reason: "limit-reached",
-          message: `Scient plugin state would exceed ${MAX_STATE_BYTES / 1024} KiB. Remove a plugin and try again.`,
-        });
-      }
-      return contents;
-    });
+  const encodeWithinBudget = Effect.fn("ScientPluginRegistry.encodeWithinBudget")(function* (
+    plugins: ReadonlyArray<InstalledPlugin>,
+  ) {
+    const current = yield* Ref.get(state);
+    const contents = yield* encodePersistedPluginsState({
+      formatVersion: 1,
+      plugins: [...plugins.map((plugin) => plugin.record), ...current.preserved],
+    }).pipe(
+      Effect.mapError(
+        () =>
+          new ExtensionsError({
+            reason: "state-unavailable",
+            message: "Scient plugin state could not be encoded.",
+          }),
+      ),
+    );
+    if (Buffer.byteLength(contents, "utf8") > MAX_STATE_BYTES) {
+      return yield* new ExtensionsError({
+        reason: "limit-reached",
+        message: `Scient plugin state would exceed ${MAX_STATE_BYTES / 1024} KiB. Remove a plugin and try again.`,
+      });
+    }
+    return contents;
+  });
 
   /**
    * Persist, then publish in memory. Callers run it inside an uninterruptible
    * section. A commit that would exceed the state budget fails with
    * `limit-reached` and writes nothing.
    */
-  const commit = (candidate: ReadonlyArray<InstalledPlugin>) =>
-    Effect.gen(function* () {
-      const plugins = pruneOwnership(candidate, yield* authoritativeConnectorIds);
-      const contents = yield* encodeWithinBudget(plugins);
-      yield* writeState(contents);
-      yield* Ref.update(state, (previous) => ({ ...previous, plugins }));
-      yield* publishState;
-    });
+  const commit = Effect.fn("ScientPluginRegistry.commit")(function* (
+    candidate: ReadonlyArray<InstalledPlugin>,
+  ) {
+    const plugins = pruneOwnership(candidate, yield* authoritativeConnectorIds);
+    const contents = yield* encodeWithinBudget(plugins);
+    yield* writeState(contents);
+    yield* Ref.update(state, (previous) => ({ ...previous, plugins }));
+    yield* publishState;
+  });
 
   const removeDirectory = (directory: string) =>
     Effect.tryPromise(() =>
@@ -868,8 +870,8 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
       }),
     ).pipe(Effect.withSpan("ScientPluginRegistry.setEnabled"));
 
-  const list: ScientPluginRegistryShape["list"] = () =>
-    Effect.gen(function* () {
+  const list: ScientPluginRegistryShape["list"] = Effect.fn("ScientPluginRegistry.list")(
+    function* () {
       const current = yield* Ref.get(state);
       const inventory = yield* connectors.list();
       const diagnostics: ExtensionsDiagnostic[] = [];
@@ -933,7 +935,8 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
         };
       });
       return { plugins: [...BUILT_IN_SCIENT_PLUGINS, ...bundles], diagnostics };
-    });
+    },
+  );
 
   return ScientPluginRegistry.of({
     list,

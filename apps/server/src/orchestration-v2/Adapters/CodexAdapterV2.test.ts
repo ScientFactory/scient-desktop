@@ -844,21 +844,27 @@ describe("CodexAdapterV2 process spawning", () => {
       },
     });
 
-    assert.deepEqual(params.config.mcp_servers, {
-      scient: {
-        url: "http://127.0.0.1:43123/mcp",
-        tool_timeout_sec: 3_900,
-        http_headers: { Authorization: "Bearer secret-codex-token" },
+    // Every server is its own override; no `mcp_servers` table replaces the user's servers.
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(params.config).filter(([key]) => key.startsWith("mcp_servers")),
+      ),
+      {
+        "mcp_servers.scient": {
+          url: "http://127.0.0.1:43123/mcp",
+          tool_timeout_sec: 3_900,
+          http_headers: { Authorization: "Bearer secret-codex-token" },
+        },
+        "mcp_servers.linear": {
+          url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
+          http_headers: { Authorization: "Bearer secret-codex-token" },
+        },
+        "mcp_servers.hugging-face": {
+          url: "http://127.0.0.1:43123/mcp/connectors/con_hf00000001",
+          http_headers: { Authorization: "Bearer secret-codex-token" },
+        },
       },
-      linear: {
-        url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
-        http_headers: { Authorization: "Bearer secret-codex-token" },
-      },
-      "hugging-face": {
-        url: "http://127.0.0.1:43123/mcp/connectors/con_hf00000001",
-        http_headers: { Authorization: "Bearer secret-codex-token" },
-      },
-    });
+    );
   });
   // SCIENT-FORK:END
 
@@ -2255,6 +2261,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer secret-codex-token",
         capabilities: new Set(["preview"]),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
       });
       const requests: Array<unknown> = [];
       yield* makeCodexReplayHarness(

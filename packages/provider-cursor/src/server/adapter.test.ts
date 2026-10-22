@@ -1627,6 +1627,7 @@ describe("CursorAdapterV2", () => {
       runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
       threadId,
       mcpSession,
+      platform: "linux",
     });
     assert.notInclude(
       JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options)),

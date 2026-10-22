@@ -134,98 +134,101 @@ export const make = Effect.gen(function* () {
   // bsdtar as `tar`, and Linux only ever reads the `.tar.xz` asset.
   const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";
 
-  const runTar = (input: LatexArchiveUnpackInput) =>
-    Effect.gen(function* () {
-      if (platform === "win32") {
-        const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
-        if (!present) {
-          return yield* new LatexArchiveUnpackError({
-            reason: "unpacker-unavailable",
-            detail: `This computer has no ${command}, which Scient needs to expand the download.`,
-          });
-        }
-      }
-      const result = yield* processRunner
-        .run({
-          command,
-          args: tinyTexUnpackArguments(input),
-          timeout: UNPACK_TIMEOUT,
-          maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LatexArchiveUnpackError({
-                reason: "unpack-failed",
-                detail: `Scient could not run tar to expand the LaTeX distribution: ${cause.message}`,
-              }),
-          ),
-        );
-      if (result.timedOut) {
-        return yield* new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: "Expanding the LaTeX distribution took too long and was stopped.",
-        });
-      }
-      const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
-      if (missingTar) {
+  const runTar = Effect.fn("LatexArchiveUnpacker.runTar")(function* (
+    input: LatexArchiveUnpackInput,
+  ) {
+    if (platform === "win32") {
+      const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
+      if (!present) {
         return yield* new LatexArchiveUnpackError({
           reason: "unpacker-unavailable",
           detail: `This computer has no ${command}, which Scient needs to expand the download.`,
         });
       }
-      if (result.code !== 0) {
-        return yield* new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: `Expanding the LaTeX distribution failed: ${
-            result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
-          }`,
-        });
-      }
-    });
-
-  /** The Windows bundle unpacking itself, into a destination cleared of tar's partial output. */
-  const runSelfExtractor = (input: LatexArchiveUnpackInput, tarFailure: LatexArchiveUnpackError) =>
-    Effect.gen(function* () {
-      // The extractor's failure is the final one, so it leads; tar's, which
-      // may repeat per entry, follows in brief and stays complete in the log.
-      const failed = (detail: string) =>
-        new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: `The download's own extractor failed: ${/[.!?:]$/u.test(detail) ? detail : `${detail}.`} Before that, ${boundedDetail(tarFailure.detail)}`,
-        });
-      yield* fileSystem.remove(input.destination, { recursive: true, force: true }).pipe(
-        Effect.andThen(fileSystem.makeDirectory(input.destination, { recursive: true })),
-        Effect.mapError((cause) =>
-          failed(`Scient could not clear ${input.destination}: ${cause.message}`),
+    }
+    const result = yield* processRunner
+      .run({
+        command,
+        args: tinyTexUnpackArguments(input),
+        timeout: UNPACK_TIMEOUT,
+        maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new LatexArchiveUnpackError({
+              reason: "unpack-failed",
+              detail: `Scient could not run tar to expand the LaTeX distribution: ${cause.message}`,
+            }),
         ),
       );
-      const result = yield* processRunner
-        .run({
-          command: input.archivePath,
-          args: sevenZipSelfExtractArguments(input),
-          timeout: UNPACK_TIMEOUT,
-          maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(Effect.mapError((cause) => failed(cause.message)));
-      if (result.timedOut) return yield* failed("it took too long and was stopped.");
-      if (result.code !== 0) {
-        yield* Effect.logWarning("scient latex bundle could not unpack itself", {
-          code: result.code,
-          stderr: result.stderr,
-          stdout: result.stdout,
-          tarFailure: tarFailure.detail,
-        });
-        return yield* failed(selfExtractorComplaint(result));
-      }
-      yield* Effect.logInfo("scient latex bundle unpacked itself after the system tar failed", {
+    if (result.timedOut) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: "Expanding the LaTeX distribution took too long and was stopped.",
+      });
+    }
+    const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
+    if (missingTar) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpacker-unavailable",
+        detail: `This computer has no ${command}, which Scient needs to expand the download.`,
+      });
+    }
+    if (result.code !== 0) {
+      return yield* new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: `Expanding the LaTeX distribution failed: ${
+          result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
+        }`,
+      });
+    }
+  });
+
+  /** The Windows bundle unpacking itself, into a destination cleared of tar's partial output. */
+  const runSelfExtractor = Effect.fn("LatexArchiveUnpacker.runSelfExtractor")(function* (
+    input: LatexArchiveUnpackInput,
+    tarFailure: LatexArchiveUnpackError,
+  ) {
+    // The extractor's failure is the final one, so it leads; tar's, which
+    // may repeat per entry, follows in brief and stays complete in the log.
+    const failed = (detail: string) =>
+      new LatexArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: `The download's own extractor failed: ${/[.!?:]$/u.test(detail) ? detail : `${detail}.`} Before that, ${boundedDetail(tarFailure.detail)}`,
+      });
+    yield* fileSystem.remove(input.destination, { recursive: true, force: true }).pipe(
+      Effect.andThen(fileSystem.makeDirectory(input.destination, { recursive: true })),
+      Effect.mapError((cause) =>
+        failed(`Scient could not clear ${input.destination}: ${cause.message}`),
+      ),
+    );
+    const result = yield* processRunner
+      .run({
+        command: input.archivePath,
+        args: sevenZipSelfExtractArguments(input),
+        timeout: UNPACK_TIMEOUT,
+        maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.mapError((cause) => failed(cause.message)));
+    if (result.timedOut) return yield* failed("it took too long and was stopped.");
+    if (result.code !== 0) {
+      yield* Effect.logWarning("scient latex bundle could not unpack itself", {
+        code: result.code,
+        stderr: result.stderr,
+        stdout: result.stdout,
         tarFailure: tarFailure.detail,
       });
+      return yield* failed(selfExtractorComplaint(result));
+    }
+    yield* Effect.logInfo("scient latex bundle unpacked itself after the system tar failed", {
+      tarFailure: tarFailure.detail,
     });
+  });
 
   const unpack: LatexArchiveUnpacker["Service"]["unpack"] = Effect.fn(
     "LatexArchiveUnpacker.unpack",

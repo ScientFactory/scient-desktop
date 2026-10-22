@@ -1410,18 +1410,20 @@ export function codexThreadRuntimeParams(input: {
               http_headers: {
                 Authorization: mcpSession.authorizationHeader,
               },
-              // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
-              ...Object.fromEntries(
-                mcpSession.connectors.map((connector) => [
-                  connector.serverName,
-                  {
-                    url: connector.url,
-                    http_headers: { Authorization: mcpSession.authorizationHeader },
-                  },
-                ]),
-              ),
-              // SCIENT-FORK:END Scient Extensions connectors
             },
+            // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL).
+            // Each connector is its own `mcp_servers.<name>` override, like the owned server
+            // above, so the user's MCP configuration stays in place beside them.
+            ...Object.fromEntries(
+              mcpSession.connectors.map((connector) => [
+                `mcp_servers.${connector.serverName}`,
+                {
+                  url: connector.url,
+                  http_headers: { Authorization: mcpSession.authorizationHeader },
+                },
+              ]),
+            ),
+            // SCIENT-FORK:END Scient Extensions connectors
           }),
     },
   };

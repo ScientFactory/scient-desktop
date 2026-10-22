@@ -273,8 +273,8 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   // Keyed by query, cursor and limit; Map insertion order drives eviction.
   const cache = new Map<string, CachedPage>();
 
-  const fetchOnce = (url: string) =>
-    Effect.gen(function* () {
+  const fetchOnce = Effect.fn("ExtensionsDiscover.fetchOnce")(
+    function* (url: string) {
       const response = yield* httpClient.execute(
         HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson),
       );
@@ -304,30 +304,33 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         ),
       );
       return Buffer.concat(chunks.parts, chunks.size).toString("utf8");
-    }).pipe(
-      // One deadline covers headers and body; interruption aborts the request.
-      Effect.timeoutOrElse({
-        duration: ATTEMPT_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new RegistryAttemptError({
-              retryable: true,
-              message: "The MCP Registry did not answer in time.",
-            }),
-          ),
-      }),
-      Effect.mapError((error) => {
-        if (error._tag === "RegistryAttemptError") return error;
-        const transport =
-          HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError";
-        return new RegistryAttemptError({
-          retryable: transport,
-          message: transport
-            ? "Scient could not reach the MCP Registry."
-            : "The MCP Registry response could not be read.",
-        });
-      }),
-    );
+    },
+    (effect) =>
+      effect.pipe(
+        // One deadline covers headers and body; interruption aborts the request.
+        Effect.timeoutOrElse({
+          duration: ATTEMPT_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new RegistryAttemptError({
+                retryable: true,
+                message: "The MCP Registry did not answer in time.",
+              }),
+            ),
+        }),
+        Effect.mapError((error) => {
+          if (error._tag === "RegistryAttemptError") return error;
+          const transport =
+            HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError";
+          return new RegistryAttemptError({
+            retryable: transport,
+            message: transport
+              ? "Scient could not reach the MCP Registry."
+              : "The MCP Registry response could not be read.",
+          });
+        }),
+      ),
+  );
 
   /** Live installation state: connectors by registry name and by canonical URL. */
   const installedConnectors = Effect.gen(function* () {
