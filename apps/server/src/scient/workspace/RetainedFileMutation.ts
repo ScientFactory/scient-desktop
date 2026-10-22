@@ -73,6 +73,17 @@ const Journal = Schema.Struct({
   desired: Schema.NullOr(Schema.String),
   executable: Schema.Boolean,
   guardMaxBytes: Schema.NullOr(Schema.Number),
+  /** Files published together with this one; see `RetainedMutationInput.peerGuards`. */
+  peerGuards: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        revision: Schema.NullOr(Schema.String),
+        directory: Schema.optionalKey(Schema.Literal(true)),
+        only: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
+    ),
+  ),
   binding: Schema.NullOr(Binding),
   destinationBinding: Schema.NullOr(Binding),
   phase: Schema.Literals([
@@ -130,6 +141,22 @@ export interface RetainedMutationInput {
   readonly condition?: "revision" | "unguarded" | "absent";
   readonly destination?: string;
   readonly guardMaxBytes?: number;
+  /**
+   * Other paths, relative to `cwd`, published together with this one, as they
+   * must stand when this file becomes visible: a regular file with `revision`,
+   * or for a null revision nothing at all. A folder stands there only with
+   * `directory`, and then holds nothing but the paths in `only` when given (a
+   * folder the group removes). On the way, no link, and a file only where it is
+   * one of these paths or this one. A change before then skips the mutation, so
+   * a group never lands half-applied. Kept in the record, so recovery after a
+   * crash checks them too.
+   */
+  readonly peerGuards?: ReadonlyArray<{
+    readonly path: string;
+    readonly revision: string | null;
+    readonly directory?: true;
+    readonly only?: ReadonlyArray<string>;
+  }>;
   readonly expectedMutationEpoch?: string;
   readonly retentionLimitBytes?: number | null;
   /** Internal ownership only; never accepted from a transport. */
@@ -282,6 +309,64 @@ export async function fileIdentity(file: string): Promise<Identity | null> {
   }
 }
 /** Whole-file hashing is streaming; a prefix digest is never a manuscript CAS guard. */
+/**
+ * What stands at `path` below `root`, found without following any link: a link
+ * anywhere on the way, or a special file, is `other`. A file where a folder on
+ * the way should be means nothing can stand at `path`, but only if that file is
+ * one of `planned`; any other file there is `other`.
+ */
+async function peerEntry(
+  root: string,
+  path: string,
+  planned: ReadonlySet<string>,
+): Promise<
+  | { readonly kind: "absent" | "directory" | "other" }
+  | { readonly kind: "file"; readonly revision: string | null }
+> {
+  const segments = path.split("/");
+  let current = root;
+  for (const [index, segment] of segments.entries()) {
+    current = NodePath.join(current, segment);
+    const stat = await NodeFSP.lstat(current).catch((e: unknown) => {
+      if (absent(e)) return null;
+      throw e;
+    });
+    if (stat === null) return { kind: "absent" };
+    if (stat.isSymbolicLink()) return { kind: "other" };
+    if (index < segments.length - 1) {
+      if (stat.isDirectory()) continue;
+      return planned.has(segments.slice(0, index + 1).join("/"))
+        ? { kind: "absent" }
+        : { kind: "other" };
+    }
+    if (stat.isDirectory()) return { kind: "directory" };
+    if (!stat.isFile()) return { kind: "other" };
+    return { kind: "file", revision: await fileRevision(current) };
+  }
+  return { kind: "other" };
+}
+/**
+ * Whether the folder `path` below `root` holds no file but those in `only`:
+ * folders, empty ones included, may lead anywhere; any other file, link or
+ * special entry fails. Links are never followed.
+ */
+async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
+  const allowed = new Set(only);
+  const pending = [path];
+  // Bounded: a folder the group empties holds its files and some folders, not a tree.
+  let seen = 0;
+  for (let folder = pending.pop(); folder !== undefined; folder = pending.pop()) {
+    const entries = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
+    seen += entries.length;
+    if (seen > allowed.size + 10_000) return false;
+    for (const entry of entries) {
+      const name = `${folder}/${entry.name}`;
+      if (entry.isDirectory()) pending.push(name);
+      else if (!(entry.isFile() && allowed.has(name))) return false;
+    }
+  }
+  return true;
+}
 export async function fileRevision(file: string): Promise<string | null> {
   let handle;
   try {
@@ -688,6 +773,7 @@ async function run(
       record.expected !== input.expectedRevision ||
       record.executable !== (input.executable ?? false) ||
       record.guardMaxBytes !== (input.guardMaxBytes ?? null) ||
+      JSON.stringify(record.peerGuards ?? []) !== JSON.stringify(input.peerGuards ?? []) ||
       (record.expectedMutationEpoch ?? null) !== (input.expectedMutationEpoch ?? null) ||
       record.visibleRetentionPath !== (input.visibleRetentionPath ?? null) ||
       (input.bytes !== undefined &&
@@ -726,6 +812,7 @@ async function run(
       desired: input.bytes == null ? null : bytesRevision(input.bytes),
       executable: input.executable ?? false,
       guardMaxBytes: input.guardMaxBytes ?? null,
+      ...(input.peerGuards ? { peerGuards: input.peerGuards } : {}),
       binding: input.binding,
       destinationBinding: input.destinationBinding ?? null,
       phase: "preparing",
@@ -857,6 +944,23 @@ async function run(
       return false;
     return snapshot.revision === record.expected;
   };
+  const peersIntact = async () => {
+    const root = input.binding.rootPath;
+    const planned = new Set([
+      NodePath.relative(root, target),
+      ...(record.peerGuards ?? []).map((peer) => peer.path),
+    ]);
+    for (const peer of record.peerGuards ?? []) {
+      const entry = await peerEntry(root, peer.path, planned);
+      if (peer.revision !== null) {
+        if (entry.kind !== "file" || entry.revision !== peer.revision) return false;
+      } else if (entry.kind === "directory") {
+        if (!peer.directory) return false;
+        if (peer.only && !(await holdsOnly(root, peer.path, peer.only))) return false;
+      } else if (entry.kind !== "absent") return false;
+    }
+    return true;
+  };
   // This durable refusal is definitive: no native source syscall was admitted.
   if (
     record.sourceMutation === false &&
@@ -865,6 +969,12 @@ async function run(
     !(await guarded(target))
   )
     return finish("skipped", record.currentRevision === null ? "target" : "revision");
+  if (
+    record.sourceMutation === false &&
+    (record.phase === "preparing" || record.phase === "prepared") &&
+    !(await peersIntact())
+  )
+    return finish("skipped", "revision");
   if (
     record.sourceMutation === false &&
     (record.phase === "preparing" || record.phase === "prepared") &&
@@ -997,6 +1107,31 @@ async function run(
       (await guarded(retained))
     )
       return finish("done");
+    // A folder captured for pruning sits in this private record until removed: finish
+    // removing it if still empty, put it back if anything appeared in it. Once the
+    // capture is recorded, its absence here means the removal already happened.
+    if (kind === "prune" && ["publishing", "displaced"].includes(record.phase)) {
+      const held = await NodeFSP.lstat(retained, { bigint: true }).catch((e: unknown) => {
+        if (absent(e)) return null;
+        throw e;
+      });
+      if (held === null) {
+        if (record.phase === "displaced") return finish("done");
+      } else if (
+        held.isDirectory() &&
+        (record.capturedIdentity === null ||
+          (String(held.dev) === record.capturedIdentity.dev &&
+            String(held.ino) === record.capturedIdentity.ino))
+      ) {
+        if ((await NodeFSP.readdir(retained)).length === 0) {
+          const removed = await command("rmdir", "retained", "retained");
+          return good(removed) ? finish("done") : finish("attention", "recovery");
+        }
+        await save({ phase: "restoring", failure: "target" });
+        const restored = await command("restore", "retained", NodePath.basename(target));
+        return finish("attention", good(restored) ? "target" : "recovery");
+      }
+    }
     if (
       (record.phase === "installing" || record.phase === "installed") &&
       record.publishedIdentity &&
@@ -1064,6 +1199,8 @@ async function run(
       (await fileRevision(slot)) !== record.desired)
   )
     return finish("attention", "recovery");
+  // Staging takes time; the group is checked again just before anything becomes visible.
+  if (!(await peersIntact())) return finish("skipped", "revision");
   if (record.publication === "create") {
     await save({
       phase: "publishing",

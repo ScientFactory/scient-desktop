@@ -490,6 +490,17 @@ export const make = (hooks: ApplierHooks = {}) =>
               try: () => durableJson(begin.recordPath, progress(state)),
               catch: (cause) => new WorkspaceApplyError({ cause }),
             });
+          // Every path the plan names, for the folders a peer guard may meet.
+          const planned = [
+            ...new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
+          ];
+          // Settle any step a crash left pending before deciding anything: settlement
+          // checks each step's group, and a step left pending is otherwise replayed as
+          // if it never started.
+          if (state.phase === "applying")
+            yield* files
+              .withSettledWorkspaceRead({ cwd: state.cwd }, () => Effect.void)
+              .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
           if (state.phase === "applying")
             for (const [unitIndex, unit] of state.plan.units.entries()) {
               if (state.outcomes[unitIndex] !== "pending") continue;
@@ -511,6 +522,13 @@ export const make = (hooks: ApplierHooks = {}) =>
                   .filter((name) => !ownValue(state.plan.target, name) && !blockers.includes(name))
                   .sort(),
               ];
+              const positions = new Map(ordered.map((name, index) => [name, index]));
+              const below = new Map(
+                state.plan.guards[unitIndex]!.map((guard) => [
+                  guard,
+                  planned.filter((path) => path.startsWith(`${guard}/`)),
+                ]),
+              );
               const destinationsIntact = async () => {
                 await assertRootBinding(state.cwd, state.rootIdentity);
                 for (const name of state.plan.guards[unitIndex]!) {
@@ -549,6 +567,37 @@ export const make = (hooks: ApplierHooks = {}) =>
                 }
                 const file = ownValue(state.plan.target, name);
                 const index = state.plan.units.flat().indexOf(name);
+                // The rest of the unit as it must stand when this file becomes visible:
+                // steps before this one applied, later ones still as captured. The record
+                // keeps them, so a crash's recovery cannot publish into a changed group.
+                const position = positions.get(name)!;
+                const expected = (guard: string) =>
+                  (!positions.has(guard) || positions.get(guard)! < position
+                    ? ownValue(state.plan.target, guard)?.revision
+                    : ownValue(state.plan.captured, guard)) ?? null;
+                const peerGuards = state.plan.guards[unitIndex]!.filter(
+                  (guard) => guard !== name,
+                ).map((guard) => {
+                  const inside = below.get(guard)!;
+                  // A folder may stand here where one stood when the folder was captured,
+                  // or where the plan needs one now: it holds a file still kept or already
+                  // written, or this step's own file. One the plan empties for good may
+                  // hold nothing but the files it removes.
+                  const folder =
+                    name.startsWith(`${guard}/`) ||
+                    inside.some(
+                      (path) => ownValue(state.plan.captured, path) || expected(path) !== null,
+                    );
+                  const removed = !inside.some((path) => ownValue(state.plan.target, path));
+                  return {
+                    path: guard,
+                    revision: expected(guard),
+                    ...(folder ? { directory: true as const } : {}),
+                    ...(folder && removed
+                      ? { only: inside.filter((path) => ownValue(state.plan.captured, path)) }
+                      : {}),
+                  };
+                });
                 const args = {
                   cwd: state.cwd,
                   relativePath: name,
@@ -556,16 +605,36 @@ export const make = (hooks: ApplierHooks = {}) =>
                   id: `step-${index}`,
                   expectedRevision: ownValue(state.plan.captured, name) ?? null,
                   expectedRootIdentity: state.rootIdentity,
+                  peerGuards,
                   ...(file
                     ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
                     : {}),
                 };
-                const outcome = yield* (
-                  file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
-                ).pipe(
-                  Effect.map((result) => result.outcome),
-                  Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
-                );
+                // A step another reader settled after a crash, before its bytes were
+                // staged, is closed as skipped: nothing was published, and replaying it
+                // would only repeat the refusal.
+                const settled = yield* Effect.tryPromise({
+                  try: () =>
+                    NodeFSP.readFile(
+                      NodePath.join(begin.retentionDirectory, `step-${index}`, "record.json"),
+                      "utf8",
+                    ).then(decodeRetainedRecord, (e: NodeJS.ErrnoException) => {
+                      if (e.code === "ENOENT") return null;
+                      throw e;
+                    }),
+                  catch: (cause) => new WorkspaceApplyError({ cause }),
+                });
+                const outcome =
+                  settled?.version === 2 &&
+                  settled.phase === "done" &&
+                  settled.outcome === "skipped"
+                    ? "skipped"
+                    : yield* (
+                        file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
+                      ).pipe(
+                        Effect.map((result) => result.outcome),
+                        Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+                      );
                 yield* Effect.tryPromise({
                   try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
                   catch: (cause) => new WorkspaceApplyError({ cause }),
