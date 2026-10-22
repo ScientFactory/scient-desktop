@@ -150,6 +150,38 @@ describe("document artifact bindings", () => {
     expect(json).not.toContain("function");
     expect(decodeSourceDescriptor(json)).toEqual(descriptor);
   });
+
+  it("round-trips sent and draft attachment PDFs and rejects an unnamed draft", () => {
+    const base = {
+      _tag: "attachment-pdf" as const,
+      authority: identity.authority,
+      logicalDocumentKey: LogicalDocumentKey.make("attachment:a-1"),
+      title: "Paper",
+      fileName: "paper.pdf",
+      capabilities: { canSaveCopy: true, canRevealSource: false },
+    };
+    for (const locator of [
+      { _tag: "sent" as const, threadId: "thread-1", attachmentId: "a-1" },
+      { _tag: "draft" as const, threadId: "thread-1", fileContextId: "file:local-1" },
+      {
+        _tag: "draft" as const,
+        threadId: "thread-1",
+        fileContextId: "file:local-1",
+        uploadedAttachmentId: "a-2",
+      },
+    ]) {
+      const descriptor = PdfSourceDescriptor.make({ ...base, locator });
+      expect(decodeSourceDescriptor(encodeSourceDescriptor(descriptor))).toEqual(descriptor);
+    }
+    expect(() =>
+      decodeSourceDescriptor(
+        JSON.stringify({
+          ...base,
+          locator: { _tag: "draft", threadId: "thread-1", fileContextId: "" },
+        }),
+      ),
+    ).toThrow();
+  });
 });
 
 const accepted = (transition: ReturnType<typeof beginDocumentProduction>) => {

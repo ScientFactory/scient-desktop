@@ -171,6 +171,31 @@ const WorkspacePdfLegacyLocator = Schema.Struct({
   absolutePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
 });
 
+const AttachmentIdentifier = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(256),
+  Schema.isPattern(/^[^\x00]+$/u),
+);
+
+/**
+ * A chat attachment PDF. A sent attachment is identified by its thread and
+ * persisted id. A draft is identified by its composer file context id, which
+ * stays stable through upload; its uploaded id, when it has one, only says
+ * where the bytes can already be fetched.
+ */
+export const AttachmentPdfLocator = Schema.Union([
+  Schema.TaggedStruct("sent", {
+    threadId: AttachmentIdentifier,
+    attachmentId: AttachmentIdentifier,
+  }),
+  Schema.TaggedStruct("draft", {
+    threadId: AttachmentIdentifier,
+    fileContextId: AttachmentIdentifier,
+    uploadedAttachmentId: Schema.optional(AttachmentIdentifier),
+  }),
+]);
+export type AttachmentPdfLocator = typeof AttachmentPdfLocator.Type;
+
 export const PdfSourceDescriptor = Schema.Union([
   Schema.TaggedStruct("workspace-pdf", {
     ...PdfSourceBase,
@@ -191,6 +216,10 @@ export const PdfSourceDescriptor = Schema.Union([
   Schema.TaggedStruct("environment-pdf", {
     ...PdfSourceBase,
     path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  }),
+  Schema.TaggedStruct("attachment-pdf", {
+    ...PdfSourceBase,
+    locator: AttachmentPdfLocator,
   }),
 ]);
 export type PdfSourceDescriptor = typeof PdfSourceDescriptor.Type;

@@ -8,6 +8,15 @@ of T3's text editor. Every existing file-opening entry point converges on that
 panel, so Files-tree, search, chat, and linked-path selection share the same
 binary-safe route.
 
+Chat attachments are the second seam: `AttachmentFilePreview` mounts
+`AttachmentPdfPreview` for PDFs instead of Chromium's built-in viewer. Its
+`attachment-pdf` descriptor names a sent attachment by thread and persisted id,
+and a draft by its composer file context id; the uploaded id, when a draft has
+one, only says where its bytes can be fetched. A draft that is not uploaded
+reads its local Blob through an object URL and saves a copy by downloading it in
+the renderer, since native copy accepts only HTTP(S) sources. A preview with
+nothing durable to name (no thread) keeps the browser's own PDF viewer.
+
 PDFs must never be read through `projects.readFile`. The workspace service keeps
 its `WorkspaceBinaryFileError` protection. Instead, the reader requests an exact
 file-scoped, short-lived asset capability and PDF.js reads the authorized URL.

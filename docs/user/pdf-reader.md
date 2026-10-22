@@ -5,8 +5,9 @@ while keeping them beside the conversation and related files.
 
 Opening a workspace or environment PDF uses the Scient reader in the Files side
 panel. The reader uses the full panel by default; the project file explorer and
-the PDF pages/outline sidebar remain optional. PDF attachments use the file
-viewer's embedded browser document instead. Browser tabs keep their own viewer.
+the PDF pages/outline sidebar remain optional. PDFs attached to a chat message,
+including attachments you are still composing, open in the same reader. Browser
+tabs keep their own viewer.
 
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
 Each conversation keeps its own PDF reading position. A fork starts from the

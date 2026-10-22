@@ -297,6 +297,11 @@ function descriptorsEqual(left: LatexPdfDescriptor, right: LatexPdfDescriptor): 
       );
     case "environment-pdf":
       return right._tag === "environment-pdf" && left.path === right.path;
+    case "attachment-pdf":
+      return (
+        right._tag === "attachment-pdf" &&
+        JSON.stringify(left.locator) === JSON.stringify(right.locator)
+      );
   }
 }
 
