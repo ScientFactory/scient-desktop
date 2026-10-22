@@ -221,8 +221,9 @@ one rewrites the inner one too.
   and switching to it, moving a pull request's worktree to its head, checking
   out a pull request locally, removing a worktree) closes new apply admission
   at once, waits for running applies to finish, then runs.
-- Bulk changes of one checkout run one at a time. One made inside another of
-  the same checkout (a provider's checkout calling the Git driver) joins it.
+- Bulk changes of one checkout run one at a time. One the owning fiber makes
+  inside its own section (a provider's checkout calling the Git driver) runs
+  within it; any other fiber, a forked child included, waits its turn.
 - An apply asking to start during a bulk change is refused
   (`CheckoutSuspendedError`), not queued.
 - Each bulk change advances the checkout's epoch as it starts and as it ends,

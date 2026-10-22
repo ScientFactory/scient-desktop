@@ -6,9 +6,11 @@
  * application section, and a bulk mutation of the checkout (checkpoint restore,
  * pull, switching branch, removing the worktree). A bulk request closes new
  * application admission at once, waits for running ones to settle, then runs.
- * Bulk sections of one checkout run one at a time; a bulk change made inside
- * another of the same checkout (a provider checkout calling the Git driver)
- * joins it. Every bulk section advances the checkout's epoch as it starts and
+ * Bulk sections of one checkout run one at a time; a bulk change the owning
+ * fiber makes inside its own section (a provider checkout calling the Git
+ * driver) runs within it. Another fiber, a forked child included, waits its
+ * turn, so a section that awaits such a fiber's same-checkout change waits for
+ * itself. Every bulk section advances the checkout's epoch as it starts and
  * again as it ends, even when it fails, so a plan made against an earlier epoch
  * is stale.
  *
@@ -121,11 +123,13 @@ interface Located {
   readonly keys: ReadonlyArray<string>;
 }
 
-/** Checkouts the current fiber already holds a bulk section of. */
-class HeldCheckouts extends Context.Reference<ReadonlySet<string>>(
-  "t3/scient/workspace/CheckoutBarrier/HeldCheckouts",
-  { defaultValue: () => new Set() },
-) {}
+/**
+ * The bulk sections the current fiber runs inside, by checkout, with the fiber
+ * that owns each. A forked fiber inherits them but is not their owner.
+ */
+class HeldCheckouts extends Context.Reference<
+  ReadonlyMap<string, { readonly section: CheckoutSection; readonly fiber: number }>
+>("t3/scient/workspace/CheckoutBarrier/HeldCheckouts", { defaultValue: () => new Map() }) {}
 
 const missing = (error: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "");
@@ -210,9 +214,17 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
       if (found === null) return yield* effect;
       const key = found.keys[0]!;
       const already = yield* HeldCheckouts;
-      // A bulk change inside one of the same checkout joins it.
-      if (already.has(key)) return yield* effect;
       const held = entry(key);
+      // A bulk change made by the very fiber that holds this checkout's section, while
+      // it holds it, runs within it: it is part of that fiber's own sequential work.
+      // Any other fiber, a forked child included, waits its turn like everyone else.
+      const joined = already.get(key);
+      if (
+        joined !== undefined &&
+        joined.fiber === (yield* Effect.fiberId) &&
+        held.held.has(joined.section)
+      )
+        return yield* effect;
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           held.bulks++;
@@ -225,18 +237,32 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
                 held.drained ??= Deferred.makeUnsafe<void>();
                 yield* Deferred.await(held.drained);
               }
+              // The path may name another checkout by now (moved, replaced); never
+              // change one under another's identity.
+              const now = yield* lookup(path, options?.missing === "skip");
+              // Gone while waiting, with `missing: "skip"`: nothing of it is left to settle.
+              if (now === null) return yield* effect;
+              if (now.keys[0] !== key)
+                return yield* new CheckoutLookupError({
+                  path,
+                  cause: new Error("The checkout at this path changed while waiting."),
+                });
               const section: CheckoutSection = {
                 key,
-                keys: [key],
-                root: found.root,
-                epoch: held.epoch,
+                keys: now.keys,
+                root: now.root,
+                epoch: epochOf(now.keys),
               };
+              const fiber = yield* Effect.fiberId;
               held.held.add(section);
               return yield* Effect.gen(function* () {
                 for (const settle of settlers) yield* settle(section);
                 return yield* effect;
               }).pipe(
-                Effect.provideService(HeldCheckouts, new Set([...already, key])),
+                Effect.provideService(
+                  HeldCheckouts,
+                  new Map([...already, [key, { section, fiber }]]),
+                ),
                 Effect.ensuring(Effect.sync(() => held.held.delete(section))),
               );
             }),

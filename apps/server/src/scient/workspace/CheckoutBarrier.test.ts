@@ -30,6 +30,7 @@ import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts"
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   CheckoutBarrier,
+  type CheckoutLookupError,
   CheckoutRecoveryRequiredError,
   makeCheckoutBarrier,
   type CheckoutSection,
@@ -254,6 +255,182 @@ describe("CheckoutBarrier", () => {
       assert.isTrue(mutated);
       // The outer change makes plans of the inner checkout stale too.
       assert.equal((yield* barrier.current(submodule)).epoch, inner.epoch + 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not let a detached task join a bulk section that has ended", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const afterOuter = yield* Deferred.make<void>();
+      let mutated = false;
+      let detached:
+        | Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError>
+        | undefined;
+      yield* barrier.bulk(
+        repo,
+        Effect.gen(function* () {
+          // Started inside the section, it inherits the section and outlives it.
+          detached = yield* Deferred.await(afterOuter).pipe(
+            Effect.andThen(
+              barrier.bulk(
+                repo,
+                Effect.sync(() => {
+                  mutated = true;
+                }),
+              ),
+            ),
+            Effect.forkDetach,
+          );
+        }),
+      );
+      const release = yield* Deferred.make<void>();
+      const application = yield* holdApplication(barrier, repo, release);
+      yield* Deferred.succeed(afterOuter, undefined);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.isFalse(mutated);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(application);
+      yield* Fiber.join(detached!);
+      assert.isTrue(mutated);
+      assert.equal((yield* barrier.current(repo)).epoch, 4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a queued bulk change whose path now names another checkout", () =>
+    Effect.gen(function* () {
+      const { root, repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const release = yield* Deferred.make<void>();
+      const outer = yield* holdBulk(barrier, repo, release);
+      let mutated = false;
+      const queued = yield* barrier
+        .bulk(
+          repo,
+          Effect.sync(() => {
+            mutated = true;
+          }),
+        )
+        .pipe(Effect.forkChild);
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      // The checkout moves away and another takes its path.
+      yield* Effect.promise(async () => {
+        await NodeFSP.rename(repo, NodePath.join(root, "moved"));
+        await NodeFSP.mkdir(NodePath.join(repo, ".git"), { recursive: true });
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(outer);
+      const refused = yield* Effect.exit(Fiber.join(queued));
+      assert.include(String(refused), "CheckoutLookupError");
+      assert.isFalse(mutated);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("hands settlers an inner checkout's whole chain and summed epoch", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const submodule = NodePath.join(repo, "vendor/sub");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(submodule, ".git"), { recursive: true }),
+      );
+      const barrier = makeCheckoutBarrier();
+      yield* barrier.bulk(repo, Effect.void);
+      const handed: CheckoutSection[] = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* barrier.settleBeforeBulk((section) => Effect.sync(() => handed.push(section)));
+          const inside = yield* barrier.bulk(submodule, barrier.current(submodule));
+          assert.equal(handed[0]!.keys.length, 2);
+          assert.equal(handed[0]!.epoch, inside.epoch);
+        }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("makes another fiber's change of the same checkout wait its turn", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const order: string[] = [];
+      let child: Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError> | undefined;
+      yield* barrier.bulk(
+        repo,
+        Effect.gen(function* () {
+          // Forked inside the section, it inherits it but does not own it.
+          child = yield* barrier
+            .bulk(
+              repo,
+              Effect.sync(() => {
+                order.push("child");
+              }),
+            )
+            .pipe(Effect.forkDetach);
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          order.push("owner");
+        }),
+      );
+      yield* Fiber.join(child!);
+      assert.deepEqual(order, ["owner", "child"]);
+      assert.equal((yield* barrier.current(repo)).epoch, 4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reopens admission when an owner is interrupted while its child waits", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const barrier = makeCheckoutBarrier();
+      const inside = yield* Deferred.make<void>();
+      const owner = yield* barrier
+        .bulk(
+          repo,
+          Effect.gen(function* () {
+            yield* barrier.bulk(repo, Effect.void).pipe(Effect.forkChild);
+            yield* Deferred.succeed(inside, undefined);
+            return yield* Effect.never;
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(inside);
+      yield* Fiber.interrupt(owner);
+      yield* barrier.application(repo, () => Effect.void);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("runs a queued change of a vanished path without settlers when told to skip", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      const barrier = makeCheckoutBarrier();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const release = yield* Deferred.make<void>();
+          const outer = yield* holdBulk(barrier, worktree, release);
+          let removed = false;
+          const queued = yield* barrier
+            .bulk(
+              worktree,
+              Effect.sync(() => {
+                removed = true;
+              }),
+              { missing: "skip" },
+            )
+            .pipe(Effect.forkChild);
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          // Gone meanwhile; a settler that would refuse its vanished checkout never runs.
+          yield* Effect.promise(() => NodeFSP.rm(worktree, { recursive: true, force: true }));
+          yield* barrier.settleBeforeBulk((section) =>
+            Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root })),
+          );
+          yield* Deferred.succeed(release, undefined).pipe(
+            Effect.andThen(Effect.exit(Fiber.join(outer))),
+          );
+          yield* Fiber.join(queued);
+          assert.isTrue(removed);
+        }),
+      );
     }).pipe(Effect.scoped),
   );
 
