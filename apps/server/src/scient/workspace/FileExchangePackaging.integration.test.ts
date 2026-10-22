@@ -51,7 +51,7 @@ const configuredFiles = (root: string, helper: string | undefined) =>
 
 describe.skipIf(!qualified)("host-configured file publication", () => {
   it.live.each(["checked", "displaced", "installed", "done"] as MutationPoint[])(
-    "recovers %s through an updated resource path without repeating ambiguous publication",
+    "recovers %s through an updated resource path without repeating publication",
     (point) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -123,20 +123,11 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
           const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
           return yield* files.replaceFileRetained({ ...input, bytes: undefined });
         }).pipe(Effect.provide(configuredFiles(root, newHelper)));
-        if (point === "checked") {
-          // The new protocol parks an ambiguous boundary for review instead of reapplying it.
-          expect(result.outcome).toBe("attention");
-          expect(result.failure).toBe("recovery");
-          expect(yield* fs.readFileString(target)).toBe("captured");
-          const retained = yield* Effect.promise(() =>
-            Promise.all((result.retainedPaths ?? []).map((path) => NodeFSP.readFile(path, "utf8"))),
-          );
-          expect(retained).toContain("merged");
-        } else {
-          expect(result.outcome).toBe("done");
-          expect(yield* fs.readFileString(target)).toBe("merged");
-          expect(yield* fs.readFileString(result.retainedPath!)).toBe("captured");
-        }
+        // At `checked` the exchange never ran (the staged copy is still in its slot),
+        // so recovery makes it once; after that, recovery finishes what the call did.
+        expect(result.outcome).toBe("done");
+        expect(yield* fs.readFileString(target)).toBe("merged");
+        expect(yield* fs.readFileString(result.retainedPath!)).toBe("captured");
         expect(
           decodeRetainedRecord(
             yield* fs.readFileString(NodePath.join(root, "records/sync/record.json")),
