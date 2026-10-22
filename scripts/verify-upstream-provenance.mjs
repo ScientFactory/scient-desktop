@@ -35,10 +35,10 @@ function parseArgs(argv) {
 export function validateIntroducedMergeParents(input) {
   const failures = [];
   const queueMerges = new Set();
-  if (input.allowQueueMerges === true) {
-    // Only the trusted merge_group workflow enables this mode. With the queue
-    // configured to MERGE, GitHub's integration commits form the first-parent
-    // chain from the event head back to its exact base. PR histories hang off
+  if (input.allowQueueMerges === true || input.allowOwnedHeadMerge === true) {
+    // Trusted merge_group and main-push events can contain a batch of queued
+    // PRs. With the queue configured to MERGE, their integration commits form
+    // a two-parent chain back to the exact event base. PR histories hang off
     // second parents and remain fully checked below.
     const parentsByCommit = new Map(input.merges.map((merge) => [merge.commit, merge.parents]));
     let current = input.head;
@@ -53,13 +53,6 @@ export function validateIntroducedMergeParents(input) {
   }
   for (const merge of input.merges) {
     if (queueMerges.has(merge.commit)) continue;
-    if (
-      input.allowOwnedHeadMerge === true &&
-      merge.commit === input.head &&
-      merge.parents[0] === input.base
-    ) {
-      continue;
-    }
     for (const parent of merge.parents.slice(1)) {
       if (input.isOfficialAncestor(parent)) continue;
       if (input.isOwnedAncestor(parent)) continue;
