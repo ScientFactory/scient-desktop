@@ -23,7 +23,12 @@ import {
 } from "./LatexToolchain.ts";
 import { LatexArchiveUnpacker, make as makeLatexArchiveUnpacker } from "./LatexArchiveUnpacker.ts";
 import { resolveTinyTexAsset, type TinyTexAsset } from "./tinytexManifest.ts";
-import { isTexSafePath, make as makeLatexStateLocation } from "./latexStateLocation.ts";
+import {
+  LatexTexDirectory,
+  isTexSafePath,
+  latexTexDirectory,
+  make as makeLatexTexDirectory,
+} from "./latexTexDirectory.ts";
 import {
   encodeManagedLatexInstallRecord,
   managedLatexInstallRoot,
@@ -423,7 +428,7 @@ const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAs
   });
 
 /**
- * A Windows profile whose name TeX Live cannot read. Scient's LaTeX state must
+ * A Windows profile whose name TeX Live cannot read. TeX's own files must
  * move to a private ASCII folder under the real `%ProgramData%`, locked to
  * this account; TinyTeX installed there must be the one the probe finds; and a
  * build of documents in Hebrew-named folders, invoked exactly as the build
@@ -433,29 +438,27 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
   Effect.gen(function* () {
     const profile = NodePath.join(temporaryRoot, "יעקב ü");
     const stateDirectory = NodePath.join(profile, "userdata");
-    const relocated = Layer.effect(ServerConfig.ServerConfig, makeLatexStateLocation).pipe(
-      Layer.provide(ServerConfig.layerTest(stateDirectory, stateDirectory)),
+    const relocated = Layer.effect(LatexTexDirectory, makeLatexTexDirectory).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(stateDirectory, stateDirectory)),
       Layer.provide(ProcessRunner.layer),
       Layer.provide(Layer.succeed(HostProcess.Environment, { ...process.env })),
       Layer.provide(NodeServices.layer),
     );
-    const latexDir = yield* ServerConfig.ServerConfig.use((config) =>
-      Effect.succeed(config.latexDir),
-    ).pipe(Effect.provide(relocated));
+    const texDirectory = yield* latexTexDirectory.pipe(Effect.provide(relocated));
     yield* Effect.addFinalizer(() =>
-      Effect.promise(() => NodeFSP.rm(latexDir, { recursive: true, force: true })),
+      Effect.promise(() => NodeFSP.rm(texDirectory, { recursive: true, force: true })),
     );
     const programData = process.env.ProgramData ?? "C:\\ProgramData";
-    expect(NodePath.dirname(latexDir).toLowerCase()).toBe(programData.toLowerCase());
-    expect(isTexSafePath(latexDir)).toBe(true);
+    expect(NodePath.dirname(texDirectory).toLowerCase()).toBe(programData.toLowerCase());
+    expect(isTexSafePath(texDirectory)).toBe(true);
     const acl = NodeChildProcess.spawnSync(
       NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
-      [latexDir],
+      [texDirectory],
       { encoding: "utf8" },
     );
     expect(acl.status, acl.stderr).toBe(0);
     const grants = acl.stdout
-      .replace(latexDir, "")
+      .replace(texDirectory, "")
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter((line) => line.includes(":("));
@@ -466,7 +469,7 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
 
     // Installed where the managed installer would place it, and recorded the
     // same way, so the probe below has to find it through the relocated state.
-    const paths = managedLatexPaths({ latexDir, join: NodePath.join });
+    const paths = managedLatexPaths({ latexDir: texDirectory, join: NodePath.join });
     const installRoot = managedLatexInstallRoot({
       managedRoot: paths.managedRoot,
       version: "smoke",
@@ -511,7 +514,7 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
     );
     expect(found.kind).toBe("latexmk");
     expect(found.source).toBe("scient-managed");
-    expect(found.executable?.toLowerCase().startsWith(latexDir.toLowerCase())).toBe(true);
+    expect(found.executable?.toLowerCase().startsWith(texDirectory.toLowerCase())).toBe(true);
     const executable = found.executable ?? "";
 
     for (const [folder, rootFileName] of [
@@ -527,7 +530,7 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
         ),
       );
       const workDirectory = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(latexDir, "builds-")),
+        NodeFSP.mkdtemp(NodePath.join(texDirectory, "builds-")),
       );
       const invocation = buildLatexInvocation({
         toolchain: { kind: "latexmk", executable, version: found.version ?? "unknown" },

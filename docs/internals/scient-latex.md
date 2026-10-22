@@ -736,38 +736,38 @@ descriptors do not disclose the canonical host root.
 
 `config.latexDir` is `<state root>/latex`, a sibling of `analysisDir` and the
 other environment-derived state directories — never inside the user's
-workspace. On Windows, when that path is not printable ASCII, the LaTeX services
-see a different `latexDir` (`latexStateLocation.ts`, provided only to them in
-`ScientServerLayers.ts`). TeX Live cannot work from such a path: kpathsea does
-not find its own `texmf.cnf` (a single "ü" is enough), and `latexmk` converts
-every path argument to the system code page, so Hebrew or Cyrillic become "?".
-8.3 short names do not help, because kpathsea expands them back. The
-replacement is `%ProgramData%\scient-latex-<16 hex>`. No other account can
-ever reach it. It is made inside the profile `latexDir`, where only this account
-can open it, locked there with `icacls` (inherited access removed, full control
-for the account's SID from `whoami`, SYSTEM and Administrators), and only then
-moved into `%ProgramData%`. A same-volume move keeps the folder's protected
-access list, so it arrives private. A profile on another drive cannot be moved,
-and nothing changes. `%ProgramData%` lets accounts delete only what they created,
-so the folder cannot be removed or replaced afterwards. Its path and NTFS
-identity (`dev:ino`) are recorded in `<profile latexDir>/tex-location.json`. A
-later start reuses it only if the path is a direct child of `%ProgramData%` with
-that name pattern and the same real folder (not a link) is still there; a folder
-recreated under the name has a different identity and is ignored. Build evidence
-and SyncTeX indexes in the profile folder move across entry by entry, never over
-an existing entry (files are linked to their new name, which fails if it is
-taken, then unlinked), and anything left moves on a later start. The work runs
-on a detached fiber and server start waits only for its answer, at most 30
-seconds, never for cleanup it cannot interrupt (stopping a hung process, closing
-a file). Whichever settles first wins: the new folder, or the profile `latexDir`
-when the wait runs out or a step fails, which is the earlier behavior. Earlier
-state moves only after the new folder has won, so it is never split; a folder
-recorded after losing is the one the next start uses, and the next start sweeps
-an attempt's leftovers from the profile. ASCII paths and other platforms are
-untouched. All of this assumes the state directory is private to the account, as
-Scient's state directory must be anyway: whoever can write there can already
-replace the managed TeX. Every compile writes into
-`<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
+workspace. On Windows, when that path is not printable ASCII, the folders TeX
+itself reads and writes — `managed`, `builds` and `artwork` — live elsewhere
+(`latexTexDirectory.ts`: a `LatexTexDirectory` reference provided only to the
+LaTeX services in `ScientServerLayers.ts`, read through `latexTexDirectory`,
+which falls back to `latexDir`). Build evidence and SyncTeX indexes, which only
+Node and Scient's own helper read, stay in `latexDir`, so nothing moves and
+nothing is migrated. TeX Live cannot work from such a path: kpathsea does not
+find its own `texmf.cnf` (a single "ü" is enough), and `latexmk` converts every
+path argument to the system code page, so Hebrew or Cyrillic become "?". 8.3
+short names do not help, because kpathsea expands them back. The replacement is
+`%ProgramData%\scient-latex-<16 hex>`. No other account can ever reach it. It
+is made inside the profile `latexDir`, where only this account can open it,
+locked there with `icacls` (inherited access removed, full control for the
+account's SID from `whoami`, SYSTEM and Administrators), and only then moved
+into `%ProgramData%`. A same-volume move keeps the folder's protected access
+list, so it arrives private. A profile on another drive cannot be moved, and
+nothing changes. `%ProgramData%` lets accounts delete only what they created, so
+the folder cannot be removed or replaced afterwards. Its path and NTFS identity
+(`dev:ino`) are recorded in `<latexDir>/tex-location.json`. A later start reuses
+it only if the path is a direct child of `%ProgramData%` with that name pattern
+and the same real folder (not a link) is still there; a folder recreated under
+the name has a different identity and is ignored. The work runs on a detached
+fiber and server start waits only for its answer, at most 30 seconds, never for
+cleanup it cannot interrupt (stopping a hung process, closing a file). Whichever
+settles first wins: the new folder, or `latexDir` when the wait runs out or a
+step fails, which is the earlier behavior. A folder recorded after the wait ran
+out is the one the next start uses, and the next start sweeps an attempt's
+leftovers from the profile. ASCII paths and other platforms are untouched. All
+of this assumes the state directory is private to the account, as Scient's
+state directory must be anyway: whoever can write there can already replace the
+managed TeX. Every compile writes into
+`<TeX folder>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
 `-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
 `.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.
 Build-input evidence is the only other per-document state this lane keeps, one
@@ -782,8 +782,8 @@ output basename changes. SyncTeX is still requested, but TeX distributions that
 encode its input paths through a Windows code page may lose Unicode characters
 there, so successful compilation does not establish Unicode source navigation.
 The managed TinyTeX
-distribution lives under a separate
-`<latexDir>/managed` root, entirely apart from build work directories. Published
+distribution lives under a separate `managed` root in the TeX folder (normally
+`<latexDir>/managed`), entirely apart from build work directories. Published
 navigation indexes live under
 `<latexDir>/synctex/<artifact-id>/<revision-id>` and are swept when the shared
 PDF store no longer retains the matching immutable revision.

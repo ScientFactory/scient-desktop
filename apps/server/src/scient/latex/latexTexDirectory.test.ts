@@ -15,14 +15,16 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import {
-  LATEX_STATE_LOCATION_FILE,
-  isPrivateLatexStateFolder,
+  LATEX_TEX_LOCATION_FILE,
+  isPrivateTexFolder,
   isTexSafePath,
-  make as makeLatexStateLocation,
+  LatexTexDirectory,
+  latexTexDirectory,
+  make as makeLatexTexDirectory,
   privateFolderLockArguments,
-  resolveLatexStateDirectory,
+  resolveLatexTexDirectory,
   windowsUserSid,
-} from "./latexStateLocation.ts";
+} from "./latexTexDirectory.ts";
 
 const SID = "S-1-5-21-1111111111-2222222222-3333333333-1001";
 
@@ -96,7 +98,7 @@ const harness = (
         ...(options.programData === "absent" ? {} : { PROGRAMDATA: programData }),
       }),
     );
-    const resolve = resolveLatexStateDirectory(latexDir).pipe(Effect.provide(services));
+    const resolve = resolveLatexTexDirectory(latexDir).pipe(Effect.provide(services));
     const privateFolders = fileSystem
       .readDirectory(programData)
       .pipe(Effect.map((entries) => entries.map((entry) => path.join(programData, entry))));
@@ -124,13 +126,12 @@ describe("isTexSafePath", () => {
   });
 });
 
-describe("isPrivateLatexStateFolder", () => {
+describe("isPrivateTexFolder", () => {
   it.effect("accepts only a folder of its own name directly under ProgramData", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const programData = "/c/ProgramData";
-      const check = (directory: string) =>
-        isPrivateLatexStateFolder({ directory, programData, path });
+      const check = (directory: string) => isPrivateTexFolder({ directory, programData, path });
       expect(check("/c/ProgramData/scient-latex-0123456789abcdef")).toBe(true);
       expect(check("/c/programdata/scient-latex-0123456789abcdef")).toBe(true);
       expect(check("/c/ProgramData/other/scient-latex-0123456789abcdef")).toBe(false);
@@ -163,7 +164,7 @@ describe("privateFolderLockArguments", () => {
   });
 });
 
-describe("resolveLatexStateDirectory", () => {
+describe("resolveLatexTexDirectory", () => {
   it.effect("leaves every non-Windows computer exactly as it was", () =>
     Effect.gen(function* () {
       const fixture = yield* harness({ platform: "darwin" });
@@ -202,7 +203,7 @@ describe("resolveLatexStateDirectory", () => {
       expect(yield* fixture.stagingLeftovers).toEqual([]);
       const info = yield* fileSystem.stat(directory);
       const recorded = JSON.parse(
-        yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE)),
+        yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_TEX_LOCATION_FILE)),
       );
       expect(recorded).toEqual({
         schemaVersion: 1,
@@ -277,7 +278,7 @@ describe("resolveLatexStateDirectory", () => {
       yield* fileSystem.makeDirectory(elsewhere);
       const info = yield* fileSystem.stat(elsewhere);
       yield* fileSystem.writeFileString(
-        path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE),
+        path.join(fixture.latexDir, LATEX_TEX_LOCATION_FILE),
         JSON.stringify({
           schemaVersion: 1,
           directory: elsewhere,
@@ -305,7 +306,7 @@ describe("resolveLatexStateDirectory", () => {
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
       expect(yield* fixture.privateFolders).toEqual([]);
       expect(yield* fixture.stagingLeftovers).toEqual([]);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE))).toBe(
+      expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_TEX_LOCATION_FILE))).toBe(
         false,
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -334,43 +335,6 @@ describe("resolveLatexStateDirectory", () => {
       const fixture = yield* harness({ programData: "missing" });
       expect(yield* fixture.resolve).toBe(fixture.latexDir);
       expect(yield* fixture.stagingLeftovers).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("keeps the new folder when moving earlier state runs out of time", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const stalled = yield* Deferred.make<void>();
-      let evidenceMoves = 0;
-      const fixture = yield* harness({
-        wrapFileSystem: (real) => ({
-          ...real,
-          link: (from, to) =>
-            from.includes(`${path.sep}evidence${path.sep}`) && ++evidenceMoves === 2
-              ? Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Effect.never))
-              : real.link(from, to),
-        }),
-      });
-      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "a");
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "b.json"), "b");
-
-      const running = yield* Effect.forkChild(fixture.resolve);
-      yield* Deferred.await(stalled);
-      yield* TestClock.adjust("31 seconds");
-      const directory = yield* Fiber.join(running);
-      expect(path.dirname(directory)).toBe(fixture.programData);
-      expect(yield* fileSystem.readDirectory(path.join(directory, "evidence"))).toHaveLength(1);
-      expect(yield* fileSystem.readDirectory(path.join(fixture.latexDir, "evidence"))).toHaveLength(
-        1,
-      );
-
-      // The next start finds the same folder and moves the rest.
-      expect(yield* fixture.resolve).toBe(directory);
-      expect(
-        (yield* fileSystem.readDirectory(path.join(directory, "evidence"))).toSorted(),
-      ).toEqual(["a.json", "b.json"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -417,7 +381,7 @@ describe("resolveLatexStateDirectory", () => {
         wrapFileSystem: (real) => ({
           ...real,
           rename: (from, to) =>
-            diskStuck && to.endsWith(LATEX_STATE_LOCATION_FILE)
+            diskStuck && to.endsWith(LATEX_TEX_LOCATION_FILE)
               ? real
                   .rename(from, to)
                   .pipe(
@@ -427,26 +391,17 @@ describe("resolveLatexStateDirectory", () => {
               : real.rename(from, to),
         }),
       });
-      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "a");
       const running = yield* Effect.forkChild(fixture.resolve);
       yield* Deferred.await(stalled);
       yield* TestClock.adjust("31 seconds");
-      // This start never heard back, so it keeps the profile folder whole.
+      // This start never heard back, so it keeps the profile folder.
       expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "evidence", "a.json"))).toBe(
-        true,
-      );
 
       diskStuck = false;
       const recorded = JSON.parse(
-        yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE)),
+        yield* fileSystem.readFileString(path.join(fixture.latexDir, LATEX_TEX_LOCATION_FILE)),
       );
-      const directory = yield* fixture.resolve;
-      expect(directory).toBe(recorded.directory);
-      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
-        "a",
-      );
+      expect(yield* fixture.resolve).toBe(recorded.directory);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -493,7 +448,7 @@ describe("resolveLatexStateDirectory", () => {
       yield* Deferred.await(stalled);
       yield* TestClock.adjust("31 seconds");
       expect(yield* Fiber.join(running)).toBe(fixture.latexDir);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_STATE_LOCATION_FILE))).toBe(
+      expect(yield* fileSystem.exists(path.join(fixture.latexDir, LATEX_TEX_LOCATION_FILE))).toBe(
         false,
       );
       expect(yield* fixture.stagingLeftovers).toHaveLength(1);
@@ -512,46 +467,10 @@ describe("resolveLatexStateDirectory", () => {
       expect(yield* Ref.get(fixture.calls)).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-
-  it.effect("carries evidence and SyncTeX indexes over entry by entry, never over newer ones", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const fixture = yield* harness();
-      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "old a");
-      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "synctex", "artifact"), {
-        recursive: true,
-      });
-      const directory = yield* fixture.resolve;
-      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
-        "old a",
-      );
-      expect(yield* fileSystem.exists(path.join(directory, "synctex", "artifact"))).toBe(true);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "evidence"))).toBe(false);
-      expect(yield* fileSystem.exists(path.join(fixture.latexDir, "synctex"))).toBe(false);
-
-      // Left behind by an earlier, interrupted start: what is new moves, what
-      // the folder in use already has is not replaced.
-      yield* fileSystem.makeDirectory(path.join(fixture.latexDir, "evidence"));
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "a.json"), "stale");
-      yield* fileSystem.writeFileString(path.join(fixture.latexDir, "evidence", "b.json"), "b");
-      yield* fixture.resolve;
-      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "a.json"))).toBe(
-        "old a",
-      );
-      expect(yield* fileSystem.readFileString(path.join(directory, "evidence", "b.json"))).toBe(
-        "b",
-      );
-      expect(yield* fileSystem.readDirectory(path.join(fixture.latexDir, "evidence"))).toEqual([
-        "a.json",
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
 });
 
 describe("layer", () => {
-  it.effect("changes latexDir for the services it is provided to, and nothing else", () =>
+  it.effect("names the TeX folder for the services it is provided to, and nothing else", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -559,12 +478,19 @@ describe("layer", () => {
       const baseDir = path.join(root, "יעקב");
       const programData = path.join(root, "ProgramData");
       yield* fileSystem.makeDirectory(programData);
-      const read = ServerConfig.ServerConfig.use((config) => Effect.succeed(config));
-      const outer = yield* read.pipe(Effect.provide(ServerConfig.layerTest(root, baseDir)));
-      const inner = yield* read.pipe(
+      const config = ServerConfig.layerTest(root, baseDir);
+      const read = Effect.all([
+        latexTexDirectory,
+        ServerConfig.ServerConfig.use((service) => Effect.succeed(service.latexDir)),
+      ]);
+
+      const [unprovided, latexDir] = yield* read.pipe(Effect.provide(config));
+      expect(unprovided).toBe(latexDir);
+
+      const [texDirectory, unchanged] = yield* read.pipe(
         Effect.provide(
-          Layer.effect(ServerConfig.ServerConfig, makeLatexStateLocation).pipe(
-            Layer.provide(ServerConfig.layerTest(root, baseDir)),
+          Layer.effect(LatexTexDirectory, makeLatexTexDirectory).pipe(
+            Layer.provideMerge(config),
             Layer.provide(
               Layer.succeed(
                 ProcessRunner.ProcessRunner,
@@ -576,9 +502,9 @@ describe("layer", () => {
           ),
         ),
       );
-      expect(path.dirname(inner.latexDir)).toBe(programData);
-      expect(inner.stateDir).toBe(outer.stateDir);
-      expect(outer.latexDir.startsWith(baseDir)).toBe(true);
+      expect(path.dirname(texDirectory)).toBe(programData);
+      // Evidence, SyncTeX indexes and the record stay where they were.
+      expect(unchanged).toBe(latexDir);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

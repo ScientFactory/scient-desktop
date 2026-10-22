@@ -71,6 +71,7 @@ import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { resolveLatexDocument } from "./LatexProjectIndex.ts";
 import { LatexToolchain, latexDriverBinDirectory, latexDriverLabel } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
+import { latexTexDirectory } from "./latexTexDirectory.ts";
 import { parseLatexRecorderManifest, parseTectonicMakefileRules } from "./flsManifest.ts";
 import {
   EMPTY_EVIDENCE_MARKS,
@@ -503,6 +504,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const acquireProcessRetirementMarker = yield* makeLatexProcessRetirementMarkers;
   const config = yield* ServerConfig.ServerConfig;
+  const texDirectory = yield* latexTexDirectory;
   const store = yield* GeneratedDocumentStore;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const toolchainProbe = yield* LatexToolchain;
@@ -1646,7 +1648,7 @@ export const make = Effect.gen(function* () {
       }
       if (yield* isSuperseded(key, generation)) return;
 
-      const buildsDirectory = path.join(config.latexDir, "builds");
+      const buildsDirectory = path.join(texDirectory, "builds");
       yield* fileSystem.makeDirectory(buildsDirectory, { recursive: true });
       // Never adopt a previous attempt's aux files, including after cancellation
       // or service restart. A late writer cannot supply a successor's output.
