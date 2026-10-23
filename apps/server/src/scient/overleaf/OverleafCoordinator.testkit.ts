@@ -34,7 +34,7 @@ const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const volumeUuid = async () => VOLUME;
 export const CONNECTION = "connection-1";
 const TOKEN = new TextEncoder().encode("test-token");
-export type Point = "linked" | "applied" | "adopted" | "recorded" | "sent";
+export type Point = "linked" | "applied" | "adopted" | "recorded" | "admitting" | "sent";
 type Push = Effect.Effect<
   OverleafRepository.PushOutcome,
   OverleafRepository.OverleafRepositoryError | OverleafGitExecutor.OverleafGitError

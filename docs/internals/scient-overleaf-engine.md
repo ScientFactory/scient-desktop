@@ -301,8 +301,9 @@ settles earlier sends, and lists and restores kept copies.
 
 ### Publication
 
-After a complete adoption, confirm sends the result, still inside its
-application section so the checkout cannot change before the send:
+After a complete adoption, confirm sends the result. Steps 1 to 4 run inside its
+application section, which is released before the network is used (contract
+section 9):
 
 1. **Gate.** Nothing is sent after a partial apply, while conflict material or
    structural copies remain, or when a copy this apply kept is `changed` or
@@ -311,19 +312,24 @@ application section so the checkout cannot change before the send:
    (`none`).
 3. **Verify.** The folder is captured again, the way a review captures it and
    over every path the plan read or wrote (so an explicit deletion must still be
-   absent), and its tree must equal the candidate. A difference is `not-verified`, and the
-   edit is the next review's to send. Each copy this apply kept is checked again by its
-   stamp: one a late writer changed is recorded `changed` and the send is `blocked`. From here on, the content comes from the
-   private repository's objects, never from the folder.
+   absent), and its tree must equal the candidate. A difference is
+   `not-verified`, and the edit is the next review's to send. Each copy this
+   apply kept is checked again by its stamp: one a late writer changed is
+   recorded `changed` and the send is `blocked`. From here on, the content comes
+   from the private repository's objects, never from the folder.
 4. **Record.** The candidate is committed on the plan's fetched head. The
-   attempt is recorded `unknown` with its pins, before anything is sent. Resolved
-   history makes room; a confirm that would need a seventeenth unresolved
-   attempt is refused before the apply.
-5. **Send admission.** A credential renewed since the review records `not-sent`
-   (`send-refused`).
-6. **Send** once, never forced. `accepted` makes the candidate the base in the
-   same replacement. `out-of-date` keeps the adopted base. Anything else stays
-   `unknown`, as does an attempt whose finalizing write fails.
+   attempt is recorded `unknown` with its pins, before anything is sent.
+   Resolved history makes room; a confirm that would need a seventeenth
+   unresolved attempt is refused before the apply.
+5. **Send admission**, a short application section of its own: a checkout
+   changed or suspended since verification (its epoch moved), or a credential
+   renewed since the review, records `not-sent` (`send-refused`). Changes after
+   admission are later local changes and never alter what is sent.
+6. **Send** once, never forced, holding no section, so a pull or branch switch
+   of the checkout does not wait for the network. `accepted` makes the
+   candidate the base in the same replacement. `out-of-date` keeps the adopted
+   base. Anything else stays `unknown`, as does an attempt whose finalizing
+   write fails.
 
 **Settling earlier sends.** Prepare (on the head it fetches) and recover (one
 fetch) check every unresolved attempt against Overleaf by positive evidence
