@@ -5,7 +5,7 @@ import {
   type KeepAwakeThread,
 } from "@t3tools/contracts";
 
-export const KEEP_AWAKE_FINISH_GRACE_MS = 20_000;
+const KEEP_AWAKE_FINISH_GRACE_MS = 20_000;
 
 export interface KeepAwakeCompletion {
   readonly firstObservedAt: number;

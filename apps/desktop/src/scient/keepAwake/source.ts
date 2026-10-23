@@ -37,7 +37,7 @@ export class KeepAwakeSource extends Context.Service<
     ) => Effect.Effect<readonly WorkSourceResult[], KeepAwakeSourceError>;
   }
 >()("@t3tools/desktop/scient/keepAwake/source/KeepAwakeSource") {}
-export const threadAddress = Schema.decodeUnknownEffect(
+const threadAddress = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Tuple([Schema.String, ThreadId])),
 );
 export const layer = Layer.effect(
