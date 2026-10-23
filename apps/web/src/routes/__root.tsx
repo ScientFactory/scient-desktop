@@ -34,7 +34,11 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
+
+// SCIENT-FORK:START keep-awake mount
 import { KeepAwakeCoordinator } from "../scient/keepAwake/KeepAwakeCoordinator";
+
+// SCIENT-FORK:END
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
 import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
@@ -241,7 +245,11 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
+
+          {/* SCIENT-FORK:START keep-awake mount */}
           {isElectron && window.desktopBridge?.keepAwake ? <KeepAwakeCoordinator /> : null}
+
+          {/* SCIENT-FORK:END */}
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />

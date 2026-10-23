@@ -129,7 +129,6 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
-import { makeKeepAwakeHealth } from "./orchestration-v2/KeepAwakeHealth.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1232,7 +1231,6 @@ const layerWsRpc = (
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const observeKeepAwakeHealth = yield* makeKeepAwakeHealth;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
@@ -2150,23 +2148,13 @@ const layerWsRpc = (
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                 })
                 .pipe(
-                  Effect.flatMap((snapshot) =>
-                    Effect.gen(function* () {
-                      const projection = projectThreadProjectionForWire(
-                        buildBoundedThreadProjection({
-                          projection: snapshot.projection,
-                          snapshotSequence: snapshot.snapshotSequence,
-                        }).projection,
-                      );
-                      if (!input.includeKeepAwakeHealth) return projection;
-                      const keepAwakeHealth = yield* observeKeepAwakeHealth(
-                        snapshot.projection,
-                      ).pipe(
-                        Effect.timeout("2 seconds"),
-                        Effect.catchCause(() => Effect.succeed("unknown" as const)),
-                      );
-                      return { ...projection, keepAwakeHealth };
-                    }),
+                  Effect.map((snapshot) =>
+                    projectThreadProjectionForWire(
+                      buildBoundedThreadProjection({
+                        projection: snapshot.projection,
+                        snapshotSequence: snapshot.snapshotSequence,
+                      }).projection,
+                    ),
                   ),
                   Effect.mapError(
                     (cause) =>

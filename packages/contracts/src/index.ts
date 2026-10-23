@@ -40,7 +40,9 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
+
 // SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
+
 // after the V1 execution facade retires.
 export * from "./legacy/orchestrationEvent.ts";
 export { ScientConversationDispatchResult as DispatchResult } from "./scientConversationFork.ts";
@@ -131,4 +133,8 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
+
+// SCIENT-FORK:START keep-awake mount
 export * from "./scientKeepAwake.ts";
+
+// SCIENT-FORK:END

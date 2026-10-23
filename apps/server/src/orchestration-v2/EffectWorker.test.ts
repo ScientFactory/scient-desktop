@@ -151,6 +151,7 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
+        inspectExecution: () => Effect.succeed("unknown"),
         withProviderWorkAdmission: () => Effect.die("Unused native generation admission"),
         resolveMcpInvocationPolicy: () =>
           Effect.die("MCP invocation policy is not used in this fixture."),
@@ -716,6 +717,7 @@ it.effect("uses durable deadlines, notifications, and a slow liveness poll", () 
       Option.some(DateTime.add(now, { milliseconds: 100 })),
     );
     const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
+      isExecutingThread: () => Effect.succeed(false),
       awaitWork: Queue.take(available),
       runRecoveryOnce: Effect.succeed(false),
       runOnce: Effect.gen(function* () {
@@ -767,6 +769,7 @@ it.effect("does not hot-loop when a claim fails", () =>
     const attempts = yield* Ref.make(0);
     const now = yield* DateTime.now;
     const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
+      isExecutingThread: () => Effect.succeed(false),
       awaitWork: Effect.never,
       runRecoveryOnce: Effect.succeed(false),
       runOnce: Ref.update(attempts, (count) => count + 1).pipe(
@@ -802,6 +805,7 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
     const attempts = yield* Ref.make(0);
     const now = yield* DateTime.now;
     const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
+      isExecutingThread: () => Effect.succeed(false),
       awaitWork: Effect.never,
       runRecoveryOnce: Effect.succeed(false),
       runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),

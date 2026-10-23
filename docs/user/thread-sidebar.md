@@ -46,55 +46,57 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 ## Keep the computer awake
 
-In the desktop app, **Settings > General > Behavior > Keep computer awake**
-is a toggle, off by default. Turn it on to prevent automatic system sleep while
-threads are running; turn it off to follow system sleep settings. This preference
-applies to this computer, across projects. The display can still turn off.
+In the desktop app, **Settings > General > Behavior > Keep computer awake** is a
+toggle, off by default. It requests protection against automatic system sleep
+while local threads can continue working. The screen can still turn off.
+The preference belongs to this desktop profile, across projects.
 
-Right-click a thread and open **Keep computer awake** to select:
+Right-click a thread and open **Keep computer awake**:
 
-- **Use app setting**: follow the desktop default, including later changes.
-- **Until work finishes**: temporarily keep awake through one batch of work,
-  including queued additions, steered messages, linked subagents and active
-  monitoring. If selected before any work is submitted, it stays selected for
-  the next batch without keeping an idle computer awake. Once all related work
-  finishes or is cancelled and the queue is empty, the checkmark quietly returns
-  to **Use app setting** after fresh updates confirm completion. New messages
-  sent after that reset follow the app setting. Select **Use app setting** to
-  clear the temporary override immediately.
+- **Use app setting** follows the desktop default.
+- **Until work finishes** protects one batch, including queued additions,
+  steered messages, linked subagents, compaction, and result saving. Selecting
+  it on an idle thread arms the next batch without keeping an idle computer
+  awake. After the whole batch finishes or is cancelled and result saving ends,
+  fresh updates confirm completion and the checkmark quietly returns to
+  **Use app setting**. Messages sent after that reset follow the app setting.
 
-A held queue or unanswered approval allows normal sleep when no related work can
-continue. The temporary choice remains saved for resumption. Queued work that
-advances automatically and result saving remain protected. Persistent background
-shell commands, such as a development server, do not alone keep the computer awake.
-Pull request watches count as monitoring until they finish or are stopped.
-A remote environment's work can request protection for this desktop's connection
-and follow-up actions; it cannot change the remote machine's sleep settings.
+A held queue, approval, unanswered question, or secret request allows sleep when
+no other related work can continue. Passive PR watches and future usage-limit
+resets also allow sleep. The temporary choice stays selected for resumption.
+These local waits pause while the computer sleeps; Scient does not wake the
+computer for a future reset. Persistent background commands, such as a dev
+server, do not alone prevent sleep. The global toggle protects local execution;
+select **Until work finishes** explicitly to protect a remote connection. This
+cannot change the remote computer's power settings.
 
-Keep-awake has no maximum session duration and no configurable timeout.
+Status text under the toggle and in the existing thread menu distinguishes a
+requested keep-awake state from paused or unavailable protection. A failed
+preference save keeps an error visible and disables protection until a save
+succeeds, including when the failed change was turning protection off.
 
-Scient releases protection after 120 seconds without a fresh execution update,
-without cancelling the work. Fresh updates can restore protection while work
-continues. A repeated "running" status does not by itself establish execution
-health: Scient also checks live provider ownership and active server operations.
-If execution has no live owner and no progress for 120 seconds, its protection is
-released while the temporary choice remains selected. New progress or a recovered
-owner can restore protection. Connected silent work has no duration limit.
-Inconclusive checks, older servers without health observations, and background work
-whose ownership cannot be established remain protected while updates continue;
-a silent deadlock in a connected operation cannot be reliably distinguished from
-legitimate silent work.
+The server supplies work observations independently of the visible history.
+The desktop main process maintains the connection, so closing a window on
+macOS does not end protection while the app and backend remain running.
+Quitting the app releases its native request.
 
-Completion is confirmed across fresh updates, with a short grace period to avoid
-dropping protection between queued runs. Closing Scient releases its request. Preferences are
-stored in the desktop profile, independently of project settings.
+There is no maximum session duration and no configurable timeout. Protection
+expires after 120 seconds without fresh execution observations. Repeated saved
+?running? status alone cannot renew an operation with no live owner and no
+progress for 120 seconds. The temporary choice remains selected, and recovered
+execution or new progress can restore protection. Silent connected operations
+have no duration limit. A connected deadlock cannot always be distinguished
+from legitimate silent execution. If an older server does not support work
+observations, status reports the connection failure and stale protection expires.
 
-Keep-awake is subject to operating-system power policies, including Windows
-Modern Standby restrictions on battery and Linux desktop-service availability.
-Scient does not change Windows power plans or lid-close settings. If Windows is
-configured to sleep when the lid closes, closing it can pause local work even
-while keep-awake is enabled. Manual sleep and critical-power sleep can also
-override protection. Work on this computer may pause if the operating system sleeps.
+Operating-system policy can override the request. On Windows Modern Standby
+laptops on battery, system/execution requests can end five minutes after the
+normal sleep timeout. Scient displays the limitation on Windows and does not
+keep the display on, change power plans, or change lid-close settings. Closing
+a lid configured to sleep, choosing Sleep, and critical-power handling can
+still pause local work. ?Requested? describes Scient's native request; it is
+not a guarantee that the operating system will honor it. macOS and Linux native
+behavior also depends on system power policy and desktop-service availability.
 
 ## Pin and reorder threads
 

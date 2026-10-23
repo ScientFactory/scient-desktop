@@ -11,7 +11,11 @@ import {
 } from "../scient/conversationImport/openedConversationFiles.ts";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
+
+// SCIENT-FORK:START keep-awake mount
 import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
+
+// SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -101,7 +105,11 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+
+  // SCIENT-FORK:START keep-awake mount
   yield* ipc.handle(keepAwake);
+
+  // SCIENT-FORK:END
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 

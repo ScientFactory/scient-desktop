@@ -1,4 +1,37 @@
 import * as Schema from "effect/Schema";
+import { ThreadId } from "./baseSchemas.ts";
+
+export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
+export const KEEP_AWAKE_OBSERVE_PATH = "/api/scient/keep-awake/observe";
+export const KeepAwakeObserveRequest = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(2000)),
+  includeLocalWork: Schema.Boolean,
+});
+export type KeepAwakeObserveRequest = typeof KeepAwakeObserveRequest.Type;
+export const KeepAwakeWork = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  latestRunId: Schema.NullOr(Schema.String),
+  removed: Schema.Boolean,
+  unfinished: Schema.Boolean,
+  runnable: Schema.Boolean,
+  blockingInput: Schema.Boolean,
+  finalizing: Schema.Boolean,
+  ownership: Schema.Literals(["connected", "unowned", "unknown"]),
+  progress: Schema.String,
+  reason: Schema.String,
+});
+export type KeepAwakeWork = typeof KeepAwakeWork.Type;
+export const KeepAwakeWorkBatch = Schema.Struct({
+  environmentId: Schema.String,
+  groups: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      members: Schema.Array(KeepAwakeWork),
+    }),
+  ),
+});
+export type KeepAwakeWorkBatch = typeof KeepAwakeWorkBatch.Type;
 
 const Timestamp = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
 export const KeepAwakeChoice = Schema.Literals(["app", "once"]);
@@ -54,13 +87,6 @@ export const KeepAwakeRequest = Schema.Union([
     key: Schema.String,
     title: Schema.String,
     choice: KeepAwakeChoice,
-    work: Schema.optional(
-      Schema.Struct({ latestRunId: Schema.NullOr(Schema.String), unfinished: Schema.Boolean }),
-    ),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("report"),
-    observations: Schema.Array(KeepAwakeObservation).check(Schema.isMaxLength(2000)),
   }),
 ]);
 export type KeepAwakeRequest = typeof KeepAwakeRequest.Type;
@@ -68,6 +94,7 @@ export const KeepAwakeState = Schema.Struct({
   settings: KeepAwakeSettings,
   blocking: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
+  platformNotice: Schema.optional(Schema.String),
   threads: Schema.Array(
     Schema.Struct({
       ...KeepAwakeThread.fields,

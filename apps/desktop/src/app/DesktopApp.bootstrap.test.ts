@@ -25,7 +25,11 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopVoice from "./DesktopVoice.ts";
+
+// SCIENT-FORK:START keep-awake mount
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
+
+// SCIENT-FORK:END
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
@@ -246,7 +250,11 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(ElectronShell.ElectronShell, {}),
       Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
       Layer.mock(DesktopVoice.DesktopVoice, {}),
+
+      // SCIENT-FORK:START keep-awake mount
       Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
+
+      // SCIENT-FORK:END
       Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
       Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
       Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),

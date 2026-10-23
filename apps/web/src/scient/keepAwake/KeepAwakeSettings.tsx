@@ -13,8 +13,21 @@ export function KeepAwakeSettings() {
   return (
     <SettingsRow
       {...searchableSetting("keep-computer-awake")}
-      description="Prevent automatic sleep while threads are running. The screen can still turn off."
-      status={error ?? state?.error ?? undefined}
+      description={
+        <>
+          Prevent automatic sleep while local threads are running. The screen can still turn off.
+          {state?.platformNotice ? <> {state.platformNotice}</> : null}
+        </>
+      }
+      status={
+        error ??
+        state?.error ??
+        (state?.blocking
+          ? "Keep-awake requested"
+          : state?.threads.some((thread) => thread.status === "paused")
+            ? "Paused: waiting for work that can continue"
+            : "No keep-awake request")
+      }
       control={
         <Switch
           aria-label="Keep computer awake"

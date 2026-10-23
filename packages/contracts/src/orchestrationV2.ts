@@ -1,7 +1,6 @@
 import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ScientConversationFork } from "./scientConversationFork.ts";
-import { KeepAwakeExecutionHealth } from "./scientKeepAwake.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -1877,8 +1876,6 @@ export const OrchestrationV2DomainEvent = Schema.Union([
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
 export const OrchestrationV2ThreadProjection = Schema.Struct({
-  // Only explicit keep-awake queries carry this live, non-persisted observation.
-  keepAwakeHealth: Schema.optional(KeepAwakeExecutionHealth),
   thread: OrchestrationV2AppThread,
   runs: Schema.Array(OrchestrationV2Run),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
@@ -3370,7 +3367,6 @@ export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2Dispatc
 
 export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
   threadId: ThreadId,
-  includeKeepAwakeHealth: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;

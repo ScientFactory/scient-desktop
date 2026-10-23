@@ -383,6 +383,37 @@ instances. These owners do not replace native session lifetime or caller authori
 These are mounts into the existing public contracts and composition graph, not parallel private
 transport schemas. Preserve public encoding, endpoint registration and current error semantics.
 
+#### Keep-awake observations and desktop ownership
+
+Keep-awake policy belongs to `apps/server/src/scient/keepAwake/` and
+`apps/desktop/src/scient/keepAwake/`; its contracts live in
+`packages/contracts/src/scientKeepAwake.ts`. The authenticated Scient HTTP group
+returns work facts from canonical shells, pending execution metadata, and the
+checkpoint outbox. It never reconstructs work from the bounded transcript RPC
+or extends the core projection schema. Unchanged canonical reads are cached;
+live ownership is checked on each observation. Parent-held input blocks native
+children, and terminal children do not become synthetic unresolved work.
+
+`ProviderSessionManager.ts` has a marked read-only inspection mount into
+`ownership.ts` and shares its existing managed turn wrapper with compaction.
+`EffectWorker.ts` has a marked cancellation-safe execution counter mount;
+metadata-only title generation is excluded. These hooks are required service
+members, with explicit synthetic implementations in test stubs.
+
+`environmentHttp.ts` mounts the Scient HTTP contract; `ScientServerLayers.ts`
+provides its service. The desktop main process uses its backend pool and saved
+environment authentication independently of renderer lifetime. Its atomic async
+preferences preserve the existing `keep-awake.json` location and format.
+Electron power calls stay in the feature adapter, app shutdown uses `ElectronApp`,
+and preload uses the shared channel constant. Native request start/stop is logged.
+
+Marked mounts in `main.ts`, `DesktopIpcHandlers.ts`, `preload.ts`, `__root.tsx`,
+`SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx`, and
+`threadActionMenu.logic.ts` compose Scient-owned controls and menu policy.
+The renderer neither polls transcripts nor reports execution truth. Preserve the
+one settings toggle, two thread choices, explicit remote override, passive-wait
+policy, and OS limitations when realigning these mounts with upstream.
+
 #### Web and desktop surfaces
 
 Web capability owners are under [`apps/web/src/scient/`](../../apps/web/src/scient/). Their hooks

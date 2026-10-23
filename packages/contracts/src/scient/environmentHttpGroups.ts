@@ -1,3 +1,8 @@
+import {
+  KEEP_AWAKE_OBSERVE_PATH,
+  KeepAwakeObserveRequest,
+  KeepAwakeWorkBatch,
+} from "../scientKeepAwake.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -661,7 +666,16 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  class EnvironmentScientKeepAwakeHttpApi extends HttpApiGroup.make("scientKeepAwake").add(
+    HttpApiEndpoint.post("observe", KEEP_AWAKE_OBSERVE_PATH, {
+      headers: OptionalBearerHeaders,
+      payload: KeepAwakeObserveRequest,
+      success: KeepAwakeWorkBatch,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
   return {
+    EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
     EnvironmentScientSourcesHttpApi,
     EnvironmentScientLatexHttpApi,

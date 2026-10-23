@@ -1,5 +1,11 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-import type { KeepAwakeChoice } from "@t3tools/contracts";
+// SCIENT-FORK:START keep-awake menu mount
+import {
+  keepAwakeMenu,
+  type KeepAwakeMenuState,
+  type KeepAwakeMenuId,
+} from "../scient/keepAwake/menu";
+// SCIENT-FORK:END
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
@@ -25,8 +31,9 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
-  | "keep-awake"
-  | `keep-awake:${KeepAwakeChoice}`
+  // SCIENT-FORK:START keep-awake menu identifiers
+  | KeepAwakeMenuId
+  // SCIENT-FORK:END
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -79,7 +86,9 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
-  readonly keepAwakeChoice?: KeepAwakeChoice;
+  // SCIENT-FORK:START keep-awake menu state
+  readonly keepAwake?: KeepAwakeMenuState | undefined;
+  // SCIENT-FORK:END
   readonly canOperate: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -109,7 +118,9 @@ export interface ThreadActionMenuState {
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  // SCIENT-FORK:START local sleep preference needs no remote operate scope
   if (action === "keep-awake" || action.startsWith("keep-awake:")) return false;
+  // SCIENT-FORK:END
   return ![
     "new-thread-on-branch",
     "project-settings",
@@ -162,6 +173,7 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
+
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },
@@ -177,7 +189,9 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "regenerate-title" as const,
+
             label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
+
             icon: "refresh-cw",
             disabled: state.isRegeneratingTitle,
           },
@@ -216,24 +230,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.keepAwakeChoice === undefined
-      ? []
-      : [
-          {
-            id: "keep-awake" as const,
-            label: "Keep computer awake",
-            children: (
-              [
-                ["app", "Use app setting"],
-                ["once", "Until work finishes"],
-              ] as const
-            ).map(([choice, label]) => ({
-              id: `keep-awake:${choice}` as const,
-              label,
-              checked: state.keepAwakeChoice === choice,
-            })),
-          },
-        ]),
+    // SCIENT-FORK:START keep-awake menu mount
+    ...keepAwakeMenu(state.keepAwake),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",

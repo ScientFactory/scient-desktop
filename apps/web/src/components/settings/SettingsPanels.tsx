@@ -1,6 +1,10 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
 import { SettingsGroup } from "./SettingsGroup";
+
+// SCIENT-FORK:START keep-awake mount
 import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
+
+// SCIENT-FORK:END
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -400,6 +404,7 @@ function AboutVersionSection() {
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
+
     "up-to-date": "Up to Date",
   };
   const buttonLabel =
@@ -1816,6 +1821,7 @@ function LegacyFeaturesSection() {
 
 export function GeneralSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
     { value: "mod-enter-multiline", label: `${modifierLabel} + Enter for multiline prompts` },
@@ -2708,7 +2714,11 @@ export function GeneralSettingsPanel() {
             </>
           }
         />
+
+        {/* SCIENT-FORK:START keep-awake mount */}
         <KeepAwakeSettings />
+
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">

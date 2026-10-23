@@ -138,6 +138,7 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 );
 
 export const SETTINGS_SEARCH_ITEMS = [
+  // SCIENT-FORK:START keep-awake mount
   {
     id: "keep-computer-awake",
     title: "Keep computer awake",
@@ -145,6 +146,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sleep", "awake", "power", "queue", "keep awake"],
     desktopOnly: true,
   },
+
+  // SCIENT-FORK:END
   {
     id: "desktop-update-track",
     title: "Update track",

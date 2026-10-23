@@ -1,7 +1,7 @@
 import { type EnvironmentId, type ScopedProjectRef, type ServerConfig } from "@t3tools/contracts";
-import { keepAwakeThreadKey } from "@t3tools/contracts";
-import { requestKeepAwake } from "../scient/keepAwake/state";
-import { hasKeepAwakeShellWork } from "@t3tools/shared/scientKeepAwake";
+// SCIENT-FORK:START keep-awake menu integration
+import { keepAwakeSidebarState, handleKeepAwakeAction } from "../scient/keepAwake/sidebar";
+// SCIENT-FORK:END
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { ThreadTerminalStatusButton } from "./ThreadStatusIndicators";
@@ -601,7 +601,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       ).push(thread);
     }
   }
+
   // Server capability only gates DRAGGING — it must not influence the
+
   // sort, or mixed-version fleets would render different pinned orders on
   // web and mobile from the same data.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
@@ -3603,9 +3605,13 @@ export default function Sidebar() {
   const attemptPin = (threadRef: ScopedThreadRef) => {
     void (async () => {
       // Fresh pins take the top of the arranged run: pinThread computes a
+
       // key before the smallest key across ALL pinned shells — including
+
       // snoozed pins hidden from this list, whose keys are still part of
+
       // the run — so the new pin can't land beneath a hidden head.
+
       const result = await pinThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -4081,7 +4087,9 @@ export default function Sidebar() {
                       })),
                       {
                         id: "snooze:custom",
+
                         label: "Custom…",
+
                         separatorBefore: true,
                         disabled: !canOperateThreads(selectedThreads),
                       },
@@ -4375,19 +4383,12 @@ export default function Sidebar() {
         // SCIENT-FORK:START
         onSectionInteractionChange(true);
         // SCIENT-FORK:END
-        const powerKey = keepAwakeThreadKey(thread.environmentId, thread.id);
-        const powerState = window.desktopBridge?.keepAwake
-          ? await requestKeepAwake({ type: "get" })
-          : null;
-        const powerThread = powerState?.threads.find((entry) => entry.key === powerKey);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
-              ...(powerState === null
-                ? {}
-                : {
-                    keepAwakeChoice: powerThread?.once ? ("once" as const) : ("app" as const),
-                  }),
+              // SCIENT-FORK:START keep-awake menu state
+              keepAwake: keepAwakeSidebarState(thread),
+              // SCIENT-FORK:END
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -4425,23 +4426,15 @@ export default function Sidebar() {
         onSectionInteractionChange(false);
         // SCIENT-FORK:END
         if (clicked._tag === "Failure" || clicked.value === null) return;
-        if (clicked.value.startsWith("keep-awake:")) {
-          const choice = clicked.value.slice("keep-awake:".length);
-          if (choice === "app" || choice === "once") {
-            const current = threadByKeyRef.current.get(threadKey) ?? thread;
-            await requestKeepAwake({
-              type: "choose",
-              key: powerKey,
-              title: current.title,
-              choice,
-              work: {
-                latestRunId: current.source.latestRunId,
-                unfinished: hasKeepAwakeShellWork(current.source),
-              },
-            });
-          }
+        // SCIENT-FORK:START keep-awake menu dispatch
+        if (
+          await handleKeepAwakeAction(
+            clicked.value,
+            threadByKeyRef.current.get(threadKey) ?? thread,
+          )
+        )
           return;
-        }
+        // SCIENT-FORK:END
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;

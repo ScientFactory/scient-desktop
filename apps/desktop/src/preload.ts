@@ -1,3 +1,6 @@
+// SCIENT-FORK:START shared keep-awake channel
+import { KEEP_AWAKE_CHANNEL } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import type {
   DesktopBridge,
   DesktopPreviewOpenLinkEvent,
@@ -78,7 +81,10 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
-  keepAwake: (request) => ipcRenderer.invoke("scient:keep-awake", request),
+  // SCIENT-FORK:START keep-awake mount
+  keepAwake: (request) => ipcRenderer.invoke(KEEP_AWAKE_CHANNEL, request),
+
+  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
