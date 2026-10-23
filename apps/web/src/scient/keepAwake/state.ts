@@ -3,8 +3,8 @@ import type { KeepAwakeRequest, KeepAwakeState } from "@t3tools/contracts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { toastManager } from "../../components/ui/toast";
 
-export const keepAwakeStateAtom = Atom.make<KeepAwakeState | null>(null);
-export const keepAwakeErrorAtom = Atom.make<string | null>(null);
+export const keepAwakeStateAtom = Atom.make<KeepAwakeState | null>(null).pipe(Atom.keepAlive);
+export const keepAwakeErrorAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive);
 let pending = Promise.resolve();
 let lastState: KeepAwakeState | null = null;
 let reportedError: string | null = null;
