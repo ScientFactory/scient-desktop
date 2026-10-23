@@ -1,6 +1,6 @@
 # Overleaf manual sync: collaborator handoff
 
-**Next action: step 5, the last coordinator step, when the owner says go.** It switches the engine on in the server and takes five additions from [pr-c-design.md](pr-c-design.md) section 7. After it come the agent tools (PR C1), then the screens (PR C2).
+**Next action: step 5, the last coordinator step, when the owner says go.** It switches the engine on in the server and takes four additions from [pr-c-design.md](pr-c-design.md) section 7. After it come three engine additions, the agent tools (PR C1), then the screens (PR C2).
 
 This folder holds the plans for manual two-way sync between a folder in a Scient project and an Overleaf project, over Overleaf's Git integration.
 
@@ -30,9 +30,10 @@ The full product design, including the one-folder-per-Overleaf-project model and
 
 ## Build order
 
-1. **Step 5:** connect, disconnect, relink, token renewal, cancel and status; authenticated routes; wiring into the server; and the five additions (offline status, a "needs a decision" flag, the other-agents line, the new-file rule, holding back only a conflicted file).
-2. **PR C1, agent tools:** status, preview, connect, sync, decide, files, kept copies, Undo and management; the request that saves open editors in every window; two engine operations (send a file kept only here; Undo); the built-in Overleaf skill. Its acceptance is the first real end-to-end sync against Overleaf Cloud, driven by an agent.
-3. **PR C2, the screens:** the Overleaf chip, the review tab, settings, the connect dialog, and the user guide. Then the full journey in a packaged, signed build.
+1. **Step 5:** connect, disconnect, relink, token renewal, cancel and status; authenticated routes; wiring into the server; and four additions (offline status, a "needs a decision" flag, the other-agents line, the new-file rule).
+2. **Three engine additions, one PR each:** holding back only a file with conflict marks (two trees in the review), sending a file kept only here, and Undo. Specified in [pr-c-design.md](pr-c-design.md) section 7.
+3. **PR C1, agent tools:** status, preview, connect, sync, decide, files, kept copies, Undo and management; the request that saves open editors in every window; the built-in Overleaf skill. Its acceptance is the first real end-to-end sync against Overleaf Cloud, driven by an agent.
+4. **PR C2, the screens:** the Overleaf chip, the review tab, settings, the connect dialog, and the user guide. Then the full journey in a packaged, signed build.
 
 The contract's [acceptance matrix](pr-b-coordinator-contract.md#12-acceptance-matrix-fixed-before-code) (A01–A32) lists the tests each coordinator step must pass. Write them with the step, not afterwards.
 

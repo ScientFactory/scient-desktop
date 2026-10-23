@@ -1,8 +1,8 @@
-# Overleaf in Scient: agents, the app and the docs (PR C)
+# Overleaf in Scient: agents, the app and the docs (PRs C1 and C2)
 
 Decided with the owner on October 23–24, 2026. This document is the reference for everything after the server coordinator: what step 5 adds, the agent tools (PR C1), the app's screens (PR C2) and the documentation. Where the [implementation plan](implementation-plan.md) or the [coordinator contract](pr-b-coordinator-contract.md) disagree with it, this document wins, and they should be corrected.
 
-Nothing here is built yet. Steps 1–4 of the coordinator are merged and need no rework for these decisions.
+Nothing here is built yet. Steps 1–4 of the coordinator are merged. Most of these decisions sit on top of them; the engine changes they need are listed in section 7.
 
 ## 1. The rule for agents: whatever a person can do
 
@@ -11,6 +11,7 @@ Nothing here is built yet. Steps 1–4 of the coordinator are merged and need no
 - **The only control is the access setting the user already chose in the composer.** Overleaf tools run under it exactly like every other tool. Do not add an Overleaf permission. Do not change how the composer's access setting works. The tools never read it to decide what to refuse, and never change it.
 - **Every capability is available to the agent**, including the ones that remove or overwrite: unlink, start fresh after damaged history, restore a kept copy, undo a sync, choose a side in a conflict, keep a file only on this computer or send it.
 - **Tools do what they are asked, then report.** A tool returns a plain account of what happened, using the same lines a person sees (section 4). The engine's review acknowledgements are passed automatically: they identify the exact review being confirmed, and they are never a question to anyone.
+- **A review the engine rebuilds is confirmed the same way.** When the folder changes during a sync, or Overleaf moves, the engine builds a new review; the app or tool confirms it itself unless it now has a conflict. Asking for an operation, such as Start fresh, Undo or a restore, is its confirmation.
 - **Conflicts don't stop the agent.** It decides, the way it handles Git merge conflicts today.
 
 Three things look like steps but are not permission checks:
@@ -61,17 +62,18 @@ Ways 1 and 2 are being designed in their own thread (worktree `scient-desktop-co
 
 A short message, for example "3 files came in, 2 were sent · See changes". The agent gets the same lines. It can add:
 
-| Situation                                                                          | What it says                                                                                      |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| First sync of a link                                                               | What came in and what was sent. The connect screen or tool result already showed this beforehand. |
-| A file was renamed                                                                 | Overleaf drops comments and tracked changes on renamed files                                      |
-| Older versions were sent, for example after switching to an older branch           | "Sent older versions of 2 files · Undo" (section 4.3)                                             |
-| An earlier send never got an answer                                                | Scient checked Overleaf for it first and never sends it twice                                     |
-| The project is bigger than Overleaf recommends, or a file is too big to edit there | A size note                                                                                       |
-| A new file is over 50 MB                                                           | It stays only on this computer, because Overleaf refuses it                                       |
-| Another agent is working in this copy of the project                               | A note. The thread running the sync doesn't count.                                                |
-| A file still has conflict marks                                                    | That file waits; everything else was sent (section 4.2)                                           |
-| The sync history is damaged (rare)                                                 | Scient says so and offers "Start fresh". Nothing is deleted on either side.                       |
+| Situation                                                                          | What it says                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First sync of a link                                                               | What came in and what was sent. The connect screen or tool result already showed this beforehand.                                                                                       |
+| A file was renamed                                                                 | Overleaf drops comments and tracked changes on renamed files                                                                                                                            |
+| Older versions were sent, for example after switching to an older branch           | "Sent older versions of 2 files · Undo" (section 4.3)                                                                                                                                   |
+| An earlier send never got an answer                                                | Scient checked Overleaf for it and never retries it. The line says whether it arrived; if that still can't be told, it says so, and this sync may carry some of the same changes again. |
+| Overleaf changed while this sync was sending                                       | The app or tool starts one new sync by itself. If Overleaf changes again, the line says to sync again.                                                                                  |
+| The project is bigger than Overleaf recommends, or a file is too big to edit there | A size note                                                                                                                                                                             |
+| A new file is over 50 MB                                                           | It stays only on this computer, because Overleaf refuses it                                                                                                                             |
+| Another agent is working in this copy of the project                               | A note. The thread running the sync doesn't count.                                                                                                                                      |
+| A file still has conflict marks                                                    | That file waits; everything else was sent (section 4.2)                                                                                                                                 |
+| The sync history is damaged (rare)                                                 | Scient says so and offers "Start fresh". Nothing is deleted on either side.                                                                                                             |
 
 ### 4.2 Conflicts
 
@@ -84,36 +86,47 @@ A conflict is the same lines changed on both sides, or a change on one side that
 
 Conflicts that span several files (a rename on both sides, a file replaced by a folder) keep the engine's two whole-group choices: keep mine, or use Overleaf's.
 
-**While a file has conflict marks, only that file waits.** Everything else is sent, and Overleaf's copy of that file stays as it is until the marks are gone. The editor says "This file has 2 Overleaf conflicts to settle" instead of showing a failed LaTeX build. Today's engine holds back the whole send while any marks remain; step 5 changes this (section 7). Your version from before the sync is always kept as a copy.
+**While a file has conflict marks, only that file waits.** Everything else is sent, and Overleaf's copy of that file stays as it is until the marks are gone. The editor says "This file has 2 Overleaf conflicts to settle" instead of showing a failed LaTeX build. Your version from before the sync is always kept as a copy. Today's engine holds back the whole send while any marks remain; the change is an engine addition specified in section 7.
 
 ### 4.3 Undo
 
-Every sync that sent something offers **Undo**: it puts back into the folder the version Overleaf had just before that sync, for each file the sync changed there, keeping the current versions as copies, and syncs again. It covers the one case where this sync differs from GitHub: Git knows when you switch branches, but the sync only sees files that went back in time, so it sends older versions over collaborators' newer text. Undo also covers a deletion sent by mistake. Agents can undo too. Scient's private history already holds what Overleaf had before each send.
+**Undo puts back what Overleaf had before a send.** It covers the one case where this sync differs from GitHub: Git knows when you switch branches, but the sync only sees files that went back in time, so it sends older versions over collaborators' newer text. It also covers a deletion sent by mistake. People and agents can both undo.
+
+- **Which sends.** One send that Overleaf accepted, named by its attempt number. It is offered in that sync's result and in the status, for as long as the connection still records that attempt (the last 64). A send whose outcome is unknown, refused or out of date has nothing known to undo.
+- **What it does.** For every path that send changed on Overleaf (its parent commit's tree against the tree it sent: additions, deletions and both sides of a rename), it puts the parent's version back in the folder. That restores a changed file, removes a file the send added and recreates one it deleted. A file edited since that send is left alone and reported. Current bytes are kept as copies.
+- **Then it syncs.** The restored files go out as ordinary local changes. If collaborators changed the same files since, they merge like any other edit, and only a conflict stops.
+- **Safety.** It runs as a recorded local operation with its own receipt, like a kept-copy restore, so a retry or a restart never applies it twice.
 
 ### 4.4 What can still stop a sync
 
-These are failures with a reason, not questions:
+These are failures with a reason, never questions or approvals. Each says what happened and what to do next, and an agent can do whatever a person would.
 
-- Overleaf can't be reached, or the token is missing or rejected;
-- an open editor couldn't save (for example unconverted Visual-editor input);
-- the folder or Overleaf project is beyond a limit: 5,000 entries walked, 2,000 files, 250 MiB in total, or a synced file over 50 MB;
-- a pull, branch switch or checkpoint restore is changing the same checkout at that moment;
-- sixteen earlier sends still have no answer;
-- the sync history is damaged ("Start fresh", section 4.1).
-
-Each says what to do next. An agent can do whatever a person would.
+- **Overleaf:** it can't be reached, the token is missing or rejected, or this account has no Git access to the project.
+- **Editors:** an open editor couldn't save, for example unconverted Visual-editor input.
+- **Limits:** more than 5,000 entries in the folder, more than 2,000 files or 250 MiB to sync, a synced or incoming file over 50,000,000 bytes, or Scient's private copy of the project over its storage cap. Keeping some files only on this computer, or choosing a narrower folder, fixes the first ones.
+- **Paths and content:** names this Mac or Overleaf can't hold apart (differing only by letter case or Unicode spelling, a file and a folder with one name), or content Overleaf sends that Scient refuses to write (links, Git LFS pointers, repositories).
+- **The folder moved under the sync:** a file changed while it was being read (the sync reads it again), or the folder no longer matches what was applied when it is time to send (nothing is sent; the edit goes with the next sync).
+- **An interrupted earlier sync:** Scient finishes it first by itself. Files it can't settle become a conflict.
+- **A kept copy changed during this sync** (a program wrote into the old file): this sync sends nothing; the next one checks again.
+- **The checkout is busy:** a pull, branch switch or checkpoint restore is changing it at that moment.
+- **The folder can't be verified:** its disk is unplugged, it moved, or the project's link to this checkout changed. Relink fixes the last two.
+- **Scient's own state:** another Scient process holds the Overleaf state, or the disk is full.
+- **Sixteen earlier sends** still have no answer.
+- **The sync history is damaged:** Start fresh (section 4.1).
 
 ## 5. What is sent
 
 - **New files in the folder are sent by default.** The review carries the default for each new file, so the app and the agent tools always pick the same files.
-- **Skipped automatically, every sync** (a rule, not a remembered list):
-  - what the engine already skips or leaves out: LaTeX build leftovers (`.aux`, `.log`, `.synctex.gz`, `.fls`, `.fdb_latexmk`, `.out`, `.toc`, `.bbl`), anything in a hidden folder, system and editor droppings, Git's and Scient's own folders, nested repositories, links and Git LFS pointers;
-  - Scient's own project files (`AGENTS.md`, `PROJECT.md`) when the linked folder is the project's top;
-  - new files over 50 MB, reported (section 4.1).
-
-  A build leftover, hidden file or Scient file that Overleaf already has (a `.bbl` kept for arXiv, say) is synced like any other file.
-
-- **"Keep only on this computer"** is a list a person or agent edits on purpose, for something like notes to self. Taking a file off the list sends it at the next sync, and so does choosing "Send this file" for a skipped one. Once sent, a file is synced like any other.
+- **Skipped by default, every sync** (a rule, not a remembered list). "Send this file" sends one anyway:
+  - LaTeX build leftovers (`.aux`, `.log`, `.synctex.gz`, `.fls`, `.fdb_latexmk`, `.out`, `.toc`, `.bbl`);
+  - hidden files and anything in a hidden folder, for example `.env` or `.latexmkrc`;
+  - Scient's own project files (`AGENTS.md`, `PROJECT.md`) when the linked folder is the project's top.
+- **Never sent**, because Overleaf or the file layer can't take them; "Send this file" doesn't apply:
+  - Git's and Scient's own folders, nested repositories, links, Git LFS pointers, and system and editor droppings (`.DS_Store`, swap files);
+  - new files over 50,000,000 bytes, reported each sync (section 4.1). A file that shrinks under the limit is sent like any other.
+- **A file Overleaf already has is synced like any other**, even if its name is on the skip rule (a `.bbl` kept for arXiv, a `.latexmkrc`).
+- **"Keep only on this computer"** is a list a person or agent edits on purpose, for files not yet on Overleaf, such as notes to self. Taking a file off the list sends it at the next sync. Stopping the sync of a file already on Overleaf is not in this delivery.
+- **Too much to send** (over 2,000 files or 250 MiB) stops the sync with that reason (section 4.4).
 - A `.gitignore` in the folder is not read.
 
 ## 6. Agents' tools (PR C1)
@@ -127,7 +140,7 @@ The tools are server tools, like the existing "build this LaTeX document" tool. 
 | Connect     | Link a folder, or bring an Overleaf project in as a new folder or a new Scient project.                                                                      |
 | Sync        | The same sync a person runs, returning the result lines of section 4.1.                                                                                      |
 | Decide      | For each conflict: keep mine, use Overleaf's or merge in the file. The agent then edits the file and syncs again.                                            |
-| Files       | Keep a file only on this computer, or send it.                                                                                                               |
+| Files       | Keep a file only on this computer, or send a skipped or kept-only-here file.                                                                                 |
 | Kept copies | List, compare and restore them.                                                                                                                              |
 | Undo        | Put back Overleaf's previous version of what a sync sent.                                                                                                    |
 | Manage      | Relink, unlink, start fresh after damaged history; save the token (through the secure secret request), test it or remove it.                                 |
@@ -142,15 +155,37 @@ The tools are server tools, like the existing "build this LaTeX document" tool. 
 
 ## 7. Server work
 
-**Step 5 (the last coordinator step)** adds, beyond the contract's routes, mount, connect, disconnect, relink, token renewal, cancel and status:
+### Step 5, the last coordinator step
+
+Beyond the contract's routes, mount, connect, disconnect, relink, token renewal, cancel and status, step 5 adds:
 
 1. **An offline status** for the chip and the status tool: compares the folder with the last sync without going online. It reads the folder, so it is cached and refreshed on file changes, not run for every file header.
 2. **A "needs a decision" flag** on each review: true only when it has a conflict. The app and the tools confirm everything else straight away.
-3. **The other-agents line** (contract section 10): a bounded read of active threads in the same copy, excluding the caller. It is reported, never acknowledged. If activity can't be read, the line says so; it never claims no agent is working.
-4. **The new-file rule** of section 5: the review's default selection, the extra skips, and rule-skipped files no longer remembered as local-only. Today every unselected new file is remembered, and after 2,000 the sync refuses.
-5. **Holding back only a conflicted file** (section 4.2): the published tree takes the fetched Overleaf version of each file with conflict marks, and verification checks every other file byte for byte. This keeps the base rules as they are, because an apply already gives such a file Overleaf's version as its base. Step 5 proves it with a test: everything else is sent, Overleaf's copy of that file is unchanged, and the user's merge goes out at the next sync.
+3. **The other-agents line** (contract section 10): a bounded read of active threads in the same copy, excluding the caller and its subagents. It is reported, never acknowledged. If activity can't be read, the line says so; it never claims no agent is working.
+4. **The new-file rule** of section 5:
+   - the review's default selection, which the app and tools confirm as it is;
+   - hidden files skipped by default, not only files in hidden folders (today a top-level `.env` is selected by default);
+   - Scient's own project files and new files over 50,000,000 bytes skipped;
+   - rule-skipped files no longer remembered as local-only. Today every unselected new file is remembered, and after 2,000 the sync refuses.
 
-**PR C1 adds two engine operations**: sending a file that was kept only on this computer (today only a name clash with an Overleaf file brings one back), and Undo (section 4.3). It also adds the link between the server and the app's windows that saves open editors, which PR C2 reuses.
+### Engine additions, before the agent tools
+
+Each is its own PR after step 5, reviewed and merged before the C1 tools that use it.
+
+**1. Holding back only a file with conflict marks** (section 4.2). Today one candidate tree is the apply target, the verification expectation, the attempt and the next base, and the applier reports any remaining marks as needing attention, which blocks the whole send. The addition:
+
+1. **Two trees in the review.** The local target (what the folder will hold, marks included) and the publication tree: the local target with each held path set to the fetched Overleaf entry, or absent where Overleaf has none. Both trees and the set of held paths are bound into the review's digest. Outgoing changes are the difference between Overleaf's tree and the publication tree, so a held file never appears among them. The publication tree is validated like any other tree (file-and-folder and case or Unicode collisions).
+2. **Which paths are held.** Every path that gets new marks in this apply, plus every recorded marker path whose file still has marks. A marker record follows its file through renames on either side, so a marked file renamed locally is held at its new path. Today the review checks recorded marks only at their recorded paths.
+3. **The gate.** An apply whose only reason for attention is marks on held paths may publish: every unit done, the folder matches the local target, no interrupted groups, no staging, and no changed or ambiguous kept copies. Anything else blocks the send as today.
+4. **Verification** captures the whole publication domain and compares every path that isn't held with the publication tree, absences included. Held files are the user's work in progress and are not compared.
+5. **The attempt and the base.** The attempt records the publication tree, and acceptance makes it the base. A held file's base is then Overleaf's version, as an apply already sets it (`advanceBase`), so the user's merge goes out at the next sync. Marker records stay until the marks are gone, across acceptance, restart and recovery.
+6. **Tests:** new and carried-over marks; a marked file renamed locally and on Overleaf; Overleaf deleting a marked file; a restart between apply and send; resolving the marks and syncing; Markdown `=======` lines hold nothing back.
+
+**2. Sending a file kept only on this computer.** Removes it from the local-only list and selects it in the next review. Today only a name clash with an Overleaf file brings one back.
+
+**3. Undo** (section 4.3): a recorded local operation with its own receipt, built from the accepted attempt's parent and sent trees.
+
+PR C1 also adds the request from the server that saves open editors in every window, which PR C2 reuses.
 
 ## 8. The app's screens (PR C2)
 
@@ -181,11 +216,17 @@ The UI of PR #121 (closed October 19) is a reference for these screens.
 ## 10. Delivery
 
 1. **Step 5**, as stacked PRs if large (service operations, then routes and mount).
-2. **PR C1, agent tools**, with the editor-save link and the two engine operations. Its acceptance is the first real end-to-end sync against Overleaf Cloud, driven by an agent from the dev app.
-3. **PR C2, the screens and the user guide**, reusing C1's operations. Then the full journey in a packaged, signed macOS build.
+2. **The three engine additions** of section 7, one PR each.
+3. **PR C1, agent tools**, with the editor-save request, the skill and the agent documentation. Its acceptance is the first real end-to-end sync against Overleaf Cloud, driven by an agent from the dev app.
+4. **PR C2, the screens and the user guide**, reusing C1's operations. Then the full journey in a packaged, signed macOS build.
 
-Each piece is built, reviewed by Codex until clean, and merged through the queue one PR at a time. Where older text says "PR C", read C1 for the editor-save link and the agent journey, and C2 for anything on screen.
+Each piece is built, reviewed by Codex until clean, and merged through the queue one PR at a time. Where older text says "PR C", read C1 for the editor-save request and the agent journey, and C2 for anything on screen.
 
 ## 11. Still open with the owner
 
-**Four defaults** (contract section 1), recommended as they are: a review expires after 15 minutes; Scient's private copy of each project's history is capped at 5 GiB; files over 50,000,000 bytes are refused; only Overleaf's own site (Overleaf Cloud) is supported.
+**Four defaults** (contract section 1), recommended as they are:
+
+- a review expires after 15 minutes (it matters only while a conflict waits);
+- Scient's private copy of each project's history is capped at 5 GiB;
+- Overleaf's 50 MB file limit is read as 50,000,000 bytes: a new file over it stays only on this computer, and a synced or incoming one stops the sync;
+- only Overleaf's own site (Overleaf Cloud) is supported.
