@@ -98,6 +98,7 @@ import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import { ScientFilesIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { ScientNewTabButton, ScientSurfaceLauncher } from "~/scient/rightPanel/SurfaceLauncher";
 import { isScientNewTabSurface } from "~/scient/rightPanel/surfaces";
+import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelCategory } from "~/scient/analytics/viewCategories";
@@ -1176,7 +1177,16 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        // SCIENT-FORK:START — slightly larger tabs, with a faint divider before each one
+        "cursor-pointer group/tab relative flex h-7 max-w-40 shrink-0 items-center gap-1 rounded-md pr-2 pl-2 text-sm",
+        "not-first:before:pointer-events-none not-first:before:absolute not-first:before:inset-y-1.75 not-first:before:-left-0.75 not-first:before:w-0.5 not-first:before:scale-x-75 not-first:before:rounded-full not-first:before:bg-border/70",
+        // In Scient's strip the open tab takes the page colour and joins the page
+        // below it, as in Chrome; dividers give way beside it.
+        "in-data-[scient-tabstrip]:min-w-19 in-data-[scient-tabstrip]:shrink",
+        "in-data-[scient-tabstrip=content]:data-[active-tab=true]:h-8 in-data-[scient-tabstrip=content]:data-[active-tab=true]:self-end in-data-[scient-tabstrip=content]:data-[active-tab=true]:pb-1",
+        "in-data-[scient-tabstrip=content]:data-[active-tab=true]:rounded-t-lg in-data-[scient-tabstrip=content]:data-[active-tab=true]:rounded-b-none in-data-[scient-tabstrip=content]:data-[active-tab=true]:bg-background",
+        "in-data-[scient-tabstrip]:data-[active-tab=true]:before:opacity-0 in-data-[scient-tabstrip]:[[data-active-tab=true]+&]:before:opacity-0",
+        // SCIENT-FORK:END
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"
@@ -1210,6 +1220,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     (surface) => surface.id === props.activeSurfaceId && isScientNewTabSurface(surface),
   );
   const showsLauncher = props.activeSurfaceId === null || activeNewTab !== undefined;
+  const activeSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const activeSurfaceKey = !props.onAddNewTab
+    ? undefined
+    : activeSurface?.kind === "scient"
+      ? `scient-${activeSurface.module}`
+      : activeSurface?.kind;
   const needsNewTab = props.open !== false && props.surfaces.length === 0;
   const addNewTab = useEffectEvent(() => props.onAddNewTab?.({ whenEmpty: true }));
   useEffect(() => {
@@ -1552,7 +1568,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               ? "wco:pr-(--workspace-native-controls-inset)"
               : "wco:pr-(--workspace-native-controls-inset-wide)"),
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          // SCIENT-FORK:START — a grey tab strip; the open tab rests on its lower edge
+          props.onAddNewTab && "bg-sidebar pl-0",
+          // SCIENT-FORK:END
         )}
+        // SCIENT-FORK:START
+        data-scient-tabstrip={
+          props.onAddNewTab ? (showsLauncher ? "launcher" : "content") : undefined
+        }
+        // SCIENT-FORK:END
         data-right-panel-tabbar
       >
         <ScrollArea
@@ -1565,7 +1589,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // SCIENT-FORK:END
           data-right-panel-tab-list
         >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
+          {/* SCIENT-FORK:START — tabs shrink to fit before anything scrolls, with room
+              for the open tab's outward curves */}
+          <div
+            className={
+              props.onAddNewTab
+                ? "flex h-full w-full items-center gap-1 px-2.5"
+                : "flex h-full w-max min-w-full items-center gap-1"
+            }
+          >
+            {/* SCIENT-FORK:END */}
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
               {props.surfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
@@ -1738,7 +1771,28 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </>
         ) : null}
         {/* SCIENT-FORK:END */}
-        {tabScrollState.hasOverflow ? (
+        {/* SCIENT-FORK:START — one list of every tab instead of scroll arrows */}
+        {props.onAddNewTab && tabScrollState.hasOverflow ? (
+          <AllTabsMenu
+            tabs={props.surfaces.map((surface) => ({
+              id: surface.id,
+              title:
+                fileTitles.get(fileTabPath(surface) ?? "") ??
+                surfaceTitle(surface, props.previewSessions, props.terminalLabelsById),
+              active: surface.id === props.activeSurfaceId,
+            }))}
+            onSelect={(id) => {
+              const surface = props.surfaces.find((entry) => entry.id === id);
+              if (surface) props.onActivate(surface);
+            }}
+            onClose={(id) => {
+              const surface = props.surfaces.find((entry) => entry.id === id);
+              if (surface) props.onCloseSurface(surface);
+            }}
+          />
+        ) : null}
+        {tabScrollState.hasOverflow && !props.onAddNewTab ? (
+          /* SCIENT-FORK:END */
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
@@ -1790,7 +1844,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      {/* SCIENT-FORK:START — lets Scient's stylesheet even out where pages start; the
+          opening tag spreads over lines to carry it */}
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        data-right-panel-surface-content
+        data-scient-surface={activeSurfaceKey}
+      >
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — Scient's launcher page, for an empty panel and the New tab */}
         {props.onAddNewTab && showsLauncher ? (
           <ScientSurfaceLauncher

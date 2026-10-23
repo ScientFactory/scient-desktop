@@ -1499,7 +1499,7 @@ function PanelHeader(props: {
   readonly onBack?: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border p-3">
+    <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
       {props.onBack ? (
         <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Go back">
           <ChevronLeft />

@@ -152,7 +152,13 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             variant="ghost"
             size="sm"
           >
-            <MorphIcon className="size-4" icon={maximized ? Minimize2 : Maximize2} />
+            {/* SCIENT-FORK:START — a lighter, thinner glyph at the same size */}
+            <MorphIcon
+              className="size-4 text-muted-foreground"
+              strokeWidth={1.75}
+              icon={maximized ? Minimize2 : Maximize2}
+            />
+            {/* SCIENT-FORK:END */}
           </Toggle>
         }
       />
