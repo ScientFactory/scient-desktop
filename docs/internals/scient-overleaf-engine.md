@@ -321,10 +321,13 @@ section 9):
    attempt is recorded `unknown` with its pins, before anything is sent.
    Resolved history makes room; a confirm that would need a seventeenth
    unresolved attempt is refused before the apply.
-5. **Send admission**, a short application section of its own: a checkout
-   changed or suspended since verification (its epoch moved), or a credential
-   renewed since the review, records `not-sent` (`send-refused`). Changes after
-   admission are later local changes and never alter what is sent.
+5. **Send admission**, a short application section of its own, decides from
+   what it finds there: the same checkout (every key of its chain, so a
+   replaced or removed checkout fails) at the same epoch as at verification,
+   the same physical folders, and the credential the review used. Anything else
+   (a pull, switch or restore that ran or is running, a replaced checkout or
+   folder, a renewed credential) records `not-sent` (`send-refused`). Changes
+   after admission are later local changes and never alter what is sent.
 6. **Send** once, never forced, holding no section, so a pull or branch switch
    of the checkout does not wait for the network. `accepted` makes the
    candidate the base in the same replacement. `out-of-date` keeps the adopted

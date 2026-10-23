@@ -1182,27 +1182,39 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   /**
    * Admits a recorded attempt and sends it once, outside the application section: the
    * network is never awaited while holding the checkout (contract section 9). Admission
-   * is a short section of its own. A checkout changed or suspended since verification,
-   * or a credential renewed since the review, records `not-sent`. Changes after
-   * admission are later local changes; they never alter what is sent.
+   * is a short section of its own, deciding from what it finds there: the same checkout
+   * (every key of its chain) at the same epoch as at verification, the same physical
+   * folders, and the reviewed credential. Anything else (a pull, switch or restore that
+   * ran or is running, a checkout replaced or removed, a renewed credential) records
+   * `not-sent`. Changes after admission are later local changes; they never alter what
+   * is sent.
    */
   const send = Effect.fn("OverleafCoordinator.send")(function* (input: {
     readonly repo: string;
     readonly review: OverleafReview;
     readonly folder: string;
-    /** The checkout epoch the folder was verified under. */
-    readonly epoch: number;
+    /** The checkout the folder was verified in: its key chain and epoch. */
+    readonly verified: Pick<CheckoutSection, "keys" | "epoch">;
     readonly attemptNumber: number;
     readonly candidateCommit: string;
     readonly recorded: OverleafConnectionDocument;
   }) {
     const { repo, attemptNumber, recorded } = input;
     yield* hook(options, "admitting");
-    const admitted =
-      credentialEpoch() === input.review.binding.credentialEpoch &&
-      (yield* barrier
-        .application(input.folder, (section) => Effect.succeed(section.epoch === input.epoch))
-        .pipe(Effect.orElseSucceed(() => false)));
+    const admitted = yield* barrier
+      .application(input.folder, (section) =>
+        Effect.gen(function* () {
+          if (
+            section.epoch !== input.verified.epoch ||
+            section.keys.join("\0") !== input.verified.keys.join("\0")
+          )
+            return false;
+          yield* verifyFolders(recorded);
+          // Decided here, after the section's own lookup, so a renewal meanwhile is seen.
+          return credentialEpoch() === input.review.binding.credentialEpoch;
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => false));
     if (!admitted) {
       yield* resolveAttempts(
         repo,
@@ -1435,19 +1447,19 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   review,
                   adopted,
                 }),
-                epoch: section.epoch,
+                verified: { keys: section.keys, epoch: section.epoch },
               };
             }),
           );
           if (inSection._tag !== "applied") return inSection;
-          const { adopted, staged, epoch } = inSection;
+          const { adopted, staged, verified } = inSection;
           return {
             _tag: "applied" as const,
             adopted,
             publication:
               staged._tag === "outcome"
                 ? staged.publication
-                : yield* send({ repo, review, folder: folderOf(first), epoch, ...staged }),
+                : yield* send({ repo, review, folder: folderOf(first), verified, ...staged }),
           };
         }).pipe(
           Effect.tapError(() => finish(linked ? "unknown" : "failed", "error")),

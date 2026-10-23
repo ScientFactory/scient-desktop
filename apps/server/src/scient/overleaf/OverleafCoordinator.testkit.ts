@@ -13,7 +13,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
-import { CheckoutBarrier, makeCheckoutBarrier } from "../workspace/CheckoutBarrier.ts";
+import {
+  CheckoutBarrier,
+  type CheckoutBarrierShape,
+  makeCheckoutBarrier,
+} from "../workspace/CheckoutBarrier.ts";
 import {
   fileExchangeTestHelper,
   filePublicationTestHelper,
@@ -84,6 +88,8 @@ export const world = (input: {
   /** With `git`, stands between the coordinator and the real push, to shape what it reports. */
   readonly push?: (send: Push, commit: string) => Push;
   readonly credentialEpoch?: () => number;
+  /** Wraps the checkout barrier the coordinator uses, to act inside its sections. */
+  readonly barrier?: (real: CheckoutBarrierShape) => CheckoutBarrierShape;
 }) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -280,7 +286,7 @@ export const world = (input: {
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),
       Effect.provideService(OverleafRepository.OverleafRepository, repos),
       Effect.provideService(WorkspaceApplier, input.applier?.(applier) ?? applier),
-      Effect.provideService(CheckoutBarrier, barrier),
+      Effect.provideService(CheckoutBarrier, input.barrier?.(barrier) ?? barrier),
     );
     const connection = Effect.gen(function* () {
       const found = yield* store.readConnection(CONNECTION);

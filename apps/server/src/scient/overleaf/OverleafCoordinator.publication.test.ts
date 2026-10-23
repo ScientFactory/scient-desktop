@@ -464,6 +464,117 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
     );
   });
 
+  it.live("records a send refused when the checkout was replaced before admission", () => {
+    let replace: Effect.Effect<void> = Effect.void;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          at: (point) => (point === "admitting" ? replace : Effect.void),
+        });
+        // Another checkout now stands at the same path, at the same (first) epoch.
+        replace = Effect.promise(async () => {
+          await NodeFSP.rename(w.checkout, `${w.checkout}-old`);
+          await NodeFSP.mkdir(NodePath.join(w.checkout, ".git"), { recursive: true });
+          await NodeFSP.mkdir(w.folder);
+          await NodeFSP.writeFile(NodePath.join(w.folder, "main.tex"), "A, edited here");
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-sent" } });
+        expect(w.pushes).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.live("records a send refused when the folder was replaced before admission", () => {
+    let replace: Effect.Effect<void> = Effect.void;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          at: (point) => (point === "admitting" ? replace : Effect.void),
+        });
+        // The same checkout at the same epoch, but another folder at the connection's path.
+        replace = Effect.promise(async () => {
+          await NodeFSP.rename(w.folder, `${w.folder}-old`);
+          await NodeFSP.mkdir(w.folder);
+          await NodeFSP.writeFile(NodePath.join(w.folder, "main.tex"), "A, edited here");
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-sent" } });
+        expect(w.pushes).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.live("records a send refused when a nested checkout around the folder went away", () => {
+    let unnest: Effect.Effect<void> = Effect.void;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          at: (point) => (point === "admitting" ? unnest : Effect.void),
+        });
+        // The folder is a checkout of its own inside the connected one. A bulk change
+        // removes its marker: the remaining chain's epochs add up as before.
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.folder, ".git")));
+        unnest = Effect.orDie(
+          w.barrier.bulk(
+            w.folder,
+            Effect.promise(() =>
+              NodeFSP.rm(NodePath.join(w.folder, ".git"), { recursive: true, force: true }),
+            ),
+          ),
+        );
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-sent" } });
+        expect(w.pushes).toHaveLength(0);
+      }),
+    );
+  });
+
+  it.live("records a send refused when the credential is renewed while admission waits", () => {
+    let epoch = 0;
+    let armed = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          credentialEpoch: () => epoch,
+          at: (point) =>
+            point === "admitting"
+              ? Effect.sync(() => {
+                  armed = true;
+                })
+              : Effect.void,
+          // The renewal lands as admission enters its section, before it decides.
+          barrier: (real) => ({
+            ...real,
+            application: (path, body, options) =>
+              Effect.suspend(() => {
+                if (armed) {
+                  armed = false;
+                  epoch = 1;
+                }
+                return real.application(path, body, options);
+              }),
+          }),
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-sent" } });
+        expect(w.pushes).toHaveLength(0);
+      }),
+    );
+  });
+
   it.live("lets a pull of the checkout run while the result is being sent", () => {
     let bulk: Effect.Effect<void> = Effect.void;
     let pulled = false;
