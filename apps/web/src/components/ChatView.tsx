@@ -344,6 +344,9 @@ import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
+// SCIENT-FORK:START
+import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
+// SCIENT-FORK:END
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -1782,6 +1785,15 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
   }, [activeProjectRef, activeThreadRef]);
+  // SCIENT-FORK:START — browser visits are filed under the thread's project again
+  useBrowserHistoryProjectLink({
+    threadRef: activeThreadRef,
+    projectKey: activeProject
+      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
+      : null,
+    settingsHydrated: clientSettingsHydrated,
+  });
+  // SCIENT-FORK:END
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =
