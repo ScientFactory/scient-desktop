@@ -15,9 +15,9 @@ export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 1;
 const PRIOR_BASE_LIMIT = 20;
 const LOCAL_SNAPSHOT_LIMIT = 10;
 /** Unresolved publication attempts kept before new work is refused. */
-const UNRESOLVED_ATTEMPT_LIMIT = 16;
+export const UNRESOLVED_ATTEMPT_LIMIT = 16;
 /** All attempts kept, resolved history included; resolved ones may be pruned. */
-const ATTEMPT_LIMIT = 64;
+export const ATTEMPT_LIMIT = 64;
 const RETAINED_COPY_LIMIT = 4_096;
 /** Paths a connection can manage: Overleaf's file limit per project. */
 export const MANAGED_PATH_LIMIT = 2_000;
@@ -195,7 +195,8 @@ const RetainedCopy = Schema.Struct({
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
-const isUnresolved = (outcome: OverleafAttemptOutcome) =>
+/** An attempt whose acceptance is still unestablished; never pruned. */
+export const isOverleafAttemptUnresolved = (outcome: OverleafAttemptOutcome) =>
   outcome === "unknown" || outcome === "superseded-unresolved";
 
 /** One record per file an apply kept; further versions of it are found on disk. */
@@ -274,7 +275,7 @@ export const OverleafConnectionDocument = Schema.Struct({
     return (
       numbers.size === document.attempts.length &&
       document.attempts.every((attempt) => attempt.attemptNumber <= document.lastAttemptNumber) &&
-      document.attempts.filter((attempt) => isUnresolved(attempt.outcome)).length <=
+      document.attempts.filter((attempt) => isOverleafAttemptUnresolved(attempt.outcome)).length <=
         UNRESOLVED_ATTEMPT_LIMIT &&
       sequences.size === document.localSnapshots.length &&
       copies.size === document.retention.copies.length &&
@@ -390,7 +391,7 @@ export function overleafTransitionViolation(
     const kept = nextAttempts.get(attempt.attemptNumber);
     if (kept === undefined) {
       // Resolved history may be pruned; unresolved evidence never is.
-      if (isUnresolved(attempt.outcome)) return "unresolved-attempt-dropped";
+      if (isOverleafAttemptUnresolved(attempt.outcome)) return "unresolved-attempt-dropped";
       continue;
     }
     // Only the classification may change; who sent what, from where, is fixed.
@@ -503,7 +504,7 @@ export function overleafRequiredPins(
       oid: document.activeApply.intentTree,
     });
   for (const attempt of document.attempts) {
-    if (!isUnresolved(attempt.outcome)) continue;
+    if (!isOverleafAttemptUnresolved(attempt.outcome)) continue;
     pins.push(
       { name: `attempt/${attempt.attemptNumber}/candidate`, oid: attempt.candidateCommit },
       { name: `attempt/${attempt.attemptNumber}/parent`, oid: attempt.parentCommit },

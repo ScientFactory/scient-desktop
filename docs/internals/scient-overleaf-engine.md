@@ -244,11 +244,11 @@ is one instance per server process, shared however each layer was built.
 Arbitrary shell writers, external Git commands and other server profiles are
 outside it.
 
-## Coordinator, local half
+## Coordinator
 
 `OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
-confirmed one, recovers an interrupted apply, and lists and restores kept
-copies. It never publishes; step 4 continues from an adopted result.
+confirmed one and sends its result to Overleaf, recovers an interrupted apply,
+settles earlier sends, and lists and restores kept copies.
 
 - **Lock order.** The connection's operation reservation comes first: in
   memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
@@ -299,13 +299,56 @@ copies. It never publishes; step 4 continues from an adopted result.
   cannot finish leaves its file as a forced conflict, beside those already
   recorded.
 
+### Publication
+
+After a complete adoption, confirm sends the result, still inside its
+application section so the checkout cannot change before the send:
+
+1. **Gate.** Nothing is sent after a partial apply, while conflict material or
+   structural copies remain, or when a copy this apply kept is `changed` or
+   `ambiguous`. The result is `blocked` with the reason.
+2. **Nothing to send** when the candidate equals Overleaf's fetched tree
+   (`none`).
+3. **Verify.** The folder is captured again, the way a review captures it, and
+   its tree must equal the candidate. A difference is `not-verified`, and the
+   edit is the next review's to send. From here on, the content comes from the
+   private repository's objects, never from the folder.
+4. **Record.** The candidate is committed on the plan's fetched head. The
+   attempt is recorded `unknown` with its pins, before anything is sent. Resolved
+   history makes room; a confirm that would need a seventeenth unresolved
+   attempt is refused before the apply.
+5. **Send admission.** A credential renewed since the review records `not-sent`
+   (`send-refused`).
+6. **Send** once, never forced. `accepted` makes the candidate the base in the
+   same replacement. `out-of-date` keeps the adopted base. Anything else stays
+   `unknown`, as does an attempt whose finalizing write fails.
+
+**Settling earlier sends.** Prepare (on the head it fetches) and recover (one
+fetch) check every unresolved attempt against Overleaf by positive evidence
+only:
+
+- the head's tree equals the candidate's;
+- the candidate's tree is in the first-parent history after its parent (64
+  commits);
+- the candidate commit is reachable from the head.
+
+An unknown attempt on the current base becomes the base when accepted. A
+superseded one is only marked accepted, and the later base stays. Absent
+evidence changes nothing, including when Overleaf still holds the parent. The
+review warns about each unresolved attempt (`unresolved-publication`), and the
+confirmation must acknowledge it. Nothing is ever resent.
+
+A crash after the send leaves the confirm receipt `running` and the attempt
+`unknown`. A repeated request returns that receipt, and recovery settles the
+attempt.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
-prepare/apply/publish recovery, bounded inventory and repository retention,
-the barrier's settler for pending applies, and the editor-flush bridge. The coordinator must implement cancellation between
+bounded repository retention and the editor-flush bridge, and derive status (a
+`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;
