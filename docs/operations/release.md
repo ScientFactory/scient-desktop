@@ -36,6 +36,9 @@ the stable scheduler and production gate.
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
 - Windows packaging runs on Ubuntu 24.04 with pinned `cargo-xwin` and `jsign`.
+  Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
+  the desktop build task compiles the Linux browser helper on its host, including
+  when the eventual installer target is Windows. ImageMagick stays Linux-target-only.
   The Windows 2025 prerequisite lane builds publication and voice helpers from
   the same source commit and records their target architecture and checksums.
   The Linux packager verifies that receipt before staging the helpers outside
