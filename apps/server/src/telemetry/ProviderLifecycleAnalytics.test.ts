@@ -51,6 +51,54 @@ function operation(status: ProviderRuntimeOperation["status"]): ProviderRuntimeO
 }
 
 describe("Provider lifecycle analytics", () => {
+  it("measures Scient Agent installed state and successful installation without private metadata", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    const scient = { ...provider(), driver: ProviderDriverKind.make("scient") };
+    const missing = { ...scient, installed: false };
+    expect(mapper.observe([missing])).toContainEqual({
+      name: "provider.installation.observed",
+      properties: { provider: "scient", installed: false },
+    });
+    const installing = {
+      ...missing,
+      connection: {
+        ...scient.connection!,
+        runtime: {
+          ...scient.connection!.runtime!,
+          operation: { ...operation("installing"), action: "install" as const },
+        },
+      },
+    };
+    expect(mapper.observe([installing])).toContainEqual({
+      name: "provider.lifecycle.started",
+      properties: expect.objectContaining({ provider: "scient", action: "install" }),
+    });
+    const completed = {
+      ...scient,
+      connection: {
+        ...scient.connection!,
+        runtime: {
+          ...scient.connection!.runtime!,
+          operation: {
+            ...operation("succeeded"),
+            action: "install" as const,
+            finishedAt: "2026-08-31T00:00:12.000Z",
+          },
+        },
+      },
+    };
+    const output = mapper.observe([completed]);
+    expect(output).toContainEqual({
+      name: "provider.installation.changed",
+      properties: { provider: "scient", fromInstalled: false, toInstalled: true },
+    });
+    expect(output).toContainEqual({
+      name: "provider.lifecycle.completed",
+      properties: expect.objectContaining({ provider: "scient", action: "install" }),
+    });
+    expect(JSON.stringify(output)).not.toContain("private");
+    expect(mapper.observe([completed])).toEqual([]);
+  });
   it("never measures the completion of a baseline running operation", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     for (let epoch = 0; epoch < 2; epoch++) {
