@@ -280,16 +280,6 @@ it.for([
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
-    let phase = "gesture";
-    const writes: { phase: string; value: number; stack: string | undefined }[] = [];
-    const nativeScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
-    using _scrollTrace =
-      name === "26-code"
-        ? vi.spyOn(scroll, "scrollTop", "set").mockImplementation((value) => {
-            if (writes.length < 8) writes.push({ phase, value, stack: new Error().stack });
-            nativeScrollTop.set!.call(scroll, value);
-          })
-        : null;
     {
       using _clock = fakeTimers();
       const pointer = () => {
@@ -346,11 +336,10 @@ it.for([
           .nth(0)
           .dblClick({ position: hit.position });
       }
-      const afterGesture = name === "26-code" ? scroll.scrollTop : undefined;
-      phase = "publish";
+      const afterGesture = scroll.scrollTop;
+      expect(Math.abs(afterGesture - before), "native selection scroll").toBeLessThanOrEqual(2);
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
-      phase = "published";
       await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
       const mapped = state.reveals[0]!;
       expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
@@ -369,7 +358,6 @@ it.for([
               before,
               afterGesture,
               afterPublish,
-              writes,
               fonts: document.fonts.status,
               pagedSettled: pagedLayoutSettled(state.visual.view),
               root: state.visual.view.dom.getBoundingClientRect().toJSON(),
