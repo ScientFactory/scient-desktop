@@ -293,6 +293,56 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  // SCIENT-FORK:START — the closed-panel new-tab rule reaches existing configs once
+  it.effect("adds the closed-panel new-tab rule beside an unchanged new-tab rule once", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const openPanel = {
+        key: "mod+t",
+        command: "rightPanel.new",
+        when: "rightPanelOpen && !terminalFocus",
+      } as const;
+      const closedPanel = {
+        key: "mod+t",
+        command: "rightPanel.new",
+        when: "!rightPanelOpen && !terminalFocus",
+      } as const;
+      const newTabRules = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
+        rules.filter((entry) => entry.command === "rightPanel.new"),
+      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [openPanel]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.sameDeepMembers(yield* newTabRules, [openPanel, closedPanel]);
+
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [openPanel]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.deepStrictEqual(yield* newTabRules, [openPanel]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("leaves a rebound new-tab shortcut without the closed-panel rule", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const rebound = {
+        key: "mod+shift+t",
+        command: "rightPanel.new",
+        when: "rightPanelOpen && !terminalFocus",
+      } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [rebound]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepStrictEqual(
+        persisted.filter((entry) => entry.command === "rightPanel.new"),
+        [rebound],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+  // SCIENT-FORK:END
+
   it.effect("keeps a late default pending while the config is full", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

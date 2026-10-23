@@ -346,6 +346,11 @@ import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 // SCIENT-FORK:START
 import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
+import {
+  adjacentPanelSurface,
+  canDuplicatePanelSurface,
+} from "~/scient/rightPanel/panelTabCommands";
+import { duplicatePanelSurface } from "~/scient/rightPanel/panelTabDuplication";
 // SCIENT-FORK:END
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
@@ -3321,6 +3326,22 @@ function ChatViewContent(props: ChatViewProps) {
     addDiffSurface();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  // SCIENT-FORK:START — a second copy of a browser or terminal tab; like opening
+  // a browser, it waits for a pending file save first
+  const duplicateRightPanelSurface = (surface: RightPanelSurface) => {
+    if (!activeThreadRef) return;
+    if (surface.kind === "preview" && !canOperatePreview) return;
+    runAfterPendingFileSave(null, () => {
+      duplicatePanelSurface({
+        surface,
+        threadRef: activeThreadRef,
+        openPreview,
+        previewSessions: activePreviewState.sessions,
+        addTerminal: addTerminalSurfaceStable,
+      });
+    });
+  };
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
     addNewTabSurface,
@@ -4842,6 +4863,44 @@ function ChatViewContent(props: ChatViewProps) {
         if (!activeRightPanelSurface) return false;
         if (!event.repeat) closeRightPanelSurfaceStable(activeRightPanelSurface);
       },
+      // SCIENT-FORK:START — side-panel tab commands: an open panel's tab bar
+      // handles a new tab itself, a closed panel opens with one
+      "rightPanel.new": ({ event }) => {
+        if (rightPanelOpen || !activeThreadRef) return false;
+        if (!event.repeat) addNewTabSurface();
+      },
+      "rightPanel.nextTab": () => {
+        if (!rightPanelOpen) return false;
+        const target = adjacentPanelSurface(
+          renderedRightPanelSurfaces,
+          renderedRightPanelSurface?.id ?? null,
+          1,
+        );
+        if (!target) return false;
+        activateRightPanelSurfaceStable(target);
+      },
+      "rightPanel.previousTab": () => {
+        if (!rightPanelOpen) return false;
+        const target = adjacentPanelSurface(
+          renderedRightPanelSurfaces,
+          renderedRightPanelSurface?.id ?? null,
+          -1,
+        );
+        if (!target) return false;
+        activateRightPanelSurfaceStable(target);
+      },
+      "rightPanel.duplicateTab": ({ event }) => {
+        if (!rightPanelOpen || !renderedRightPanelSurface) return false;
+        if (
+          !canDuplicatePanelSurface(renderedRightPanelSurface, {
+            browserAvailable: canOperatePreview && browserAvailable,
+          })
+        ) {
+          return false;
+        }
+        if (!event.repeat) duplicateRightPanelSurface(renderedRightPanelSurface);
+      },
+      // SCIENT-FORK:END
       "terminal.split": ({ terminalFocusOwner }) => {
         if (!canOperateTerminal) return false;
         if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable();
@@ -8616,6 +8675,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddSources={addSourcesSurface}
           // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
           onAddNewTab={addNewTabSurface}
+          onDuplicateSurface={duplicateRightPanelSurface}
           // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}

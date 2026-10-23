@@ -70,6 +70,12 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "threadPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.close",
+  // SCIENT-FORK:START — move between side-panel tabs, as Chrome's Ctrl+Tab does,
+  // and open a second copy of one
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
+  "rightPanel.duplicateTab",
+  // SCIENT-FORK:END
   "view.reopenClosed",
   "pullRequest.copyNumber",
   "diff.toggle",

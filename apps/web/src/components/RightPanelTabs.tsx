@@ -98,6 +98,7 @@ import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import { ScientFilesIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { ScientNewTabButton, ScientSurfaceLauncher } from "~/scient/rightPanel/SurfaceLauncher";
 import { isScientNewTabSurface } from "~/scient/rightPanel/surfaces";
+import { canDuplicatePanelSurface } from "~/scient/rightPanel/panelTabCommands";
 import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
@@ -152,6 +153,8 @@ export interface RightPanelTabsProps {
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   // SCIENT-FORK:START — when set, "+" and its shortcut open the launcher as a tab
   onAddNewTab?: ((options?: { readonly whenEmpty?: boolean }) => void) | undefined;
+  /** Opens a second copy of a browser or terminal tab. */
+  onDuplicateSurface?: ((surface: RightPanelSurface) => void) | undefined;
   // SCIENT-FORK:END
   onCopyFilePath: (path: FileSurfacePath, format: FilePathCopyFormat) => void;
   onAddBrowser: () => void;
@@ -243,6 +246,9 @@ const SURFACE_UNAVAILABLE_HINTS = {
 } as const;
 
 type TabContextMenuAction =
+  // SCIENT-FORK:START
+  | "duplicate"
+  // SCIENT-FORK:END
   | "rename"
   | "copy-relative-path"
   | "copy-full-path"
@@ -1425,6 +1431,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const menuMuted = menuOverlay?.audioMuted ?? false;
     const menuFilePath = surface.kind === "file" ? fileSurfacePath(surface) : null;
     const items: readonly ContextMenuItem<TabContextMenuAction>[] = [
+      // SCIENT-FORK:START
+      ...(props.onDuplicateSurface &&
+      canDuplicatePanelSurface(surface, { browserAvailable: props.browserAvailable })
+        ? ([{ id: "duplicate", label: "Duplicate" }] as const)
+        : []),
+      // SCIENT-FORK:END
       ...(surface.kind === "device" && props.onRenameDevice
         ? ([{ id: "rename", label: "Rename" }] as const)
         : []),
@@ -1446,6 +1458,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
     const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
     switch (action) {
+      // SCIENT-FORK:START
+      case "duplicate":
+        props.onDuplicateSurface?.(surface);
+        break;
+      // SCIENT-FORK:END
       case "rename":
         if (surface.kind === "device") setRenamingDevice(surface.id);
         break;
