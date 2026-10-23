@@ -1234,6 +1234,97 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     ),
   );
 
+  it.live("keeps a restore the applier could not finish as a forced conflict", () => {
+    let interfere = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          // Just after the restore's step, another writer puts B back.
+          native: async (point, folder) => {
+            if (!interfere || point !== "done") return;
+            interfere = false;
+            await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "B");
+          },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        // A group recorded earlier stays beside the restore's.
+        const current = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            forcedConflicts: [["earlier.tex"]],
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        interfere = true;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy!.applyId,
+            kept: copy!.kept,
+            keptRevision: copy!.keptRevision!,
+            currentRevision: copy!.currentRevision,
+          }),
+        ).toMatchObject({
+          _tag: "restored",
+          adopted: { outcome: "attention", interrupted: [["main.tex"]] },
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        expect((yield* w.connection).forcedConflicts).toEqual([["earlier.tex"], ["main.tex"]]);
+        // The next review asks about main.tex instead of calling the folder up to date.
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.conflicts.map((conflict) => [...conflict.paths])).toContainEqual([
+          "main.tex",
+        ]);
+      }),
+    );
+  });
+
+  it.live("refuses before writing a restore with no room for the group it may leave", () =>
+    run(
+      Effect.gen(function* () {
+        const { w, copy } = yield* syncedThenListed();
+        const current = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            forcedConflicts: Array.from({ length: 4_000 }, (_, n) => [`group-${n}.tex`]),
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        const refused = yield* Effect.exit(
+          w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        );
+        expect(refused).toMatchObject(
+          Exit.fail(
+            expect.objectContaining({
+              _tag: "OverleafRetainedLimitError",
+              limit: "conflict-group",
+            }),
+          ),
+        );
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        expect((yield* w.connection).activeApply).toBeNull();
+      }),
+    ),
+  );
+
   it.live("refuses before writing a restore that would track too much conflict material", () =>
     run(
       Effect.gen(function* () {

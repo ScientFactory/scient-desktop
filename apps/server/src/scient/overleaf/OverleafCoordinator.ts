@@ -657,7 +657,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       // A restore keeps the bytes it displaced (never released automatically), never
       // moves the base, and sends nothing. The restored file takes part in the sync
       // again unless it is local-only on purpose; restored conflict material is
-      // tracked again.
+      // tracked again. A restore the applier could not finish leaves its group for
+      // review beside those already recorded.
       const restored = (yield* repos.readTree({ repo, tree: link.intentTree })).map(
         (entry) => entry.path,
       );
@@ -666,6 +667,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         ...connection,
         revision: connection.revision + 1,
         managedPaths: unique([...connection.managedPaths, ...synced]),
+        forcedConflicts: [
+          ...new Map(
+            [...connection.forcedConflicts, ...result.interrupted].map((group) => {
+              const paths = unique(group);
+              return [paths.join("\0"), paths] as const;
+            }),
+          ).values(),
+        ],
         markerPaths: unique([
           ...connection.markerPaths,
           ...link.priorMarkers,
@@ -1124,7 +1133,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               const priorMarkers =
                 copy.markers && input.kept === copy.kept ? [copy.relativePath] : [];
               // Room for what the restore keeps, for the path it may bring back into the
-              // sync and for the conflict material it tracks again, before anything is written.
+              // sync, for the group it may leave and for the conflict material it tracks
+              // again, before anything is written.
               const returning =
                 !connection.managedPaths.includes(copy.relativePath) &&
                 !connection.localOnlyPaths.includes(copy.relativePath);
@@ -1137,6 +1147,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "managed-paths",
+                });
+              // The restore's one file is one group if the applier cannot finish it.
+              if (connection.forcedConflicts.length + 1 > FORCED_CONFLICT_LIMIT)
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "conflict-group",
                 });
               if (unique([...connection.markerPaths, ...priorMarkers]).length > MANAGED_PATH_LIMIT)
                 return yield* new OverleafRetainedLimitError({

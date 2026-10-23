@@ -293,9 +293,11 @@ copies. It never publishes; step 4 continues from an adopted result.
   request saw. It reads the copy and the folder's file once each, never past
   50 MiB; a folder file too large to read is never taken for an absent one.
   Before writing, it checks room for the copy it keeps, a file it brings back
-  into the sync, and conflict material it tracks again. The file it replaces is
-  kept (state `kept`), the base never moves, and the restored bytes are a local
-  change for the next review.
+  into the sync, the group it may leave and conflict material it tracks again.
+  The file it replaces is kept (state `kept`), the base never moves, and the
+  restored bytes are a local change for the next review. A restore the applier
+  cannot finish leaves its file as a forced conflict, beside those already
+  recorded.
 
 ## Remaining integration gates
 
