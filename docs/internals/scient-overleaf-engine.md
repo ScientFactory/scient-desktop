@@ -309,8 +309,9 @@ application section so the checkout cannot change before the send:
    `ambiguous`. The result is `blocked` with the reason.
 2. **Nothing to send** when the candidate equals Overleaf's fetched tree
    (`none`).
-3. **Verify.** The folder is captured again, the way a review captures it, and
-   its tree must equal the candidate. A difference is `not-verified`, and the
+3. **Verify.** The folder is captured again, the way a review captures it and
+   over every path the plan read or wrote (so an explicit deletion must still be
+   absent), and its tree must equal the candidate. A difference is `not-verified`, and the
    edit is the next review's to send. From here on, the content comes from the
    private repository's objects, never from the folder.
 4. **Record.** The candidate is committed on the plan's fetched head. The
@@ -328,8 +329,8 @@ fetch) check every unresolved attempt against Overleaf by positive evidence
 only:
 
 - the head's tree equals the candidate's;
-- the candidate's tree is in the first-parent history after its parent (64
-  commits);
+- the candidate's tree is in a first-parent commit (of the last 64) that
+  descends from the attempt's parent, so a rewritten history proves nothing;
 - the candidate commit is reachable from the head.
 
 An unknown attempt on the current base becomes the base when accepted. A

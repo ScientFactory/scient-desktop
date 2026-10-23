@@ -93,6 +93,27 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
     );
   });
 
+  it.live("sends nothing when a file Overleaf deleted is back before verification", () => {
+    let folder = "";
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "a.tex": "A", "gone.tex": "old" },
+          remote: { "a.tex": "A" },
+          // The deletion is applied; then the file is written again before verification.
+          at: (point) =>
+            point === "adopted" ? write(folder, { "gone.tex": "new work" }) : Effect.void,
+        });
+        folder = w.folder;
+        yield* write(w.folder, { "a.tex": "B" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-verified" } });
+        expect(w.pushes).toHaveLength(0);
+        expect(yield* read(w.folder, "gone.tex")).toBe("new work");
+      }),
+    );
+  });
+
   it.live("sends the verified candidate, not an edit made after verification", () => {
     let folder = "";
     return run(
@@ -204,6 +225,31 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
         expect(next.review.incoming.map((change) => change.kind)).toEqual(["modified"]);
         expect(next.review.binding.warnings).toEqual([]);
         expect(w.pushes).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.live("takes nothing from a rewritten history that only happens to hold the same tree", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "a.tex": "A" },
+          remote: { "a.tex": "A" },
+          push: () => Effect.succeed({ _tag: "unknown" as const, detail: "never sent" }),
+        });
+        yield* write(w.folder, { "a.tex": "B" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "unknown" } });
+        const before = yield* w.connection;
+        // Overleaf's history is replaced: one unrelated commit holds the candidate's tree,
+        // but neither the recorded parent nor the candidate commit is in it.
+        yield* w.rewriteHistory([{ "a.tex": "B" }, { "a.tex": "C" }]);
+        expect(yield* w.coordinator.recover({ connectionId: CONNECTION })).toMatchObject({
+          attempts: { accepted: [], unresolved: [1] },
+        });
+        const after = yield* w.connection;
+        expect(after.attempts).toMatchObject([{ outcome: "unknown" }]);
+        expect(after.base).toEqual(before.base);
       }),
     ),
   );

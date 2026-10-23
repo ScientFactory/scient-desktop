@@ -333,6 +333,29 @@ export const world = (input: {
       },
       /** With `git`: a collaborator's commit of `contents` on Overleaf's head. */
       collaborate,
+      /** With `git`: replaces Overleaf's history with commits of `chain`, oldest first (forced). */
+      rewriteHistory: Effect.fnUntraced(function* (chain: ReadonlyArray<Record<string, string>>) {
+        let last: string | undefined;
+        for (const contents of chain)
+          last = yield* repos.commit({
+            repo: collaborator,
+            tree: yield* tree(collaborator, contents),
+            parents: last === undefined ? [] : [last],
+            message: "rewritten",
+          });
+        yield* git.execute({
+          cwd: root,
+          args: [
+            "--git-dir",
+            collaborator,
+            "push",
+            "-q",
+            "--force",
+            overleaf,
+            `${last}:refs/heads/main`,
+          ],
+        });
+      }),
     };
   });
 

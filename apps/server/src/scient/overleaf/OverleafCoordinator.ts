@@ -896,10 +896,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     );
   });
 
-  /** The tree of what the folder holds now, captured as a review captures it; null if refused. */
+  /**
+   * The tree of what the folder holds now, captured as a review captures it, with
+   * `domain` read too; null if the capture was refused.
+   */
   const capturedTree = Effect.fn("OverleafCoordinator.capturedTree")(function* (
     repo: string,
     connection: OverleafConnectionDocument,
+    domain: ReadonlyArray<string>,
   ) {
     const baseTree =
       connection.base.tree === null
@@ -908,7 +912,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const captured = yield* Effect.promise(() =>
       captureOverleafInventory({
         folder: folderOf(connection),
-        managedPaths: captureScope(connection, baseTree),
+        managedPaths: unique([...captureScope(connection, baseTree), ...domain]),
         localOnlyPaths: connection.localOnlyPaths,
         selectedAdditions: [],
         requestedPaths: [],
@@ -1077,9 +1081,20 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     if (blocked !== null) return { _tag: "blocked", reason: blocked } satisfies OverleafPublication;
     const { candidateTree, remoteCommit, remoteTree } = review.binding;
     if (candidateTree === remoteTree) return { _tag: "none" } satisfies OverleafPublication;
-    // The folder must hold exactly the candidate now. What is sent is built from the
-    // repository's objects, never read from the folder after this.
-    if ((yield* capturedTree(repo, connection)) !== candidateTree)
+    // The folder must hold exactly the candidate now, over the whole publication domain
+    // (contract section 5): every path the plan read or wrote, so an explicit deletion
+    // must still be absent. What is sent is built from the repository's objects, never
+    // read from the folder after this.
+    const plan = review.applyPlan;
+    const domain = [
+      ...new Set([
+        ...plan.base.keys(),
+        ...plan.remote.keys(),
+        ...plan.captured.keys(),
+        ...plan.target.keys(),
+      ]),
+    ];
+    if ((yield* capturedTree(repo, connection, domain)) !== candidateTree)
       return { _tag: "not-verified" } satisfies OverleafPublication;
     const candidateCommit = yield* repos.commit({
       repo,
