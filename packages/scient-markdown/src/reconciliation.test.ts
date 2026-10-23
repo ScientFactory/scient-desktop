@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { reconcileMarkdown } from "./reconciliation.ts";
 import { applyMarkdownSourcePatches } from "./sourceLedger.ts";
 
@@ -109,5 +109,19 @@ describe("conservative Markdown reconciliation", () => {
   it("bounds work instead of freezing on an oversized draft", () => {
     const source = "a".repeat(256_001);
     expect(reconcileMarkdown(source, source + "b", source + "c")).toBeNull();
+  });
+  it("gives the same result however slowly the machine runs", () => {
+    // Every clock read jumps a second, as on a heavily loaded machine.
+    let now = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1_000));
+    try {
+      const local = base.replace("First", "My first");
+      const disk = base.replace("Second", "Their second");
+      expect(reconcileMarkdown(base, local, disk)?.source).toBe(
+        "My first paragraph.\n\nTheir second paragraph.\n",
+      );
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

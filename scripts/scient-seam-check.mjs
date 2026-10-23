@@ -86,8 +86,13 @@ function snapshot(run, mode, env, resources) {
     .join(NodePath.delimiter);
   // All object/index writes remain private, including write-tree. Keep the
   // objects alive until every check finishes, then dispose them in finally.
-  if (NodeFS.existsSync(index)) NodeFS.copyFileSync(index, env.GIT_INDEX_FILE);
-  else run(["read-tree", "--empty"]);
+  if (NodeFS.existsSync(index)) {
+    // A newer index timestamp can hide same-size edits with matching cached stats.
+    // Whole seconds from the exact nanosecond time never move it forward.
+    const indexTime = Number(NodeFS.statSync(index, { bigint: true }).mtimeNs / 1_000_000_000n);
+    NodeFS.copyFileSync(index, env.GIT_INDEX_FILE);
+    NodeFS.utimesSync(env.GIT_INDEX_FILE, indexTime, indexTime);
+  } else run(["read-tree", "--empty"]);
   if (mode === "working-tree") run(["add", "--all", "--", "."]);
   return run(["write-tree"]).trim();
 }

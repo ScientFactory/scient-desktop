@@ -506,6 +506,8 @@ behavior, then rerun the behavioral tests. Never remove an assertion just to tur
 The existing per-feature commands, including CI entry points, now use this same implementation;
 they are not independent fallbacks. If it needs repair, continue independent review, repair it
 with equivalent evidence, and do not claim the affected gate passed prematurely.
+The private index timestamp must not advance when copied: Git uses it to decide whether
+same-size working-tree edits need a content check even when cached file stats match.
 
 An ambiguous diff signal may have manifest-owned `diffSignalRefinements`: alternatives with a
 `changed` expression and optional `fileContext` expression. After the original signal matches,
