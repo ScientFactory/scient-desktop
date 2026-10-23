@@ -27,11 +27,13 @@ function blocks(source: string) {
 }
 
 function edits(before: readonly string[], after: readonly string[]): BlockEdit[] | null {
-  const changes = diffArrays([...before], [...after], {
-    comparator: (a, b) => a.trimEnd() === b.trimEnd(),
-    maxEditLength: MAX_EDIT_LENGTH,
-    timeout: 20,
-  });
+  // Work is bounded by MAX_BLOCKS and MAX_EDIT_LENGTH, not wall-clock time, so the
+  // result never depends on machine load. Blocks are trimmed once, not per comparison.
+  const changes = diffArrays(
+    before.map((token) => token.trimEnd()),
+    after.map((token) => token.trimEnd()),
+    { maxEditLength: MAX_EDIT_LENGTH },
+  );
   if (!changes) return null;
   const result: BlockEdit[] = [];
   let offset = 0;
