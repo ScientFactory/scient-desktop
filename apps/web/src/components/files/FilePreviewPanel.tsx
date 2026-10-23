@@ -76,7 +76,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { AlertTriangle, Download, FolderTree, Globe, WrapTextIcon } from "lucide-react";
+// SCIENT-FORK:START — FolderTree moved to the tab strip's Files button
+import { AlertTriangle, Download, Globe, WrapTextIcon } from "lucide-react";
+// SCIENT-FORK:END
 import { Code2, Eye, Table2 } from "lucide";
 import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
 import {
@@ -97,7 +99,9 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
-import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
+// SCIENT-FORK:START — the file list's state moved to usePanelFilesOpen
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+// SCIENT-FORK:END
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
@@ -134,8 +138,12 @@ import {
   resolveHtmlRenderedState,
   resolveMarkdownRenderedState,
   markdownViewTransition,
-  resolveInitialFileExplorerOpen,
+  // SCIENT-FORK:START — usePanelFilesOpen resolves the file list's default
+  // SCIENT-FORK:END
 } from "~/scient/fileOpening/fileOpeningPolicy";
+// SCIENT-FORK:START
+import { usePanelFilesOpen } from "~/scient/rightPanel/PanelFilesColumn";
+// SCIENT-FORK:END
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
@@ -258,7 +266,8 @@ interface FilePreviewPanelProps {
   workspaceMutationId: string | null;
 }
 
-const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
+// SCIENT-FORK:START — the file list's storage key lives with usePanelFilesOpen
+// SCIENT-FORK:END
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 
@@ -1451,16 +1460,8 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
-function initialExplorerOpen(): boolean {
-  try {
-    return resolveInitialFileExplorerOpen(
-      getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean),
-    );
-  } catch (error) {
-    console.error(error);
-    return resolveInitialFileExplorerOpen(null);
-  }
-}
+// SCIENT-FORK:START — the file list's saved state is read through usePanelFilesOpen
+// SCIENT-FORK:END
 
 export default function FilePreviewPanel({
   onCiteFile,
@@ -1616,9 +1617,11 @@ export default function FilePreviewPanel({
   const scientCrumbPath =
     !isHostFile && folderTrail === undefined && breadcrumbPath ? breadcrumbPath : null;
   // SCIENT-FORK:END
-  const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
-  const effectiveExplorerOpen = isFolder || (isPdf ? pdfExplorerOpen : explorerOpen);
+  // SCIENT-FORK:START — one switch, the tab strip's Files button, serves every tab and
+  // every kind of file, PDFs included
+  const [explorerOpen] = usePanelFilesOpen();
+  const effectiveExplorerOpen = isFolder || explorerOpen;
+  // SCIENT-FORK:END
   const showExplorer = shouldShowFileExplorer({
     relativePath: previewPath,
     explorerOpen: effectiveExplorerOpen,
@@ -2023,21 +2026,8 @@ export default function FilePreviewPanel({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new path or trail re-renders the crumbs, so the current one scrolls back into view.
   }, [breadcrumbPath, breadcrumbTrail]);
 
-  const toggleExplorer = () => {
-    if (isPdf) {
-      setPdfExplorerOpen((current) => !current);
-      return;
-    }
-    setExplorerOpen((current) => {
-      const next = !current;
-      try {
-        setLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, next, Schema.Boolean);
-      } catch (error) {
-        console.error(error);
-      }
-      return next;
-    });
-  };
+  // SCIENT-FORK:START — the file list's switch is the tab strip's Files button
+  // SCIENT-FORK:END
 
   const handleOpenInBrowser = () => {
     if (
@@ -2363,15 +2353,8 @@ export default function FilePreviewPanel({
               }
             />
           ) : null}
-          {!isHostFile && previewPath !== null ? (
-            <FileSurfaceAction
-              label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
-              pressed={effectiveExplorerOpen}
-              onPress={toggleExplorer}
-            >
-              <FolderTree className="size-3.5" />
-            </FileSurfaceAction>
-          ) : null}
+          {/* SCIENT-FORK:START — the tab strip's Files button shows and hides the list */}
+          {/* SCIENT-FORK:END */}
         </div>
       ) : null}
       {markdownLease ? (

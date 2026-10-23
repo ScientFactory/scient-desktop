@@ -22,6 +22,12 @@ The **⋯** Files menu refreshes the tree, expands or collapses every loaded
 folder, and sets file visibility. The tree does not watch the disk, so use
 **Refresh files** after changing files outside Scient.
 
+The same file list can sit beside other side-panel tabs too, such as a browser
+page, Sources, or a Scientific computing session. Use the folder button at the
+end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
+and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
+file list, and a panel too narrow for both shows the page alone.
+
 The Files menu offers two visibility levels:
 
 - **Project files** is the default. It includes durable managed source files,

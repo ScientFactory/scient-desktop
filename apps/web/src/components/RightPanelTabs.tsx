@@ -99,6 +99,7 @@ import { ScientFilesIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon
 import { ScientNewTabButton, ScientSurfaceLauncher } from "~/scient/rightPanel/SurfaceLauncher";
 import { isScientNewTabSurface } from "~/scient/rightPanel/surfaces";
 import { canDuplicatePanelSurface } from "~/scient/rightPanel/panelTabCommands";
+import { PanelFilesToggle } from "~/scient/rightPanel/PanelFilesColumn";
 import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
@@ -1853,6 +1854,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </Tooltip>
           </div>
         ) : null}
+        {/* SCIENT-FORK:START — the file list beside the open tab */}
+        {props.open !== false && props.onAddNewTab ? (
+          <PanelFilesToggle surface={activeSurface} keybindings={props.keybindings} />
+        ) : null}
+        {/* SCIENT-FORK:END */}
         {props.layoutControls}
         {ownsDesktopTitleBar ? (
           <span

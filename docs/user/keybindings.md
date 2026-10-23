@@ -207,6 +207,7 @@ Useful current commands include:
 - `rightPanel.new` (`mod+t`) opens a side-panel tab on the Tools page;
 - `rightPanel.nextTab` and `rightPanel.previousTab` (`ctrl+tab`, `ctrl+shift+tab`) move between
   side-panel tabs;
+- `rightPanel.toggleFiles` (`mod+alt+e`) shows or hides the file list beside a side-panel tab;
 - `rightPanel.duplicateTab` (`mod+shift+d`) opens a second copy of a browser or terminal tab; and
 - `rightPanel.toggleMaximized` maximizes or restores the open right panel and has no default shortcut.
 
@@ -294,6 +295,8 @@ platform, as in Chrome. Browsers keep `ctrl+tab` for their own tabs, so in a bro
 two commands to keys the browser leaves alone. To open a second copy of a browser page or a
 terminal, right-click its tab and choose **Duplicate**, or use `rightPanel.duplicateTab`, which
 defaults to `mod+shift+d` outside the terminal. In the terminal, `mod+shift+d` still splits it.
+`rightPanel.toggleFiles` shows or hides the project's file list beside the open side-panel tab and
+defaults to `mod+alt+e`. It does not run while the terminal has focus.
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. The thread jumps do not run while the model picker is open.
 Those defaults use `isDesktop` so they do not steal the

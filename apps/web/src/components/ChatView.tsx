@@ -347,6 +347,11 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 // SCIENT-FORK:START
 import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
 import {
+  PanelFilesLayout,
+  panelFilesToggleApplies,
+  usePanelFilesOpen,
+} from "~/scient/rightPanel/PanelFilesColumn";
+import {
   adjacentPanelSurface,
   canDuplicatePanelSurface,
 } from "~/scient/rightPanel/panelTabCommands";
@@ -3326,6 +3331,9 @@ function ChatViewContent(props: ChatViewProps) {
     addDiffSurface();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  // SCIENT-FORK:START — the switch for the file list beside side-panel tabs
+  const [panelFilesOpen, setPanelFilesOpen] = usePanelFilesOpen();
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — a second copy of a browser or terminal tab; like opening
   // a browser, it waits for a pending file save first
   const duplicateRightPanelSurface = (surface: RightPanelSurface) => {
@@ -4899,6 +4907,10 @@ function ChatViewContent(props: ChatViewProps) {
           return false;
         }
         if (!event.repeat) duplicateRightPanelSurface(renderedRightPanelSurface);
+      },
+      "rightPanel.toggleFiles": ({ event }) => {
+        if (!rightPanelOpen || !panelFilesToggleApplies(renderedRightPanelSurface)) return false;
+        if (!event.repeat) setPanelFilesOpen(!panelFilesOpen);
       },
       // SCIENT-FORK:END
       "terminal.split": ({ terminalFocusOwner }) => {
@@ -8693,7 +8705,21 @@ function ChatViewContent(props: ChatViewProps) {
           computeAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           deviceAvailable={activeThreadRef !== null}
         >
-          {forkPdfContinuityPending ? null : rightPanelContent}
+          {/* SCIENT-FORK:START — the project's file list can sit beside any tab */}
+          {forkPdfContinuityPending ? null : (
+            <PanelFilesLayout
+              surface={renderedRightPanelSurface}
+              environmentId={activeThreadRef.environmentId}
+              cwd={activeWorkspaceRoot}
+              projectName={activeProject?.title ?? null}
+              workspaceMutationId={workspaceMutationId}
+              onOpenFile={openFileSurfaceStable}
+              onOpenFileSource={openFileSourceSurface}
+            >
+              {rightPanelContent}
+            </PanelFilesLayout>
+          )}
+          {/* SCIENT-FORK:END */}
         </ChatRightPanel>
       ) : null}
 

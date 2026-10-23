@@ -75,6 +75,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "rightPanel.nextTab",
   "rightPanel.previousTab",
   "rightPanel.duplicateTab",
+  // Show the project's file list beside any tab.
+  "rightPanel.toggleFiles",
   // SCIENT-FORK:END
   "view.reopenClosed",
   "pullRequest.copyNumber",

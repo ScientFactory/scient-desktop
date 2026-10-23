@@ -158,6 +158,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "ctrl+tab", command: "rightPanel.nextTab" },
   { key: "ctrl+shift+tab", command: "rightPanel.previousTab" },
   { key: "mod+shift+d", command: "rightPanel.duplicateTab", when: "!terminalFocus" },
+  // The project's file list beside any tab.
+  { key: "mod+alt+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
   // SCIENT-FORK:END
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
