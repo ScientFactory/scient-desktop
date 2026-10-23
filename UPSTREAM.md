@@ -592,18 +592,20 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`21da3061aa006fc852ea4bd84c31ec084a3afa26` is recorded in
-[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
-([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
-Literal extension merge `a495ed55e0d5f5e2740b750121772dcf1327108c` has exact owned
-base `80436ae5bead92d3cde82b90a6aa5b137aefde6b` and the frozen official target as
-parents, retaining all 133 additional donor commits after `81dea7821d`.
-Its committed provenance and staged seam checks pass; final qualification of the
-composed owned-main catch-up remains pending. Native V2, scientific capabilities,
-immutable migrations and database durability remain; cloud, telemetry, relay,
-updater, mobile publication and release holds are unchanged. The receipt separates
-older qualification from extension evidence and outstanding native/visual checks.
-Release remains separate.
+`2c8bdf6177159d8fcd12a897d7c9311f6eb93237` is recorded in
+[the 2026-10-23 receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md).
+Literal merge `29f4ebb106d541307e8b2eb9251e41b9dd5cf703` has exact owned-main
+base `3ca9472f3cf5dd0e7b8d885a2e9bc876db31d5bc` and the frozen official target as
+parents, retaining all 151 additional donor commits after `21da3061aa`.
+Local automated qualification covers all 46 workspace test tasks through fresh
+affected checks and exact unchanged-input reuse. Committed provenance and all
+six staged seam checks pass. Visual acceptance and hosted CI remain pending;
+the owner authorized the local merge with visual acceptance pending and prohibited
+pushing. No pull request was created for this alignment. The
+[previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
+retains its own boundaries and evidence, including Scient PR #614.
+Native V2, scientific capabilities, immutable migrations, database durability and
+all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 
 ## Receiving T3 updates
 
