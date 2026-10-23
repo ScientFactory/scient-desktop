@@ -123,7 +123,7 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
   "OverleafRetainedLimitError",
   {
     connectionId: Schema.String,
-    limit: Schema.Literals(["kept-copies", "managed-paths", "conflict-group"]),
+    limit: Schema.Literals(["kept-copies", "managed-paths", "conflict-group", "marker-paths"]),
   },
 ) {
   override get message(): string {
@@ -134,6 +134,8 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
         return "This would bring back a file beyond the number Scient can sync for one project.";
       case "conflict-group":
         return "This sync changes more files together than Scient can track at once.";
+      case "marker-paths":
+        return "This would track more files with conflict material than Scient can. Resolve some first.";
     }
   }
 }
@@ -1118,8 +1120,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               );
               if (copy === undefined || connection.base.commit === null)
                 return { _tag: "unknown-copy" as const };
-              // Room for what the restore keeps, and for the path it may bring back into
-              // the sync, before anything is written.
+              // Conflict material kept as the main version is tracked again once back.
+              const priorMarkers =
+                copy.markers && input.kept === copy.kept ? [copy.relativePath] : [];
+              // Room for what the restore keeps, for the path it may bring back into the
+              // sync and for the conflict material it tracks again, before anything is written.
               const returning =
                 !connection.managedPaths.includes(copy.relativePath) &&
                 !connection.localOnlyPaths.includes(copy.relativePath);
@@ -1132,6 +1137,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "managed-paths",
+                });
+              if (unique([...connection.markerPaths, ...priorMarkers]).length > MANAGED_PATH_LIMIT)
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "marker-paths",
                 });
               // Each read once and never past what a restore reads: the bytes checked
               // are the bytes restored. A file left unread is not an absent one.
@@ -1166,8 +1176,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   intentTree,
                   remoteCommit: connection.base.commit,
                   localOnly: connection.localOnlyPaths,
-                  // Conflict material kept as the main version is tracked again once back.
-                  priorMarkers: copy.markers && input.kept === copy.kept ? [copy.relativePath] : [],
+                  priorMarkers,
                 },
                 updatedAt: DateTime.formatIso(yield* DateTime.now),
               };

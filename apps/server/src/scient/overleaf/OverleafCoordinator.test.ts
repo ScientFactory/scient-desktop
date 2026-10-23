@@ -1234,6 +1234,52 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     ),
   );
 
+  it.live("refuses before writing a restore that would track too much conflict material", () =>
+    run(
+      Effect.gen(function* () {
+        const marked = "<<<<<<< mine\nours\n=======\ntheirs\n>>>>>>> theirs\n";
+        const w = yield* world({
+          synced: { "main.tex": marked },
+          remote: { "main.tex": "resolved" },
+          markerPaths: ["main.tex"],
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION }))[0]!;
+        // Other files' conflict material fills the record; bringing main.tex's back
+        // would track one more.
+        const current = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: current.revision,
+          next: {
+            ...current,
+            revision: current.revision + 1,
+            markerPaths: Array.from({ length: 2_000 }, (_, n) => `marked-${n}.tex`),
+            updatedAt: "2026-10-22T12:00:00.000Z",
+          },
+        });
+        const refused = yield* Effect.exit(
+          w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: copy.currentRevision,
+          }),
+        );
+        expect(refused).toMatchObject(
+          Exit.fail(
+            expect.objectContaining({ _tag: "OverleafRetainedLimitError", limit: "marker-paths" }),
+          ),
+        );
+        expect(yield* read(w.folder, "main.tex")).toBe("resolved");
+        const after = yield* w.connection;
+        expect(after.activeApply).toBeNull();
+        expect(after.markerPaths).toHaveLength(2_000);
+      }),
+    ),
+  );
+
   it.live("keeps a restored local-only file local-only", () =>
     run(
       Effect.gen(function* () {
