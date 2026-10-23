@@ -400,7 +400,7 @@ function LoadedScientPdfReader(props: {
     editSession.configure(async (bytes, expectedRevision, operationId) => {
       const result = await savePdfEdits({ source, bytes, expectedRevision, operationId });
       source = result.source;
-      copied ||= result.createdCopy || result.source._tag === "generated-pdf";
+      copied = copied || result.createdCopy || result.source._tag === "generated-pdf";
       if (copied) props.onSavedCopy(source);
       return result;
     });
@@ -551,22 +551,15 @@ function LoadedScientPdfReader(props: {
     reader.closeSearch();
   };
 
-  const saveCopy = async () => {
-    if (edit.url && edit.bytes) {
-      if (saveCopyPendingRef.current) return;
-      saveCopyPendingRef.current = true;
-      setSavingCopy(true);
-      try {
-        announcePdfSaveCopyResult(await saveEditedPdfCopy(edit.bytes, props.source.fileName));
-      } catch {
-        toastManager.add({ type: "error", title: "The PDF copy could not be saved" });
-      } finally {
-        saveCopyPendingRef.current = false;
-        setSavingCopy(false);
-      }
-    } else
-      await createReaderSaveCopy({ presentedSource, props, saveCopyPendingRef, setSavingCopy })();
-  };
+  const saveCopy = () =>
+    createReaderSaveCopy({
+      presentedSource,
+      props,
+      saveCopyPendingRef,
+      setSavingCopy,
+      editedCopy:
+        edit.url && edit.bytes ? { bytes: edit.bytes, fileName: props.source.fileName } : null,
+    })();
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (
@@ -965,29 +958,39 @@ function createReaderSaveCopy({
   props,
   saveCopyPendingRef,
   setSavingCopy,
+  editedCopy,
 }: {
   presentedSource: ReturnType<typeof usePresentedPdfSourceBundle>;
   props: { readonly actions: PdfSourceActions };
   saveCopyPendingRef: RefObject<boolean>;
   setSavingCopy: Dispatch<SetStateAction<boolean>>;
+  editedCopy: { readonly bytes: Uint8Array; readonly fileName: string } | null;
 }) {
   return async () => {
-    if (saveCopyPendingRef.current || presentedSource === null) return;
+    if (saveCopyPendingRef.current || (presentedSource === null && editedCopy === null)) return;
     const bundle = presentedSource;
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
-        props.actions.saveCopy(bundle.source, bundle.resolved),
-      );
-      const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) bundle.resolved.refresh();
+      if (editedCopy) {
+        announcePdfSaveCopyResult(await saveEditedPdfCopy(editedCopy.bytes, editedCopy.fileName));
+      } else if (bundle) {
+        const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
+          props.actions.saveCopy(bundle.source, bundle.resolved),
+        );
+        const presentation = announcePdfSaveCopyResult(result);
+        if (presentation.refreshSource) bundle.resolved.refresh();
+      }
     } catch {
-      toastManager.add({
-        type: "error",
-        title: "The PDF could not be saved",
-        description: "Try again or choose another location.",
-      });
+      toastManager.add(
+        editedCopy
+          ? { type: "error", title: "The PDF copy could not be saved" }
+          : {
+              type: "error",
+              title: "The PDF could not be saved",
+              description: "Try again or choose another location.",
+            },
+      );
     } finally {
       saveCopyPendingRef.current = false;
       setSavingCopy(false);
