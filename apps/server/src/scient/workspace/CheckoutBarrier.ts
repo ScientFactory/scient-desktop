@@ -208,72 +208,75 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
   const epochOf = (keys: ReadonlyArray<string>) =>
     keys.reduce((sum, key) => sum + entry(key).epoch, 0);
 
-  const bulk: CheckoutBarrierShape["bulk"] = (path, effect, options) =>
-    Effect.gen(function* () {
-      const found = yield* lookup(path, options?.missing === "skip");
-      if (found === null) return yield* effect;
-      const key = found.keys[0]!;
-      const already = yield* HeldCheckouts;
-      const held = entry(key);
-      // A bulk change made by the very fiber that holds this checkout's section, while
-      // it holds it, runs within it: it is part of that fiber's own sequential work.
-      // Any other fiber, a forked child included, waits its turn like everyone else.
-      const joined = already.get(key);
-      if (
-        joined !== undefined &&
-        joined.fiber === (yield* Effect.fiberId) &&
-        held.held.has(joined.section)
-      )
-        return yield* effect;
-      return yield* Effect.acquireUseRelease(
+  const bulk: CheckoutBarrierShape["bulk"] = Effect.fn("CheckoutBarrier.bulk")(function* <A, E, R>(
+    path: string,
+    effect: Effect.Effect<A, E, R>,
+    options?: { readonly missing?: "nearest" | "skip" },
+  ) {
+    const found = yield* lookup(path, options?.missing === "skip");
+    if (found === null) return yield* effect;
+    const key = found.keys[0]!;
+    const already = yield* HeldCheckouts;
+    const held = entry(key);
+    // A bulk change made by the very fiber that holds this checkout's section, while
+    // it holds it, runs within it: it is part of that fiber's own sequential work.
+    // Any other fiber, a forked child included, waits its turn like everyone else.
+    const joined = already.get(key);
+    if (
+      joined !== undefined &&
+      joined.fiber === (yield* Effect.fiberId) &&
+      held.held.has(joined.section)
+    )
+      return yield* effect;
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        held.bulks++;
+        held.epoch++;
+      }),
+      () =>
+        held.turn.withPermit(
+          Effect.gen(function* () {
+            while (held.applications > 0) {
+              held.drained ??= Deferred.makeUnsafe<void>();
+              yield* Deferred.await(held.drained);
+            }
+            // The path may name another checkout by now (moved, replaced); never
+            // change one under another's identity.
+            const now = yield* lookup(path, options?.missing === "skip");
+            // Gone while waiting, with `missing: "skip"`: nothing of it is left to settle.
+            if (now === null) return yield* effect;
+            if (now.keys[0] !== key)
+              return yield* new CheckoutLookupError({
+                path,
+                cause: new Error("The checkout at this path changed while waiting."),
+              });
+            const section: CheckoutSection = {
+              key,
+              keys: now.keys,
+              root: now.root,
+              epoch: epochOf(now.keys),
+            };
+            const fiber = yield* Effect.fiberId;
+            held.held.add(section);
+            return yield* Effect.gen(function* () {
+              for (const settle of settlers) yield* settle(section);
+              return yield* effect;
+            }).pipe(
+              Effect.provideService(
+                HeldCheckouts,
+                new Map([...already, [key, { section, fiber }]]),
+              ),
+              Effect.ensuring(Effect.sync(() => held.held.delete(section))),
+            );
+          }),
+        ),
+      () =>
         Effect.sync(() => {
-          held.bulks++;
+          held.bulks--;
           held.epoch++;
         }),
-        () =>
-          held.turn.withPermit(
-            Effect.gen(function* () {
-              while (held.applications > 0) {
-                held.drained ??= Deferred.makeUnsafe<void>();
-                yield* Deferred.await(held.drained);
-              }
-              // The path may name another checkout by now (moved, replaced); never
-              // change one under another's identity.
-              const now = yield* lookup(path, options?.missing === "skip");
-              // Gone while waiting, with `missing: "skip"`: nothing of it is left to settle.
-              if (now === null) return yield* effect;
-              if (now.keys[0] !== key)
-                return yield* new CheckoutLookupError({
-                  path,
-                  cause: new Error("The checkout at this path changed while waiting."),
-                });
-              const section: CheckoutSection = {
-                key,
-                keys: now.keys,
-                root: now.root,
-                epoch: epochOf(now.keys),
-              };
-              const fiber = yield* Effect.fiberId;
-              held.held.add(section);
-              return yield* Effect.gen(function* () {
-                for (const settle of settlers) yield* settle(section);
-                return yield* effect;
-              }).pipe(
-                Effect.provideService(
-                  HeldCheckouts,
-                  new Map([...already, [key, { section, fiber }]]),
-                ),
-                Effect.ensuring(Effect.sync(() => held.held.delete(section))),
-              );
-            }),
-          ),
-        () =>
-          Effect.sync(() => {
-            held.bulks--;
-            held.epoch++;
-          }),
-      );
-    });
+    );
+  });
 
   const application: CheckoutBarrierShape["application"] = (path, body, options) =>
     Effect.flatMap(located(path), (found) =>

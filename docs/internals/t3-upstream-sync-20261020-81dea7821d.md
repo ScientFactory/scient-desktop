@@ -1119,3 +1119,73 @@ admission makes that regression fail by incorrectly accepting checkout;
 restoring the reviewed ordering makes it pass. The regression stays beside the
 existing private production-manager fixture, with a marked Scient seam rather
 than duplicate fixture exports.
+
+### Hosted CI compatibility follow-through
+
+The first repaired push was `b87ed92d48341258f40152353f4574bfcc83f91a`.
+Its exact-source root build succeeded with 32,106 pinned source entries and no
+drift. The isolated production-launcher smoke survived, then shut down with exit
+0, no forced kill, no drainage timeout and no remaining owned process; artifacts
+were unchanged. This proves launch/shutdown, not renderer/backend readiness or
+new manual feature acceptance.
+
+CI run `39881227807` then found four quality-rule incompatibilities in the landed
+checkout barrier. The reusable bulk operation now uses named `Effect.fn`,
+preserving its generic contract and ownership algorithm. The three consumer
+fixtures wait for actual public admission epochs under their existing Effect
+test scope rather than sleeping for 100/200 ms. No manual test runtime, schedule,
+sleep, retry count or per-test timeout override is added. The error-channel
+witness checks the actual typed failure and epochs, not internal tracing
+annotations. All 20 barrier cases and the complete composed root quality gate
+pass after those corrections; warnings remain distinct from errors.
+
+### Final hosted-failure repair checkpoint
+
+Run `39881227807` checked synthetic merge
+`29558d9ec67af8d0a142c164ed8a54c4c8fb9841`, whose owned-main parent is
+`6a53599f99da349d1ada22015cb5759f3bb241e8` and alignment parent is
+`b87ed92d48341258f40152353f4574bfcc83f91a`. All three server shards, Release
+Smoke, Linux AppImage/native runtime, remote-server installers and the native
+Compute matrix passed. Static, workspace, browser and Windows installer failures
+still made that run a failure; it is not delivery evidence.
+
+The Markdown stress witness now runs its same 300 deterministic seeds and 80
+steps per seed as independently disposed serial cases. Real reconciliation,
+format validation and every harness violation assertion remain; aggregate
+distribution thresholds were removed rather than shared across tests. The full
+package passes 392 cases. The visual-editor witness retains exact source,
+undo/redo, paused recovery, occupied storage and restored-checkpoint assertions,
+using native focus and signal-owned publication receipts. Its obsolete recovery
+banner wording assertion was removed. All 15 cases pass. Independent Codex
+source review accepted both repairs.
+
+Windows CI exposed a second include-lookup hazard: bare `installer.nsh` found
+electron-builder's framework file and defined its extraction macro twice. The
+generated wrapper now qualifies Scient's staged resource with NSIS's Windows
+separator. A real pinned NSIS 3.0.4.1 probe loads the actual framework extraction
+macro first, retains the conflicting filename, and uses a resource path with
+spaces. The old include fails with the CI macro collision; all six corrected
+channel/native-preview variants preprocess successfully. Codex accepted the
+change. This is mac-host preprocessing, not Windows installation or registry
+execution; a new Windows CI run remains required.
+
+Cold Chromium profiling found repeated computed-typography reads in detached
+measurement. Reading all 13 unchanged properties before writing them reduced
+that profiled operation's self time from about 1.3 seconds to 0.45 seconds under
+fourfold CPU throttling. The buffer is local to one measurement and is applied
+before descendant recursion. Invalid whitespace children between longtable rows
+were also removed, preserving footer, gap, header and body-row order. Codex
+accepted both source changes. These measurements do not establish the precise
+Linux CI cause or a complete speedup: the fourfold-throttled split scenario
+still exceeded its unchanged 15-second budget. No deadline, retry, assertion,
+font requirement or platform exclusion was weakened. Temporary profiling and
+abort-phase instrumentation were removed.
+
+The final affected coverage passes: 27 native split-selection cases, 15 visual
+editor cases and both reading-position cases in the combined run; all 19
+pagination cases in the subsequent visual-capture run. The initial optional
+capture path outside Vite's allowed workspace was rejected; using an owned
+workspace output path fixed capture without relaxing filesystem access. Native
+captures show the Hebrew opening/table pages and repeated longtable furniture.
+Web type checking and root formatting/lint pass; existing warnings are retained.
+These results do not replace fresh exact-candidate hosted qualification.

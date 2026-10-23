@@ -4393,7 +4393,6 @@ function LatexRichPreviewView({
                   <Fragment key={key}>
                     {longtable && pageBreaks.some((part) => part.row === rowIndex) ? (
                       <>
-                        {" "}
                         <LatexLongTableBand
                           repeat
                           editor={editor}
@@ -4428,7 +4427,7 @@ function LatexRichPreviewView({
                           columns={Math.max(1, rows[0]?.length ?? 1)}
                           alignments={columnAlignments}
                           number={tableNumber ?? null}
-                        />{" "}
+                        />
                       </>
                     ) : null}
                     <tr

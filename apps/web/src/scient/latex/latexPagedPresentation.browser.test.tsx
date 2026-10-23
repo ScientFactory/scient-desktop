@@ -72,11 +72,7 @@ async function mount(_fixture: _Fixture, source: string, name: string) {
     );
   }
   await _fixture.root0.rerender(<Harness />);
-  return await waitForLatexVisualTestReadiness(
-    _fixture.host,
-    _fixture.context,
-    `pagination ${name}`,
-  );
+  return waitForLatexVisualTestReadiness(_fixture.host, _fixture.context, `pagination ${name}`);
 }
 
 it.for(["detached", "hidden", "briefly hidden"] as const)(

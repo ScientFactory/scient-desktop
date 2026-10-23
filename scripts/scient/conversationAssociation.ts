@@ -79,9 +79,9 @@ export function renderWindowsConversationAssociationInclude(
     `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}"`,
     "!macroend",
     "",
-    // electron-builder adds build resources to the include path. NSIS 3.0.4
-    // splits Windows paths on backslashes only, so appending "/" breaks lookup.
-    '!include "installer.nsh"',
+    // A bare name resolves to electron-builder's own installer.nsh. NSIS needs
+    // its Windows separator when qualifying the product's staged resources.
+    '!include "${BUILD_RESOURCES_DIR}\\installer.nsh"',
     "",
   ].join("\n");
 }

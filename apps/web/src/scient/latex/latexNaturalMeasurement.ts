@@ -1,5 +1,21 @@
 import type { EditorView } from "@tiptap/pm/view";
 
+const typographyProperties = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-indent",
+  "text-align",
+  "white-space",
+  "direction",
+  "unicode-bidi",
+  "vertical-align",
+] as const;
+
 const hosts = new WeakMap<EditorView, HTMLElement>();
 const previewStyles = new Map<string, string>();
 export function resetNaturalMeasurement(view: EditorView) {
@@ -92,21 +108,7 @@ export function measureNatural<T>(
   const positions = new WeakMap<globalThis.Node, number>();
   const copies = new WeakMap<Element, HTMLElement>();
   const scale = view.dom.getBoundingClientRect().width / (view.dom.offsetWidth || 1);
-  const properties = [
-    "font-family",
-    "font-size",
-    "font-weight",
-    "font-style",
-    "line-height",
-    "letter-spacing",
-    "word-spacing",
-    "text-indent",
-    "text-align",
-    "white-space",
-    "direction",
-    "unicode-bidi",
-    "vertical-align",
-  ];
+  const typography = new Array<string>(typographyProperties.length);
   const clone = (node: globalThis.Node): globalThis.Node | null => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = document.createTextNode(node.textContent ?? "");
@@ -151,8 +153,11 @@ export function measureNatural<T>(
       node instanceof HTMLTextAreaElement
     ) {
       const style = getComputedStyle(node);
-      for (const property of properties)
-        copy.style.setProperty(property, style.getPropertyValue(property));
+      // Detached style writes can invalidate Chromium's computed-style cache.
+      for (let index = 0; index < typographyProperties.length; index++)
+        typography[index] = style.getPropertyValue(typographyProperties[index]!);
+      for (let index = 0; index < typographyProperties.length; index++)
+        copy.style.setProperty(typographyProperties[index]!, typography[index]!);
     }
     if (node.matches(".scient-paged-line,.scient-paged-part")) {
       copy.style.removeProperty("top");

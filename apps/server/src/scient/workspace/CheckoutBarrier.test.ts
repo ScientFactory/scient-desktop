@@ -30,6 +30,7 @@ import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts"
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   CheckoutBarrier,
+  type CheckoutBarrierShape,
   type CheckoutLookupError,
   CheckoutRecoveryRequiredError,
   makeCheckoutBarrier,
@@ -58,7 +59,7 @@ const folders = Effect.acquireRelease(
 
 /** Forks `body` inside an application section and returns once it is inside. */
 const holdApplication = (
-  barrier: ReturnType<typeof makeCheckoutBarrier>,
+  barrier: CheckoutBarrierShape,
   path: string,
   release: Deferred.Deferred<void>,
 ) =>
@@ -74,11 +75,7 @@ const holdApplication = (
   });
 
 /** Forks a bulk change of `path` and returns once it runs, with its section's epoch. */
-const holdBulk = (
-  barrier: ReturnType<typeof makeCheckoutBarrier>,
-  path: string,
-  release: Deferred.Deferred<void>,
-) =>
+const holdBulk = (barrier: CheckoutBarrierShape, path: string, release: Deferred.Deferred<void>) =>
   Effect.gen(function* () {
     const inside = yield* Deferred.make<void>();
     const fiber = yield* barrier
@@ -87,6 +84,18 @@ const holdBulk = (
     yield* Deferred.await(inside);
     return fiber;
   });
+
+// Admission has no event; observe its public epoch without starting a second test runtime.
+const waitForBulkAdmission = Effect.fn("test.CheckoutBarrier.waitForBulkAdmission")(function* (
+  barrier: CheckoutBarrierShape,
+  path: string,
+) {
+  yield* barrier.current(path).pipe(
+    Effect.repeat({
+      until: (section) => section.epoch > 0,
+    }),
+  );
+});
 
 describe("CheckoutBarrier", () => {
   it.effect("refuses an application while a bulk change runs, and admits one after", () =>
@@ -137,13 +146,13 @@ describe("CheckoutBarrier", () => {
       const { repo } = yield* folders;
       const barrier = makeCheckoutBarrier();
       assert.equal((yield* barrier.current(repo)).epoch, 0);
-      const during = yield* Effect.exit(
-        barrier.bulk(
+      const during = yield* barrier
+        .bulk(
           repo,
           Effect.flatMap(barrier.current(repo), (section) => Effect.fail(section.epoch)),
-        ),
-      );
-      assert.deepEqual(during, Exit.fail(1));
+        )
+        .pipe(Effect.flip);
+      assert.equal(during, 1);
       assert.equal((yield* barrier.current(repo)).epoch, 2);
     }).pipe(Effect.scoped),
   );
@@ -537,7 +546,7 @@ const repository = Effect.acquireRelease(
   }),
   (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
 );
-const driverWith = (barrier: ReturnType<typeof makeCheckoutBarrier>) =>
+const driverWith = (barrier: CheckoutBarrierShape) =>
   GitVcsDriver.layer.pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-checkout-barrier-" })),
     Layer.provide(Layer.succeed(CheckoutBarrier, barrier)),
@@ -555,7 +564,7 @@ describe("CheckoutBarrier consumers", () => {
       const switching = yield* driver
         .switchRef({ cwd: root, refName: "other" })
         .pipe(Effect.forkChild);
-      yield* Effect.sleep("200 millis");
+      yield* waitForBulkAdmission(barrier, root);
       assert.equal(git(root, "branch", "--show-current"), "main");
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);
@@ -592,7 +601,7 @@ describe("CheckoutBarrier consumers", () => {
       const removing = yield* driver
         .removeWorktree({ cwd: root, path: "./target", force: true })
         .pipe(Effect.forkChild);
-      yield* Effect.sleep("200 millis");
+      yield* waitForBulkAdmission(barrier, target);
       assert.isTrue(yield* Effect.promise(() => NodeFSP.access(target).then(() => true)));
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);
@@ -657,7 +666,7 @@ describe("CheckoutBarrier consumers", () => {
           } as never,
         })
         .pipe(Effect.forkChild);
-      yield* Effect.sleep("100 millis");
+      yield* waitForBulkAdmission(barrier, root);
       assert.deepEqual(restored, []);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);

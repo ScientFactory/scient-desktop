@@ -1,4 +1,5 @@
 import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
@@ -16,7 +17,11 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { createLatexVisualTestOwner, useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  createLatexVisualTestOwner,
+  readMountedLatexVisualTestEditor,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { pdfFitWidthScale } from "../pdf/pdfReaderModel";
 import { isMacKeyboard } from "../keyboard/keys";
@@ -90,10 +95,8 @@ describe("visual LaTeX page layout", () => {
     expect
       .poll(
         () => {
-          const document = _fixture.container.querySelector<HTMLElement>(
-            ".scient-latex-visual-document",
-          );
-          return !!document && document.dataset.latexLoading === undefined;
+          const editor = readMountedLatexVisualTestEditor(_fixture.container);
+          return !!editor && editor.view.dom.dataset.latexLoading === undefined;
         },
         { timeout: 5_000 },
       )
@@ -248,23 +251,24 @@ describe("visual LaTeX page layout", () => {
         editor.commands.setNode("heading", { level: 1 });
       });
       expect(current).toContain("\\section{Old base}");
+      const checkpoint = current;
       current = tex("Old base\n\nAgent paragraph.");
       revision = "r2";
       await act(() => show(current, revision));
-      await expect
-        .poll(
-          () =>
-            _fixture.container.querySelector(".scient-latex-visual-recovery-message")?.textContent,
-        )
-        .toBe("Unsaved changes · keep this document open");
-      expect(editor.isEditable).toBe(false);
+      await expect.poll(() => editor.isEditable).toBe(false);
       expect(_fixture.container.querySelector(".ProseMirror")?.textContent).toContain(
         "Agent paragraph.",
       );
       expect(localStorage.getItem(slot)).toBe(theirs);
       await page.getByRole("button", { name: "Compare", exact: true }).click();
+      expect(_fixture.container.querySelector('pre[data-side="recovered"]')?.textContent).toContain(
+        "\\section{Old base}",
+      );
+      expect(_fixture.container.querySelector('pre[data-side="current"]')?.textContent).toContain(
+        "Agent paragraph.",
+      );
       await page.getByRole("button", { name: "Use recovered", exact: true }).click();
-      await expect.poll(() => current).toContain("\\section{Old base}");
+      await expect.poll(() => current).toBe(checkpoint);
       expect(localStorage.getItem(slot)).toBe(theirs);
     } finally {
       quota.mockRestore();
@@ -432,17 +436,28 @@ Body.
     expect(onEdit).not.toHaveBeenCalled();
   });
 
-  it.each([
+  it.for([
     "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
     "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
     "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
-  ])("types and undoes below unused declaration %s", async (definition) => {
+  ])("types and undoes below unused declaration %s", async (definition, context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     const original = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
     let current = original;
+    const publications = new Map<string, () => void>();
+    // Native text paints before recovery journaling and worker conversion publish it.
+    const nextPublication = (source: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      publications.set(source, resolve);
+      const dispose = () => {
+        if (publications.get(source) === resolve) publications.delete(source);
+      };
+      _fixture.cleanup.defer(dispose);
+      return () => waitForTestReceipt(context.signal, promise, dispose);
+    };
     function Harness() {
       const [source, setSource] = useState(current);
       const owner = useLatexVisualTestOwner(source);
@@ -460,32 +475,40 @@ Body.
             if (!outcome.accepted) return outcome;
             current = outcome.snapshot.source;
             setSource(current);
+            publications.get(current)?.();
             return outcome;
           }}
         />
       );
     }
     await _fixture.root0.rerender(<Harness />);
-    const editor = () =>
-      (
-        _fixture.container.querySelector(".scient-latex-visual-document") as
-          | (HTMLElement & { editor?: Editor })
-          | null
-      )?.editor;
-    await expect.poll(editor).toBeTruthy();
     await readingViewReady(_fixture);
-    const live = editor()!;
+    const live = readMountedLatexVisualTestEditor(_fixture.container)!;
     expect(live.isEditable).toBe(true);
     expect(live.state.doc.textContent).toBe("Actual body.");
+    const changed = original.replace("Actual body.", "New Actual body.");
+    const typed = nextPublication(changed);
     live.commands.setTextSelection(1);
     live.view.focus();
+    expect(document.activeElement).toBe(live.view.dom);
+    expect(live.view.hasFocus()).toBe(true);
+    const native = document.getSelection()!;
+    expect(native.isCollapsed).toBe(true);
+    expect(native.anchorNode).not.toBeNull();
+    expect(live.view.posAtDOM(native.anchorNode!, native.anchorOffset)).toBe(1);
     await userEvent.keyboard("New ");
-    const changed = original.replace("Actual body.", "New Actual body.");
-    await expect.poll(() => current).toBe(changed);
+    await vi.waitFor(() => expect(live.state.doc.textContent).toBe("New Actual body."));
+    await typed();
+    expect(current).toBe(changed);
+    const undone = nextPublication(original);
     await undoKeyboard();
-    await expect.poll(() => current).toBe(original);
+    await undone();
+    expect(current).toBe(original);
+    const redone = nextPublication(changed);
     live.commands.redo();
-    await expect.poll(() => current).toBe(changed);
+    await redone();
+    expect(current).toBe(changed);
+    expect(readMountedLatexVisualTestEditor(_fixture.container)).toBe(live);
   });
 
   it("saves and undoes a compound prose edit without rewriting protected commands", async () => {
