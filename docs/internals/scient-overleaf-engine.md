@@ -244,13 +244,113 @@ is one instance per server process, shared however each layer was built.
 Arbitrary shell writers, external Git commands and other server profiles are
 outside it.
 
+## Coordinator
+
+`OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
+confirmed one and sends its result to Overleaf, recovers an interrupted apply,
+settles earlier sends, and lists and restores kept copies.
+
+- **Lock order.** The connection's operation reservation comes first: in
+  memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
+  checkout barrier's application section, then the store's compare-and-set,
+  then the file layer's locks. Overleaf is fetched before the section.
+- **Confirm.** Inside the section, it checks the folder and retention
+  identities, captures the folder again and rebuilds the review with the same
+  selections and choices. Capture reads the base's paths, the managed paths and
+  every path in a forced conflict. A different digest is a stale review: the
+  fresh one is offered and nothing is applied. Before anything is written it
+  checks room:
+  for every kept copy the apply could add, and for every group an interruption
+  could leave as a forced conflict (at most 2,000 paths each). Then, before the
+  applier runs, it records the receipt, a local snapshot, the intent pin and
+  `activeApply`, in that order.
+- **Adoption** is one document replacement:
+  - the base: a tree written from the applier's per-path base on the fetched
+    remote commit, with the previous base moved into `priorBases`;
+  - managed and local-only paths;
+  - `forcedConflicts` (interrupted groups) and `markerPaths`;
+  - kept copies, each with its place in the retention folder and a stamp (size
+    and change time) taken around a fresh read of its bytes, from the file its
+    path still names. A copy that no longer holds what the applier kept is
+    recorded `changed`, never released;
+  - `completedSyncCount`, which advances only on `complete`;
+  - unknown publication attempts, which become `superseded-unresolved`;
+  - the link, cleared.
+
+  Recovery resumes the applier by the linked ID and adopts once. A link whose
+  apply never recorded its plan is cleared as a replan.
+
+- **Bulk changes.** The coordinator registers the barrier's settler: a bulk
+  change of a checkout with a pending apply recovers it inline when the
+  reservation is free, and is refused otherwise. Structural copies in the
+  folder always refuse it, including any the inline recovery finds.
+- **Listing kept copies** compares each copy by its stamp and reads again only
+  a changed or extra version. One listing reads at most one inventory's total;
+  a file past that budget, or larger than a restore reads (a kept copy or the
+  folder's file), is listed `unread`, which is not the same as gone.
+- **Restore.** It puts a kept copy back as a one-file `retained-restore` apply,
+  only if both the copy and the folder's file still have the revisions the
+  request saw. It reads the copy and the folder's file once each, never past
+  50 MiB; a folder file too large to read is never taken for an absent one.
+  Before writing, it checks room for the copy it keeps, a file it brings back
+  into the sync, the group it may leave and conflict material it tracks again.
+  The file it replaces is kept (state `kept`), the base never moves, and the
+  restored bytes are a local change for the next review. A restore the applier
+  cannot finish leaves its file as a forced conflict, beside those already
+  recorded.
+
+### Publication
+
+After a complete adoption, confirm sends the result, still inside its
+application section so the checkout cannot change before the send:
+
+1. **Gate.** Nothing is sent after a partial apply, while conflict material or
+   structural copies remain, or when a copy this apply kept is `changed` or
+   `ambiguous`. The result is `blocked` with the reason.
+2. **Nothing to send** when the candidate equals Overleaf's fetched tree
+   (`none`).
+3. **Verify.** The folder is captured again, the way a review captures it and
+   over every path the plan read or wrote (so an explicit deletion must still be
+   absent), and its tree must equal the candidate. A difference is `not-verified`, and the
+   edit is the next review's to send. Each copy this apply kept is checked again by its
+   stamp: one a late writer changed is recorded `changed` and the send is `blocked`. From here on, the content comes from the
+   private repository's objects, never from the folder.
+4. **Record.** The candidate is committed on the plan's fetched head. The
+   attempt is recorded `unknown` with its pins, before anything is sent. Resolved
+   history makes room; a confirm that would need a seventeenth unresolved
+   attempt is refused before the apply.
+5. **Send admission.** A credential renewed since the review records `not-sent`
+   (`send-refused`).
+6. **Send** once, never forced. `accepted` makes the candidate the base in the
+   same replacement. `out-of-date` keeps the adopted base. Anything else stays
+   `unknown`, as does an attempt whose finalizing write fails.
+
+**Settling earlier sends.** Prepare (on the head it fetches) and recover (one
+fetch) check every unresolved attempt against Overleaf by positive evidence
+only:
+
+- the head's tree equals the candidate's;
+- the candidate's tree is in a first-parent commit (of the last 64) that
+  descends from the attempt's parent, so a rewritten history proves nothing;
+- the candidate commit is reachable from the head.
+
+An unknown attempt on the current base becomes the base when accepted. A
+superseded one is only marked accepted, and the later base stays. Absent
+evidence changes nothing, including when Overleaf still holds the parent. The
+review warns about each unresolved attempt (`unresolved-publication`), and the
+confirmation must acknowledge it. Nothing is ever resent.
+
+A crash after the send leaves the confirm receipt `running` and the attempt
+`unknown`. A repeated request returns that receipt, and recovery settles the
+attempt.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
-prepare/apply/publish recovery, bounded inventory and repository retention,
-the barrier's settler for pending applies, and the editor-flush bridge. The coordinator must implement cancellation between
+bounded repository retention and the editor-flush bridge, and derive status (a
+`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;

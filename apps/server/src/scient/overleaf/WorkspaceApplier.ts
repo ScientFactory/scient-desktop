@@ -111,7 +111,10 @@ export interface WorkspaceApplyResult {
   readonly base: ReadonlyMap<string, string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly markerPaths: ReadonlyArray<string>;
-  readonly retained: ReadonlyArray<RetainedMutationResult & { readonly changed: boolean }>;
+  /** Kept copies; `relativePath` is the plan path whose step kept it. */
+  readonly retained: ReadonlyArray<
+    RetainedMutationResult & { readonly changed: boolean; readonly relativePath: string }
+  >;
   readonly matchesTarget: boolean;
   /** Temporary structural source copies excluded from manuscript capture. Never auto-delete. */
   readonly stagingPaths: ReadonlyArray<string>;
@@ -145,27 +148,15 @@ export interface ApplierHooks {
 function ownValue<T>(values: Readonly<Record<string, T>>, name: string): T | undefined {
   return Object.hasOwn(values, name) ? values[name] : undefined;
 }
-function storePlan(input: WorkspaceApplyPlan): StoredPlan {
-  const target = Object.fromEntries(
-    [...input.target].map(([name, file]) => [
-      name,
-      {
-        revision: bytesRevision(file.bytes),
-        contents: Buffer.from(file.bytes).toString("base64"),
-        executable: false,
-      },
-    ]),
-  );
-  for (const rename of input.renames)
-    if (
-      rename.from !== rename.to &&
-      manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to)
-    )
-      throw new Error("Alias-only renames need a separate manual rename before synchronization.");
+/**
+ * The plan's apply units, and the paths each one guards: what an interruption of
+ * that unit leaves behind as one forced conflict.
+ */
+function planUnits(input: WorkspaceApplyPlan, targetRevisions: ReadonlyMap<string, string>) {
   const changes: Array<Extract<FileChange, { path: string }>> = [
     ...new Set([...input.captured.keys(), ...input.target.keys()]),
   ]
-    .filter((name) => input.captured.get(name) !== ownValue(target, name)?.revision)
+    .filter((name) => input.captured.get(name) !== targetRevisions.get(name))
     .map((name) => ({
       kind: !input.captured.has(name) ? "added" : !input.target.has(name) ? "deleted" : "modified",
       path: name,
@@ -197,6 +188,33 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
     }
     return [...new Set([...unit, ...paths])];
   });
+  return { units, guards };
+}
+const targetRevisions = (plan: WorkspaceApplyPlan) =>
+  new Map([...plan.target].map(([name, file]) => [name, bytesRevision(file.bytes)]));
+/** Every group an interrupted apply of `plan` could leave as a forced conflict. */
+export const interruptibleGroups = (
+  plan: WorkspaceApplyPlan,
+): ReadonlyArray<ReadonlyArray<string>> => planUnits(plan, targetRevisions(plan)).guards;
+function storePlan(input: WorkspaceApplyPlan): StoredPlan {
+  const revisions = targetRevisions(input);
+  const target = Object.fromEntries(
+    [...input.target].map(([name, file]) => [
+      name,
+      {
+        revision: revisions.get(name)!,
+        contents: Buffer.from(file.bytes).toString("base64"),
+        executable: false,
+      },
+    ]),
+  );
+  for (const rename of input.renames)
+    if (
+      rename.from !== rename.to &&
+      manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to)
+    )
+      throw new Error("Alias-only renames need a separate manual rename before synchronization.");
+  const { units, guards } = planUnits(input, revisions);
   return {
     base: Object.fromEntries(input.base),
     remote: Object.fromEntries(input.remote),
@@ -450,7 +468,13 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             } else {
               if (intentText === null) {
                 if (saved !== null) throw new Error("Missing durable apply intent.");
-                if (!input.plan) throw new Error("Missing apply plan.");
+                if (!input.plan) {
+                  // Recovery of an apply that never recorded its plan. Every file
+                  // mutation creates its record folder first, so an empty folder
+                  // proves nothing was written: there is nothing to resume.
+                  if ((await NodeFSP.readdir(retentionDirectory)).length === 0) return null;
+                  throw new Error("Missing apply plan.");
+                }
                 const plan = storePlan(input.plan);
                 validatePlan(plan);
                 const intent = { version: 2 as const, cwd, rootIdentity, plan };
@@ -516,6 +540,16 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
           },
           catch: (cause) => new WorkspaceApplyError({ cause }),
         });
+        if (begin === null)
+          return {
+            outcome: "replan",
+            base: new Map(),
+            interrupted: [],
+            markerPaths: [],
+            retained: [],
+            matchesTarget: false,
+            stagingPaths: [],
+          } satisfies WorkspaceApplyResult;
         yield* files
           .registerRetainedFileHistory({
             cwd: input.cwd,
@@ -737,7 +771,9 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
           .withSettledWorkspaceRead({ cwd: state.cwd }, () =>
             Effect.tryPromise({
               try: async (): Promise<WorkspaceApplyResult> => {
-                const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
+                const retained: Array<
+                  RetainedMutationResult & { changed: boolean; relativePath: string }
+                > = [];
                 for (const [index, name] of state.plan.units.flat().entries())
                   for (const attempt of await stepAttempts(begin.retentionDirectory, index)) {
                     const directory = NodePath.join(begin.retentionDirectory, attempt);
@@ -755,8 +791,9 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                             record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
                             current !== record.desired)
                         ) {
-                          retained.push(
-                            await recheckRetainedFile(
+                          retained.push({
+                            relativePath: name,
+                            ...(await recheckRetainedFile(
                               {
                                 outcome: record.outcome ?? "attention",
                                 recordDirectory: directory,
@@ -765,8 +802,8 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                                 retainedIdentity: null,
                               },
                               ownValue(state.plan.captured, name) ?? null,
-                            ),
-                          );
+                            )),
+                          });
                         }
                       }
                     } catch (e) {
