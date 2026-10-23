@@ -223,6 +223,9 @@ describe("overleafTransitionViolation", () => {
       planDigest: "a".repeat(64),
       baseGeneration: 1,
       intentTree: oid("5"),
+      remoteCommit: oid("7"),
+      localOnly: [],
+      priorMarkers: [],
     };
     const applying = next(first, { activeApply: link });
     // The apply's result advances the base and clears its link in one replacement.
@@ -276,6 +279,9 @@ describe("overleafTransitionViolation", () => {
       planDigest: "a".repeat(64),
       baseGeneration: 1,
       intentTree: oid("5"),
+      remoteCommit: oid("7"),
+      localOnly: [],
+      priorMarkers: [],
     };
     const applying = next(synced, { activeApply: link });
     expect(overleafTransitionViolation(synced, applying, NOW)).toBeNull();
@@ -301,6 +307,10 @@ describe("overleafTransitionViolation", () => {
       state: "changed",
       retainedAt: "2026-10-12T12:00:00.000Z",
       retainedAtSyncCount: 1,
+      kept: "apply-1/files/step-0/retained",
+      markers: false,
+      versions: [],
+      stamp: "1:1",
     };
     const holding = next(synced, { retention: { ...synced.retention, copies: [copy] } });
     expect(violation(holding, { retention: { ...freshVault, copies: [copy] } })).toBe(
@@ -315,6 +325,9 @@ describe("overleafTransitionViolation", () => {
         planDigest: "a".repeat(64),
         baseGeneration: 1,
         intentTree: oid("5"),
+        remoteCommit: oid("7"),
+        localOnly: [],
+        priorMarkers: [],
       },
     });
     expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");
@@ -334,6 +347,10 @@ describe("overleafTransitionViolation", () => {
       state: "releasable",
       retainedAt: "2026-10-05T12:00:00.000Z",
       retainedAtSyncCount: 1,
+      kept: "apply-1/files/step-0/retained",
+      markers: false,
+      versions: [],
+      stamp: "1:1",
     };
     const holding = (change: Partial<typeof copy>, completedSyncCount: number) =>
       next(synced, {
