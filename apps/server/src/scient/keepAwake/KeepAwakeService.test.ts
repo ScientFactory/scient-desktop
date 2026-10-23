@@ -135,7 +135,7 @@ const seed = (extra: readonly OrchestrationV2DomainEvent[], currentRun = run) =>
     yield* Effect.forEach(records, (event) => store.apply(event.event));
   });
 
-it.effect.each(["background", "native"] as const)(
+it.effect.each(["background", "native", "run"] as const)(
   "observes %s ownership on every poll and releases protection after owner loss without completing the work",
   (kind) =>
     Effect.gen(function* () {
@@ -146,7 +146,8 @@ it.effect.each(["background", "native"] as const)(
           Layer.mergeAll(
             Layer.mock(ProviderSessionManagerV2)({
               inspectExecution: (input) => {
-                assert.isUndefined(input.runOrdinal);
+                if (kind === "run") assert.equal(input.runOrdinal, 1);
+                else assert.isUndefined(input.runOrdinal);
                 return Ref.get(ownership);
               },
             }),
@@ -160,59 +161,70 @@ it.effect.each(["background", "native"] as const)(
         ),
       );
       yield* Effect.gen(function* () {
-        yield* seed([
-          {
-            id: EventId.make("background-owner"),
-            threadId: id,
-            occurredAt: now,
-            type: "provider-thread.updated",
-            payload: {
-              id: ProviderThreadId.make("provider"),
-              driver: ProviderDriverKind.make("codex"),
-              providerInstanceId: instanceId,
-              providerSessionId: ProviderSessionId.make("session"),
-              appThreadId: kind === "native" ? null : id,
-              ownerNodeId: null,
-              nativeThreadRef: null,
-              nativeConversationHeadRef: null,
-              status: "idle",
-              firstRunOrdinal: null,
-              lastRunOrdinal: null,
-              handoffIds: [],
-              forkedFrom: null,
-              pendingBackgroundTasks: [{ kind: "background_task", taskId: "task" }],
-              createdAt: now,
-              updatedAt: now,
+        yield* seed(
+          [
+            {
+              id: EventId.make("background-owner"),
+              threadId: id,
+              occurredAt: now,
+              type: "provider-thread.updated",
+              payload: {
+                id: ProviderThreadId.make("provider"),
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: instanceId,
+                providerSessionId: ProviderSessionId.make("session"),
+                appThreadId: kind === "native" ? null : id,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: kind === "run" ? 1 : null,
+                lastRunOrdinal: kind === "run" ? 1 : null,
+                handoffIds: [],
+                forkedFrom: null,
+                pendingBackgroundTasks:
+                  kind === "run" ? [] : [{ kind: "background_task", taskId: "task" }],
+                createdAt: now,
+                updatedAt: now,
+              },
             },
-          },
-          ...(kind !== "native"
-            ? []
-            : [
-                {
-                  id: EventId.make("native-root"),
-                  threadId: id,
-                  occurredAt: now,
-                  type: "node.updated",
-                  payload: {
-                    id: NodeId.make("root"),
+            ...(kind !== "native"
+              ? []
+              : [
+                  {
+                    id: EventId.make("native-root"),
                     threadId: id,
-                    runId: null,
-                    parentNodeId: null,
-                    rootNodeId: NodeId.make("root"),
-                    kind: "root_turn",
-                    status: "running",
-                    countsForRun: false,
-                    providerThreadId: ProviderThreadId.make("provider"),
-                    providerTurnId: null,
-                    nativeItemRef: null,
-                    runtimeRequestId: null,
-                    checkpointScopeId: null,
-                    startedAt: now,
-                    completedAt: null,
-                  },
-                } satisfies OrchestrationV2DomainEvent,
-              ]),
-        ]);
+                    occurredAt: now,
+                    type: "node.updated",
+                    payload: {
+                      id: NodeId.make("root"),
+                      threadId: id,
+                      runId: null,
+                      parentNodeId: null,
+                      rootNodeId: NodeId.make("root"),
+                      kind: "root_turn",
+                      status: "running",
+                      countsForRun: false,
+                      providerThreadId: ProviderThreadId.make("provider"),
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      runtimeRequestId: null,
+                      checkpointScopeId: null,
+                      startedAt: now,
+                      completedAt: null,
+                    },
+                  } satisfies OrchestrationV2DomainEvent,
+                ]),
+          ],
+          kind === "run"
+            ? {
+                ...run,
+                status: "running",
+                completedAt: null,
+                providerThreadId: ProviderThreadId.make("provider"),
+              }
+            : run,
+        );
         const service = yield* Service.KeepAwakeService;
         const observe = service
           .observe({ threadIds: [id], includeLocalWork: false })

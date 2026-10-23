@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ThreadId,
   keepAwakeThreadKey,
+  type ExecutionEnvironmentDescriptor,
   type KeepAwakeDocument,
 } from "@t3tools/contracts";
 import {
@@ -85,13 +86,13 @@ const setup = Effect.fn("KeepAwakeSourceTest.setup")(function* (
                   requests.push({ url: request.url, authorization: request.headers.authorization });
                   const value =
                     request.method === "GET"
-                      ? {
+                      ? ({
                           environmentId: descriptorId,
                           label: "Remote",
-                          platform: "linux",
+                          platform: { os: "linux", arch: "x64" },
                           serverVersion: "1",
-                          capabilities: {},
-                        }
+                          capabilities: { repositoryIdentity: false },
+                        } satisfies ExecutionEnvironmentDescriptor)
                       : batch;
                   return HttpClientResponse.fromWeb(request, Response.json(value));
                 }),

@@ -1,6 +1,6 @@
 import {
   KeepAwakeWorkBatch,
-  OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderThreadJson,
   isProviderNativeSubagentThread,
   type KeepAwakeObserveRequest,
   type ThreadId,
@@ -52,7 +52,7 @@ export const layer = Layer.effect(
     const worker = yield* OrchestrationEffectWorkerV2;
     const environment = yield* ServerEnvironmentIdentity;
     const decodeProvider = Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OrchestrationV2ProviderThread),
+      Schema.fromJsonString(OrchestrationV2ProviderThreadJson),
     );
     const lock = yield* Semaphore.make(1);
     const load = sql.withTransaction(
