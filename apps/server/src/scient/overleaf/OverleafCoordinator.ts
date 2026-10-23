@@ -1096,6 +1096,28 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     ];
     if ((yield* capturedTree(repo, connection, domain)) !== candidateTree)
       return { _tag: "not-verified" } satisfies OverleafPublication;
+    // A program still holding a file this apply replaced may have written into its kept
+    // copy since adoption: newer work than the candidate. Each copy is checked again; a
+    // change is recorded and stops the send.
+    const vault = yield* vaultOf(connection);
+    const rechecked = yield* Effect.forEach(connection.retention.copies, (copy) =>
+      copy.applyId !== input.adopted.applyId || copy.state !== "releasable"
+        ? Effect.succeed(copy)
+        : Effect.map(stampAt(NodePath.join(vault, copy.kept)), (now) =>
+            now === copy.stamp
+              ? copy
+              : { ...copy, state: now === null ? ("ambiguous" as const) : ("changed" as const) },
+          ),
+    );
+    if (rechecked.some((copy, index) => copy !== connection.retention.copies[index])) {
+      yield* replaceWithPins(repo, connection, {
+        ...connection,
+        revision: connection.revision + 1,
+        retention: { ...connection.retention, copies: rechecked },
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      return { _tag: "blocked", reason: "kept-copy-changed" } satisfies OverleafPublication;
+    }
     const candidateCommit = yield* repos.commit({
       repo,
       tree: candidateTree,

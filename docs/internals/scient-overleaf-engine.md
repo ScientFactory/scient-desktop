@@ -312,7 +312,8 @@ application section so the checkout cannot change before the send:
 3. **Verify.** The folder is captured again, the way a review captures it and
    over every path the plan read or wrote (so an explicit deletion must still be
    absent), and its tree must equal the candidate. A difference is `not-verified`, and the
-   edit is the next review's to send. From here on, the content comes from the
+   edit is the next review's to send. Each copy this apply kept is checked again by its
+   stamp: one a late writer changed is recorded `changed` and the send is `blocked`. From here on, the content comes from the
    private repository's objects, never from the folder.
 4. **Record.** The candidate is committed on the plan's fetched head. The
    attempt is recorded `unknown` with its pins, before anything is sent. Resolved
