@@ -19,6 +19,7 @@ import * as Controller from "./controller.ts";
 import * as Storage from "./storage.ts";
 import * as Power from "./power.ts";
 import * as Source from "./source.ts";
+import * as Remote from "./remote.ts";
 
 export class KeepAwakeError extends Schema.TaggedError<KeepAwakeError>()("KeepAwakeError", {
   cause: Schema.Defect(),
@@ -110,6 +111,7 @@ export const layer = Layer.effect(
   Layer.provideMerge(Storage.layer),
   Layer.provideMerge(Power.layer),
   Layer.provideMerge(Source.layer),
+  Layer.provideMerge(Remote.layer),
 );
 
 export const keepAwake = makeIpcMethod({

@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { ThreadId } from "./baseSchemas.ts";
 
 export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
+export const KEEP_AWAKE_REMOTE_OBSERVER = "__scientObserveKeepAwake";
 export const KEEP_AWAKE_OBSERVE_PATH = "/api/scient/keep-awake/observe";
 export const KeepAwakeObserveRequest = Schema.Struct({
   threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(2000)),

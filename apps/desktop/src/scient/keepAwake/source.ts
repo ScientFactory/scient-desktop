@@ -17,7 +17,13 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { DesktopBackendPool } from "../../backend/DesktopBackendPool.ts";
-import { DesktopSavedEnvironments } from "../../settings/DesktopSavedEnvironments.ts";
+import { DesktopConnectionCatalogStore } from "../../app/DesktopConnectionCatalogStore.ts";
+import {
+  ConnectionCatalogDocument,
+  EMPTY_CONNECTION_CATALOG_DOCUMENT,
+} from "@t3tools/client-runtime/platform";
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
+import { KeepAwakeRemote } from "./remote.ts";
 
 export interface WorkSourceResult {
   readonly local: boolean;
@@ -44,34 +50,54 @@ export const layer = Layer.effect(
   KeepAwakeSource,
   Effect.gen(function* () {
     const pool = yield* DesktopBackendPool;
-    const saved = yield* DesktopSavedEnvironments;
+    const catalogStore = yield* DesktopConnectionCatalogStore;
+    const remoteObserver = yield* KeepAwakeRemote;
     const http = yield* HttpClient.HttpClient;
     const tokens = new Map<string, string>();
     const identities = new Map<string, string>();
     let generation = 0;
-    const fetchBatch = Effect.fn("KeepAwakeSource.fetchBatch")(function* (
-      origin: string,
-      token: string,
-      ids: readonly ThreadId[],
-      includeLocalWork: boolean,
-      local = true,
-    ) {
-      const requestGeneration = ++generation;
-      const request = yield* HttpClientRequest.post(new URL(KEEP_AWAKE_OBSERVE_PATH, origin)).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.bodyJson({ threadIds: ids, includeLocalWork }),
-      );
-      const response = yield* http.execute(request);
-      if (response.status < 200 || response.status >= 300) {
-        if (response.status === 401) tokens.delete(origin);
-        return yield* new KeepAwakeSourceError({
-          cause: `Work observation unavailable (HTTP ${response.status})`,
-        });
-      }
-      const batch = yield* HttpClientResponse.schemaBodyJson(KeepAwakeWorkBatch)(response);
-      identities.set(origin, batch.environmentId);
-      return { local, batch, generation: requestGeneration };
-    });
+    const fetchBatch = Effect.fn("KeepAwakeSource.fetchBatch")(
+      function* (
+        origin: string,
+        token: string,
+        ids: readonly ThreadId[],
+        includeLocalWork: boolean,
+        local = true,
+        expectedEnvironmentId?: string,
+      ) {
+        const requestGeneration = ++generation;
+        if (expectedEnvironmentId !== undefined) {
+          const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl: origin }).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
+          if (descriptor.environmentId !== expectedEnvironmentId)
+            return yield* new KeepAwakeSourceError({
+              cause: "The saved endpoint belongs to a different environment.",
+            });
+        }
+        const request = yield* HttpClientRequest.post(
+          new URL(KEEP_AWAKE_OBSERVE_PATH, origin),
+        ).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.bodyJson({ threadIds: ids, includeLocalWork }),
+        );
+        const response = yield* http.execute(request);
+        if (response.status < 200 || response.status >= 300) {
+          if (response.status === 401) tokens.delete(origin);
+          return yield* new KeepAwakeSourceError({
+            cause: `Work observation unavailable (HTTP ${response.status})`,
+          });
+        }
+        const batch = yield* HttpClientResponse.schemaBodyJson(KeepAwakeWorkBatch)(response);
+        if (expectedEnvironmentId !== undefined && batch.environmentId !== expectedEnvironmentId)
+          return yield* new KeepAwakeSourceError({
+            cause: "The observation belongs to a different environment.",
+          });
+        identities.set(origin, batch.environmentId);
+        return { local, batch, generation: requestGeneration };
+      },
+      Effect.mapError((cause) => new KeepAwakeSourceError({ cause })),
+    );
     return KeepAwakeSource.of({
       observe: Effect.fn("KeepAwakeSource.observe")(
         function* (document: KeepAwakeDocument) {
@@ -167,46 +193,96 @@ export const layer = Layer.effect(
           const remote = explicit.filter(
             ([env]) => !localIds.has(env) && env !== PRIMARY_LOCAL_ENVIRONMENT_ID,
           );
-          const records =
-            remote.length > 0
-              ? yield* saved.getRegistry.pipe(
+          const catalog =
+            remote.length === 0
+              ? EMPTY_CONNECTION_CATALOG_DOCUMENT
+              : yield* catalogStore.get.pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () => Effect.succeed(EMPTY_CONNECTION_CATALOG_DOCUMENT),
+                      onSome: Schema.decodeUnknownEffect(
+                        Schema.fromJsonString(ConnectionCatalogDocument),
+                      ),
+                    }),
+                  ),
                   Effect.catch(() => {
                     results.push({
                       local: false,
                       batch: { environmentId: "", groups: [] },
-                      error: "Could not load remote environment authentication.",
+                      error: "Could not read the current connection catalog.",
                     });
-                    return Effect.succeed([]);
+                    return Effect.succeed(EMPTY_CONNECTION_CATALOG_DOCUMENT);
                   }),
-                )
-              : [];
+                );
           results.push(
             ...(yield* Effect.forEach(
-              records.filter((record) => remote.some(([env]) => env === record.environmentId)),
-              (record) =>
+              [...new Set(remote.map(([env]) => env))],
+              (environmentId) =>
                 attempt(
                   Effect.gen(function* () {
-                    retainedOrigins.add(record.httpBaseUrl);
-                    const ids = remote
-                      .filter(([env]) => env === record.environmentId)
-                      .map(([, id]) => id);
-
-                    const token = yield* saved.getSecret(record.environmentId);
-                    if (Option.isNone(token))
-                      return yield* new KeepAwakeSourceError({
-                        cause: "Saved authentication unavailable",
-                      });
-                    const result = yield* fetchBatch(
-                      record.httpBaseUrl,
-                      token.value,
-                      ids,
-                      false,
-                      false,
+                    const targets = catalog.targets.filter(
+                      (target) => target.environmentId === environmentId,
                     );
-                    return { ...result, local: false };
+                    if (
+                      targets.length === 0 ||
+                      catalog.disabledEnvironmentIds.some((id) => id === environmentId)
+                    )
+                      return yield* new KeepAwakeSourceError({
+                        cause: "The remote connection is unavailable or disabled.",
+                      });
+                    const ids = remote.filter(([env]) => env === environmentId).map(([, id]) => id);
+                    const routes: Effect.Effect<WorkSourceResult, KeepAwakeSourceError>[] = [];
+                    let needsConnectionRuntime = false;
+                    for (const target of targets) {
+                      if (target._tag !== "BearerConnectionTarget") {
+                        needsConnectionRuntime = true;
+                        continue;
+                      }
+                      const profile = catalog.profiles.find(
+                        (profile) =>
+                          profile.connectionId === target.connectionId &&
+                          profile.environmentId === environmentId,
+                      );
+                      if (profile?._tag !== "BearerConnectionProfile") continue;
+                      if (profile.authorization === "t3-connect") {
+                        needsConnectionRuntime = true;
+                        continue;
+                      }
+                      const credential = catalog.credentials.find(
+                        (entry) => entry.connectionId === target.connectionId,
+                      )?.credential;
+                      if (!credential) continue;
+                      routes.push(
+                        fetchBatch(
+                          profile.httpBaseUrl,
+                          credential.token,
+                          ids,
+                          false,
+                          false,
+                          environmentId,
+                        ),
+                      );
+                    }
+                    if (needsConnectionRuntime)
+                      routes.push(
+                        Effect.gen(function* () {
+                          const requestGeneration = ++generation;
+                          const batch = yield* remoteObserver.observe(environmentId, ids);
+                          if (batch.environmentId !== environmentId)
+                            return yield* new KeepAwakeSourceError({
+                              cause: "The remote observation belongs to a different environment.",
+                            });
+                          return { local: false, batch, generation: requestGeneration };
+                        }).pipe(Effect.mapError((cause) => new KeepAwakeSourceError({ cause }))),
+                      );
+                    if (routes.length === 0)
+                      return yield* new KeepAwakeSourceError({
+                        cause: "No authenticated remote route is available.",
+                      });
+                    return yield* Effect.firstSuccessOf(routes);
                   }),
                   false,
-                  String(record.environmentId),
+                  environmentId,
                 ),
               { concurrency: 4 },
             )),

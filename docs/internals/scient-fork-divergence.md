@@ -442,8 +442,12 @@ metadata-only title generation is excluded. These hooks are required service
 members, with explicit synthetic implementations in test stubs.
 
 `environmentHttp.ts` mounts the Scient HTTP contract; `ScientServerLayers.ts`
-provides its service. The desktop main process uses its backend pool and saved
-environment authentication independently of renderer lifetime. Its atomic async
+provides its service. The desktop main process uses its backend pool and the encrypted connection
+catalog. Direct bearer observations survive renderer closure. SSH and relay
+observations use a fixed read-only observer in the renderer's existing connection
+runtime, preserving tunnel routing, token refresh, and DPoP key ownership without
+copying credentials. This path requires an open window and fails closed when
+unavailable; local observation remains independent of renderer lifetime. Its atomic async
 preferences preserve the existing `keep-awake.json` location and format.
 Electron power calls stay in the feature adapter, app shutdown uses `ElectronApp`,
 and preload uses the shared channel constant. Native request start/stop is logged.

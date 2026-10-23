@@ -68,7 +68,11 @@ These local waits pause while the computer sleeps; Scient does not wake the
 computer for a future reset. Persistent background commands, such as a dev
 server, do not alone prevent sleep. The global toggle protects local execution;
 select **Until work finishes** explicitly to protect a remote connection. This
-cannot change the remote computer's power settings.
+cannot change the remote computer's power settings. Remote connections use the
+current connection catalog. SSH and Scient Connect observations reuse the open
+window's authenticated connection, including relay proof signing. If that window
+or connection closes, their protection expires without fresh observations;
+local execution and direct bearer connections remain observed by the desktop.
 
 Status text under the toggle and in the existing thread menu distinguishes a
 requested keep-awake state from paused or unavailable protection. A failed
@@ -76,14 +80,15 @@ preference save keeps an error visible and disables protection until a save
 succeeds, including when the failed change was turning protection off.
 
 The server supplies work observations independently of the visible history.
-The desktop main process maintains the connection, so closing a window on
-macOS does not end protection while the app and backend remain running.
+The desktop main process maintains local and direct bearer observations, so
+closing a window on macOS does not end their protection while the app and backend
+remain running.
 Quitting the app releases its native request.
 
 There is no maximum session duration and no configurable timeout. Protection
 expires after 120 seconds without fresh execution observations. Repeated saved
-"running" status alone cannot renew an operation with no live owner and no
-progress for 120 seconds. The temporary choice remains selected, and recovered
+"running" status alone cannot renew an operation with a missing or unverifiable
+owner and no progress for 120 seconds. The temporary choice remains selected, and recovered
 execution or new progress can restore protection. Silent connected operations
 have no duration limit. A connected deadlock cannot always be distinguished
 from legitimate silent execution. If an older server does not support work
