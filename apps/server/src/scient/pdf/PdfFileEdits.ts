@@ -1,18 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
-import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
-import { LogicalDocumentKey } from "@scientfactory/document-artifacts";
 import { SCIENT_PDF_EDIT_MAX_BYTES, ScientPdfEditError } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
-import * as ServerConfig from "../../config.ts";
+import { KnownWorkspaces } from "../../workspace/KnownWorkspaces.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { revisionForBytes } from "../workspace/WorkspaceFileMutations.ts";
+import { PDF_EDIT_PRODUCER, publishEditedPdfCopy } from "./EditedPdfCopy.ts";
 
 const isPdfEditError = Schema.is(ScientPdfEditError);
 
@@ -34,7 +32,11 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       return yield* new ScientPdfEditError({ message: "Choose a valid PDF smaller than 50 MB." });
     }
     const revision = revisionForBytes(upload);
-    let source = input.source;
+    const source = input.source;
+    if (source._tag === "attachment-pdf")
+      return yield* new ScientPdfEditError({
+        message: "Save the attachment to your project before editing its pages.",
+      });
     if (source._tag === "generated-pdf") {
       const store = yield* GeneratedDocumentStore;
       const original = yield* store.resolveRevision(source);
@@ -44,39 +46,32 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
           message: "The original PDF changed. Reopen it before editing.",
         });
       }
-      const config = yield* ServerConfig.ServerConfig;
-      const cwd = NodePath.join(config.stateDir, "pdf-edits");
-      yield* fs.makeDirectory(cwd, { recursive: true });
-      const fileName = `${input.operationId}-edited.pdf`;
-      const path = NodePath.join(cwd, fileName);
-      const platform = yield* HostProcess.Platform;
-      // Generated revisions are immutable; edited PDFs have an independent durable file.
-      const exists = yield* fs.exists(path);
-      if (exists) {
-        if (revisionForBytes(yield* fs.readFile(path)) !== revision) {
+      const edited = original.artifact.provenance.producerId === PDF_EDIT_PRODUCER;
+      return yield* publishEditedPdfCopy({
+        operationId: input.operationId,
+        bytes: upload,
+        title: edited ? original.title : `${original.title} (edited)`,
+        ...(edited ? { existingCopy: original.artifact } : {}),
+      });
+    }
+    if (source._tag === "environment-pdf") {
+      if (!NodePath.isAbsolute(source.path))
+        return yield* new ScientPdfEditError({ message: "The PDF path must be absolute." });
+      const known = yield* KnownWorkspaces;
+      if (!(yield* known.contains(yield* fs.realPath(source.path)))) {
+        const original = yield* fs.readFile(source.path);
+        if (revisionForBytes(original) !== input.expectedRevision)
           return yield* new ScientPdfEditError({
-            message: "An edited PDF already exists with different contents.",
+            message: "The PDF changed. Reopen it before editing.",
           });
-        }
-      } else yield* files.createBinaryFile({ cwd, relativePath: fileName, bytes: upload });
-      return {
-        source: {
-          _tag: "environment-pdf" as const,
-          authority: source.authority,
-          logicalDocumentKey: LogicalDocumentKey.make(
-            `environment:${NodeCrypto.createHash("sha256")
-              .update(platform === "win32" ? path.toLowerCase() : path)
-              .digest("hex")}`,
-          ),
-          title: fileName,
-          fileName,
-          path,
-          capabilities: { canSaveCopy: true, canRevealSource: false },
-        },
-        revision,
-        path,
-        createdCopy: true,
-      };
+        if (!new TextDecoder().decode(original.subarray(0, 1024)).includes("%PDF-"))
+          return yield* new ScientPdfEditError({ message: "The destination is no longer a PDF." });
+        return yield* publishEditedPdfCopy({
+          operationId: input.operationId,
+          bytes: upload,
+          title: `${source.title} (edited)`,
+        });
+      }
     }
     const cwd =
       source._tag === "workspace-pdf" ? source.workspaceRoot : NodePath.dirname(source.path);

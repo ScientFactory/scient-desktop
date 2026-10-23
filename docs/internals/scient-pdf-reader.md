@@ -188,7 +188,7 @@ and root license remain in the emitted `pdfjs-assets` tree.
 ## Page editing and immediate publication
 
 Page selection is immediate and independent of the editing worker. Only a page
-mutation or its context menu loads the PDF worker. Ordinary reading and checkbox
+mutation loads the PDF worker. Ordinary reading, opening a context menu and checkbox
 selection do not parse a second copy of the document. The virtualized thumbnail
 list explicitly invalidates its items for selection and busy-state changes.
 Opening a page's context menu does not change checkbox selection. Commands on
@@ -215,14 +215,24 @@ history. The PDF reader retains its existing document identity and zoom state.
 The transport calls `PdfFileEdits.save`; the server owns all destination paths.
 Workspace/environment PDFs use the shared binary-file mutation boundary with
 a SHA-256 expected revision and a unique operation ID. A concurrent writer is
-never silently overwritten. Generated revisions instead produce an independent
-file under the server's `pdf-edits` directory and return that source descriptor
-for subsequent saves. This keeps the generated revision store immutable.
+never silently overwritten. Generated PDFs and environment PDFs outside known
+writable projects publish independent, validated revisions through
+`GeneratedDocumentStore`, under a PDF-editor-owned binding. Later saves check
+that binding's expected revision under a per-binding lease. The original PDF
+remains immutable; only registered workspace files use the workspace writer.
+The client remembers the edited-copy descriptor and view choice by reader scope
+in local storage, so the copy remains openable after closing or restarting the
+reader. Quote metadata follows the saved copy's identity.
+Attachments retain the existing read-only experience.
 
 The worker rebuilds from the base PDF context, retaining the catalog, metadata,
 attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.
-Distinct duplicated page nodes can be rotated independently. Unsupported forms,
+Inherited resources and page boxes are materialized before reparenting original
+page nodes. Distinct duplicated page nodes can be rotated independently. Unsupported forms,
 certificate permissions and encrypted documents fail before publication.
 The session retains up to 100 undo steps; undo/redo uses the same save precondition.
+Generated source revisions have separate editing sessions. An unpublished cache
+is invalidated before actions are enabled on a replacement presentation. The last
+subscriber releases history and the worker after admitted saves have finished.

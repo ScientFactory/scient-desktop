@@ -46,12 +46,13 @@ import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderS
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader } from "./useScientPdfReader";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
-import { usePdfRevealClaim } from "./anchors/pdfRevealRequests";
+import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
 import { PdfPageInsertion } from "./PdfPageInsertion";
 import { PdfMovePagesDialog } from "./PdfMovePagesDialog";
 import { savePdfEdits } from "./savePdfEdits";
 import { saveEditedPdfCopy } from "./saveEditedPdfCopy";
+import { rememberPdfEditedCopy, usePdfEditedCopy } from "./pdfEditedCopyStore";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -125,13 +126,36 @@ export function ScientPdfReader(props: {
   readonly citeThread?: ScopedThreadRef | undefined;
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
-  const asset = resolver.useResolve(props.source);
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
-  // Held from the first render, so a quote waiting for this PDF survives authorization and loading.
-  const revealOwner = usePdfRevealClaim(legacyDocumentKey);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
-  const displayed = useRetainedPdfSource(documentKey, props.source, asset);
-  const editSession = pdfEditSession(documentKey);
+  const savedCopy = usePdfEditedCopy(documentKey);
+  const originalReveal = usePdfRevealRequest(legacyDocumentKey);
+  const forceOriginal = savedCopy !== null && originalReveal !== null;
+  const showingCopy = savedCopy !== null && !savedCopy.showOriginal && !forceOriginal;
+  const source = showingCopy ? savedCopy.source : props.source;
+  const revealDocumentKey = pdfReaderSessionDocumentKey(source);
+  const revealOwner = usePdfRevealClaim(revealDocumentKey);
+  useEffect(() => {
+    if (forceOriginal && savedCopy && !savedCopy.showOriginal)
+      rememberPdfEditedCopy(documentKey, { ...savedCopy, showOriginal: true });
+  }, [documentKey, forceOriginal, savedCopy]);
+  const asset = resolver.useResolve(source);
+  const displayed = useRetainedPdfSource(documentKey, source, asset);
+  const editSessionKey = showingCopy
+    ? savedCopy.sessionKey
+    : savedCopy
+      ? JSON.stringify([
+          documentKey,
+          "original",
+          props.source._tag === "generated-pdf" ? props.source.revisionId : null,
+          savedCopy.source._tag === "generated-pdf"
+            ? savedCopy.source.revisionId
+            : savedCopy.source.logicalDocumentKey,
+        ])
+      : source._tag === "generated-pdf"
+        ? JSON.stringify([documentKey, source.revisionId])
+        : documentKey;
+  const editSession = pdfEditSession(editSessionKey);
   const edit = useSyncExternalStore(editSession.subscribe, editSession.getSnapshot);
   // Only the candidate request changes on retry; the painted reader stays mounted.
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -184,8 +208,34 @@ export function ScientPdfReader(props: {
     <LoadedScientPdfReader
       key={documentKey}
       documentKey={documentKey}
+      editSessionKey={editSessionKey}
+      revealDocumentKey={revealDocumentKey}
       legacyDocumentKey={legacyDocumentKey}
-      source={displayed?.source ?? props.source}
+      source={displayed?.source ?? source}
+      copyView={savedCopy ? (showingCopy ? "edited" : "original") : null}
+      onSwitchCopy={() => {
+        if (!savedCopy) return;
+        void editSession.reset().then(() => {
+          rememberPdfEditedCopy(documentKey, {
+            ...savedCopy,
+            showOriginal: !savedCopy.showOriginal,
+          });
+        });
+      }}
+      onSavedCopy={(savedSource) => {
+        const durable = rememberPdfEditedCopy(documentKey, {
+          source: savedSource,
+          sessionKey: editSessionKey,
+          showOriginal: false,
+        });
+        if (!durable)
+          toastManager.add({
+            type: "error",
+            title: "Keep a local copy",
+            description:
+              "The PDF was saved, but its location could not be remembered. Use Save copy before closing Scient.",
+          });
+      }}
       sourceAsset={
         edit.url
           ? {
@@ -231,8 +281,13 @@ function LoadedScientPdfReader(props: {
   readonly authorizationFailed: boolean;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
+  readonly editSessionKey: string;
+  readonly revealDocumentKey: string;
   readonly legacyDocumentKey: string;
   readonly source: PdfSourceDescriptor;
+  readonly copyView: "original" | "edited" | null;
+  readonly onSwitchCopy: () => void;
+  readonly onSavedCopy: (source: PdfSourceDescriptor) => void;
   readonly sourceAsset: Extract<PdfSourceResolution, { readonly _tag: "Success" }>;
   readonly refreshSource: () => void;
   /** Fetches the document again after a failed load. */
@@ -241,8 +296,9 @@ function LoadedScientPdfReader(props: {
   readonly citeThread?: ScopedThreadRef | undefined;
   readonly revealOwner: object;
 }) {
-  const editSession = pdfEditSession(props.documentKey);
+  const editSession = pdfEditSession(props.editSessionKey);
   const edit = useSyncExternalStore(editSession.subscribe, editSession.getSnapshot);
+  const isEditedDocument = props.copyView === "edited" || edit.url !== null;
   const requestedRevisionId =
     props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
@@ -305,8 +361,19 @@ function LoadedScientPdfReader(props: {
     viewerElement,
   });
   const { state, goToPage: goToReaderPage } = reader;
+  const canEditPages = props.source._tag !== "attachment-pdf";
+  const [editingPresentation, setEditingPresentation] = useState<typeof reader.presentation>(null);
+  const staleEditingCache =
+    edit.active &&
+    !edit.url &&
+    reader.presentationCurrent &&
+    editingPresentation !== reader.presentation;
+  useEffect(() => {
+    if (staleEditingCache) void editSession.reset();
+  }, [staleEditingCache, editSession]);
   const copiedNotice = useRef<string | null>(null);
   const [moveRequest, setMoveRequest] = useState<{
+    sessionKey: string;
     pages: readonly string[];
     initialPage: number;
   } | null>(null);
@@ -316,19 +383,27 @@ function LoadedScientPdfReader(props: {
     toastManager.add({
       type: "success",
       title: "Edited PDF saved separately",
-      description: edit.copiedPath,
+      description: "Use Save copy to export the edited document.",
     });
   }, [edit.copiedPath]);
   const ensureEdits = async () => {
-    if (editSession.getSnapshot().active) return true;
     const runtime = reader.runtimeRef.current;
-    if (!runtime || !reader.presentationCurrent) return false;
-    let source = props.source;
+    if (!canEditPages || staleEditingCache || !runtime || !reader.presentationCurrent) return false;
+    const snapshot = editSession.getSnapshot();
+    if (snapshot.active) {
+      if (snapshot.url || editingPresentation === reader.presentation) return true;
+      return false;
+    }
+    let source: PdfSourceDescriptor = props.source;
+    let copied = props.copyView === "edited";
     editSession.configure(async (bytes, expectedRevision, operationId) => {
       const result = await savePdfEdits({ source, bytes, expectedRevision, operationId });
       source = result.source;
+      copied ||= result.createdCopy || result.source._tag === "generated-pdf";
+      if (copied) props.onSavedCopy(source);
       return result;
     });
+    setEditingPresentation(reader.presentation);
     await editSession.start(() => runtime.document.getData(), state.page);
     return editSession.getSnapshot().active;
   };
@@ -337,7 +412,15 @@ function LoadedScientPdfReader(props: {
     editSession.toggle(page, shiftKey);
   };
   const showPageContext = async (page: number, position: { x: number; y: number }) => {
-    if (editSession.getSnapshot().busy || !(await ensureEdits())) return;
+    if (
+      !canEditPages ||
+      staleEditingCache ||
+      editSession.getSnapshot().busy ||
+      !reader.presentationCurrent
+    )
+      return;
+    const contextRuntime = reader.runtimeRef.current;
+    editSession.prepareSelection(state.pageCount);
     const frame = editSession.getSnapshot().frame;
     const pageId = frame.pages[page - 1]?.id;
     if (!pageId) return;
@@ -368,10 +451,15 @@ function LoadedScientPdfReader(props: {
       },
     ];
     const action = await ensureLocalApi().contextMenu.show(items, position);
+    if (!action || contextRuntime !== reader.runtimeRef.current || !(await ensureEdits())) return;
     if (action === "left") await editSession.rotate(-90, target);
     else if (action === "right") await editSession.rotate(90, target);
     else if (action === "move")
-      setMoveRequest({ pages: [...(target ?? frame.selection)], initialPage: page });
+      setMoveRequest({
+        sessionKey: props.editSessionKey,
+        pages: [...(target ?? frame.selection)],
+        initialPage: page,
+      });
     else if (action === "duplicate") await editSession.duplicate(target);
     else if (action === "delete") await editSession.delete(target);
   };
@@ -397,14 +485,28 @@ function LoadedScientPdfReader(props: {
   });
   const currentPresentation =
     props.interactionReady &&
+    !staleEditingCache &&
     state.phase === "ready" &&
     reader.presentationCurrent &&
     reader.presentation?.revisionId === requestedRevisionId &&
     reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = Array.from({ length: state.pageCount }, (_, index) => index + 1);
   useEffect(() => {
-    if (state.phase === "ready") editSession.prepareSelection(state.pageCount);
-  }, [editSession, state.phase, state.pageCount]);
+    if (
+      canEditPages &&
+      state.phase === "ready" &&
+      !edit.active &&
+      edit.frame.pages.length !== state.pageCount
+    )
+      editSession.prepareSelection(state.pageCount);
+  }, [
+    canEditPages,
+    editSession,
+    state.phase,
+    state.pageCount,
+    edit.active,
+    edit.frame.pages.length,
+  ]);
   const restoredEditUrl = useRef<string | null>(null);
   useEffect(() => {
     if (!currentPresentation) return;
@@ -424,8 +526,8 @@ function LoadedScientPdfReader(props: {
 
   const onSyncPageChange = props.syncNavigation?.onPageChange;
   useEffect(() => {
-    if (state.phase === "ready" && !edit.url) onSyncPageChange?.(state.page);
-  }, [edit.url, onSyncPageChange, state.page, state.phase]);
+    if (state.phase === "ready" && !isEditedDocument) onSyncPageChange?.(state.page);
+  }, [isEditedDocument, onSyncPageChange, state.page, state.phase]);
   const { prepareSearch, goToSyncPoint } = reader;
   useEffect(() => {
     if (!searchOpen) return;
@@ -433,9 +535,9 @@ function LoadedScientPdfReader(props: {
   }, [prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
-    if (edit.url || target === null || target === undefined || !currentPresentation) return;
+    if (isEditedDocument || target === null || target === undefined || !currentPresentation) return;
     goToSyncPoint(target);
-  }, [edit.url, props.syncNavigation?.forwardTarget, goToSyncPoint, currentPresentation]);
+  }, [isEditedDocument, props.syncNavigation?.forwardTarget, goToSyncPoint, currentPresentation]);
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -462,6 +564,7 @@ function LoadedScientPdfReader(props: {
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (
+      canEditPages &&
       !event.defaultPrevented &&
       !event.nativeEvent.isComposing &&
       (event.ctrlKey || event.metaKey)
@@ -506,7 +609,7 @@ function LoadedScientPdfReader(props: {
       aria-label={`PDF reader: ${props.source.fileName}`}
       onKeyDown={onReaderKeyDown}
     >
-      {moveRequest ? (
+      {moveRequest?.sessionKey === props.editSessionKey ? (
         <PdfMovePagesDialog
           session={editSession}
           pages={moveRequest.pages}
@@ -576,6 +679,14 @@ function LoadedScientPdfReader(props: {
           </>
         }
       />
+      {props.copyView ? (
+        <div className="scient-pdf-copy-notice">
+          <span>{props.copyView === "edited" ? "Edited copy" : "Original PDF"}</span>
+          <Button variant="ghost" size="xs" disabled={edit.busy} onClick={props.onSwitchCopy}>
+            {props.copyView === "edited" ? "Show original" : "Open edited copy"}
+          </Button>
+        </div>
+      ) : null}
       {edit.error ? (
         <div className="scient-pdf-notice" role="alert">
           {edit.error}
@@ -607,27 +718,29 @@ function LoadedScientPdfReader(props: {
         {sidebar !== "closed" && state.phase === "ready" && reader.runtimeRef.current ? (
           <aside className="scient-pdf-sidebar" aria-label="PDF navigation" tabIndex={0}>
             <div className="scient-pdf-sidebar-tabs">
-              <input
-                type="checkbox"
-                className="scient-pdf-select-all"
-                aria-label="Select all pages"
-                disabled={edit.busy || !currentPresentation}
-                checked={
-                  edit.frame.pages.length > 0 &&
-                  edit.frame.selection.length === edit.frame.pages.length
-                }
-                ref={(input) => {
-                  if (input)
-                    input.indeterminate =
-                      edit.frame.selection.length > 0 &&
-                      edit.frame.selection.length < edit.frame.pages.length;
-                }}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-                  editSession.prepareSelection(state.pageCount);
-                  editSession.selectPages(checked ? thumbnailPages : []);
-                }}
-              />
+              {canEditPages ? (
+                <input
+                  type="checkbox"
+                  className="scient-pdf-select-all"
+                  aria-label="Select all pages"
+                  disabled={edit.busy || !currentPresentation}
+                  checked={
+                    edit.frame.pages.length > 0 &&
+                    edit.frame.selection.length === edit.frame.pages.length
+                  }
+                  ref={(input) => {
+                    if (input)
+                      input.indeterminate =
+                        edit.frame.selection.length > 0 &&
+                        edit.frame.selection.length < edit.frame.pages.length;
+                  }}
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    editSession.prepareSelection(state.pageCount);
+                    editSession.selectPages(checked ? thumbnailPages : []);
+                  }}
+                />
+              ) : null}
               <button
                 type="button"
                 data-active={sidebar === "thumbnails" || undefined}
@@ -655,13 +768,15 @@ function LoadedScientPdfReader(props: {
                     activePage: state.page,
                   }}
                   ListFooterComponent={
-                    <PdfPageInsertion
-                      boundary={state.pageCount}
-                      last
-                      session={editSession}
-                      disabled={edit.busy || !currentPresentation}
-                      ensureReady={ensureEdits}
-                    />
+                    canEditPages ? (
+                      <PdfPageInsertion
+                        boundary={state.pageCount}
+                        last
+                        session={editSession}
+                        disabled={edit.busy || !currentPresentation}
+                        ensureReady={ensureEdits}
+                      />
+                    ) : null
                   }
                   keyExtractor={(pageNumber) => String(pageNumber)}
                   estimatedItemSize={205}
@@ -672,6 +787,7 @@ function LoadedScientPdfReader(props: {
                       pageNumber={pageNumber}
                       active={state.page === pageNumber}
                       runtime={reader.runtimeRef.current!}
+                      editable={canEditPages}
                       selected={edit.frame.selection.includes(
                         edit.frame.pages[pageNumber - 1]?.id ?? "",
                       )}
@@ -700,12 +816,14 @@ function LoadedScientPdfReader(props: {
                         });
                       }}
                     >
-                      <PdfPageInsertion
-                        boundary={pageNumber - 1}
-                        session={editSession}
-                        disabled={edit.busy || !currentPresentation}
-                        ensureReady={ensureEdits}
-                      />
+                      {canEditPages ? (
+                        <PdfPageInsertion
+                          boundary={pageNumber - 1}
+                          session={editSession}
+                          disabled={edit.busy || !currentPresentation}
+                          ensureReady={ensureEdits}
+                        />
+                      ) : null}
                     </PdfThumbnail>
                   )}
                 />
@@ -731,7 +849,7 @@ function LoadedScientPdfReader(props: {
             className="scient-pdf-presentation-mount"
             tabIndex={0}
             onDoubleClick={(event) => {
-              if (edit.url || !currentPresentation) return;
+              if (isEditedDocument || !currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
               // An editable page uses the ordinary click gesture. Keep inverse
@@ -759,9 +877,9 @@ function LoadedScientPdfReader(props: {
           <PdfQuoteLayer
             container={container}
             runtimeRef={reader.runtimeRef}
-            presentedSource={presentedSource?.source ?? null}
-            revealKey={props.legacyDocumentKey}
-            ready={currentPresentation}
+            presentedSource={edit.savedSource ?? presentedSource?.source ?? null}
+            revealKey={props.revealDocumentKey}
+            ready={currentPresentation && !edit.busy}
             citeThread={props.citeThread}
             revealOwner={props.revealOwner}
           />

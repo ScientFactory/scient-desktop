@@ -9,6 +9,7 @@ import {
   PDFNumber,
   PDFString,
   PDFHexString,
+  PDFPageLeaf,
   type PDFObject,
   type PDFPage,
 } from "pdf-lib";
@@ -154,6 +155,15 @@ async function build(entries: readonly PdfEditPage[]) {
       });
       const done = new Set(round);
       pending = pending.filter((index) => !done.has(index));
+    }
+  }
+  // Reparenting drops intermediate page-tree ancestors; retain their inherited values.
+  for (const page of prepared) {
+    if (!page) continue;
+    for (const entry of PDFPageLeaf.InheritableEntries) {
+      const key = name(entry);
+      const value = page.node.getInheritableAttribute(key);
+      if (value) page.node.set(key, value);
     }
   }
   for (let i = output.getPageCount() - 1; i >= 0; i--) output.removePage(i);

@@ -29,6 +29,7 @@ const revisionForBytes = (bytes: Uint8Array) =>
 
 export class PdfEditSession {
   private listeners = new Set<() => void>();
+  private unusedTimer: ReturnType<typeof setTimeout> | null = null;
   private worker: Worker | null = null;
   private sequence = 0;
   private pending = new Map<
@@ -54,14 +55,27 @@ export class PdfEditSession {
     canUndo: false,
     canRedo: false,
     savedPath: null as string | null,
+    savedSource: null as ScientPdfEditSaveResult["source"] | null,
     copiedPath: null as string | null,
     restorePage: 1,
   };
 
+  constructor(private readonly onUnused?: () => void) {}
+
   subscribe = (listener: () => void) => {
+    if (this.unusedTimer !== null) clearTimeout(this.unusedTimer);
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+      if (this.listeners.size) return;
+      // Allow a React resubscription, and finish any admitted save before releasing its worker.
+      this.unusedTimer = setTimeout(() => {
+        void this.queue.then(() => {
+          if (this.listeners.size) return;
+          this.clearState();
+          this.onUnused?.();
+        });
+      }, 0);
     };
   };
   getSnapshot = () => this.snapshot;
@@ -159,6 +173,7 @@ export class PdfEditSession {
     this.revision = result.revision;
     this.update({
       savedPath: result.path,
+      savedSource: result.source,
       ...(result.createdCopy ? { copiedPath: result.path } : {}),
     });
   }
@@ -305,33 +320,34 @@ export class PdfEditSession {
         index,
       ),
     );
-  reset = () =>
-    this.run(async () => {
-      this.worker?.terminate();
-      this.worker = null;
-      for (const pending of this.pending.values()) pending.reject(new Error("PDF reloaded."));
-      this.pending.clear();
-      if (this.snapshot.url) URL.revokeObjectURL(this.snapshot.url);
-      this.past = [];
-      this.future = [];
-      this.baseBytes = null;
-      this.basePages = [];
-      this.persist = null;
-      this.revision = "";
-      this.focusedId = null;
-      this.anchor = null;
-      this.update({
-        active: false,
-        frame: EMPTY_FRAME,
-        url: null,
-        bytes: null,
-        canUndo: false,
-        canRedo: false,
-        savedPath: null,
-        copiedPath: null,
-        restorePage: 1,
-      });
+  private clearState() {
+    this.worker?.terminate();
+    this.worker = null;
+    for (const pending of this.pending.values()) pending.reject(new Error("PDF reloaded."));
+    this.pending.clear();
+    if (this.snapshot.url) URL.revokeObjectURL(this.snapshot.url);
+    this.past = [];
+    this.future = [];
+    this.baseBytes = null;
+    this.basePages = [];
+    this.persist = null;
+    this.revision = "";
+    this.focusedId = null;
+    this.anchor = null;
+    this.update({
+      active: false,
+      frame: EMPTY_FRAME,
+      url: null,
+      bytes: null,
+      canUndo: false,
+      canRedo: false,
+      savedPath: null,
+      savedSource: null,
+      copiedPath: null,
+      restorePage: 1,
     });
+  }
+  reset = () => this.run(async () => this.clearState());
   dismissError = () => this.update({ error: null });
 }
 
@@ -345,7 +361,10 @@ if (typeof window !== "undefined")
 export function pdfEditSession(documentKey: string) {
   let session = sessions.get(documentKey);
   if (!session) {
-    session = new PdfEditSession();
+    const candidate = new PdfEditSession(() => {
+      if (sessions.get(documentKey) === candidate) sessions.delete(documentKey);
+    });
+    session = candidate;
     sessions.set(documentKey, session);
   }
   return session;

@@ -48,6 +48,7 @@ export function PdfThumbnail(props: {
   readonly active: boolean;
   readonly pageNumber: number;
   readonly runtime: ScientPdfRuntime;
+  readonly editable?: boolean;
   readonly onSelect: (page: number) => void;
   readonly selected: boolean;
   readonly disabled: boolean;
@@ -124,6 +125,7 @@ export function PdfThumbnail(props: {
       data-drop={dropSide ?? undefined}
       data-checked={props.selected || undefined}
       onContextMenu={(event) => {
+        if (props.editable === false) return;
         event.preventDefault();
         event.currentTarget
           .querySelector<HTMLButtonElement>(".scient-reader-page-thumbnail")
@@ -131,7 +133,10 @@ export function PdfThumbnail(props: {
         props.onContext(props.pageNumber, { x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
-        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        if (
+          props.editable !== false &&
+          (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+        ) {
           event.preventDefault();
           const r = event.currentTarget.getBoundingClientRect();
           props.onContext(props.pageNumber, { x: r.left + 20, y: r.top + 20 });
@@ -176,9 +181,9 @@ export function PdfThumbnail(props: {
         onSelect={(page) => {
           if (performance.now() > suppressClick.current) props.onSelect(page);
         }}
-        draggable={!props.disabled}
+        draggable={props.editable !== false && !props.disabled}
         onDragStart={(event) => {
-          if (props.disabled) {
+          if (props.disabled || props.editable === false) {
             event.preventDefault();
             return;
           }
@@ -204,21 +209,23 @@ export function PdfThumbnail(props: {
         ) : null}
         <canvas ref={canvasRef} className={failed ? "hidden" : undefined} aria-hidden="true" />
       </ReaderPageThumbnail>
-      <input
-        type="checkbox"
-        className="scient-pdf-page-checkbox"
-        aria-label={`Select page ${props.pageNumber}`}
-        checked={props.selected}
-        disabled={props.disabled}
-        onChange={(event) => {
-          event.stopPropagation();
-          props.onToggle(
-            props.pageNumber,
-            "shiftKey" in event.nativeEvent && event.nativeEvent.shiftKey === true,
-          );
-        }}
-        onClick={(event) => event.stopPropagation()}
-      />
+      {props.editable !== false ? (
+        <input
+          type="checkbox"
+          className="scient-pdf-page-checkbox"
+          aria-label={`Select page ${props.pageNumber}`}
+          checked={props.selected}
+          disabled={props.disabled}
+          onChange={(event) => {
+            event.stopPropagation();
+            props.onToggle(
+              props.pageNumber,
+              "shiftKey" in event.nativeEvent && event.nativeEvent.shiftKey === true,
+            );
+          }}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ) : null}
       {props.children}
     </div>
   );

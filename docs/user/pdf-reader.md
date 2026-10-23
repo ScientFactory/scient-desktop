@@ -97,8 +97,12 @@ Text fields keep their own undo and selection shortcuts. History is kept in
 memory while the document's editing session remains open.
 
 Generated PDFs are immutable build outputs: their first page edit automatically
-creates a separate durable edited PDF, whose location Scient reports. Subsequent
-edits save that file; LaTeX rebuilds continue to own the original output.
+creates a separate edited document. Files outside writable project folders also
+use an edited copy. Scient remembers the copy for this conversation and opens it
+when you return to the original document. Use Show original / Open edited copy
+to switch between them, or Save copy to export the edited PDF as a local file.
+Subsequent edits save new revisions of the copy; LaTeX rebuilds own the original.
+Chat attachments remain read-only; save them to your project to edit their pages.
 The backend checks the expected file revision before replacing bytes and uses
 the host's supported file-publication method. If another application changed
 the PDF, the edit is refused.
