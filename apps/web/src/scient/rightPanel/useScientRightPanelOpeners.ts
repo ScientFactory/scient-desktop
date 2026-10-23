@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
@@ -14,7 +15,12 @@ import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPo
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 
-import { scientComputeSurface, scientSourcePdfSurface, scientSourcesSurface } from "./surfaces";
+import {
+  scientComputeSurface,
+  scientNewTabSurface,
+  scientSourcePdfSurface,
+  scientSourcesSurface,
+} from "./surfaces";
 
 /**
  * Openers for the right-panel surfaces Scient adds: agents, sources, compute,
@@ -36,6 +42,17 @@ export function useScientRightPanelOpeners(input: {
   const addSourcesSurface = () => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
     const surface = scientSourcesSurface();
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  };
+  // `whenEmpty` reads the panel as it is now, so a repeated call adds one tab.
+  const addNewTabSurface = (options?: { readonly whenEmpty?: boolean }) => {
+    if (!activeThreadRef) return;
+    const store = useRightPanelStore.getState();
+    const surfaces = store.byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces ?? [];
+    if (options?.whenEmpty && surfaces.length > 0) return;
+    const surface = scientNewTabSurface();
     runAfterPendingFileSave(surface.id, () => {
       useRightPanelStore.getState().openScient(activeThreadRef, surface);
     });
@@ -101,6 +118,7 @@ export function useScientRightPanelOpeners(input: {
     });
   };
   return {
+    addNewTabSurface,
     addAgentsSurface,
     addDocumentsSurface,
     addSourcesSurface,

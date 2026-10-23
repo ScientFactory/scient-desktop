@@ -43,6 +43,20 @@ describe("shouldTypeToFocusComposer", () => {
     document.body.append(_ownDOM(_fixture, deviceScreen));
     expect(typeOn(deviceScreen, "a")).toBe(false);
   });
+  // SCIENT-FORK:START — the New tab page's letters open its cards
+  it("keeps letters typed on the side panel's New tab page there", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    const launcher = document.createElement("div");
+    launcher.setAttribute("data-scient-launcher", "");
+    launcher.tabIndex = -1;
+    const heading = document.createElement("h2");
+    launcher.append(heading);
+    document.body.append(_ownDOM(_fixture, launcher));
+    expect(typeOn(launcher, "f")).toBe(false);
+    expect(typeOn(heading, "f")).toBe(false);
+  });
+  // SCIENT-FORK:END
 });
 function _createFixture() {
   const stack = new AsyncDisposableStack();

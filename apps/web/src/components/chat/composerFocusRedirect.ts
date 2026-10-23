@@ -21,6 +21,9 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="radio"]',
   '[role="switch"]',
   '[role="tab"]',
+  // SCIENT-FORK:START — the side panel's New tab page takes its own letter shortcuts
+  "[data-scient-launcher]",
+  // SCIENT-FORK:END
 ].join(",");
 // Popups match only while open or closing: some stay mounted when closed,
 // such as the chat header actions menu.

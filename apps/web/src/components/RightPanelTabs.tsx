@@ -94,6 +94,11 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { ScientRightPanelSurfaceIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
 import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
+// SCIENT-FORK:START
+import { ScientFilesIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
+import { ScientNewTabButton, ScientSurfaceLauncher } from "~/scient/rightPanel/SurfaceLauncher";
+import { isScientNewTabSurface } from "~/scient/rightPanel/surfaces";
+// SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelCategory } from "~/scient/analytics/viewCategories";
 
@@ -144,6 +149,9 @@ export interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
+  // SCIENT-FORK:START — when set, "+" and its shortcut open the launcher as a tab
+  onAddNewTab?: ((options?: { readonly whenEmpty?: boolean }) => void) | undefined;
+  // SCIENT-FORK:END
   onCopyFilePath: (path: FileSurfacePath, format: FilePathCopyFormat) => void;
   onAddBrowser: () => void;
   /**
@@ -820,7 +828,9 @@ function SurfaceIcon({
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
-      return <Files className="size-3 shrink-0" />;
+      // SCIENT-FORK:START — Scient's Files sign, shared with the Files card and the Show files button
+      return <ScientFilesIcon className="size-3 shrink-0" />;
+    // SCIENT-FORK:END
     case "file":
       return (
         <PierreEntryIcon
@@ -1194,6 +1204,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   );
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
+  // SCIENT-FORK:START — the launcher is what a New tab shows. An open, empty
+  // panel gets one, so the page always appears as a tab.
+  const activeNewTab = props.surfaces.find(
+    (surface) => surface.id === props.activeSurfaceId && isScientNewTabSurface(surface),
+  );
+  const showsLauncher = props.activeSurfaceId === null || activeNewTab !== undefined;
+  const needsNewTab = props.open !== false && props.surfaces.length === 0;
+  const addNewTab = useEffectEvent(() => props.onAddNewTab?.({ whenEmpty: true }));
+  useEffect(() => {
+    if (needsNewTab) addNewTab();
+  }, [needsNewTab]);
+  // SCIENT-FORK:END
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   // Files with the same name get the folder that tells them apart.
@@ -1226,6 +1248,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     event.preventDefault();
     event.stopPropagation();
+    // SCIENT-FORK:START
+    if (props.onAddNewTab) {
+      if (!event.repeat) props.onAddNewTab();
+      return;
+    }
+    // SCIENT-FORK:END
     if (!event.repeat) {
       addSurfaceTriggerRef.current?.focus();
       setAddSurfaceMenuOpen(true);
@@ -1532,7 +1560,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ref={tabListRef}
           hideScrollbars
           scrollFade
-          className="min-w-0 flex-1"
+          // SCIENT-FORK:START — with "+" outside it, the list hugs its tabs
+          className={cn("min-w-0", props.onAddNewTab ? "h-full w-auto flex-initial" : "flex-1")}
+          // SCIENT-FORK:END
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
@@ -1586,7 +1616,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 );
               })}
             </SortableTabList>
-            {props.open !== false ? (
+            {/* SCIENT-FORK:START */}
+            {props.open !== false && !props.onAddNewTab ? (
+              /* SCIENT-FORK:END */
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}
@@ -1695,6 +1727,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null}
           </div>
         </ScrollArea>
+        {/* SCIENT-FORK:START — "+" stays in view beside the tabs while they scroll */}
+        {props.open !== false && props.onAddNewTab ? (
+          <>
+            <ScientNewTabButton
+              onClick={() => props.onAddNewTab?.()}
+              keybindings={props.keybindings}
+            />
+            {tabScrollState.hasOverflow ? null : <div className="min-w-0 flex-1" />}
+          </>
+        ) : null}
+        {/* SCIENT-FORK:END */}
         {tabScrollState.hasOverflow ? (
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
@@ -1748,7 +1791,34 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
-        {props.activeSurfaceId === null ? (
+        {/* SCIENT-FORK:START — Scient's launcher page, for an empty panel and the New tab */}
+        {props.onAddNewTab && showsLauncher ? (
+          <ScientSurfaceLauncher
+            {...(activeNewTab ? { onPicked: () => props.onCloseSurface(activeNewTab) } : {})}
+            onAddBrowser={props.onAddBrowser}
+            onAddBrowserInProfile={props.onAddBrowserInProfile}
+            browserProfiles={browserProfiles}
+            onAddTerminal={props.onAddTerminal}
+            onAddDiff={props.onAddDiff}
+            onAddFiles={props.onAddFiles}
+            onAddPullRequest={props.onAddPullRequest}
+            onAddPullRequests={props.onAddPullRequests}
+            onAddSources={props.onAddSources}
+            onAddDocuments={props.onAddDocuments}
+            onAddCompute={props.onAddCompute}
+            onAddDevice={props.onAddDevice}
+            browserAvailable={props.browserAvailable}
+            terminalAvailable={props.terminalAvailable}
+            diffAvailable={props.diffAvailable}
+            filesAvailable={props.filesAvailable}
+            pullRequestAvailable={props.pullRequestAvailable}
+            pullRequestsAvailable={props.pullRequestsAvailable}
+            sourcesAvailable={props.sourcesAvailable}
+            documentsAvailable={props.documentsAvailable}
+            computeAvailable={props.computeAvailable}
+            deviceAvailable={props.deviceAvailable}
+          />
+        ) : /* SCIENT-FORK:END */ props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}

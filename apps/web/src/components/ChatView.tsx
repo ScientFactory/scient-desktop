@@ -3323,6 +3323,7 @@ function ChatViewContent(props: ChatViewProps) {
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
+    addNewTabSurface,
     addAgentsSurface,
     addDocumentsSurface,
     addSourcesSurface,
@@ -8613,6 +8614,9 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
+          onAddNewTab={addNewTabSurface}
+          // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}

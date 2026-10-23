@@ -9,8 +9,9 @@ change it, and drag the divider to resize either side.
 
 ## Start a document
 
-Choose **Documents** in the side panel, or under **+**, then **LaTeX** (or
-**Markdown**). A new `untitled.tex` opens straight in Visual, set up from your
+Open a new tab in the side panel with **+**, then choose **LaTeX** (or
+**Markdown**) from the format button on the **Document** card. **New** in the
+Files bar does the same in the selected folder. A new `untitled.tex` opens straight in Visual, set up from your
 default template, with the cursor in the title. Nothing else needs filling in:
 type the title and keep writing. Once the title is saved and you move on, the
 file takes its name from it once, for example `spectral-bounds.tex`; later
