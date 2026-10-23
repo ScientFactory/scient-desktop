@@ -295,6 +295,9 @@ platform, as in Chrome. Browsers keep `ctrl+tab` for their own tabs, so in a bro
 two commands to keys the browser leaves alone. To open a second copy of a browser page or a
 terminal, right-click its tab and choose **Duplicate**, or use `rightPanel.duplicateTab`, which
 defaults to `mod+shift+d` outside the terminal. In the terminal, `mod+shift+d` still splits it.
+While the keyboard is in a side-panel Files or file tab, `navigation.back` and
+`navigation.forward` (`mod+[` and `mod+]`) move back and forward in that tab's own history
+instead of between threads.
 `rightPanel.toggleFiles` shows or hides the project's file list beside the open side-panel tab and
 defaults to `mod+alt+e`. It does not run while the terminal has focus.
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the

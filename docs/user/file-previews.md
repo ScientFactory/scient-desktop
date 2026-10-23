@@ -28,6 +28,13 @@ end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
 and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
 file list, and a panel too narrow for both shows the page alone.
 
+Files and file tabs keep a short history. **Back** and **Forward** sit at the
+start of the tab's header and light up once there is somewhere to go: after
+Files opens a file, after a path crumb opens a folder, or after a file opens
+from another tab, including a tab that was already open.
+While the keyboard is in the tab, `mod+[` and `mod+]` do the same. The history
+lasts while Scient is open.
+
 The Files menu offers two visibility levels:
 
 - **Project files** is the default. It includes durable managed source files,

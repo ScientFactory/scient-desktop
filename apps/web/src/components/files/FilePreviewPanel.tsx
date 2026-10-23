@@ -143,6 +143,7 @@ import {
 } from "~/scient/fileOpening/fileOpeningPolicy";
 // SCIENT-FORK:START
 import { usePanelFilesOpen } from "~/scient/rightPanel/PanelFilesColumn";
+import { TabHistoryButtons } from "~/scient/rightPanel/tabHistory";
 // SCIENT-FORK:END
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
@@ -225,6 +226,9 @@ import {
 import { setProjectFileQueryData } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
+  // SCIENT-FORK:START — the tab this view fills, for its Back and Forward history
+  scientSurfaceId?: string | undefined;
+  // SCIENT-FORK:END
   onCiteFile?: MarkdownCiteHandler;
   fileCitation?: FileCitation | undefined;
   environmentId: EnvironmentId;
@@ -1464,6 +1468,9 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
 // SCIENT-FORK:END
 
 export default function FilePreviewPanel({
+  // SCIENT-FORK:START
+  scientSurfaceId,
+  // SCIENT-FORK:END
   onCiteFile,
   fileCitation,
   environmentId,
@@ -2105,6 +2112,14 @@ export default function FilePreviewPanel({
           )}
           data-surface-subheader
         >
+          {/* SCIENT-FORK:START — -me-1 gives back the room the crumbs' ps-1 takes, so the path stays put */}
+          <TabHistoryButtons
+            className="-me-1"
+            threadRef={threadRef}
+            surfaceId={scientSurfaceId}
+            keybindings={keybindings}
+          />
+          {/* SCIENT-FORK:END */}
           <ScrollArea
             radius="none"
             ref={breadcrumbRef}
@@ -2783,6 +2798,19 @@ export default function FilePreviewPanel({
               onOpenFile={onOpenFile}
               onOpenFileSource={onOpenFileSource}
               workspaceMutationId={workspaceMutationId}
+              // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar
+              {...(previewPath === null
+                ? {
+                    scientToolbarLeading: (
+                      <TabHistoryButtons
+                        threadRef={threadRef}
+                        surfaceId={scientSurfaceId}
+                        keybindings={keybindings}
+                      />
+                    ),
+                  }
+                : {})}
+              // SCIENT-FORK:END
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}

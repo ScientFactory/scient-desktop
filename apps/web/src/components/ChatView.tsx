@@ -346,6 +346,7 @@ import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 // SCIENT-FORK:START
 import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
+import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel/tabHistory";
 import {
   PanelFilesLayout,
   panelFilesToggleApplies,
@@ -2679,6 +2680,9 @@ function ChatViewContent(props: ChatViewProps) {
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // SCIENT-FORK:START — Back and Forward for file tabs
+  useRightPanelTabHistory({ threadRef: activeThreadRef, keybindings, runAfterPendingFileSave });
+  // SCIENT-FORK:END
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -7693,12 +7697,19 @@ function ChatViewContent(props: ChatViewProps) {
               workspaceRoot: activeWorkspaceRoot,
               onCiteFile: (citation, anchor) =>
                 composerRef.current?.citeText(citation, anchor) ?? false,
+              // A rename carries the tab's Back and Forward history with it.
               onFileRenamed: (fromPath, toPath) =>
-                useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath),
+                ),
               onFileMoved: (fromPath, toPath) =>
-                useRightPanelStore
-                  .getState()
-                  .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                ),
               onOpenFileSource: openFileSourceSurface,
               onHtmlPresentationRequestHandled: handleHtmlPresentationRequestHandled,
               onLatexPresentationRequestHandled: handleLatexPresentationRequestHandled,
