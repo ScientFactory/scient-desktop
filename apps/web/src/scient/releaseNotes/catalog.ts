@@ -9,6 +9,52 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.25",
+    publishedAt: "2026-10-22",
+    format: "paragraphs",
+    headline: "Write visually. Ask about papers. Connect your tools.",
+    highlights: [
+      {
+        id: "visual-latex-0625",
+        title: "Write LaTeX in a visual workspace",
+        description:
+          "Open a LaTeX document in Visual to edit text, headings, lists, tables, figures, and references on the page. Switch to Source or use Split to work with both. Supported edits preserve the underlying LaTeX, while unsupported content remains accessible as source. The compiled PDF remains the authority for final layout.",
+      },
+      {
+        id: "math-authoring-0625",
+        title: "Build equations as you write",
+        description:
+          "Edit formulas directly in the visual document, browse mathematical symbols, and use command suggestions to insert structures such as fractions. Keep favorite and recent symbols close at hand, or open a formula's LaTeX source for precise changes. English and Hebrew documents support mixed text directions while formulas retain left-to-right entry.",
+      },
+      {
+        id: "document-templates-0625",
+        title: "Start a document from a template",
+        description:
+          "Choose Documents → LaTeX to start writing from your default template. Preview templates, choose English or Hebrew, and save your own. Settings → Documents brings templates, opening views, compiler readiness, and document tools together. Visual writing works before TeX is installed; building a PDF needs a local compiler and the document's packages.",
+      },
+      {
+        id: "extensions-0625",
+        title: "Connect services for your agents in one place",
+        description:
+          "Settings → Extensions lets you discover and connect services, manage Scient plugins, and inspect supported agents' own plugins and servers. Sign in to a service once through Scient, choose which projects may use it, and see which agents it works with. You can also add a service by URL or install a plugin bundle from a folder.",
+      },
+      {
+        id: "pdf-passages-0625",
+        title: "Ask about a passage in a PDF",
+        description:
+          "Select text in a PDF and choose Ask in chat. Your question carries the quote, its page, and nearby text. Click the quote to reopen the passage with a highlight. If the PDF has changed, Scient reports whether it can still locate the text. This works with project PDFs, LaTeX output, Sources papers, and sent PDF attachments that have a text layer.",
+      },
+      {
+        id: "unread-app-badge-0625",
+        title: "See unread answers on the app icon",
+        description:
+          "The desktop app icon now reflects unread conversations across your connected environments, using the sidebar's read state. Windows shows a taskbar overlay; macOS and supported Linux docks show a badge where system permissions allow it. Control it from Settings → General → App icon badge.",
+      },
+    ],
+    alsoIncluded:
+      "More reliable LaTeX tool detection and compiler installation on Windows, including fixes for Windows profiles whose names contain accents or Hebrew letters.",
+  },
+  {
     version: "0.6.24",
     publishedAt: "2026-10-19",
     format: "paragraphs",
