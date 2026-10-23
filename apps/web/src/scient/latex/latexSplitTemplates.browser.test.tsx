@@ -280,6 +280,16 @@ it.for([
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
+    let phase = "gesture";
+    const writes: { phase: string; value: number; stack: string | undefined }[] = [];
+    const nativeScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+    using _scrollTrace =
+      name === "26-code"
+        ? vi.spyOn(scroll, "scrollTop", "set").mockImplementation((value) => {
+            if (writes.length < 8) writes.push({ phase, value, stack: new Error().stack });
+            nativeScrollTop.set!.call(scroll, value);
+          })
+        : null;
     {
       using _clock = fakeTimers();
       const pointer = () => {
@@ -336,8 +346,11 @@ it.for([
           .nth(0)
           .dblClick({ position: hit.position });
       }
+      const afterGesture = name === "26-code" ? scroll.scrollTop : undefined;
+      phase = "publish";
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
+      phase = "published";
       await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
       const mapped = state.reveals[0]!;
       expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
@@ -347,7 +360,28 @@ it.for([
           ? field.value.slice(field.selectionStart, field.selectionEnd).trim()
           : document.getSelection()?.toString().trim(),
       ).toBe(word);
-      expect(Math.abs(scroll.scrollTop - before)).toBeLessThanOrEqual(2);
+      const afterPublish = scroll.scrollTop;
+      const scrollDelta = Math.abs(afterPublish - before);
+      expect(
+        scrollDelta,
+        scrollDelta > 2
+          ? JSON.stringify({
+              before,
+              afterGesture,
+              afterPublish,
+              writes,
+              fonts: document.fonts.status,
+              pagedSettled: pagedLayoutSettled(state.visual.view),
+              root: state.visual.view.dom.getBoundingClientRect().toJSON(),
+              viewport: scroll.getBoundingClientRect().toJSON(),
+              field: field instanceof HTMLElement ? field.getBoundingClientRect().toJSON() : null,
+              fieldScrollTop: field instanceof HTMLTextAreaElement ? field.scrollTop : null,
+              fieldScrollHeight: field instanceof HTMLTextAreaElement ? field.scrollHeight : null,
+              fieldClientHeight: field instanceof HTMLTextAreaElement ? field.clientHeight : null,
+              fieldFont: field instanceof HTMLElement ? getComputedStyle(field).fontFamily : null,
+            })
+          : undefined,
+      ).toBeLessThanOrEqual(2);
       await vi.waitFor(() =>
         expect(state.source().getViewState().selections?.[0]?.start).toEqual(
           sourcePosition(source, mapped.from),
