@@ -539,9 +539,11 @@ export const PickFolderOptionsSchema = Schema.Struct({
 // SCIENT-FORK:START — Scient asset copy contracts live in scient/desktopBridge.ts.
 export {
   DesktopAssetCopyRequestSchema,
+  DesktopPdfBytesCopyRequestSchema,
   DesktopAssetCopyResultSchema,
 } from "./scient/desktopBridge.ts";
 export type { DesktopAssetCopyRequest, DesktopAssetCopyResult };
+export type { DesktopPdfBytesCopyRequest } from "./scient/desktopBridge.ts";
 // SCIENT-FORK:END
 
 /**

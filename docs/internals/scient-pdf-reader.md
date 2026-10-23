@@ -48,6 +48,10 @@ PDF.js `PDFViewer` owns visible-page rendering, text and annotation layers,
 internal destinations, bounded canvases, and cleanup. The reader additionally
 virtualizes thumbnails, loads outlines lazily, preserves fit modes across panel
 resizes, and destroys loading/rendering work on file switches or unmount.
+Page changes update navigation without scheduling resize settlement: fitting
+each newly visible page would change the entire document's scale and scroll
+position in mixed-size PDFs. Explicit Fit width uses the current page; actual
+container resizes and rotation continue through the resize settlement path.
 
 The reader uses PDF.js's legacy/compatibility build at the same pinned version
 as its worker. This keeps Electron compatibility without changing the parsing or
@@ -180,3 +184,45 @@ and should remain independent of PDF UI decisions.
 
 PDF.js is distributed under Apache-2.0. Its bundled support-data license files
 and root license remain in the emitted `pdfjs-assets` tree.
+
+## Page editing and immediate publication
+
+Page selection is immediate and independent of the editing worker. Only a page
+mutation or its context menu loads the PDF worker. Ordinary reading and checkbox
+selection do not parse a second copy of the document. The virtualized thumbnail
+list explicitly invalidates its items for selection and busy-state changes.
+Opening a page's context menu does not change checkbox selection. Commands on
+an unchecked page receive its ID as an explicit target; checked-page commands
+use the selected group.
+Drag data captures explicit page IDs at pickup: an unchecked page drags alone,
+while a checked page drags the checked group. Drop targets use those IDs without
+changing checkbox selection. Group drags use a canvas-backed stacked preview
+with a page-count badge.
+The context menu's Move… command captures explicit page IDs and opens a shared
+dialog with one Before page field. It converts the current page number to an
+insertion boundary; page count + 1 means the end. It uses the same save and undo
+path as dragging. Gap menus only insert blank or imported pages.
+Checkboxes, the Rotate/Move/Duplicate/Delete context menu, page dragging and
+the zero-height gap insertion controls stay in the existing sidebar. No edit
+toolbar, mode, or additional thumbnail spacing is introduced.
+
+`pdfEditSession.ts` serializes changes and undo/redo. It assembles candidate
+bytes off the UI thread, then calls the environment's authenticated multipart
+`POST /api/scient/pdf/save` endpoint. The displayed revision and history advance
+only after a successful save. Failures leave the candidate out of the current
+history. The PDF reader retains its existing document identity and zoom state.
+
+The transport calls `PdfFileEdits.save`; the server owns all destination paths.
+Workspace/environment PDFs use the shared binary-file mutation boundary with
+a SHA-256 expected revision and a unique operation ID. A concurrent writer is
+never silently overwritten. Generated revisions instead produce an independent
+file under the server's `pdf-edits` directory and return that source descriptor
+for subsequent saves. This keeps the generated revision store immutable.
+
+The worker rebuilds from the base PDF context, retaining the catalog, metadata,
+attachments and original page references. Removed-page destinations are rebound
+to a surviving page. Copied pages rebind explicit and named internal links to
+inserted targets; external links and non-link annotations retain their objects.
+Distinct duplicated page nodes can be rotated independently. Unsupported forms,
+certificate permissions and encrypted documents fail before publication.
+The session retains up to 100 undo steps; undo/redo uses the same save precondition.
