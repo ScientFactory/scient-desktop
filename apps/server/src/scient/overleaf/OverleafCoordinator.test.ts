@@ -5,252 +5,34 @@
  * between the coordinator's durable steps: nothing at this level compensates.
  */
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 
-import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import {
-  CheckoutBarrier,
   type CheckoutLookupError,
   type CheckoutRecoveryRequiredError,
-  makeCheckoutBarrier,
+  type makeCheckoutBarrier,
 } from "../workspace/CheckoutBarrier.ts";
+import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
+import type * as OverleafCoordinator from "./OverleafCoordinator.ts";
 import {
-  fileExchangeTestHelper,
-  filePublicationTestHelper,
-  nativePublicationHost,
-} from "../workspace/fileExchange.testkit.ts";
-import * as OverleafCoordinator from "./OverleafCoordinator.ts";
-import { overleafConnectionFixture } from "./OverleafConnectionState.testkit.ts";
-import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
-import * as OverleafRepository from "./OverleafRepository.ts";
-import { makeOverleafReviewRegistry } from "./OverleafReviewRegistry.ts";
+  canApply,
+  CONNECTION,
+  firstKept,
+  type Point,
+  read,
+  revision,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
-import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
-import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
-import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
-
-const canApply = await nativePublicationHost();
-const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
-const volumeUuid = async () => VOLUME;
-const CONNECTION = "connection-1";
-type Point = "linked" | "applied" | "adopted";
-
-const write = (folder: string, files: Record<string, string>) =>
-  Effect.promise(async () => {
-    for (const [path, content] of Object.entries(files)) {
-      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(folder, path)), { recursive: true });
-      await NodeFSP.writeFile(NodePath.join(folder, path), content);
-    }
-  });
-const read = (folder: string, path: string) =>
-  Effect.promise(() => NodeFSP.readFile(NodePath.join(folder, path), "utf8").catch(() => null));
-const revision = (text: string) => bytesRevision(new TextEncoder().encode(text));
-/** The kept copy of the plan's first step, wherever the vault placed it. */
-const firstKept = (stateRoot: string) =>
-  NodeFSP.readdir(stateRoot, { recursive: true }).then((paths) =>
-    NodePath.join(
-      stateRoot,
-      paths.find((path) => /\/step-0\/(?:slot|retained)$/u.test(path))!,
-    ),
-  );
-
-/**
- * A connected folder whose last sync left `synced` on both sides, and an
- * Overleaf that will next hold `remote`. Hooks run at the coordinator's points.
- */
-const world = (input: {
-  readonly synced: Record<string, string>;
-  readonly remote: Record<string, string>;
-  /** Files only in the folder, recorded as local-only. */
-  readonly localOnly?: Record<string, string>;
-  /** Paths recorded as holding Scient conflict material. */
-  readonly markerPaths?: ReadonlyArray<string>;
-  readonly at?: (point: Point) => Effect.Effect<void>;
-  /** Runs at the native publication hooks of every step the applier takes. */
-  readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
-  /** Wraps the real applier, to shape what it reports. */
-  readonly applier?: (real: WorkspaceApplier["Service"]) => WorkspaceApplier["Service"];
-  readonly limits?: OverleafCoordinator.OverleafCoordinatorOptions["limits"];
-}) =>
-  Effect.gen(function* () {
-    const root = yield* Effect.acquireRelease(
-      Effect.promise(async () =>
-        NodeFSP.realpath(
-          await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-coordinator-")),
-        ),
-      ),
-      (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
-    );
-    const checkout = NodePath.join(root, "workspace");
-    const folder = NodePath.join(checkout, "paper");
-    const stateRoot = NodePath.join(root, "state");
-    yield* Effect.promise(async () => {
-      await NodeFSP.mkdir(NodePath.join(checkout, ".git"), { recursive: true });
-      await NodeFSP.mkdir(folder);
-      await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
-    });
-    yield* write(folder, input.synced);
-    yield* write(folder, input.localOnly ?? {});
-
-    const helper = yield* Effect.promise(() => filePublicationTestHelper());
-    // The retention probe runs the exchange helper; the applier publishes through the other.
-    const exchangeHelper = (yield* Effect.promise(() => fileExchangeTestHelper())) ?? null;
-    const git = yield* OverleafGitExecutor.make({
-      runtimeRoot: NodePath.join(root, "runtime"),
-      allowLocalProtocols: true,
-    });
-    const repos = yield* OverleafRepository.make.pipe(
-      Effect.provideService(OverleafGitExecutor.OverleafGitExecutor, git),
-    );
-    const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid });
-    const files = yield* makeApplierFiles({
-      root,
-      helper,
-      retainedHooks: { at: async (point) => input.native?.(point, folder, stateRoot) },
-    });
-    const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
-    const barrier = makeCheckoutBarrier();
-    const registry = makeOverleafReviewRegistry();
-
-    const repo = NodePath.join(stateRoot, "repositories", `${CONNECTION}.git`);
-    yield* repos.initialize({ repo, gitUrl: "https://git.overleaf.com/0123456789abcdef01234567" });
-    const tree = Effect.fnUntraced(function* (contents: Record<string, string>) {
-      const entries = [];
-      for (const [path, content] of Object.entries(contents))
-        entries.push({
-          path,
-          oid: yield* repos.writeBlob({ repo, bytes: new TextEncoder().encode(content) }),
-        });
-      return yield* repos.writeTree({ repo, entries });
-    });
-    const syncedTree = yield* tree(input.synced);
-    const syncedCommit = yield* repos.commit({
-      repo,
-      tree: syncedTree,
-      parents: [],
-      message: "synced",
-    });
-    let remote = input.remote;
-    // Overleaf's head stays the same commit until its content changes.
-    let head: { commit: string; tree: string } | undefined;
-    const fetchRemote = () =>
-      Effect.gen(function* () {
-        const remoteTree = yield* tree(remote);
-        if (head?.tree !== remoteTree)
-          head = {
-            commit: yield* repos.commit({
-              repo,
-              tree: remoteTree,
-              parents: [syncedCommit],
-              message: "remote",
-            }),
-            tree: remoteTree,
-          };
-        return head;
-      });
-
-    const retention = yield* store.prepareRetention({
-      environmentId: "environment-1",
-      connectionId: CONNECTION,
-      checkoutRoot: checkout,
-      exchangeHelper,
-      expected: null,
-    });
-    const fileId = (path: string) =>
-      Effect.promise(async () => String((await NodeFSP.stat(path, { bigint: true })).ino));
-    yield* store.createConnection({
-      ...overleafConnectionFixture(CONNECTION),
-      checkout: {
-        canonicalRoot: checkout,
-        identity: { volume: VOLUME, fileId: yield* fileId(checkout) },
-      },
-      folder: {
-        relativePath: "paper",
-        identity: { volume: VOLUME, fileId: yield* fileId(folder) },
-      },
-      base: { commit: syncedCommit, tree: syncedTree, generation: 1 },
-      completedSyncCount: 1,
-      managedPaths: Object.keys(input.synced),
-      localOnlyPaths: Object.keys(input.localOnly ?? {}),
-      markerPaths: [...(input.markerPaths ?? [])],
-      retention: { vaultIdentity: retention.identity, copies: [] },
-    });
-
-    const coordinatorWith = (stateStore: OverleafStateStore.OverleafStateStore["Service"]) =>
-      OverleafCoordinator.make({
-        stateRoot,
-        exchangeHelper,
-        fetchRemote,
-        volumeUuid,
-        registry,
-      }).pipe(
-        Effect.provideService(OverleafStateStore.OverleafStateStore, stateStore),
-        Effect.provideService(OverleafRepository.OverleafRepository, repos),
-        Effect.provideService(WorkspaceApplier, applier),
-        Effect.provideService(CheckoutBarrier, makeCheckoutBarrier()),
-      );
-    const coordinator = yield* OverleafCoordinator.make({
-      stateRoot,
-      exchangeHelper,
-      fetchRemote,
-      volumeUuid,
-      registry,
-      hooks: { at: (point) => input.at?.(point) ?? Effect.void },
-      ...(input.limits ? { limits: input.limits } : {}),
-    }).pipe(
-      Effect.provideService(OverleafStateStore.OverleafStateStore, store),
-      Effect.provideService(OverleafRepository.OverleafRepository, repos),
-      Effect.provideService(WorkspaceApplier, input.applier?.(applier) ?? applier),
-      Effect.provideService(CheckoutBarrier, barrier),
-    );
-    const connection = Effect.gen(function* () {
-      const found = yield* store.readConnection(CONNECTION);
-      if (found._tag !== "ready") return yield* Effect.die(found._tag);
-      return found.document;
-    });
-    /** Prepares a review and confirms it exactly as offered. */
-    const sync = (requestId = "request-1") =>
-      Effect.gen(function* () {
-        const prepared = yield* coordinator.prepare({ connectionId: CONNECTION });
-        if (prepared._tag !== "review") return yield* Effect.die(prepared);
-        return yield* coordinator.confirm({
-          connectionId: CONNECTION,
-          requestId,
-          reviewId: prepared.review.id,
-          digest: prepared.review.digest,
-          acknowledgements: prepared.review.binding.acknowledgements,
-        });
-      });
-    return {
-      store,
-      coordinatorWith,
-      volumeUuid,
-      stateRoot,
-      checkout,
-      folder,
-      repo,
-      repos,
-      coordinator,
-      barrier,
-      registry,
-      connection,
-      sync,
-      setRemote: (next: Record<string, string>) => {
-        remote = next;
-      },
-    };
-  });
-
-const run = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-  body.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+import { WorkspaceApplier } from "./WorkspaceApplier.ts";
 
 describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
   it.live("applies a confirmed review and adopts the result once", () =>
@@ -297,7 +79,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         // for a different request is refused.
         expect(yield* w.coordinator.confirm(request)).toMatchObject({
           _tag: "duplicate",
-          receipt: { status: "completed", resultCategory: "applied-complete" },
+          receipt: { status: "completed", resultCategory: "applied-complete-none" },
         });
         expect(
           String(yield* Effect.exit(w.coordinator.confirm({ ...request, digest: "other" }))),
@@ -358,6 +140,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(after.base.generation).toBe(before.base.generation + 1);
         expect(yield* w.coordinator.recover({ connectionId: CONNECTION })).toEqual({
           _tag: "none",
+          attempts: { accepted: [], unresolved: [] },
         });
         expect((yield* w.connection).base.generation).toBe(after.base.generation);
       }),

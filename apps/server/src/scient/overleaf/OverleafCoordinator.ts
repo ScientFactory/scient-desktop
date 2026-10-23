@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Folder identities and private scratch folders.
 /**
- * The local half of a manual Overleaf sync (coordinator contract sections 3, 4,
- * 6 and 9; step 3b). It prepares reviews, applies a confirmed one to the
- * folder, recovers an interrupted apply and adopts the applier's result into
- * the connection. It never publishes: step 4 continues from an adopted result.
+ * A manual Overleaf sync (coordinator contract sections 3 to 6, 8 and 9; steps
+ * 3b and 4). It prepares reviews, applies a confirmed one to the folder, adopts
+ * the applier's result into the connection, then sends it to Overleaf once:
+ * verified, recorded first, never resent. Recovery finishes an interrupted
+ * apply and settles earlier sends by positive evidence only; it never sends.
  *
  * Lock order: the connection's operation reservation (in memory, refused rather
  * than queued), then the checkout barrier's application section, then the
@@ -19,6 +20,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -30,12 +32,16 @@ import {
 } from "../workspace/CheckoutBarrier.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import {
+  ATTEMPT_LIMIT,
   FORCED_CONFLICT_LIMIT,
+  isOverleafAttemptUnresolved,
   KEPT_VERSION_LIMIT,
   MANAGED_PATH_LIMIT,
   overleafRequiredPins,
+  UNRESOLVED_ATTEMPT_LIMIT,
   type OverleafConnectionDocument,
   type OverleafOperationReceipt,
+  type OverleafPublicationAttempt,
 } from "./OverleafConnectionState.ts";
 import { newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
 import {
@@ -43,12 +49,18 @@ import {
   OVERLEAF_LIMITS,
   type OverleafInventoryRefusal,
 } from "./OverleafInventory.ts";
-import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
+import { probeAcceptance } from "./OverleafProtocolProbe.ts";
+import {
+  OverleafRepository,
+  type OverleafRepositoryError,
+  type PushOutcome,
+} from "./OverleafRepository.ts";
 import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import {
   buildOverleafReview,
   type OverleafReview,
   type OverleafReviewRefusal,
+  writeCapturedTree,
 } from "./OverleafReview.ts";
 import {
   makeOverleafReviewRegistry,
@@ -123,7 +135,13 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
   "OverleafRetainedLimitError",
   {
     connectionId: Schema.String,
-    limit: Schema.Literals(["kept-copies", "managed-paths", "conflict-group", "marker-paths"]),
+    limit: Schema.Literals([
+      "kept-copies",
+      "managed-paths",
+      "conflict-group",
+      "marker-paths",
+      "attempts",
+    ]),
   },
 ) {
   override get message(): string {
@@ -136,6 +154,8 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
         return "This sync changes more files together than Scient can track at once.";
       case "marker-paths":
         return "This would track more files with conflict material than Scient can. Resolve some first.";
+      case "attempts":
+        return "Earlier sends to Overleaf are still unresolved, and Scient can't record another until some are.";
     }
   }
 }
@@ -166,8 +186,38 @@ export interface OverleafAdopted {
   readonly baseGeneration: number;
 }
 
+/** What became of an applied review's changes for Overleaf (contract section 6). */
+export type OverleafPublication =
+  /** Nothing to send: the result equals Overleaf's tree. */
+  | { readonly _tag: "none" }
+  /** Not sent: the apply left something to review first. */
+  | {
+      readonly _tag: "blocked";
+      readonly reason: "attention" | "markers" | "staging" | "kept-copy-changed";
+    }
+  /** Not sent: the folder changed after the apply. The change is for the next review. */
+  | { readonly _tag: "not-verified" }
+  /** Recorded, then refused before sending: the credential changed since the review. */
+  | { readonly _tag: "not-sent"; readonly attemptNumber: number }
+  | { readonly _tag: "accepted"; readonly attemptNumber: number }
+  /** Overleaf had moved on, so nothing was applied there. A new review is needed. */
+  | { readonly _tag: "out-of-date"; readonly attemptNumber: number }
+  /** Perhaps sent. Overleaf's history settles it later; it is never sent again. */
+  | { readonly _tag: "unknown"; readonly attemptNumber: number };
+
+/** What a check of earlier sends against Overleaf found. */
+export interface OverleafAttemptsChecked {
+  readonly accepted: ReadonlyArray<number>;
+  /** Still unestablished; the next review warns about each. */
+  readonly unresolved: ReadonlyArray<number>;
+}
+
 export type OverleafConfirmResult =
-  | { readonly _tag: "applied"; readonly adopted: OverleafAdopted }
+  | {
+      readonly _tag: "applied";
+      readonly adopted: OverleafAdopted;
+      readonly publication: OverleafPublication;
+    }
   /** The review no longer describes the folder or Overleaf; `review` replaces it. */
   | {
       readonly _tag: "stale";
@@ -211,9 +261,14 @@ export type OverleafRestoreResult =
   | { readonly _tag: "unknown-copy" }
   | { readonly _tag: "duplicate"; readonly receipt: OverleafOperationReceipt };
 
+/** `attempts` is null when Overleaf could not be reached to check earlier sends. */
 export type OverleafRecoverResult =
-  | { readonly _tag: "none" }
-  | { readonly _tag: "recovered"; readonly adopted: OverleafAdopted };
+  | { readonly _tag: "none"; readonly attempts: OverleafAttemptsChecked | null }
+  | {
+      readonly _tag: "recovered";
+      readonly adopted: OverleafAdopted;
+      readonly attempts: OverleafAttemptsChecked | null;
+    };
 
 type FetchError = OverleafRepositoryError | OverleafGitError;
 /** Everything a coordinator operation can fail with; business outcomes are results instead. */
@@ -239,11 +294,19 @@ export interface OverleafCoordinatorOptions {
   readonly stateRoot: string;
   /** The host's exchange helper; null only for the declared development fallback. */
   readonly exchangeHelper: string | null;
-  /** Fetches Overleaf's branch into `repo`. Step 4 supplies the authenticated fetch. */
+  /** Fetches Overleaf's branch into `repo`. Step 5 supplies the authenticated fetch. */
   readonly fetchRemote: (input: {
     readonly repo: string;
     readonly connection: OverleafConnectionDocument;
   }) => Effect.Effect<{ readonly commit: string; readonly tree: string }, FetchError>;
+  /** Sends one commit to Overleaf's branch, never forced. Step 5 supplies the authenticated push. */
+  readonly pushRemote: (input: {
+    readonly repo: string;
+    readonly connection: OverleafConnectionDocument;
+    readonly commit: string;
+  }) => Effect.Effect<PushOutcome, FetchError>;
+  /** Test seam: the Git address of the connection's project. Defaults to Overleaf's. */
+  readonly gitUrl?: (connection: OverleafConnectionDocument) => string;
   /** The host credential epoch; renewing the token advances it. */
   readonly credentialEpoch?: () => number;
   /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
@@ -260,7 +323,7 @@ export interface OverleafCoordinatorOptions {
   };
   /** Fault points for tests: a throw stops the operation there, as a crash would. */
   readonly hooks?: {
-    readonly at?: (point: "linked" | "applied" | "adopted") => Effect.Effect<void>;
+    readonly at?: (point: HookPoint) => Effect.Effect<void>;
   };
 }
 
@@ -351,10 +414,10 @@ const readWithin = async (path: string, limit: number, keep = false): Promise<Fi
   }
 };
 
-const hook = (
-  options: OverleafCoordinatorOptions,
-  point: "linked" | "applied" | "adopted",
-): Effect.Effect<void> => options.hooks?.at?.(point) ?? Effect.void;
+/** The coordinator's durable steps; `recorded` is an attempt written, `sent` its push returned. */
+type HookPoint = "linked" | "applied" | "adopted" | "recorded" | "sent";
+const hook = (options: OverleafCoordinatorOptions, point: HookPoint): Effect.Effect<void> =>
+  options.hooks?.at?.(point) ?? Effect.void;
 
 /** @public Context tag; step 5 mounts it behind authenticated routes. */
 export class OverleafCoordinator extends Context.Service<
@@ -480,10 +543,26 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const repo = NodePath.join(options.stateRoot, "repositories", `${connection.connectionId}.git`);
     yield* repos.initialize({
       repo,
-      gitUrl: `https://git.overleaf.com/${connection.remote.projectId}`,
+      gitUrl:
+        options.gitUrl?.(connection) ?? `https://git.overleaf.com/${connection.remote.projectId}`,
     });
     return repo;
   });
+
+  /**
+   * What this connection syncs: the base, the last reviewed result, and every path an
+   * interrupted apply left in a forced conflict, which may be in neither (the new name
+   * of a rename it undid, say).
+   */
+  const captureScope = (
+    connection: OverleafConnectionDocument,
+    baseTree: ReadonlyArray<{ readonly path: string }>,
+  ) =>
+    unique([
+      ...baseTree.map((entry) => entry.path),
+      ...connection.managedPaths,
+      ...connection.forcedConflicts.flat(),
+    ]);
 
   /** Captures the folder and builds the review, reading requested collisions in full. */
   const buildReview = Effect.fn("OverleafCoordinator.buildReview")(function* (input: {
@@ -498,14 +577,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       connection.base.tree === null
         ? []
         : yield* repos.readTree({ repo, tree: connection.base.tree });
-    // What this connection syncs: the base, the last reviewed result, and every path
-    // an interrupted apply left in a forced conflict, which may be in neither (the
-    // new name of a rename it undid, say).
-    const managedPaths = unique([
-      ...baseTree.map((entry) => entry.path),
-      ...connection.managedPaths,
-      ...connection.forcedConflicts.flat(),
-    ]);
+    const managedPaths = captureScope(connection, baseTree);
     const scratch = NodePath.join(options.stateRoot, "scratch", newOverleafId());
     let requested = input.selections.collisionPaths;
     // A review may ask once for the local files Overleaf has content at; a second
@@ -824,6 +896,304 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     );
   });
 
+  /**
+   * The tree of what the folder holds now, captured as a review captures it, with
+   * `domain` read too; null if the capture was refused.
+   */
+  const capturedTree = Effect.fn("OverleafCoordinator.capturedTree")(function* (
+    repo: string,
+    connection: OverleafConnectionDocument,
+    domain: ReadonlyArray<string>,
+  ) {
+    const baseTree =
+      connection.base.tree === null
+        ? []
+        : yield* repos.readTree({ repo, tree: connection.base.tree });
+    const captured = yield* Effect.promise(() =>
+      captureOverleafInventory({
+        folder: folderOf(connection),
+        managedPaths: unique([...captureScope(connection, baseTree), ...domain]),
+        localOnlyPaths: connection.localOnlyPaths,
+        selectedAdditions: [],
+        requestedPaths: [],
+        stagingPaths: connection.stagingPaths,
+      }),
+    );
+    if (captured._tag === "refused") return null;
+    const scratch = NodePath.join(options.stateRoot, "scratch", newOverleafId());
+    yield* Effect.promise(() => NodeFSP.mkdir(scratch, { recursive: true, mode: 0o700 }));
+    const written = yield* writeCapturedTree({
+      repo,
+      captured: captured.inventory.captured,
+      scratch,
+    }).pipe(
+      Effect.provideService(OverleafRepository, repos),
+      Effect.ensuring(Effect.promise(() => NodeFSP.rm(scratch, { recursive: true, force: true }))),
+    );
+    return written.tree;
+  });
+
+  /**
+   * Records definite outcomes in one replacement. An acceptance of the attempt built on
+   * the current base makes its candidate the base, overtaking any other unknown one.
+   */
+  const resolveAttempts = Effect.fn("OverleafCoordinator.resolveAttempts")(function* (
+    repo: string,
+    previous: OverleafConnectionDocument,
+    found: ReadonlyMap<number, Pick<OverleafPublicationAttempt, "outcome" | "evidence">>,
+  ) {
+    const adopting = previous.attempts.find(
+      (attempt) =>
+        attempt.outcome === "unknown" &&
+        attempt.baseGeneration === previous.base.generation &&
+        found.get(attempt.attemptNumber)?.outcome === "accepted",
+    );
+    const next: OverleafConnectionDocument = {
+      ...previous,
+      revision: previous.revision + 1,
+      attempts: previous.attempts.map((attempt) => {
+        const settled = found.get(attempt.attemptNumber);
+        if (settled !== undefined) return { ...attempt, ...settled };
+        return adopting !== undefined && attempt.outcome === "unknown"
+          ? {
+              ...attempt,
+              outcome: "superseded-unresolved" as const,
+              evidence: "superseded" as const,
+            }
+          : attempt;
+      }),
+      ...(adopting === undefined
+        ? {}
+        : {
+            base: {
+              commit: adopting.candidateCommit,
+              tree: adopting.candidateTree,
+              generation: previous.base.generation + 1,
+            },
+            priorBases:
+              previous.base.tree === null
+                ? previous.priorBases
+                : [
+                    {
+                      commit: previous.base.commit,
+                      tree: previous.base.tree,
+                      generation: previous.base.generation,
+                    },
+                    ...previous.priorBases,
+                  ].slice(0, PRIOR_BASE_LIMIT),
+          }),
+      updatedAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    yield* replaceWithPins(repo, previous, next);
+  });
+
+  /**
+   * Settles earlier sends against Overleaf's `head` by positive evidence only
+   * (contract section 6): its tree, its bounded history, or the candidate's
+   * reachability. Absent evidence leaves an attempt as it is. Never sends.
+   */
+  const checkAttempts = Effect.fn("OverleafCoordinator.checkAttempts")(function* (
+    repo: string,
+    connectionId: string,
+    head: { readonly commit: string; readonly tree: string },
+  ) {
+    let connection = yield* readActive(connectionId);
+    const open = connection.attempts.filter((attempt) =>
+      isOverleafAttemptUnresolved(attempt.outcome),
+    );
+    const evidence = new Map<number, "remote-head-tree" | "remote-history">();
+    for (const attempt of open) {
+      const found = yield* probeAcceptance({
+        repository: repos,
+        repo,
+        before: attempt.parentCommit,
+        head,
+        candidate: { commit: attempt.candidateCommit, tree: attempt.candidateTree },
+      });
+      // An unknown attempt is always on the current base; one that is not is left alone.
+      if (
+        found !== "unknown" &&
+        (attempt.outcome !== "unknown" || attempt.baseGeneration === connection.base.generation)
+      )
+        evidence.set(
+          attempt.attemptNumber,
+          found === "current-tree" ? "remote-head-tree" : "remote-history",
+        );
+    }
+    // Late evidence for an overtaken attempt never moves the base, so it is recorded
+    // on its own first; then the current attempt's acceptance moves it.
+    for (const overtaken of [true, false]) {
+      const found = new Map(
+        open
+          .filter(
+            (attempt) =>
+              (attempt.outcome === "superseded-unresolved") === overtaken &&
+              evidence.has(attempt.attemptNumber),
+          )
+          .map((attempt) => [
+            attempt.attemptNumber,
+            { outcome: "accepted" as const, evidence: evidence.get(attempt.attemptNumber)! },
+          ]),
+      );
+      if (found.size === 0) continue;
+      yield* resolveAttempts(repo, connection, found);
+      connection = yield* readActive(connectionId);
+    }
+    return {
+      accepted: [...evidence.keys()].sort((left, right) => left - right),
+      unresolved: open
+        .map((attempt) => attempt.attemptNumber)
+        .filter((number) => !evidence.has(number)),
+    } satisfies OverleafAttemptsChecked;
+  });
+
+  /**
+   * Sends an adopted apply's result to Overleaf, inside the confirm's application
+   * section so the checkout cannot change before the send (contract sections 5 and 6):
+   * gate, verify the folder, record the attempt, send once, record what came back.
+   */
+  const publish = Effect.fn("OverleafCoordinator.publish")(function* (input: {
+    readonly repo: string;
+    readonly connectionId: string;
+    readonly operationId: string;
+    readonly requestId: string;
+    readonly review: OverleafReview;
+    readonly adopted: OverleafAdopted;
+  }) {
+    const { repo, review } = input;
+    const connection = yield* readActive(input.connectionId);
+    // Only a whole apply with nothing left to review is sent. A late writer's bytes in
+    // a copy this apply kept may be newer work than the candidate.
+    const blocked =
+      input.adopted.outcome !== "complete" || connection.forcedConflicts.length > 0
+        ? ("attention" as const)
+        : connection.markerPaths.length > 0
+          ? ("markers" as const)
+          : connection.stagingPaths.length > 0
+            ? ("staging" as const)
+            : connection.retention.copies.some(
+                  (copy) =>
+                    copy.applyId === input.adopted.applyId &&
+                    (copy.state === "changed" || copy.state === "ambiguous"),
+                )
+              ? ("kept-copy-changed" as const)
+              : null;
+    if (blocked !== null) return { _tag: "blocked", reason: blocked } satisfies OverleafPublication;
+    const { candidateTree, remoteCommit, remoteTree } = review.binding;
+    if (candidateTree === remoteTree) return { _tag: "none" } satisfies OverleafPublication;
+    // The folder must hold exactly the candidate now, over the whole publication domain
+    // (contract section 5): every path the plan read or wrote, so an explicit deletion
+    // must still be absent. What is sent is built from the repository's objects, never
+    // read from the folder after this.
+    const plan = review.applyPlan;
+    const domain = [
+      ...new Set([
+        ...plan.base.keys(),
+        ...plan.remote.keys(),
+        ...plan.captured.keys(),
+        ...plan.target.keys(),
+      ]),
+    ];
+    if ((yield* capturedTree(repo, connection, domain)) !== candidateTree)
+      return { _tag: "not-verified" } satisfies OverleafPublication;
+    // A program still holding a file this apply replaced may have written into its kept
+    // copy since adoption: newer work than the candidate. Each copy is checked again; a
+    // change is recorded and stops the send.
+    const vault = yield* vaultOf(connection);
+    const rechecked = yield* Effect.forEach(connection.retention.copies, (copy) =>
+      copy.applyId !== input.adopted.applyId || copy.state !== "releasable"
+        ? Effect.succeed(copy)
+        : Effect.map(stampAt(NodePath.join(vault, copy.kept)), (now) =>
+            now === copy.stamp
+              ? copy
+              : { ...copy, state: now === null ? ("ambiguous" as const) : ("changed" as const) },
+          ),
+    );
+    if (rechecked.some((copy, index) => copy !== connection.retention.copies[index])) {
+      yield* replaceWithPins(repo, connection, {
+        ...connection,
+        revision: connection.revision + 1,
+        retention: { ...connection.retention, copies: rechecked },
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      return { _tag: "blocked", reason: "kept-copy-changed" } satisfies OverleafPublication;
+    }
+    const candidateCommit = yield* repos.commit({
+      repo,
+      tree: candidateTree,
+      parents: [remoteCommit],
+      message: "Sync from Scient",
+    });
+    const attemptNumber = connection.lastAttemptNumber + 1;
+    const recordedAt = DateTime.formatIso(yield* DateTime.now);
+    // Resolved history makes room for the new attempt; unresolved evidence never does.
+    const kept = [...connection.attempts];
+    while (kept.length >= ATTEMPT_LIMIT) {
+      const oldest = kept.findIndex((attempt) => !isOverleafAttemptUnresolved(attempt.outcome));
+      if (oldest === -1) break;
+      kept.splice(oldest, 1);
+    }
+    const recorded: OverleafConnectionDocument = {
+      ...connection,
+      revision: connection.revision + 1,
+      lastAttemptNumber: attemptNumber,
+      attempts: [
+        ...kept,
+        {
+          attemptNumber,
+          operationId: input.operationId,
+          requestId: input.requestId,
+          planDigest: review.digest,
+          authority: connection.binding,
+          branch: connection.remote.branch,
+          parentCommit: remoteCommit,
+          candidateCommit,
+          candidateTree,
+          baseGeneration: connection.base.generation,
+          outcome: "unknown",
+          evidence: null,
+          recordedAt,
+        },
+      ],
+      updatedAt: recordedAt,
+    };
+    // Pins first, then the record: no send unless both are durable.
+    yield* replaceWithPins(repo, connection, recorded);
+    yield* hook(options, "recorded");
+    // Send admission: a credential renewed since the review is not the one reviewed.
+    if (credentialEpoch() !== review.binding.credentialEpoch) {
+      yield* resolveAttempts(
+        repo,
+        recorded,
+        new Map([
+          [attemptNumber, { outcome: "not-sent" as const, evidence: "send-refused" as const }],
+        ]),
+      );
+      return { _tag: "not-sent", attemptNumber } satisfies OverleafPublication;
+    }
+    const pushed = yield* options
+      .pushRemote({ repo, connection: recorded, commit: candidateCommit })
+      // A push that failed partway may still have reached Overleaf.
+      .pipe(Effect.orElseSucceed((): PushOutcome => ({ _tag: "unknown", detail: "push failed" })));
+    yield* hook(options, "sent");
+    if (pushed._tag === "unknown")
+      return { _tag: "unknown", attemptNumber } satisfies OverleafPublication;
+    // If this write fails, the attempt stays unknown for recovery to settle; never resent.
+    yield* resolveAttempts(
+      repo,
+      recorded,
+      new Map([
+        [
+          attemptNumber,
+          pushed._tag === "accepted"
+            ? { outcome: "accepted" as const, evidence: "push-accepted" as const }
+            : { outcome: "out-of-date" as const, evidence: "push-out-of-date" as const },
+        ],
+      ]),
+    );
+    return { _tag: pushed._tag, attemptNumber } satisfies OverleafPublication;
+  });
+
   const prepare: OverleafCoordinator["Service"]["prepare"] = (input) =>
     reserve(input.connectionId, () =>
       Effect.gen(function* () {
@@ -838,6 +1208,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         }
         const repo = yield* repositoryFor(connection);
         const remote = yield* options.fetchRemote({ repo, connection });
+        // Earlier sends are settled against this head first: an acceptance moves the
+        // base the review is built on.
+        if (connection.attempts.some((attempt) => isOverleafAttemptUnresolved(attempt.outcome))) {
+          yield* checkAttempts(repo, input.connectionId, remote);
+          connection = yield* readActive(input.connectionId);
+        }
         const section = yield* barrier.current(folderOf(connection));
         const built = yield* buildReview({
           connection,
@@ -960,6 +1336,20 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "conflict-group",
                 });
+              // A sync with changes to send records one more attempt, which must fit beside
+              // every send still unresolved.
+              if (
+                review.binding.candidateTree !== review.binding.remoteTree &&
+                connection.attempts.filter((attempt) =>
+                  isOverleafAttemptUnresolved(attempt.outcome),
+                ).length +
+                  1 >
+                  UNRESOLVED_ATTEMPT_LIMIT
+              )
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "attempts",
+                });
               const sequence =
                 Math.max(0, ...connection.localSnapshots.map((snapshot) => snapshot.sequence)) + 1;
               const withLink: OverleafConnectionDocument = {
@@ -991,9 +1381,18 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               yield* replaceWithPins(repo, connection, withLink);
               linked = true;
               yield* hook(options, "linked");
+              const adopted = yield* runLinked(repo, withLink, review.applyPlan);
               return {
                 _tag: "applied" as const,
-                adopted: yield* runLinked(repo, withLink, review.applyPlan),
+                adopted,
+                publication: yield* publish({
+                  repo,
+                  connectionId: input.connectionId,
+                  operationId,
+                  requestId: input.requestId,
+                  review,
+                  adopted,
+                }),
               };
             }),
           );
@@ -1002,7 +1401,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           Effect.tap((done) =>
             finish(
               done._tag === "applied" ? "completed" : "failed",
-              done._tag === "applied" ? `applied-${done.adopted.outcome}` : done._tag,
+              done._tag === "applied"
+                ? `applied-${done.adopted.outcome}-${done.publication._tag}`
+                : done._tag,
             ),
           ),
         );
@@ -1011,7 +1412,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     );
 
   const recover: OverleafCoordinator["Service"]["recover"] = (input) =>
-    reserve(input.connectionId, () => recoverHeld(input.connectionId));
+    reserve(input.connectionId, () =>
+      Effect.gen(function* () {
+        const recovered = yield* recoverHeld(input.connectionId);
+        const connection = yield* readActive(input.connectionId);
+        if (!connection.attempts.some((attempt) => isOverleafAttemptUnresolved(attempt.outcome)))
+          return { ...recovered, attempts: { accepted: [], unresolved: [] } };
+        // Checking earlier sends is the one network read recovery makes; offline, they wait.
+        yield* store.admitWritable;
+        const repo = yield* repositoryFor(connection);
+        const head = yield* options.fetchRemote({ repo, connection }).pipe(Effect.option);
+        if (Option.isNone(head)) return { ...recovered, attempts: null };
+        return {
+          ...recovered,
+          attempts: yield* checkAttempts(repo, input.connectionId, head.value),
+        };
+      }),
+    );
 
   const vaultOf = (connection: OverleafConnectionDocument) =>
     store
