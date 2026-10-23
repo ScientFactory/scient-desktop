@@ -19,15 +19,15 @@ Two injected functions, like `fetchRemote` in 3b: `pushRemote({ repo, connection
 2. **Nothing to send.** When the candidate tree equals the fetched remote tree, the sync was incoming-only: `publication: none`.
 3. **Verify.** Capture the folder again, with the adopted managed and local-only paths and staging, and write its tree. It must equal the candidate tree, byte for byte and absence for absence. A difference (an edit since the apply) returns `not-verified`: the edit is a local change for the next review, and nothing is recorded or sent. The pinned candidate is built from the repository's objects, never from the folder after this point.
 4. **Commit and record.** Commit the candidate tree with the plan's fetched remote commit as its only parent. Then, in one replacement with pins first (`attempt/<n>/candidate`, `attempt/<n>/parent`), record attempt `n` as `unknown` on the adopted base generation. No send happens unless this write succeeds.
-5. **Send admission.** If the credential epoch changed since the review, record `not-sent` with `send-refused` evidence. The checkout cannot change: the section is still held.
-6. **Send** once, never forced.
+5. **Send admission**, after the application section is released: a short section of its own. If the checkout's epoch moved since verification (a pull, switch or restore ran), the checkout is suspended, or the credential epoch changed since the review, record `not-sent` with `send-refused` evidence. Changes after admission are later local changes and never alter what is sent.
+6. **Send** once, never forced, holding no section.
    - `accepted`: one replacement records `accepted` with `push-accepted` evidence and makes the candidate the base (generation + 1).
    - `out-of-date`: record `out-of-date`. The base stays the adopted one, and a new review is needed.
    - `unknown` (network, timeout, unrecognized output): the attempt stays `unknown`.
    - If the finalizing write fails, the durable `unknown` attempt remains for recovery to settle. It is never sent again.
 7. **Receipt.** The confirm receipt finishes with the publication category. A repeated request returns it, never another send.
 
-**The section is held through the send.** A pull or branch switch of the checkout waits for the push (bounded by the Git executor's limits). So the checkout the candidate describes cannot change between verification and sending.
+**The network is never awaited while holding the checkout** (contract section 9). Steps 1–4 run in the confirm's application section; the send runs after a short admission section, so a pull or branch switch never waits for Overleaf. #633 first held the section through the send; the follow-up corrects that before anything is mounted.
 
 ## Classification
 
