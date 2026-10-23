@@ -257,17 +257,22 @@ copies. It never publishes; step 4 continues from an adopted result.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
   selections and choices. Capture reads the base's paths, the managed paths and
-  every path in a forced conflict. A different digest is a stale review: the fresh one
-  is offered and nothing is applied. Before the applier runs, it records the
-  receipt, a local snapshot, the intent pin and `activeApply`, in that order.
+  every path in a forced conflict. A different digest is a stale review: the
+  fresh one is offered and nothing is applied. Before anything is written it
+  checks room:
+  for every kept copy the apply could add, and for every group an interruption
+  could leave as a forced conflict (at most 2,000 paths each). Then, before the
+  applier runs, it records the receipt, a local snapshot, the intent pin and
+  `activeApply`, in that order.
 - **Adoption** is one document replacement:
   - the base: a tree written from the applier's per-path base on the fetched
     remote commit, with the previous base moved into `priorBases`;
   - managed and local-only paths;
   - `forcedConflicts` (interrupted groups) and `markerPaths`;
   - kept copies, each with its place in the retention folder and a stamp (size
-    and change time) taken around a fresh read of its bytes. A copy that no
-    longer holds what the applier kept is recorded `changed`, never released;
+    and change time) taken around a fresh read of its bytes, from the file its
+    path still names. A copy that no longer holds what the applier kept is
+    recorded `changed`, never released;
   - `completedSyncCount`, which advances only on `complete`;
   - unknown publication attempts, which become `superseded-unresolved`;
   - the link, cleared.
@@ -281,12 +286,14 @@ copies. It never publishes; step 4 continues from an adopted result.
   folder always refuse it, including any the inline recovery finds.
 - **Listing kept copies** compares each copy by its stamp and reads again only
   a changed or extra version. One listing reads at most one inventory's total;
-  a file past that budget, or larger than a restore reads back, is listed
-  `unread`, which is not the same as gone.
+  a file past that budget, or larger than a restore reads (a kept copy or the
+  folder's file), is listed `unread`, which is not the same as gone.
 - **Restore.** It puts a kept copy back as a one-file `retained-restore` apply,
   only if both the copy and the folder's file still have the revisions the
-  request saw. It reads the copy once, never past 50 MiB. The file it replaces is kept (state `kept`), the base never
-  moves, and the restored bytes are a local change for the next review.
+  request saw. It reads the copy and the folder's file once each, never past
+  50 MiB; a folder file too large to read is never taken for an absent one.
+  The file it replaces is kept (state `kept`), the base never moves, and the
+  restored bytes are a local change for the next review.
 
 ## Remaining integration gates
 

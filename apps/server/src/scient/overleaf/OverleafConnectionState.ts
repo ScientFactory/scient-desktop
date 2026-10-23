@@ -19,7 +19,14 @@ const UNRESOLVED_ATTEMPT_LIMIT = 16;
 /** All attempts kept, resolved history included; resolved ones may be pruned. */
 const ATTEMPT_LIMIT = 64;
 const RETAINED_COPY_LIMIT = 4_096;
-const MANAGED_PATH_LIMIT = 2_000;
+/** Paths a connection can manage: Overleaf's file limit per project. */
+export const MANAGED_PATH_LIMIT = 2_000;
+/**
+ * Forced conflicts one record holds. Each change of a sync may be interrupted on
+ * its own, and a sync changes at most the files it captured and the files of its
+ * result, each within the managed-path limit.
+ */
+export const FORCED_CONFLICT_LIMIT = 2 * MANAGED_PATH_LIMIT;
 const RETENTION_PERIOD_MILLIS = 7 * 24 * 60 * 60 * 1_000;
 
 const Oid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u));
@@ -241,7 +248,7 @@ export const OverleafConnectionDocument = Schema.Struct({
   /** Groups an earlier apply left half done: forced conflicts until a reviewed resolution. */
   forcedConflicts: Schema.Array(
     Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  ).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ).check(Schema.isMaxLength(FORCED_CONFLICT_LIMIT)),
   /** Files where Scient wrote conflict material that may still be unresolved. */
   markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   /** The applier's structural source copies in the folder; never captured, never deleted automatically. */

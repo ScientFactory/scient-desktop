@@ -148,27 +148,15 @@ export interface ApplierHooks {
 function ownValue<T>(values: Readonly<Record<string, T>>, name: string): T | undefined {
   return Object.hasOwn(values, name) ? values[name] : undefined;
 }
-function storePlan(input: WorkspaceApplyPlan): StoredPlan {
-  const target = Object.fromEntries(
-    [...input.target].map(([name, file]) => [
-      name,
-      {
-        revision: bytesRevision(file.bytes),
-        contents: Buffer.from(file.bytes).toString("base64"),
-        executable: false,
-      },
-    ]),
-  );
-  for (const rename of input.renames)
-    if (
-      rename.from !== rename.to &&
-      manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to)
-    )
-      throw new Error("Alias-only renames need a separate manual rename before synchronization.");
+/**
+ * The plan's apply units, and the paths each one guards: what an interruption of
+ * that unit leaves behind as one forced conflict.
+ */
+function planUnits(input: WorkspaceApplyPlan, targetRevisions: ReadonlyMap<string, string>) {
   const changes: Array<Extract<FileChange, { path: string }>> = [
     ...new Set([...input.captured.keys(), ...input.target.keys()]),
   ]
-    .filter((name) => input.captured.get(name) !== ownValue(target, name)?.revision)
+    .filter((name) => input.captured.get(name) !== targetRevisions.get(name))
     .map((name) => ({
       kind: !input.captured.has(name) ? "added" : !input.target.has(name) ? "deleted" : "modified",
       path: name,
@@ -200,6 +188,33 @@ function storePlan(input: WorkspaceApplyPlan): StoredPlan {
     }
     return [...new Set([...unit, ...paths])];
   });
+  return { units, guards };
+}
+const targetRevisions = (plan: WorkspaceApplyPlan) =>
+  new Map([...plan.target].map(([name, file]) => [name, bytesRevision(file.bytes)]));
+/** Every group an interrupted apply of `plan` could leave as a forced conflict. */
+export const interruptibleGroups = (
+  plan: WorkspaceApplyPlan,
+): ReadonlyArray<ReadonlyArray<string>> => planUnits(plan, targetRevisions(plan)).guards;
+function storePlan(input: WorkspaceApplyPlan): StoredPlan {
+  const revisions = targetRevisions(input);
+  const target = Object.fromEntries(
+    [...input.target].map(([name, file]) => [
+      name,
+      {
+        revision: revisions.get(name)!,
+        contents: Buffer.from(file.bytes).toString("base64"),
+        executable: false,
+      },
+    ]),
+  );
+  for (const rename of input.renames)
+    if (
+      rename.from !== rename.to &&
+      manuscriptCollisionKey(rename.from) === manuscriptCollisionKey(rename.to)
+    )
+      throw new Error("Alias-only renames need a separate manual rename before synchronization.");
+  const { units, guards } = planUnits(input, revisions);
   return {
     base: Object.fromEntries(input.base),
     remote: Object.fromEntries(input.remote),

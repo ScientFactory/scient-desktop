@@ -660,6 +660,34 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     );
   });
 
+  it.live("refuses before writing a sync whose group could not be recorded if interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        // A rename is one group of two paths; here a forced conflict holds only one.
+        const w = yield* world({
+          synced: { "old.tex": "chapter text that moves" },
+          remote: { "new.tex": "chapter text that moves" },
+          limits: { conflictPaths: 1 },
+        });
+        const before = yield* w.connection;
+        const refused = yield* Effect.exit(w.sync());
+        expect(refused).toMatchObject(
+          Exit.fail(
+            expect.objectContaining({
+              _tag: "OverleafRetainedLimitError",
+              limit: "conflict-group",
+            }),
+          ),
+        );
+        const after = yield* w.connection;
+        expect(after.activeApply).toBeNull();
+        expect(after.base).toEqual(before.base);
+        expect(yield* read(w.folder, "old.tex")).toBe("chapter text that moves");
+        expect(yield* read(w.folder, "new.tex")).toBeNull();
+      }),
+    ),
+  );
+
   /** Syncs `main.tex` from A to B, then lists the copy of A that the sync kept. */
   const syncedThenListed = (at?: (point: Point) => Effect.Effect<void>) =>
     Effect.gen(function* () {
@@ -1017,13 +1045,96 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     );
   });
 
+  it.live("never releases a copy whose path was replaced while its file was read", () => {
+    let stateRoot = "";
+    let swapped = false;
+    let undo = () => {};
+    return run(
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.sync(() => undo()));
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          // When adoption first examines the kept copy's open file, the path is given
+          // to another file: the open one still reads as the unchanged copy of A.
+          at: (point) =>
+            point !== "applied" || swapped
+              ? Effect.void
+              : Effect.promise(async () => {
+                  const path = await firstKept(stateRoot);
+                  const probe = await NodeFSP.open(path, "r");
+                  const ino = (await probe.stat({ bigint: true })).ino;
+                  const prototype = Object.getPrototypeOf(probe) as { stat: typeof probe.stat };
+                  const stat = prototype.stat;
+                  await probe.close();
+                  undo = () => {
+                    prototype.stat = stat;
+                  };
+                  prototype.stat = async function (this: typeof probe, options) {
+                    const found = await stat.call(this, { bigint: true });
+                    if (!swapped && found.ino === ino) {
+                      swapped = true;
+                      undo();
+                      await NodeFSP.rename(path, `${path}-moved`);
+                      await NodeFSP.writeFile(path, "Z");
+                    }
+                    return stat.call(this, options);
+                  } as typeof probe.stat;
+                }),
+        });
+        stateRoot = w.stateRoot;
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        expect(swapped).toBe(true);
+        expect((yield* w.connection).retention.copies).toMatchObject([
+          { state: "changed", stamp: "0:0" },
+        ]);
+        expect(yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).toMatchObject([
+          { keptRevision: revision("Z"), unread: false },
+        ]);
+      }),
+    );
+  });
+
+  it.live("leaves a folder file past the read limit unread, in listing and restore", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          limits: { fileBytes: 2, listingBytes: 10 },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        yield* write(w.folder, { "main.tex": "LONG" });
+        const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(copy).toMatchObject({
+          keptRevision: revision("A"),
+          currentRevision: null,
+          unread: true,
+        });
+        // Neither "absent" nor the file's exact bytes lets a restore read past the limit.
+        for (const [attempt, currentRevision] of [null, revision("LONG")].entries())
+          expect(
+            yield* w.coordinator.restoreKept({
+              connectionId: CONNECTION,
+              requestId: `restore-${attempt}`,
+              applyId: copy!.applyId,
+              kept: copy!.kept,
+              keptRevision: copy!.keptRevision!,
+              currentRevision,
+            }),
+          ).toEqual({ _tag: "stale" });
+        expect(yield* read(w.folder, "main.tex")).toBe("LONG");
+      }),
+    ),
+  );
+
   it.live("lists a copy grown past what a restore reads back as unread, and restores none", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world({
           synced: { "main.tex": "A" },
           remote: { "main.tex": "B" },
-          limits: { keptFileBytes: 4 },
+          limits: { fileBytes: 4 },
         });
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
         const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
