@@ -540,6 +540,16 @@
   white-space: nowrap;
   color: var(--muted-foreground);
 }
+.scient-pdf-move-form {
+  width: 196px;
+  max-width: calc(100vw - 48px);
+}
+.scient-pdf-move-destination {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
 .scient-pdf-import-scope {
   display: flex;
   gap: 16px;

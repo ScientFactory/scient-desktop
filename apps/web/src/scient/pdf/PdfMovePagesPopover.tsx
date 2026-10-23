@@ -1,5 +1,12 @@
 import { useId, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "~/components/ui/button";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "~/components/ui/number-field";
 import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 import type { PdfEditSession } from "./pdfEditSession";
 
@@ -12,14 +19,13 @@ export function PdfMovePagesPopover(props: {
 }) {
   const snapshot = useSyncExternalStore(props.session.subscribe, props.session.getSnapshot);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(String(props.initialPage));
+  const [before, setBefore] = useState<number | null>(props.initialPage);
   const [error, setError] = useState<string | null>(null);
   const fieldId = useId();
   const hintId = useId();
   const pageCount = snapshot.frame.pages.length;
-  const before = Number(value);
   const valid =
-    value.trim() !== "" && Number.isInteger(before) && before >= 1 && before <= pageCount + 1;
+    before !== null && Number.isInteger(before) && before >= 1 && before <= pageCount + 1;
 
   return (
     <Popover
@@ -32,7 +38,6 @@ export function PdfMovePagesPopover(props: {
         anchor={props.anchor}
         side="right"
         align="start"
-        width="sm"
         padding="comfortable"
         initialFocus={inputRef}
         finalFocus={() =>
@@ -40,10 +45,10 @@ export function PdfMovePagesPopover(props: {
         }
       >
         <form
-          className="scient-pdf-insert-form"
+          className="scient-pdf-insert-form scient-pdf-move-form"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!valid || snapshot.busy) return;
+            if (!valid || before === null || snapshot.busy) return;
             const currentPages = new Set(snapshot.frame.pages.map((page) => page.id));
             if (!props.pages.every((id) => currentPages.has(id))) {
               setError("The PDF pages changed. Close this menu and choose the pages again.");
@@ -60,28 +65,41 @@ export function PdfMovePagesPopover(props: {
           <PopoverTitle size="compact">
             {props.pages.length === 1 ? "Move page" : `Move ${props.pages.length} pages`}
           </PopoverTitle>
-          <label htmlFor={fieldId}>Before page</label>
-          <input
-            ref={inputRef}
-            id={fieldId}
-            className="scient-pdf-import-range"
-            type="number"
-            min={1}
-            max={pageCount + 1}
-            step={1}
-            required
-            value={value}
-            disabled={snapshot.busy}
-            aria-invalid={!valid || undefined}
-            aria-describedby={hintId}
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => {
-              setValue(event.currentTarget.value);
-              setError(null);
-            }}
-          />
+          <div className="scient-pdf-move-destination">
+            <label htmlFor={fieldId}>Before page</label>
+            <NumberField
+              id={fieldId}
+              size="sm"
+              min={1}
+              max={pageCount + 1}
+              step={1}
+              smallStep={1}
+              largeStep={1}
+              allowOutOfRange
+              required
+              value={before}
+              disabled={snapshot.busy}
+              format={{ useGrouping: false }}
+              onValueChange={(value) => {
+                setBefore(value);
+                setError(null);
+              }}
+            >
+              <NumberFieldGroup>
+                <NumberFieldDecrement aria-label="Previous destination" />
+                <NumberFieldInput
+                  ref={inputRef}
+                  aria-invalid={!valid || undefined}
+                  aria-describedby={hintId}
+                  aria-valuetext={before === pageCount + 1 ? "End of document" : undefined}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <NumberFieldIncrement aria-label="Next destination" />
+              </NumberFieldGroup>
+            </NumberField>
+          </div>
           <p id={hintId} className="text-xs text-muted-foreground">
-            Use {pageCount + 1} to move to the end.
+            {before === pageCount + 1 ? "End of document" : `${pageCount + 1} = End`}
           </p>
           {error ? (
             <p role="alert" className="text-xs text-destructive">
