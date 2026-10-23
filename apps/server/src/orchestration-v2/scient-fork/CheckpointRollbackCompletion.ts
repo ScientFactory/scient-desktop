@@ -12,7 +12,9 @@ import type * as Ref from "effect/Ref";
 import type { OrchestratorDispatchError } from "../Orchestrator.ts";
 import type { ProjectionStoreV2Shape } from "../ProjectionStore.ts";
 
-export const dispatchCheckpointRollbackComplete = (
+export const dispatchCheckpointRollbackComplete = Effect.fn(
+  "CheckpointRollbackCompletion.dispatchCheckpointRollbackComplete",
+)(function* (
   deps: {
     readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThread">;
     readonly mapDispatchError: (
@@ -32,33 +34,30 @@ export const dispatchCheckpointRollbackComplete = (
     { readonly type: "checkpoint.rollback.complete" }
   >,
   events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-) =>
-  Effect.gen(function* () {
-    const { projectionStore, mapDispatchError, emit } = deps;
-    const thread = yield* projectionStore
-      .getThread(command.threadId)
-      .pipe(mapDispatchError(command));
-    // Superseded work may finish late; it cannot settle the newer request.
-    if (
-      thread.deletedAt !== null ||
-      thread.rollbackRequestId !== command.requestId ||
-      thread.rollbackCompletedRequestId === command.requestId
-    )
-      return;
-    const now = yield* DateTime.now;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.metadata-updated",
-      threadId: command.threadId,
-      providerInstanceId: thread.providerInstanceId,
-      occurredAt: now,
-      payload: {
-        ...thread,
-        rollbackCompletedRequestId: command.requestId,
-        rollbackFailure: null,
-        updatedAt: now,
-      },
-    });
+) {
+  const { projectionStore, mapDispatchError, emit } = deps;
+  const thread = yield* projectionStore.getThread(command.threadId).pipe(mapDispatchError(command));
+  // Superseded work may finish late; it cannot settle the newer request.
+  if (
+    thread.deletedAt !== null ||
+    thread.rollbackRequestId !== command.requestId ||
+    thread.rollbackCompletedRequestId === command.requestId
+  )
+    return;
+  const now = yield* DateTime.now;
+  yield* emit(
+    events,
+    command,
+  )({
+    type: "thread.metadata-updated",
+    threadId: command.threadId,
+    providerInstanceId: thread.providerInstanceId,
+    occurredAt: now,
+    payload: {
+      ...thread,
+      rollbackCompletedRequestId: command.requestId,
+      rollbackFailure: null,
+      updatedAt: now,
+    },
   });
+});

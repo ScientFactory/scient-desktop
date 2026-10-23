@@ -1,7 +1,8 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getProviderStatusBannerKey, ProviderStatusBanner } from "./ProviderStatusBanner";
 
@@ -51,8 +52,12 @@ function assistedCursorProvider(): ServerProvider {
 }
 
 describe("ProviderStatusBanner", () => {
-  it("renders an accessible dismiss control for provider warnings", () => {
-    const markup = renderMarkup(
+  it("renders an accessible dismiss control for provider warnings", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ProviderStatusBanner status={warningProvider()} onDismiss={() => {}} />,
     );
 
@@ -60,8 +65,12 @@ describe("ProviderStatusBanner", () => {
     expect(markup).toContain('aria-label="Dismiss Codex provider warning"');
   });
 
-  it("labels error dismiss controls with the correct severity", () => {
-    const markup = renderMarkup(
+  it("labels error dismiss controls with the correct severity", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ProviderStatusBanner
         status={{ ...warningProvider(), status: "error" }}
         onDismiss={() => {}}
@@ -71,7 +80,10 @@ describe("ProviderStatusBanner", () => {
     expect(markup).toContain('aria-label="Dismiss Codex provider error"');
   });
 
-  it("does not duplicate expected assisted installation and sign-in states", () => {
+  it("does not duplicate expected assisted installation and sign-in states", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const installed = assistedCursorProvider();
     const missing: ServerProvider = {
       ...installed,
@@ -108,10 +120,15 @@ describe("ProviderStatusBanner", () => {
     expect(getProviderStatusBannerKey(missing)).toBeNull();
     expect(getProviderStatusBannerKey(installing)).toBeNull();
     expect(getProviderStatusBannerKey(installed)).toBeNull();
-    expect(renderMarkup(<ProviderStatusBanner status={missing} onDismiss={() => {}} />)).toBe("");
+    expect(
+      await renderMarkup(_fixture, <ProviderStatusBanner status={missing} onDismiss={() => {}} />),
+    ).toBe("");
   });
 
-  it("keeps genuine assisted lifecycle failures visible", () => {
+  it("keeps genuine assisted lifecycle failures visible", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const installed = assistedCursorProvider();
     const failed: ServerProvider = {
       ...installed,
@@ -131,36 +148,76 @@ describe("ProviderStatusBanner", () => {
       },
     };
 
-    const markup = renderMarkup(<ProviderStatusBanner status={failed} onDismiss={() => {}} />);
+    const markup = await renderMarkup(
+      _fixture,
+      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+    );
     expect(getProviderStatusBannerKey(failed)).not.toBeNull();
     expect(markup).toContain("Cursor setup failed");
     expect(markup).toContain("Cursor verification failed.");
   });
 
-  it("keeps an unexplained provider failure visible when assisted sign-in is available", () => {
+  it("keeps an unexplained provider failure visible when assisted sign-in is available", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const failed: ServerProvider = {
       ...assistedCursorProvider(),
       auth: { status: "unknown", required: true },
       message: "Cursor provider failed its health check.",
     };
 
-    const markup = renderMarkup(<ProviderStatusBanner status={failed} onDismiss={() => {}} />);
+    const markup = await renderMarkup(
+      _fixture,
+      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+    );
     expect(getProviderStatusBannerKey(failed)).not.toBeNull();
     expect(markup).toContain("Cursor provider failed its health check.");
   });
 });
 
-const browserRoots: Root[] = [];
-afterEach(async () => {
-  for (const root of browserRoots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  for (const root of _fixture.root0.splice(0)) await act(async () => await root.unmount());
+  _clearOwnedDOM(_fixture);
   vi.unstubAllGlobals();
-});
-function renderMarkup(node: ReactNode): string {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
-  browserRoots.push(root);
-  act(() => root.render(node));
+}
+async function renderMarkup(_fixture: _Fixture, node: ReactNode): Promise<string> {
+  const container = document.body.appendChild(_ownDOM(_fixture, document.createElement("div")));
+  const root = _fixture.stack.use(
+    await _fixtureRender(null, { container: container, router: false }),
+  );
+  _fixture.root0.push(root);
+  await act(async () => await root.rerender(node));
   return container.innerHTML;
+}
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    stack,
+    cleanup,
+    root0: [] as Screen[],
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
 }

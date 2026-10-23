@@ -1,6 +1,6 @@
 import { Extension } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
-import { Plugin } from "@tiptap/pm/state";
+import { Plugin, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { observeResize } from "~/lib/observeResize";
 import {
@@ -488,6 +488,42 @@ function measured(
   );
 }
 
+function flowOffsetDecoration(from: number, to: number, offset: number) {
+  return Decoration.node(
+    from,
+    to,
+    {
+      style: `position:relative;top:${offset}px;--scient-paged-flow-offset:${offset}px;`,
+    },
+    { latexFlowOffset: offset },
+  );
+}
+
+function mapPagedDecorations(previous: DecorationSet, tr: Transaction) {
+  const removed = new Set<unknown>();
+  const mapped = previous.map(tr.mapping, tr.doc, {
+    onRemove: (spec) => {
+      if (typeof spec.latexFlowOffset === "number") removed.add(spec);
+    },
+  });
+  if (!removed.size) return mapped;
+  // A split or join invalidates the old node bounds, not its retained paragraph's offset.
+  const restored = previous
+    .find(undefined, undefined, (spec) => removed.has(spec))
+    .flatMap((decoration) => {
+      const offset: unknown = decoration.spec.latexFlowOffset;
+      const original = tr.before.nodeAt(decoration.from);
+      const from = tr.mapping.mapResult(decoration.from, 1);
+      if (typeof offset !== "number" || from.deleted || original?.type.name !== "paragraph")
+        return [];
+      const node = tr.doc.nodeAt(from.pos);
+      return node?.type === original.type
+        ? [flowOffsetDecoration(from.pos, from.pos + node.nodeSize, offset)]
+        : [];
+    });
+  return mapped.add(tr.doc, restored);
+}
+
 /** Page sheets are outside ProseMirror; one live model owns every visible fragment. */
 export const LatexPagedPresentation = Extension.create<{ source: () => string }>({
   name: "latexPagedPresentation",
@@ -508,7 +544,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
               (tr.docChanged
                 ? {
                     ...previous,
-                    decorations: previous.decorations.map(tr.mapping, tr.doc),
+                    decorations: mapPagedDecorations(previous.decorations, tr),
                     geometry: previous.geometry.map((part) => ({
                       ...part,
                       from: tr.mapping.map(part.from),
@@ -1312,9 +1348,11 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                   // skips. Move this block's ink instead, leaving browser flow measurable.
                   origin.shift = gapHeight;
                   decorations.push(
-                    Decoration.node(entry.position, entry.position + entry.node.nodeSize, {
-                      style: `position:relative;top:${gapHeight}px;--scient-paged-flow-offset:${gapHeight}px;`,
-                    }),
+                    flowOffsetDecoration(
+                      entry.position,
+                      entry.position + entry.node.nodeSize,
+                      gapHeight,
+                    ),
                   );
                 } else if (gapHeight > 1 && part === entry.measurement.parts[0]) {
                   // Space before an entire table belongs outside its caption and
@@ -1655,6 +1693,10 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             progress.pending = generation !== epoch || refresh;
             view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
           }
+          const canMeasure = () =>
+            view.dom.isConnected &&
+            view.dom.offsetWidth > 0 &&
+            view.dom.getBoundingClientRect().width > 0;
           function start() {
             frame = 0;
             if (disposed || view.isDestroyed) return;
@@ -1666,7 +1708,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             // Loading mutates the document every frame. Wait before requesting
             // geometry, otherwise the waiting loop lays out each growing slice.
             // Width observation resumes hidden panes and DOM-only tests.
-            if (!view.dom.offsetWidth || !view.dom.getBoundingClientRect().width) return;
+            if (!canMeasure()) return;
             const generation = epoch;
             const iterator = work(view.state.doc, generation);
             running = true;
@@ -1677,6 +1719,15 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 iterator.return();
                 running = false;
                 start();
+                return;
+              }
+              // React can detach the paper before Tiptap destroys its view. Hidden panes
+              // also lose geometry between yields; width observation starts a fresh pass.
+              if (!canMeasure()) {
+                iterator.return();
+                running = false;
+                // A hide/show within one rendering update may not emit a width change.
+                schedule();
                 return;
               }
               if (!iterator.next().done) frame = requestAnimationFrame(resume);

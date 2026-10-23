@@ -42,15 +42,16 @@ const PreflightChild = Context.Reference<PreflightChildSlot | undefined>(
 );
 
 /** Lets a timed-out preflight force-kill the helper it started. */
-export const recordAntigravityPreflightChild = (child: ChildProcessSpawner.ChildProcessHandle) =>
-  Effect.gen(function* () {
-    const slot = yield* PreflightChild;
-    if (slot) slot.current = child;
-  });
+export const recordAntigravityPreflightChild = Effect.fn(
+  "antigravityBrowserHelperPreflight.recordAntigravityPreflightChild",
+)(function* (child: ChildProcessSpawner.ChildProcessHandle) {
+  const slot = yield* PreflightChild;
+  if (slot) slot.current = child;
+});
 
 /** Interrupts a timed-out preflight in the background, never waiting without a bound. */
-const abandonPreflight = (fiber: Fiber.Fiber<unknown, unknown>, slot: PreflightChildSlot) =>
-  Effect.gen(function* () {
+const abandonPreflight = Effect.fn("antigravityBrowserHelperPreflight.abandonPreflight")(
+  function* (fiber: Fiber.Fiber<unknown, unknown>, slot: PreflightChildSlot) {
     const settled = yield* Fiber.interrupt(fiber).pipe(Effect.timeoutOption(TEARDOWN_BOUND));
     if (Option.isSome(settled)) return;
     if (slot.current) {
@@ -59,7 +60,9 @@ const abandonPreflight = (fiber: Fiber.Fiber<unknown, unknown>, slot: PreflightC
         .pipe(Effect.timeoutOption(TEARDOWN_BOUND), Effect.ignore);
     }
     yield* Effect.logDebug("The Antigravity browser-helper preflight teardown did not finish.");
-  }).pipe(Effect.forkDetach, Effect.asVoid);
+  },
+  (effect) => effect.pipe(Effect.forkDetach, Effect.asVoid),
+);
 
 /**
  * A digest of the executable and every spelling of the startup variables, so the

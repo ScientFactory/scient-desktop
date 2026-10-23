@@ -245,96 +245,93 @@ export function makeAcpRegistryOwnership(catalog: AcpRegistryOwnershipInput) {
   });
 
   /** Validates every ownership proof, then removes the agent's app-owned installations. */
-  const removeOwnedInstallations = (
+  const removeOwnedInstallations = Effect.fn("ownership.removeOwnedInstallations")(function* (
     safeAgentId: string,
     agentRoot: string,
     existed: boolean,
     input: { readonly expectedInstallation?: ProviderRegistryInstallation },
-  ) =>
-    Effect.gen(function* () {
-      const packages = yield* readOwnedPackageReceipts(safeAgentId);
-      if (!existed) {
-        if (input.expectedInstallation)
-          return yield* new AcpRegistryError({
-            reason: "install_failed",
-            detail:
-              "The ACP Registry installation changed before removal. Review the action again.",
-          });
-        for (const owned of packages) yield* fileSystem.remove(owned.receiptPath, { force: true });
-        return { agentId: safeAgentId, removed: false };
-      }
-      const binaryRoots: string[] = [];
-      for (const version of yield* fileSystem.readDirectory(agentRoot)) {
-        const versionRoot = path.join(agentRoot, version);
-        if ((yield* fileSystem.stat(versionRoot)).type !== "Directory") continue;
-        yield* assertOwnedInstallRoot(versionRoot);
-        for (const entry of yield* fileSystem.readDirectory(versionRoot)) {
-          if (!/^(?:darwin|linux|windows)-(?:aarch64|x86_64)$/u.test(entry)) continue;
-          const root = path.join(versionRoot, entry);
-          yield* assertOwnedInstallRoot(root);
-          binaryRoots.push(root);
-        }
-      }
-      if (input.expectedInstallation) {
-        const expected = input.expectedInstallation;
-        const registry = yield* loadCachedRegistry();
-        const agent = registry.agents.find(
-          (candidate) => candidate.id === safeAgentId && candidate.version === expected.version,
-        );
-        const target =
-          platformTarget === undefined ? undefined : agent?.distribution.binary?.[platformTarget];
-        const currentBinary = agent && target ? binaryPaths(agent, target) : undefined;
-        const binaryFacts =
-          expected.distribution === "binary" &&
-          agent &&
-          currentBinary &&
-          binaryRoots.includes(currentBinary.installRoot)
-            ? yield* binaryInstallationFacts(agent, currentBinary)
-            : undefined;
-        const matching =
-          expected.agentId === safeAgentId &&
-          (yield* fileSystem.exists(expected.executablePath)) &&
-          (expected.distribution === "binary"
-            ? binaryRoots.includes(expected.installRoot) &&
-              currentBinary?.installRoot === expected.installRoot &&
-              currentBinary.executablePath === expected.executablePath &&
-              binaryFacts?.installer === expected.installer
-            : packages.some(
-                ({ receipt, installRoot }) =>
-                  installRoot === expected.installRoot &&
-                  receipt.agentVersion === expected.version &&
-                  receipt.distribution === expected.distribution &&
-                  receipt.managerPath === expected.installer &&
-                  receipt.executablePath === expected.executablePath &&
-                  receipt.packageSpec === expected.packageSpec &&
-                  receipt.packageVersion === expected.packageVersion,
-              ));
-        if (!matching)
-          return yield* new AcpRegistryError({
-            reason: "install_failed",
-            detail:
-              "The ACP Registry installation changed before removal. Review the action again.",
-          });
-      }
-      // Validate every ownership proof before removing any bytes. Package-manager
-      // executables and credentials outside these private roots are never touched.
-      let removed = false;
-      for (const root of new Set([...binaryRoots, ...packages.map((owned) => owned.installRoot)])) {
-        if (!(yield* fileSystem.exists(root))) continue;
-        yield* fileSystem.remove(root, { recursive: true });
-        removed = true;
-      }
+  ) {
+    const packages = yield* readOwnedPackageReceipts(safeAgentId);
+    if (!existed) {
+      if (input.expectedInstallation)
+        return yield* new AcpRegistryError({
+          reason: "install_failed",
+          detail: "The ACP Registry installation changed before removal. Review the action again.",
+        });
       for (const owned of packages) yield* fileSystem.remove(owned.receiptPath, { force: true });
-      for (const version of yield* fileSystem.readDirectory(agentRoot)) {
-        const versionRoot = path.join(agentRoot, version);
-        if ((yield* fileSystem.stat(versionRoot)).type !== "Directory") continue;
-        if ((yield* fileSystem.readDirectory(versionRoot)).length === 0)
-          yield* fileSystem.remove(versionRoot, { recursive: true });
+      return { agentId: safeAgentId, removed: false };
+    }
+    const binaryRoots: string[] = [];
+    for (const version of yield* fileSystem.readDirectory(agentRoot)) {
+      const versionRoot = path.join(agentRoot, version);
+      if ((yield* fileSystem.stat(versionRoot)).type !== "Directory") continue;
+      yield* assertOwnedInstallRoot(versionRoot);
+      for (const entry of yield* fileSystem.readDirectory(versionRoot)) {
+        if (!/^(?:darwin|linux|windows)-(?:aarch64|x86_64)$/u.test(entry)) continue;
+        const root = path.join(versionRoot, entry);
+        yield* assertOwnedInstallRoot(root);
+        binaryRoots.push(root);
       }
-      if ((yield* fileSystem.readDirectory(agentRoot)).length === 0)
-        yield* fileSystem.remove(agentRoot, { recursive: true });
-      return { agentId: safeAgentId, removed };
-    });
+    }
+    if (input.expectedInstallation) {
+      const expected = input.expectedInstallation;
+      const registry = yield* loadCachedRegistry();
+      const agent = registry.agents.find(
+        (candidate) => candidate.id === safeAgentId && candidate.version === expected.version,
+      );
+      const target =
+        platformTarget === undefined ? undefined : agent?.distribution.binary?.[platformTarget];
+      const currentBinary = agent && target ? binaryPaths(agent, target) : undefined;
+      const binaryFacts =
+        expected.distribution === "binary" &&
+        agent &&
+        currentBinary &&
+        binaryRoots.includes(currentBinary.installRoot)
+          ? yield* binaryInstallationFacts(agent, currentBinary)
+          : undefined;
+      const matching =
+        expected.agentId === safeAgentId &&
+        (yield* fileSystem.exists(expected.executablePath)) &&
+        (expected.distribution === "binary"
+          ? binaryRoots.includes(expected.installRoot) &&
+            currentBinary?.installRoot === expected.installRoot &&
+            currentBinary.executablePath === expected.executablePath &&
+            binaryFacts?.installer === expected.installer
+          : packages.some(
+              ({ receipt, installRoot }) =>
+                installRoot === expected.installRoot &&
+                receipt.agentVersion === expected.version &&
+                receipt.distribution === expected.distribution &&
+                receipt.managerPath === expected.installer &&
+                receipt.executablePath === expected.executablePath &&
+                receipt.packageSpec === expected.packageSpec &&
+                receipt.packageVersion === expected.packageVersion,
+            ));
+      if (!matching)
+        return yield* new AcpRegistryError({
+          reason: "install_failed",
+          detail: "The ACP Registry installation changed before removal. Review the action again.",
+        });
+    }
+    // Validate every ownership proof before removing any bytes. Package-manager
+    // executables and credentials outside these private roots are never touched.
+    let removed = false;
+    for (const root of new Set([...binaryRoots, ...packages.map((owned) => owned.installRoot)])) {
+      if (!(yield* fileSystem.exists(root))) continue;
+      yield* fileSystem.remove(root, { recursive: true });
+      removed = true;
+    }
+    for (const owned of packages) yield* fileSystem.remove(owned.receiptPath, { force: true });
+    for (const version of yield* fileSystem.readDirectory(agentRoot)) {
+      const versionRoot = path.join(agentRoot, version);
+      if ((yield* fileSystem.stat(versionRoot)).type !== "Directory") continue;
+      if ((yield* fileSystem.readDirectory(versionRoot)).length === 0)
+        yield* fileSystem.remove(versionRoot, { recursive: true });
+    }
+    if ((yield* fileSystem.readDirectory(agentRoot)).length === 0)
+      yield* fileSystem.remove(agentRoot, { recursive: true });
+    return { agentId: safeAgentId, removed };
+  });
 
   /** Keeps registry errors and wraps any other failure as an install failure. */
   const asOwnedInstallationError = (action: "prepare" | "inspect" | "resolve" | "remove") =>

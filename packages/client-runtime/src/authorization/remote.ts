@@ -15,11 +15,7 @@ import {
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
 
-export {
-  RemoteEnvironmentAuthInvalidJsonError,
-  RemoteEnvironmentAuthTimeoutError,
-  RemoteEnvironmentAuthUndeclaredStatusError,
-} from "../rpc/http.ts";
+export { RemoteEnvironmentAuthUndeclaredStatusError } from "../rpc/http.ts";
 export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
@@ -37,11 +33,13 @@ const clientMetadataTokenExchangeFields = (
   };
 };
 
+// SCIENT-FORK:START — connection metadata never collects account or analytics device identities.
 export const appendClientConnectionParams = (
   url: URL,
   clientMetadata: AuthClientPresentationMetadata | undefined,
   connectionMethod?: ClientConnectionMethod,
 ): void => {
+  // SCIENT-FORK:END
   if (clientMetadata?.surface) {
     url.searchParams.set("clientSurface", clientMetadata.surface);
   }
@@ -217,7 +215,9 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
     url.pathname = "/ws";
   }
   url.searchParams.set("wsTicket", issued.ticket);
+  // SCIENT-FORK:START — authenticating a socket does not collect telemetry identities.
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
+  // SCIENT-FORK:END
   return url.toString();
 });
 
@@ -243,6 +243,8 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     url.pathname = "/ws";
   }
   url.searchParams.set("wsTicket", issued.ticket);
+  // SCIENT-FORK:START — authenticating a socket does not collect telemetry identities.
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
+  // SCIENT-FORK:END
   return url.toString();
 });

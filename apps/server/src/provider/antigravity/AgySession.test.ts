@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Real timers coordinate native child-process exits.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Tests observe native child-process exits.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   buildAgySessionArgs,
@@ -34,8 +35,6 @@ function makeMockBinary(): { readonly directory: string; readonly binaryPath: st
 }
 
 const TestLayer = Layer.mergeAll(NodeServices.layer);
-const waitReal = (milliseconds: number) =>
-  Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
 it("builds the documented persistent stream-json command", () => {
   assert.deepStrictEqual(
@@ -180,20 +179,40 @@ it.layer(TestLayer)("AgySession", (it) => {
         Effect.sync(() => NodeFS.rmSync(mock.directory, { recursive: true, force: true })),
       );
       const unexpectedExits = yield* Ref.make(0);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let exitObserver: Fiber.Fiber<unknown, unknown> | undefined;
       const session = yield* makeAgySession({
         binaryPath: mock.binaryPath,
         cwd: process.cwd(),
         environment: process.env,
         onUnexpectedExit: () => Ref.update(unexpectedExits, (count) => count + 1),
-      });
-      const hung = yield* session.prompt({ text: "HANG" }).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((child) => ({
+                ...child,
+                exitCode: Effect.withFiber((fiber) => {
+                  exitObserver = fiber;
+                  return child.exitCode;
+                }),
+              })),
+            ),
+        }),
+      );
+      // startImmediately runs the prompt synchronously through its active-turn
+      // registration, so the second prompt deterministically observes a busy session.
+      const hung = yield* session
+        .prompt({ text: "HANG" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
       const concurrent = yield* Effect.flip(session.prompt({ text: "second" }));
       assert.strictEqual(concurrent.stage, "concurrent");
       yield* session.cancel;
       const cancelled = yield* Fiber.join(hung);
       assert.strictEqual(cancelled.status, "cancelled");
-      yield* waitReal(50);
+      if (!exitObserver) return yield* Effect.die("Missing native exit observer");
+      yield* Fiber.await(exitObserver);
       assert.strictEqual(yield* Ref.get(unexpectedExits), 0);
       const closed = yield* Effect.flip(session.prompt({ text: "after cancellation" }));
       assert.strictEqual(closed.stage, "closed");

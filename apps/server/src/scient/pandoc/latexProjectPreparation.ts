@@ -192,230 +192,231 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
       });
     }
   };
-  const resolve = (target: string, directory: string, extensions: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (!SAFE_TARGET.test(target)) return { ok: false, reason: "unavailable" } as const;
-      if (path.isAbsolute(target) || /^[A-Za-z]:/u.test(target)) {
-        return { ok: false, reason: "outside-project" } as const;
+  const resolve = Effect.fn("latexProjectPreparation.resolve")(function* (
+    target: string,
+    directory: string,
+    extensions: ReadonlyArray<string>,
+  ) {
+    if (!SAFE_TARGET.test(target)) return { ok: false, reason: "unavailable" } as const;
+    if (path.isAbsolute(target) || /^[A-Za-z]:/u.test(target)) {
+      return { ok: false, reason: "outside-project" } as const;
+    }
+    let reason: Unresolved = "unavailable";
+    for (const ext of extensions) {
+      const name = ext && !target.toLowerCase().endsWith(ext) ? `${target}${ext}` : target;
+      const candidate = path.resolve(directory, name);
+      if (!inside(path, workspace, candidate)) {
+        reason = "outside-project";
+        continue;
       }
-      let reason: Unresolved = "unavailable";
-      for (const ext of extensions) {
-        const name = ext && !target.toLowerCase().endsWith(ext) ? `${target}${ext}` : target;
-        const candidate = path.resolve(directory, name);
-        if (!inside(path, workspace, candidate)) {
-          reason = "outside-project";
-          continue;
-        }
-        const real = yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
-        if (real === null) continue;
-        if (!inside(path, realWorkspace, real)) {
-          reason = "outside-project";
-          continue;
-        }
-        const stat = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
-        if (stat?.type === "File") {
-          return {
-            ok: true,
-            lexical: candidate,
-            checked: checkedFileIdentity(real, stat),
-          } as const;
-        }
+      const real = yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
+      if (real === null) continue;
+      if (!inside(path, realWorkspace, real)) {
+        reason = "outside-project";
+        continue;
       }
-      return { ok: false, reason } as const;
-    });
+      const stat = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
+      if (stat?.type === "File") {
+        return {
+          ok: true,
+          lexical: candidate,
+          checked: checkedFileIdentity(real, stat),
+        } as const;
+      }
+    }
+    return { ok: false, reason } as const;
+  });
 
   /** Reads a resolved file only if it is still the file `resolve` checked. */
-  const read = (checked: CheckedFile, maxBytes: number) =>
-    Effect.gen(function* () {
-      const verified = yield* readVerifiedWorkspaceFile(checked, realWorkspace, platform, maxBytes);
-      if (verified._tag !== "unsupported-platform") return verified;
-      if (shown === undefined || shownReal === null || checked.canonicalPath !== shownReal) {
-        return yield* new LatexPreparationError({ message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE });
-      }
-      // Bytes equal to the editor's saved revision show nothing the user did not already have.
-      const capped = yield* readCappedFile(checked, maxBytes);
-      return capped._tag === "bytes" && sha256Digest(capped.bytes) !== shown.revision
-        ? ({ _tag: "unreadable" } as const)
-        : capped;
-    });
+  const read = Effect.fn("latexProjectPreparation.read")(function* (
+    checked: CheckedFile,
+    maxBytes: number,
+  ) {
+    const verified = yield* readVerifiedWorkspaceFile(checked, realWorkspace, platform, maxBytes);
+    if (verified._tag !== "unsupported-platform") return verified;
+    if (shown === undefined || shownReal === null || checked.canonicalPath !== shownReal) {
+      return yield* new LatexPreparationError({ message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE });
+    }
+    // Bytes equal to the editor's saved revision show nothing the user did not already have.
+    const capped = yield* readCappedFile(checked, maxBytes);
+    return capped._tag === "bytes" && sha256Digest(capped.bytes) !== shown.revision
+      ? ({ _tag: "unreadable" } as const)
+      : capped;
+  });
   const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
-  const flatten = (
+  const flatten = Effect.fn("latexProjectPreparation.flatten")(function* (
     checked: CheckedFile,
     depth: number,
     stack: ReadonlyArray<string>,
     isSubfile = false,
-  ): Effect.Effect<string, PlatformError.PlatformError | LatexPreparationError> =>
-    Effect.gen(function* () {
-      const file = checked.canonicalPath;
-      if (depth > MAX_DEPTH || files.size >= MAX_FILES || stack.includes(file)) {
-        warn("A LaTeX include exceeded the depth, file-count, or cycle limit.");
-        return "\\emph{[Unresolved include]}";
-      }
-      const tooLarge = () =>
-        new LatexPreparationError({ message: "LaTeX project exceeds the 20 MB source limit." });
-      const budget = MAX_SOURCE_BYTES - totalBytes;
-      totalBytes += checked.size;
-      if (checked.size > budget) return yield* tooLarge();
-      files.add(file);
-      const contents = yield* read(checked, budget);
-      if (contents._tag === "too-large") return yield* tooLarge();
-      if (contents._tag !== "bytes") {
-        return yield* new LatexPreparationError({ message: LATEX_CHANGED_MESSAGE });
-      }
-      let source = decode(contents.bytes);
-      if (isSubfile && /\\documentclass\b/u.test(source)) {
-        const body = /\\begin\s*\{document\}([\s\S]*?)\\end\s*\{document\}/u.exec(source);
-        if (body) source = body[1] ?? "";
-      }
-      const edits: Replacement[] = [];
-      const commands = yield* Effect.try({
-        try: () => macros(source),
-        catch: () => new LatexPreparationError({ message: "LaTeX source could not be parsed." }),
+  ): Effect.fn.Return<string, PlatformError.PlatformError | LatexPreparationError> {
+    const file = checked.canonicalPath;
+    if (depth > MAX_DEPTH || files.size >= MAX_FILES || stack.includes(file)) {
+      warn("A LaTeX include exceeded the depth, file-count, or cycle limit.");
+      return "\\emph{[Unresolved include]}";
+    }
+    const tooLarge = () =>
+      new LatexPreparationError({ message: "LaTeX project exceeds the 20 MB source limit." });
+    const budget = MAX_SOURCE_BYTES - totalBytes;
+    totalBytes += checked.size;
+    if (checked.size > budget) return yield* tooLarge();
+    files.add(file);
+    const contents = yield* read(checked, budget);
+    if (contents._tag === "too-large") return yield* tooLarge();
+    if (contents._tag !== "bytes") {
+      return yield* new LatexPreparationError({ message: LATEX_CHANGED_MESSAGE });
+    }
+    let source = decode(contents.bytes);
+    if (isSubfile && /\\documentclass\b/u.test(source)) {
+      const body = /\\begin\s*\{document\}([\s\S]*?)\\end\s*\{document\}/u.exec(source);
+      if (body) source = body[1] ?? "";
+    }
+    const edits: Replacement[] = [];
+    const commands = yield* Effect.try({
+      try: () => macros(source),
+      catch: () => new LatexPreparationError({ message: "LaTeX source could not be parsed." }),
+    });
+    macroCount += commands.length;
+    if (macroCount > 8_192) {
+      return yield* new LatexPreparationError({
+        message: "LaTeX project has too many resource commands.",
       });
-      macroCount += commands.length;
-      if (macroCount > 8_192) {
-        return yield* new LatexPreparationError({
-          message: "LaTeX project has too many resource commands.",
-        });
+    }
+    for (const macro of commands) {
+      let argumentOffset = macro.end;
+      if (macro.name === "includegraphics") {
+        while (/\s/u.test(source[argumentOffset] ?? "")) argumentOffset++;
+        if (source[argumentOffset] === "[") {
+          const end = source.indexOf("]", argumentOffset + 1);
+          if (end !== -1) argumentOffset = end + 1;
+        }
       }
-      for (const macro of commands) {
-        let argumentOffset = macro.end;
-        if (macro.name === "includegraphics") {
-          while (/\s/u.test(source[argumentOffset] ?? "")) argumentOffset++;
-          if (source[argumentOffset] === "[") {
-            const end = source.indexOf("]", argumentOffset + 1);
-            if (end !== -1) argumentOffset = end + 1;
+      const arg = braced(source, argumentOffset);
+      if (macro.name === "graphicspath") {
+        if (arg) {
+          for (const match of arg.text.matchAll(/\{([^{}]*)\}/gu)) {
+            if (match[1] && graphicPaths.length < 32) graphicPaths.push(match[1]);
           }
+          edits.push({ start: macro.start, end: arg.end, text: "" });
         }
-        const arg = braced(source, argumentOffset);
-        if (macro.name === "graphicspath") {
-          if (arg) {
-            for (const match of arg.text.matchAll(/\{([^{}]*)\}/gu)) {
-              if (match[1] && graphicPaths.length < 32) graphicPaths.push(match[1]);
-            }
-            edits.push({ start: macro.start, end: arg.end, text: "" });
+        continue;
+      }
+      if (
+        macro.name === "bibliography" ||
+        macro.name === "addbibresource" ||
+        macro.name === "addglobalbib"
+      ) {
+        if (arg) {
+          for (const target of arg.text
+            .split(",")
+            .map((part) => part.trim())
+            .slice(0, 16)) {
+            const result = yield* resolve(target, baseDirectory, [".bib", ""]);
+            if (!result.ok) {
+              warn(
+                result.reason === "outside-project"
+                  ? "A bibliography outside the project folder was omitted."
+                  : "A bibliography that could not be found was omitted.",
+              );
+            } else if (
+              result.checked.size <= MAX_BIB_BYTES &&
+              bibliography.length < 16 &&
+              bibliographyBytes + result.checked.size <= MAX_BIB_BYTES
+            ) {
+              const contents = yield* read(result.checked, MAX_BIB_BYTES - bibliographyBytes);
+              if (contents._tag === "bytes") {
+                bibliography.push({ contents: decode(contents.bytes) });
+                bibliographyBytes += contents.bytes.byteLength;
+              } else warn("A bibliography changed or exceeded the 4 MB limit and was omitted.");
+            } else warn("A bibliography over the 4 MB or 16-file limit was omitted.");
           }
-          continue;
+          edits.push({ start: macro.start, end: arg.end, text: "" });
+        } else {
+          warn("A nonliteral bibliography declaration was omitted.");
+          edits.push({ start: macro.start, end: macro.end, text: "" });
         }
-        if (
-          macro.name === "bibliography" ||
-          macro.name === "addbibresource" ||
-          macro.name === "addglobalbib"
-        ) {
-          if (arg) {
-            for (const target of arg.text
-              .split(",")
-              .map((part) => part.trim())
-              .slice(0, 16)) {
-              const result = yield* resolve(target, baseDirectory, [".bib", ""]);
-              if (!result.ok) {
-                warn(
-                  result.reason === "outside-project"
-                    ? "A bibliography outside the project folder was omitted."
-                    : "A bibliography that could not be found was omitted.",
-                );
-              } else if (
-                result.checked.size <= MAX_BIB_BYTES &&
-                bibliography.length < 16 &&
-                bibliographyBytes + result.checked.size <= MAX_BIB_BYTES
-              ) {
-                const contents = yield* read(result.checked, MAX_BIB_BYTES - bibliographyBytes);
-                if (contents._tag === "bytes") {
-                  bibliography.push({ contents: decode(contents.bytes) });
-                  bibliographyBytes += contents.bytes.byteLength;
-                } else warn("A bibliography changed or exceeded the 4 MB limit and was omitted.");
-              } else warn("A bibliography over the 4 MB or 16-file limit was omitted.");
-            }
-            edits.push({ start: macro.start, end: arg.end, text: "" });
-          } else {
-            warn("A nonliteral bibliography declaration was omitted.");
-            edits.push({ start: macro.start, end: macro.end, text: "" });
-          }
-          continue;
-        }
-        if (macro.name === "includegraphics") {
-          const target = arg?.text.trim() ?? "";
-          let resolved: Effect.Success<ReturnType<typeof resolve>> = {
-            ok: false,
-            reason: "unavailable",
-          };
-          let outside = false;
-          for (const directory of graphicPaths) {
-            resolved = yield* resolve(target, path.resolve(baseDirectory, directory), [
-              "",
-              ".png",
-              ".jpg",
-              ".jpeg",
-              ".gif",
-              ".svg",
-            ]);
-            if (resolved.ok) break;
-            outside ||= resolved.reason === "outside-project";
-          }
-          if (arg && resolved.ok && resolved.checked.size <= 25 * 1024 * 1024) {
-            const relative = path
-              .relative(baseDirectory, resolved.lexical)
-              .split(path.sep)
-              .join("/");
-            imageReferences.add(relative);
-            edits.push({ start: argumentOffset, end: arg.end, text: `{${relative}}` });
-          } else if (outside) {
-            warn(
-              "A LaTeX figure outside the project folder was left out; a placeholder was inserted.",
-            );
-            edits.push({
-              start: macro.start,
-              end: arg?.end ?? macro.end,
-              text: "\\emph{[Figure outside the project folder]}",
-            });
-          } else {
-            warn(
-              "A LaTeX figure was missing, too large, or not named literally; a placeholder was inserted.",
-            );
-            edits.push({
-              start: macro.start,
-              end: arg?.end ?? macro.end,
-              text: "\\emph{[Figure unavailable]}",
-            });
-          }
-          continue;
-        }
-        if (!INCLUDE.has(macro.name)) continue;
+        continue;
+      }
+      if (macro.name === "includegraphics") {
         const target = arg?.text.trim() ?? "";
-        const resolved = yield* resolve(target, baseDirectory, [".tex", ""]);
-        let end = arg?.end ?? macro.end;
-        if (!arg) {
-          const bare = /^[ \t]*[^\s\\{}%]+/u.exec(source.slice(end));
-          if (bare) end += bare[0].length;
+        let resolved: Effect.Success<ReturnType<typeof resolve>> = {
+          ok: false,
+          reason: "unavailable",
+        };
+        let outside = false;
+        for (const directory of graphicPaths) {
+          resolved = yield* resolve(target, path.resolve(baseDirectory, directory), [
+            "",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+          ]);
+          if (resolved.ok) break;
+          outside ||= resolved.reason === "outside-project";
         }
-        if (!resolved.ok && resolved.reason === "outside-project") {
+        if (arg && resolved.ok && resolved.checked.size <= 25 * 1024 * 1024) {
+          const relative = path.relative(baseDirectory, resolved.lexical).split(path.sep).join("/");
+          imageReferences.add(relative);
+          edits.push({ start: argumentOffset, end: arg.end, text: `{${relative}}` });
+        } else if (outside) {
           warn(
-            "A LaTeX include outside the project folder was left out; a placeholder was inserted.",
+            "A LaTeX figure outside the project folder was left out; a placeholder was inserted.",
           );
           edits.push({
             start: macro.start,
-            end,
-            text: "\\emph{[Include outside the project folder]}",
+            end: arg?.end ?? macro.end,
+            text: "\\emph{[Figure outside the project folder]}",
           });
-        } else if (!resolved.ok) {
-          warn("A LaTeX include was missing or not named literally; a placeholder was inserted.");
-          edits.push({ start: macro.start, end, text: "\\emph{[Unresolved include]}" });
         } else {
-          const nested = yield* flatten(
-            resolved.checked,
-            depth + 1,
-            [...stack, file],
-            macro.name.startsWith("subfile"),
+          warn(
+            "A LaTeX figure was missing, too large, or not named literally; a placeholder was inserted.",
           );
-          edits.push({ start: macro.start, end, text: `\n${nested}\n` });
+          edits.push({
+            start: macro.start,
+            end: arg?.end ?? macro.end,
+            text: "\\emph{[Figure unavailable]}",
+          });
         }
+        continue;
       }
-      for (const edit of edits.sort((left, right) => right.start - left.start)) {
-        source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
+      if (!INCLUDE.has(macro.name)) continue;
+      const target = arg?.text.trim() ?? "";
+      const resolved = yield* resolve(target, baseDirectory, [".tex", ""]);
+      let end = arg?.end ?? macro.end;
+      if (!arg) {
+        const bare = /^[ \t]*[^\s\\{}%]+/u.exec(source.slice(end));
+        if (bare) end += bare[0].length;
       }
-      return source;
-    });
+      if (!resolved.ok && resolved.reason === "outside-project") {
+        warn(
+          "A LaTeX include outside the project folder was left out; a placeholder was inserted.",
+        );
+        edits.push({
+          start: macro.start,
+          end,
+          text: "\\emph{[Include outside the project folder]}",
+        });
+      } else if (!resolved.ok) {
+        warn("A LaTeX include was missing or not named literally; a placeholder was inserted.");
+        edits.push({ start: macro.start, end, text: "\\emph{[Unresolved include]}" });
+      } else {
+        const nested = yield* flatten(
+          resolved.checked,
+          depth + 1,
+          [...stack, file],
+          macro.name.startsWith("subfile"),
+        );
+        edits.push({ start: macro.start, end, text: `\n${nested}\n` });
+      }
+    }
+    for (const edit of edits.sort((left, right) => right.start - left.start)) {
+      source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
+    }
+    return source;
+  });
 
   const resolvedRoot = yield* resolve(path.relative(root, rootFile), root, [""]);
   if (!resolvedRoot.ok)

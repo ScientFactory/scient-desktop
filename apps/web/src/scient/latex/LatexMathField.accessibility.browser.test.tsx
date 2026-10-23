@@ -1,29 +1,30 @@
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen } from "../../../test/render";
+
 import { useState } from "react";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import type { MathfieldElement } from "mathlive";
 import { LatexMathField } from "./LatexMathField";
 import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 
-let host: HTMLDivElement;
-let root: Root;
 const publish = vi.fn();
 const spokenLabel = (math: MathfieldElement) =>
   math.shadowRoot?.querySelector(".ML__keyboard-sink")?.getAttribute("aria-label");
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   publish.mockReset();
-});
+}
 
-async function mount(value: string, display = false) {
-  host = document.createElement("div");
-  host.style.cssText = "width:800px;min-height:250px";
-  document.body.append(host);
-  root = createRoot(host);
+async function mount(_fixture: _Fixture, value: string, display = false) {
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:800px;min-height:250px";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   function Harness() {
     const [source, setSource] = useState(value);
     const [macroDefinition, setMacroDefinition] = useState("x");
@@ -65,13 +66,13 @@ async function mount(value: string, display = false) {
       </LatexDocumentMathContext.Provider>
     );
   }
-  root.render(<Harness />);
-  await expect.poll(() => host.querySelector("math-field")).toBeTruthy();
-  const math = host.querySelector<MathfieldElement>("math-field")!;
+  await _fixture.root0.rerender(<Harness />);
+  await expect.poll(() => _fixture.host.querySelector("math-field")).toBeTruthy();
+  const math = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   math.focus();
   await expect.poll(() => document.activeElement === math).toBe(true);
   await expect.poll(() => spokenLabel(math)).toBeTruthy();
-  return { math, source: host.querySelector<HTMLTextAreaElement>("textarea")! };
+  return { math, source: _fixture.host.querySelector<HTMLTextAreaElement>("textarea")! };
 }
 
 it.each([
@@ -80,7 +81,10 @@ it.each([
 ])(
   "refreshes $newWord after a source edit without publishing or moving focus",
   async (scenario) => {
-    const { math, source } = await mount(scenario.before, scenario.display);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const { math, source } = await mount(_fixture, scenario.before, scenario.display);
     await userEvent.fill(source, scenario.after);
     await expect.poll(() => math.getValue("latex")).toBe(scenario.after);
     await expect.poll(() => spokenLabel(math)).toContain(scenario.newWord);
@@ -90,7 +94,10 @@ it.each([
 );
 
 it("keeps the spoken label current through undo/redo source revisions", async () => {
-  const { math, source } = await mount("E=mc^2");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { math, source } = await mount(_fixture, "E=mc^2");
   for (const { value, word } of [
     { value: "E=mc^3", word: "cubed" },
     { value: "E=mc^2", word: "squared" },
@@ -104,7 +111,10 @@ it("keeps the spoken label current through undo/redo source revisions", async ()
 });
 
 it("refreshes the spoken label during live keyboard editing", async () => {
-  const { math } = await mount("x");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { math } = await mount(_fixture, "x");
   math.position = math.lastOffset;
   await userEvent.keyboard("+1");
   await expect.poll(() => math.getValue("latex")).toBe("x+1");
@@ -114,12 +124,15 @@ it("refreshes the spoken label during live keyboard editing", async () => {
 });
 
 it("preserves document macros during source and macro updates without moving focus", async () => {
-  const { math, source } = await mount("\\reviewmacro");
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { math, source } = await mount(_fixture, "\\reviewmacro");
   const rendered = () => math.shadowRoot?.querySelector(".ML__content")?.textContent;
   await expect.poll(rendered).toContain("x");
   await userEvent.fill(source, "\\reviewmacro^3");
   await expect.poll(() => spokenLabel(math)).toContain("cubed");
-  const definition = host.querySelector<HTMLInputElement>(
+  const definition = _fixture.host.querySelector<HTMLInputElement>(
     'input[aria-label="Synthetic macro definition"]',
   )!;
   await userEvent.fill(definition, "y");
@@ -129,3 +142,22 @@ it("preserves document macros during source and macro updates without moving foc
   expect(document.activeElement).toBe(definition);
   expect(publish).not.toHaveBeenCalled();
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

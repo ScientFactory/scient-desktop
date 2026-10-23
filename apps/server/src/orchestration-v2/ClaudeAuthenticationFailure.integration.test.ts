@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { layer as ProviderRegistryLive } from "../provider/ProviderRegistry.ts";
@@ -213,6 +214,7 @@ it.effect.each(
         Layer.mergeAll(
           instanceLayer,
           ModelManifest.layerTest,
+          ProviderLatestVersions.layer,
           Layer.succeed(ServerConfig.ServerConfig, config),
           NodeServices.layer,
         ),

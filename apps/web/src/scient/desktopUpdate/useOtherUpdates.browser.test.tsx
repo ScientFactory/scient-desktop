@@ -1,14 +1,15 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { useLayoutEffect } from "react";
+
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "~/components/ServerUpdateAction";
 import type { OtherServerUpdate } from "./otherUpdates.logic";
@@ -16,7 +17,7 @@ import type { OtherServerUpdate } from "./otherUpdates.logic";
 const lab = EnvironmentId.make("lab");
 
 const testState = vi.hoisted(() => ({
-  registry: undefined as AtomRegistry.AtomRegistry | undefined,
+  readRegistry: (): AtomRegistry.AtomRegistry | undefined => undefined,
   environments: [] as unknown[],
   providers: new Map<string, ReadonlyArray<ServerProvider>>(),
   serverStates: new Map<string, Atom.Writable<unknown>>(),
@@ -36,14 +37,14 @@ const testState = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+  useAtomValue: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
 }));
 vi.mock("~/rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
-    set: <R, W>(atom: Atom.Writable<R, W>, value: W) => testState.registry!.set(atom, value),
+    get: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
+    set: <R, W>(atom: Atom.Writable<R, W>, value: W) => testState.readRegistry()!.set(atom, value),
     update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
-      testState.registry!.update(atom, f),
+      testState.readRegistry()!.update(atom, f),
   },
 }));
 vi.mock("~/state/environments", () => ({
@@ -199,28 +200,39 @@ function remote(providers: ServerProvider[]) {
   };
 }
 
-let renderer: Root | undefined;
-let current: ReturnType<typeof useOtherUpdates> | undefined;
-function Probe({ servers }: { servers: ReadonlyArray<OtherServerUpdate> }) {
+function Probe({
+  _fixture,
+  servers,
+}: { servers: ReadonlyArray<OtherServerUpdate> } & { _fixture: _Fixture }) {
   const value = useOtherUpdates(servers);
   useLayoutEffect(() => {
-    current = value;
+    _fixture.publishCurrent(value);
   });
   return null;
 }
 
-async function render(servers: ReadonlyArray<OtherServerUpdate> = []) {
-  await act(() => {
-    renderer ??= createRoot(document.createElement("div"));
-    renderer.render(<Probe servers={servers} />);
+async function render(_fixture: _Fixture, servers: ReadonlyArray<OtherServerUpdate> = []) {
+  await act(async () => {
+    _fixture.root0 ??= _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} servers={servers} />);
   });
 }
 
-const states = () => current!.rows.map(({ item, state }) => [item.name, state]);
+const states = (_fixture: _Fixture) =>
+  _fixture.current!.rows.map(({ item, state }) => [item.name, state]);
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  testState.registry = AtomRegistry.make();
+async function _setupFixture0(_fixture: _Fixture) {
+  const registry = AtomRegistry.make();
+  testState.readRegistry = () => registry;
+  _fixture.stack.defer(() => {
+    try {
+      registry.dispose();
+    } finally {
+      testState.readRegistry = () => undefined;
+    }
+  });
   testState.serverStates = new Map();
   testState.environments = [];
   testState.providers = new Map();
@@ -231,20 +243,22 @@ beforeEach(() => {
   testState.run = null;
   testState.toasts = [];
   testState.setRun.mockClear();
-  current = undefined;
-});
+  _fixture.publishCurrent(undefined);
+}
 
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
-  testState.registry?.dispose();
-  vi.unstubAllGlobals();
-});
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
+}
 
 describe("useOtherUpdates", () => {
   it.each(["queued", "running"] as const)(
     "follows a non-default instance's %s update and latest result without a presentation change",
     async (status) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
       const original = codexCli();
       const defaultProvider = {
         ...original,
@@ -263,9 +277,9 @@ describe("useOtherUpdates", () => {
       };
       testState.environments = [remote([defaultProvider])];
       testState.providers.set(lab, [defaultProvider, other]);
-      await render();
-      expect(current!.circle).toBe("updating");
-      expect(current!.rows).toMatchObject([
+      await render(_fixture);
+      expect(_fixture.current!.circle).toBe("updating");
+      expect(_fixture.current!.rows).toMatchObject([
         { item: { instanceId: "codex" }, state: { status: "updating" } },
       ]);
 
@@ -280,9 +294,9 @@ describe("useOtherUpdates", () => {
           },
         },
       ]);
-      await render();
-      expect(current!.circle).toBe("done");
-      expect(current!.rows).toMatchObject([{ state: { status: "done" } }]);
+      await render(_fixture);
+      expect(_fixture.current!.circle).toBe("done");
+      expect(_fixture.current!.rows).toMatchObject([{ state: { status: "done" } }]);
 
       testState.providers.set(lab, [
         defaultProvider,
@@ -296,15 +310,19 @@ describe("useOtherUpdates", () => {
           },
         },
       ]);
-      await render();
-      expect(current!.circle).toBe("failed");
-      expect(current!.rows).toMatchObject([
+      await render(_fixture);
+      expect(_fixture.current!.circle).toBe("failed");
+      expect(_fixture.current!.rows).toMatchObject([
         { state: { status: "failed", reason: "New attempt failed.", retry: true } },
       ]);
     },
   );
 
   it("updates one provider in place and offers Retry after its failure", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([codexCli()])];
     let finish = (_result: unknown) => {};
     testState.updateProvider.mockImplementationOnce(
@@ -313,41 +331,49 @@ describe("useOtherUpdates", () => {
           finish = resolve;
         }),
     );
-    await render();
-    expect(current!.circle).toBe("idle");
-    await act(async () => current!.update(current!.rows[0]!.item));
-    await render();
+    await render(_fixture);
+    expect(_fixture.current!.circle).toBe("idle");
+    await act(async () => _fixture.current!.update(_fixture.current!.rows[0]!.item));
+    await render(_fixture);
     expect(testState.updateProvider).toHaveBeenCalledWith({
       environmentId: lab,
       input: { provider: "codex", instanceId: "codex" },
     });
-    expect(states()).toEqual([
+    expect(states(_fixture)).toEqual([
       ["Codex", { status: "updating", progress: { phase: "installing" } }],
     ]);
-    expect(current!.circle).toBe("updating");
+    expect(_fixture.current!.circle).toBe("updating");
 
     await act(async () => finish(AsyncResult.failure(Cause.fail(new Error("npm exited 1")))));
-    await render();
-    expect(states()).toEqual([
+    await render(_fixture);
+    expect(states(_fixture)).toEqual([
       ["Codex", { status: "failed", reason: "npm exited 1", retry: true }],
     ]);
-    expect(current!.circle).toBe("failed");
+    expect(_fixture.current!.circle).toBe("failed");
 
     testState.updateProvider.mockResolvedValueOnce(AsyncResult.success({ providers: [] }));
-    await act(async () => current!.retry(current!.rows[0]!));
+    await act(async () => _fixture.current!.retry(_fixture.current!.rows[0]!));
     expect(testState.updateProvider).toHaveBeenCalledTimes(2);
   });
 
   it("hands a managed runtime to the managed runtime updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([ompManaged()])];
-    await render();
-    await act(async () => current!.update(current!.rows[0]!.item));
+    await render(_fixture);
+    await act(async () => _fixture.current!.update(_fixture.current!.rows[0]!.item));
     expect(testState.updateManaged).toHaveBeenCalledWith([
       expect.objectContaining({ environmentId: lab, driver: "omp", availableVersion: "2.1.0" }),
     ]);
   });
 
   it("reports a finished server as done until forgotten, then the circle leaves", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([])];
     let finish = (_outcome: ServerUpdateOutcome) => {};
     testState.updateServer.mockImplementationOnce(
@@ -356,23 +382,27 @@ describe("useOtherUpdates", () => {
           finish = resolve;
         }),
     );
-    await render([serverUpdate]);
-    expect(states()).toEqual([["lab-gpu server", { status: "idle" }]]);
-    await act(async () => current!.update(current!.rows[0]!.item));
+    await render(_fixture, [serverUpdate]);
+    expect(states(_fixture)).toEqual([["lab-gpu server", { status: "idle" }]]);
+    await act(async () => _fixture.current!.update(_fixture.current!.rows[0]!.item));
     expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
     await act(async () => finish({ status: "updated" }));
     // Back on the new version, the server is no longer behind.
-    await render([]);
-    expect(states()).toEqual([["lab-gpu server", { status: "done" }]]);
-    expect(current!.circle).toBe("done");
+    await render(_fixture, []);
+    expect(states(_fixture)).toEqual([["lab-gpu server", { status: "done" }]]);
+    expect(_fixture.current!.circle).toBe("done");
 
-    await act(async () => current!.forget([current!.rows[0]!.item.key]));
-    await render([]);
-    expect(current!.rows).toEqual([]);
-    expect(current!.circle).toBeNull();
+    await act(async () => _fixture.current!.forget([_fixture.current!.rows[0]!.item.key]));
+    await render(_fixture, []);
+    expect(_fixture.current!.rows).toEqual([]);
+    expect(_fixture.current!.circle).toBeNull();
   });
 
   it("counts the running threads a server update would stop", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([])];
     testState.threads = [
       // A running turn with a follow-up queued behind it.
@@ -381,10 +411,10 @@ describe("useOtherUpdates", () => {
       // An older server without activity runs.
       { activeRunId: null, status: "starting" },
     ];
-    await render([serverUpdate]);
-    expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(2);
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.stoppedThreads(_fixture.current!.rows[0]!.item)).toBe(2);
     // Threads that resume after the restart are not stopped.
-    await render([
+    await render(_fixture, [
       {
         ...serverUpdate,
         target: {
@@ -394,10 +424,14 @@ describe("useOtherUpdates", () => {
         },
       },
     ]);
-    expect(current!.stoppedThreads(current!.rows[0]!.item)).toBe(0);
+    expect(_fixture.current!.stoppedThreads(_fixture.current!.rows[0]!.item)).toBe(0);
   });
 
   it("holds a server while its machine updates a provider, then offers it again", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const running = {
       ...codexCli(),
       updateState: {
@@ -409,22 +443,26 @@ describe("useOtherUpdates", () => {
       },
     };
     testState.environments = [remote([running])];
-    await render([serverUpdate]);
-    const server = () => current!.rows.find(({ item }) => item.kind === "server")!;
-    expect(current!.busy(server().item)).toBe(true);
+    await render(_fixture, [serverUpdate]);
+    const server = () => _fixture.current!.rows.find(({ item }) => item.kind === "server")!;
+    expect(_fixture.current!.busy(server().item)).toBe(true);
     // Dispatch reads the machine at the click, so nothing restarts it now.
-    await act(async () => current!.update(server().item));
+    await act(async () => _fixture.current!.update(server().item));
     expect(testState.updateServer).not.toHaveBeenCalled();
 
     testState.environments = [remote([])];
     testState.updateServer.mockResolvedValueOnce({ status: "updated" });
-    await render([serverUpdate]);
-    expect(current!.busy(server().item)).toBe(false);
-    await act(async () => current!.update(server().item));
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.busy(server().item)).toBe(false);
+    await act(async () => _fixture.current!.update(server().item));
     expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
   });
 
   it("releases a server once an interrupted queued provider update ends", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const withUpdateState = (status: "queued" | "failed") => ({
       ...codexCli(),
       updateState: {
@@ -436,48 +474,64 @@ describe("useOtherUpdates", () => {
       },
     });
     testState.environments = [remote([withUpdateState("queued")])];
-    await render([serverUpdate]);
-    const server = () => current!.rows.find(({ item }) => item.kind === "server")!;
-    expect(current!.busy(server().item)).toBe(true);
+    await render(_fixture, [serverUpdate]);
+    const server = () => _fixture.current!.rows.find(({ item }) => item.kind === "server")!;
+    expect(_fixture.current!.busy(server().item)).toBe(true);
 
     // The server records the interrupted update as failed rather than leaving it queued.
     testState.environments = [remote([withUpdateState("failed")])];
     testState.updateServer.mockResolvedValueOnce({ status: "updated" });
-    await render([serverUpdate]);
-    expect(current!.busy(server().item)).toBe(false);
-    await act(async () => current!.update(server().item));
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.busy(server().item)).toBe(false);
+    await act(async () => _fixture.current!.update(server().item));
     expect(testState.updateServer).toHaveBeenCalledWith(serverTarget);
   });
 
   it("holds a server while this card starts a provider update on its machine", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([codexCli()])];
     testState.updateProvider.mockImplementationOnce(() => new Promise(() => {}));
-    await render([serverUpdate]);
-    const row = (kind: string) => current!.rows.find(({ item }) => item.kind === kind)!;
-    await act(async () => current!.update(row("provider").item));
-    await render([serverUpdate]);
-    expect(current!.busy(row("server").item)).toBe(true);
-    await act(async () => current!.update(row("server").item));
+    await render(_fixture, [serverUpdate]);
+    const row = (kind: string) => _fixture.current!.rows.find(({ item }) => item.kind === kind)!;
+    await act(async () => _fixture.current!.update(row("provider").item));
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.busy(row("server").item)).toBe(true);
+    await act(async () => _fixture.current!.update(row("server").item));
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
   it("drops a removed machine's rows", async () => {
-    await render([serverUpdate]);
-    expect(current!.rows).toEqual([]);
-    expect(current!.circle).toBeNull();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.rows).toEqual([]);
+    expect(_fixture.current!.circle).toBeNull();
   });
 
   it("reports a provider update started here", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([codexCli()])];
     testState.updateProvider.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("npm exited 1"))),
     );
-    await render();
-    await act(async () => current!.update(current!.rows[0]!.item));
+    await render(_fixture);
+    await act(async () => _fixture.current!.update(_fixture.current!.rows[0]!.item));
     expect(testState.toasts).toEqual([{ type: "error", title: "Provider update failed" }]);
   });
 
   it("retries a pass's withdrawn server through the pass, keeping its confirmed target", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [remote([])];
     testState.run = {
       localVersion: null,
@@ -498,10 +552,37 @@ describe("useOtherUpdates", () => {
       ],
     };
     testState.updateServer.mockResolvedValueOnce({ status: "updated" });
-    await render([serverUpdate]);
-    expect(current!.rows[0]!.state).toMatchObject({ status: "failed", retry: true });
-    await act(async () => current!.retry(current!.rows[0]!));
+    await render(_fixture, [serverUpdate]);
+    expect(_fixture.current!.rows[0]!.state).toMatchObject({ status: "failed", retry: true });
+    await act(async () => _fixture.current!.retry(_fixture.current!.rows[0]!));
     expect(testState.updateServer).toHaveBeenCalledWith(serverTarget, { quiet: false });
     expect(testState.run).toMatchObject({ machines: [{ result: null, failure: null }] });
   });
 });
+
+function _createFixture() {
+  let _published_current = undefined! as ReturnType<typeof useOtherUpdates> | undefined;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get current() {
+      return _published_current;
+    },
+    publishCurrent(next: typeof _published_current) {
+      _published_current = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

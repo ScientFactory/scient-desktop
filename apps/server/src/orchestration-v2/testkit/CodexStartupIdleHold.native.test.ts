@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ServerConfig } from "../../config.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -83,7 +84,7 @@ const waitFor = Effect.fnUntraced(function* (
   return Option.getOrThrow(found);
 });
 
-it.live("keeps a fresh Codex session through startup that outlasts the idle window", () =>
+it.effect("keeps a fresh Codex session through startup that outlasts the idle window", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const config = yield* ServerConfig;
@@ -288,13 +289,14 @@ it.live("keeps a fresh Codex session through startup that outlasts the idle wind
         });
         yield* Deferred.await(threadStartReceived).pipe(Effect.timeout("10 seconds"));
         // Many idle windows pass while the canonical start is still preparing.
-        yield* Effect.sleep(`${IDLE_TIMEOUT_MS * 20} millis`);
+        yield* TestClock.adjust(`${IDLE_TIMEOUT_MS * 20} millis`);
         assert.isFalse(yield* Deferred.isDone(closed), "idle release retired a pending start");
         yield* Deferred.succeed(threadStartReleased, undefined);
         const completed = yield* waitFor(threadId, (p) => p.runs.at(-1)?.status === "completed");
         assert.equal(completed.runs.length, 1);
         assert.deepEqual(offered, ["turn/start"]);
         // Once the turn is over, the ordinary idle release still retires the session.
+        yield* TestClock.adjust(`${IDLE_TIMEOUT_MS} millis`);
         yield* Deferred.await(closed).pipe(Effect.timeout("10 seconds"));
       }).pipe(
         Effect.ensuring(Deferred.succeed(threadStartReleased, undefined)),

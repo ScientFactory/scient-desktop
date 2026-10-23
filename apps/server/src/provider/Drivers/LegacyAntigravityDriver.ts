@@ -124,171 +124,175 @@ export const LegacyAntigravityDriver = {
   },
   configSchema: AntigravitySettings,
   defaultConfig: (): AntigravitySettings => decodeAntigravitySettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const platform = yield* HostProcess.Platform;
-      const ptyAdapter = yield* PtyAdapter;
-      const serverConfig = yield* ServerConfig;
-      const httpClient = yield* HttpClient.HttpClient;
-      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-      const serverSettings = yield* ServerSettingsService;
-      // Antigravity is intentionally the Google-account/subscription provider.
-      // Do not let ambient Gemini/API-key variables silently change billing or
-      // make an unauthenticated account appear connected.
-      const processEnv = officialAntigravityAccountEnvironment(
-        yield* mergeProviderInstanceEnvironment(environment),
+  create: Effect.fn("LegacyAntigravityDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const ptyAdapter = yield* PtyAdapter;
+    const serverConfig = yield* ServerConfig;
+    const httpClient = yield* HttpClient.HttpClient;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const serverSettings = yield* ServerSettingsService;
+    // Antigravity is intentionally the Google-account/subscription provider.
+    // Do not let ambient Gemini/API-key variables silently change billing or
+    // make an unauthenticated account appear connected.
+    const processEnv = officialAntigravityAccountEnvironment(
+      yield* mergeProviderInstanceEnvironment(environment),
+    );
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const managedRuntime = yield* makeAntigravityManagedRuntimeResolution({
+      settings: config,
+      baseDir: serverConfig.baseDir,
+      environment: processEnv,
+      spawner,
+      managedInstallationAllowed: serverConfig.mode === "desktop",
+    });
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: managedRuntime.effectiveBinaryPath,
+    } satisfies AntigravitySettings;
+    const connectionMethods = ["antigravity_google"] as const;
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+      runtime: managedRuntime.summary,
+      connectionMethods,
+    });
+
+    const discoverSkills = (
+      cwd?: string,
+      fallback: ServerProvider["skills"] = [],
+    ): Effect.Effect<ServerProvider["skills"]> =>
+      discoverAntigravitySkills(effectiveConfig, processEnv, cwd).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Path.Path, path),
+        Effect.catch((cause) =>
+          Effect.logWarning("Antigravity native skill discovery was unavailable.", {
+            ...(cwd ? { cwd } : {}),
+            cause,
+          }).pipe(Effect.as(fallback)),
+        ),
       );
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
+
+    const nativeSessions = yield* makeNativeSessionShutdown(
+      makeLegacyAntigravityAdapterV2({
         instanceId,
-      });
-      const managedRuntime = yield* makeAntigravityManagedRuntimeResolution({
-        settings: config,
-        baseDir: serverConfig.baseDir,
+        settings: effectiveConfig,
         environment: processEnv,
         spawner,
-        managedInstallationAllowed: serverConfig.mode === "desktop",
-      });
-      const effectiveConfig = {
-        ...config,
-        enabled,
-        binaryPath: managedRuntime.effectiveBinaryPath,
-      } satisfies AntigravitySettings;
-      const connectionMethods = ["antigravity_google"] as const;
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-        runtime: managedRuntime.summary,
-        connectionMethods,
-      });
+        fileSystem,
+        path,
+        serverConfig,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+      }),
+    );
+    const orchestrationAdapter = nativeSessions.adapter;
+    const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
+    const voiceTranscriptCorrection = yield* makeAntigravityVoiceTranscriptCorrection(
+      effectiveConfig,
+      processEnv,
+    );
 
-      const discoverSkills = (
-        cwd?: string,
-        fallback: ServerProvider["skills"] = [],
-      ): Effect.Effect<ServerProvider["skills"]> =>
-        discoverAntigravitySkills(effectiveConfig, processEnv, cwd).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(Path.Path, path),
-          Effect.catch((cause) =>
-            Effect.logWarning("Antigravity native skill discovery was unavailable.", {
-              ...(cwd ? { cwd } : {}),
-              cause,
-            }).pipe(Effect.as(fallback)),
-          ),
-        );
+    // Connection actions for the antigravity_google auth method.
+    const connectionActions = yield* makeAntigravityConnectionActions(
+      effectiveConfig,
+      processEnv,
+      spawner,
+      ptyAdapter,
+      makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
+    ).pipe(
+      Effect.map((actions) =>
+        withAntigravitySessionShutdown(actions, nativeSessions.closeSessions),
+      ),
+    );
+    const checkProvider = Effect.all(
+      {
+        snapshot: checkAntigravityProviderStatus(effectiveConfig, processEnv),
+        skills: discoverSkills(),
+      },
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(({ snapshot: checkedSnapshot, skills }) =>
+        stampIdentity({ ...checkedSnapshot, skills }),
+      ),
+      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
-      const nativeSessions = yield* makeNativeSessionShutdown(
-        makeLegacyAntigravityAdapterV2({
-          instanceId,
-          settings: effectiveConfig,
-          environment: processEnv,
-          spawner,
-          fileSystem,
-          path,
-          serverConfig,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const snapshot = yield* makeManagedServerProvider<
+      ProviderSnapshotSettings<AntigravitySettings>
+    >({
+      resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
+      getSettings: snapshotSettings.getSettings,
+      streamSettings: snapshotSettings.streamSettings,
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      initialSnapshot: (settings) =>
+        buildInitialAntigravityProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+      checkProvider,
+      enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+        enrichAntigravitySnapshot({
+          snapshot: currentSnapshot,
+          maintenanceCapabilities: MAINTENANCE_CAPABILITIES,
+          enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          publishSnapshot,
+          stampIdentity,
+          httpClient,
+          latestVersions,
         }),
-      );
-      const orchestrationAdapter = nativeSessions.adapter;
-      const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
-      const voiceTranscriptCorrection = yield* makeAntigravityVoiceTranscriptCorrection(
-        effectiveConfig,
-        processEnv,
-      );
-
-      // Connection actions for the antigravity_google auth method.
-      const connectionActions = yield* makeAntigravityConnectionActions(
-        effectiveConfig,
-        processEnv,
-        spawner,
-        ptyAdapter,
-        makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
-      ).pipe(
-        Effect.map((actions) =>
-          withAntigravitySessionShutdown(actions, nativeSessions.closeSessions),
-        ),
-      );
-      const checkProvider = Effect.all(
-        {
-          snapshot: checkAntigravityProviderStatus(effectiveConfig, processEnv),
-          skills: discoverSkills(),
-        },
-        { concurrency: "unbounded" },
-      ).pipe(
-        Effect.map(({ snapshot: checkedSnapshot, skills }) =>
-          stampIdentity({ ...checkedSnapshot, skills }),
-        ),
-        Effect.provideService(Crypto.Crypto, crypto),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-      );
-
-      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-      const snapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<AntigravitySettings>
-      >({
-        resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
-        getSettings: snapshotSettings.getSettings,
-        streamSettings: snapshotSettings.streamSettings,
-        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        initialSnapshot: (settings) =>
-          buildInitialAntigravityProviderSnapshot(settings.provider).pipe(
-            Effect.map(stampIdentity),
-          ),
-        checkProvider,
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichAntigravitySnapshot({
-            snapshot: currentSnapshot,
-            maintenanceCapabilities: MAINTENANCE_CAPABILITIES,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            stampIdentity,
-            httpClient,
-            latestVersions,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: `Failed to build Antigravity snapshot: ${cause.message ?? String(cause)}`,
+            cause,
           }),
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: `Failed to build Antigravity snapshot: ${cause.message ?? String(cause)}`,
-              cause,
-            }),
-        ),
-      );
+      ),
+    );
 
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        snapshotForCwd: (cwd) =>
-          !effectiveConfig.enabled
-            ? snapshot.getSnapshot
-            : snapshot.getSnapshot.pipe(
-                Effect.flatMap((machineSnapshot) =>
-                  discoverSkills(cwd, machineSnapshot.skills).pipe(
-                    Effect.map((skills) => ({ ...machineSnapshot, skills })),
-                  ),
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      snapshotForCwd: (cwd) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : snapshot.getSnapshot.pipe(
+              Effect.flatMap((machineSnapshot) =>
+                discoverSkills(cwd, machineSnapshot.skills).pipe(
+                  Effect.map((skills) => ({ ...machineSnapshot, skills })),
                 ),
               ),
-        orchestrationAdapter,
-        textGeneration,
-        voiceTranscriptCorrection,
-        connectionActions,
-        managedRuntimeActions: managedRuntime.actions,
-      } satisfies ScientProviderInstance;
-    }),
+            ),
+      orchestrationAdapter,
+      textGeneration,
+      voiceTranscriptCorrection,
+      connectionActions,
+      managedRuntimeActions: managedRuntime.actions,
+    } satisfies ScientProviderInstance;
+  }),
 } satisfies ScientProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;

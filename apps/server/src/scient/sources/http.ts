@@ -39,19 +39,17 @@ import {
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 
-function handle<A>(
+const handle = Effect.fn("ScientSourcesHttp.handle")(function* <A>(
   endpointName: string,
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
   run: () => Promise<A>,
 ) {
-  return Effect.gen(function* () {
-    yield* annotateEnvironmentRequest(endpointName);
-    yield* requireEnvironmentScope(scope);
-    return yield* Effect.tryPromise(run).pipe(
-      Effect.catch((cause) => failEnvironmentInternal("scient_sources_operation_failed", cause)),
-    );
-  });
-}
+  yield* annotateEnvironmentRequest(endpointName);
+  yield* requireEnvironmentScope(scope);
+  return yield* Effect.tryPromise(run).pipe(
+    Effect.catch((cause) => failEnvironmentInternal("scient_sources_operation_failed", cause)),
+  );
+});
 
 export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,

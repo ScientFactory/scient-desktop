@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { materializeScientMuseRequests } from "./MuseAdapterV2.testkit.ts";
 
 const runtimeText =
@@ -16,6 +18,92 @@ function transcript(entries: ProviderReplayTranscript["entries"]): ProviderRepla
 }
 
 describe("Muse recorded Scient request identity", () => {
+  it("materializes the exact recorded PR guidance without changing native or user input", () => {
+    const runtime = { harness: "Muse Code", model: "original-model", reasoningEffort: "high" };
+    const recorded = buildRuntimeInstructions(runtime).replace(
+      "When the MCP server named t3-code exposes",
+      "When the t3-code MCP server exposes",
+    );
+    const userInput = { type: "text", text: `${recorded}\nUser-authored quoted guidance` };
+    const frame = {
+      jsonrpc: "2.0",
+      id: 43,
+      method: "turn/start",
+      params: {
+        model: "original-model",
+        reasoningEffort: "high",
+        sessionId: "native-session",
+        commandId: "native-command",
+        workspaceRoots: ["/recorded-workspace"],
+        ifBusy: "queue",
+        input: [{ type: "text", text: recorded }, userInput],
+        displayText: userInput.text,
+      },
+    };
+    const input = transcript([{ type: "expect_outbound", frame }]);
+    const materialized = materializeScientMuseRequests(input);
+    assert.deepEqual(
+      materialized,
+      transcript([
+        {
+          type: "expect_outbound",
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              input: [{ type: "text", text: buildScientRuntimeInstructions(runtime) }, userInput],
+            },
+          },
+        },
+      ]),
+    );
+    assert.equal(frame.params.input[0]!.text, recorded);
+    assert.deepEqual(materializeScientMuseRequests(materialized), materialized);
+  });
+
+  it("does not replace an unrecognized PR instruction block", () => {
+    const recorded = buildRuntimeInstructions({ harness: "Muse Code" })
+      .replace("When the MCP server named t3-code exposes", "When the t3-code MCP server exposes")
+      .replace("end your turn:", "keep polling:");
+    const input = transcript([
+      {
+        type: "expect_outbound",
+        frame: { method: "turn/start", params: { input: [{ type: "text", text: recorded }] } },
+      },
+    ]);
+    assert.deepEqual(
+      materializeScientMuseRequests(input),
+      transcript([
+        {
+          type: "expect_outbound",
+          frame: {
+            method: "turn/start",
+            params: {
+              input: [
+                {
+                  type: "text",
+                  text: recorded
+                    .replace(
+                      "you are running in T3 Code through ",
+                      "you are running in Scient through ",
+                    )
+                    .replace(
+                      "When the t3-code MCP server exposes ",
+                      "When the Scient MCP server exposes ",
+                    )
+                    .replace(
+                      "T3 Code wakes you when checks finish",
+                      "Scient wakes you when checks finish",
+                    ),
+                },
+              ],
+            },
+          },
+        },
+      ]),
+    );
+  });
+
   it("adapts only known outbound identity and guidance while preserving native protocol fields", () => {
     const initialize = {
       jsonrpc: "2.0",

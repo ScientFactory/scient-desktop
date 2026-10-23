@@ -73,6 +73,24 @@ const runOnce = (input: {
 const scratchEntries = (scratchRoot: string) =>
   NodeFS.existsSync(scratchRoot) ? NodeFS.readdirSync(scratchRoot) : [];
 
+const awaitPidWritten = (pidFile: string) =>
+  Effect.callback<void>((resume) => {
+    const inspect = () => {
+      if (readPid(pidFile) !== null) finish(Effect.void);
+    };
+    // Subscribe before the initial read so creation cannot fall in a gap.
+    const watcher = NodeFS.watch(NodePath.dirname(pidFile), (_event, name) => {
+      if (name === NodePath.basename(pidFile)) inspect();
+    });
+    const finish = (effect: Effect.Effect<void>) => {
+      watcher.close();
+      resume(effect);
+    };
+    watcher.on("error", (cause) => finish(Effect.die(cause)));
+    inspect();
+    return Effect.sync(() => watcher.close());
+  });
+
 describe("pandocEnvironment", () => {
   it("builds the environment from scratch, with dead proxies and no PATH", () => {
     const scratch = {
@@ -212,10 +230,9 @@ describe("runPandoc", () => {
   it.live("kills Pandoc and removes its scratch directory when cancelled", () =>
     Effect.gen(function* () {
       const { scratchRoot, fake, pidFile } = yield* harness;
+      const written = yield* Effect.forkChild(awaitPidWritten(pidFile));
       const fiber = yield* Effect.forkChild(runOnce({ scratchRoot, pandoc: fake("sleep") }));
-      for (let attempt = 0; attempt < 200 && readPid(pidFile) === null; attempt += 1) {
-        yield* Effect.sleep("10 millis");
-      }
+      yield* Fiber.join(written);
       const pid = readPid(pidFile);
       expect(pid).not.toBeNull();
       expect(processExists(pid!)).toBe(true);

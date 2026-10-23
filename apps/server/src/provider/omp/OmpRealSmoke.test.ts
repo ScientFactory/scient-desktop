@@ -155,6 +155,5 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
           Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
         ),
       ),
-    300_000,
   );
 });

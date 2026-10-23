@@ -346,6 +346,7 @@ export function MermaidDiagramCard({
       aria-label={displayTitle}
       className="scient-mermaid-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
       data-markdown-copy={markdownCopy}
+      data-markdown-mermaid
       data-scient-visual-card
       dir="ltr"
       onContextMenu={handleContextMenu}
@@ -512,9 +513,7 @@ export function MermaidDiagramCard({
         <>
           <div className="scient-mermaid-inline overflow-auto p-2">
             <div
-              // Drawn in the no-network frame and stripped of outside loads; Mermaid's
-              // strict renderer sanitizes it. We deliberately do not call bindFunctions,
-              // so diagram-authored click handlers do not run.
+              // The upstream lazy mount disables links/images and sanitizes before insertion.
               dangerouslySetInnerHTML={{ __html: readyResult.svg }}
             />
           </div>

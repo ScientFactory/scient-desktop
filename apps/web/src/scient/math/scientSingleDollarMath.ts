@@ -16,6 +16,8 @@
  */
 
 /** micromark character codes: null is EOF, negatives are virtual (line endings, tabs). */
+import { SCIENT_MATH_TABLE_PIPE } from "./remarkScientMath";
+
 type Code = number | null;
 
 interface TokenizerEffects {
@@ -173,11 +175,18 @@ function isWhitespaceCode(code: Code): boolean {
  * `$1/2$`, `$f(x)$`, `$a*b*c$` — are math.
  */
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
+  content = content.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (STRING_ESCAPE_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATTERN.test(content) && !NUMERIC_SUBSCRIPT_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
-  if (!CONTENT_END_PATTERN.test(content) && !CHARGE_END_PATTERN.test(content)) return false;
+  if (
+    !CONTENT_END_PATTERN.test(content) &&
+    !CHARGE_END_PATTERN.test(content) &&
+    !/^\|[^|\n]+\|$/.test(content) &&
+    !/^\\\|[^|\n]+\\\|$/.test(content)
+  )
+    return false;
   if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
   // An unescaped trailing % is a TeX comment and always renders wrong.
   if (content.endsWith("%") && !content.endsWith("\\%")) return false;

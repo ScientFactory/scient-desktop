@@ -1,14 +1,17 @@
+import { describe } from "@effect/vitest";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { AGENT_DEVICE_VERSION } from "./DeviceToolchain.ts";
+import { remoteDeviceScript } from "./sshDeviceScript.ts";
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - verifies generated remote scripts using real shell and Node processes.
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
-import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { quoteRemoteArg, remoteDeviceEnvironment } from "./sshDeviceScript.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -62,6 +65,11 @@ describe("remote helper lifecycle", () => {
         await NodeFSP.writeFile(NodePath.join(bin, "npm"), "#!/bin/sh\necho 10.0.0\n", {
           mode: 0o755,
         });
+        await NodeFSP.writeFile(
+          NodePath.join(bin, "emulator"),
+          "#!/bin/sh\nprintf 'emulated webcam<N> none\\n' >&2\n",
+          { mode: 0o755 },
+        );
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
@@ -79,7 +87,7 @@ describe("remote helper lifecycle", () => {
           hub,
           `import http from 'node:http'; import fs from 'node:fs';
 if(fs.existsSync('fail-start-once')) {fs.unlinkSync('fail-start-once');process.exit(1);}
-const args=process.argv.slice(2); fs.writeFileSync('hub-args.json',JSON.stringify(args)); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+const args=process.argv.slice(2); fs.writeFileSync('hub-args.json',JSON.stringify(args)); fs.writeFileSync('hub-camera-args',process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS || ''); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
         );
         await NodeFSP.writeFile(
           agent,
@@ -117,7 +125,14 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              PATH: `${bin}:${process.env.PATH}`,
+              SERVE_EMU_FFMPEG: NodePath.join(home, "missing-ffmpeg"),
+              ANDROID_HOME: "",
+              EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: "-memory 4096",
+            },
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
@@ -148,6 +163,9 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
           expect(concurrent.hubPort).toBe(manual.hubPort);
           expect(manual.daemonPort).toBeUndefined();
           expect((await hubArgs("one")).slice(-2)).toEqual(["--platform", "android"]);
+          expect(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub-camera-args"), "utf8"),
+          ).toBe("-camera-front emulated -camera-back emulated -memory 4096");
           // A hub started before discovery was filtered has no recorded platform.
           const hubFile = NodePath.join(root, "hosts/one/hub.json");
           const { platform: _platform, ...unfilteredHub } = JSON.parse(

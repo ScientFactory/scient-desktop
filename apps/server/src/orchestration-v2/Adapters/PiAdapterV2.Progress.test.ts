@@ -556,8 +556,8 @@ describe("PiAdapterV2", () => {
         yield* takeEvent(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
-            event.turnItem.toolName === "notify",
+            event.turnItem.type === "system_notice" &&
+            event.turnItem.message === "acceptance-fence",
         );
         assert.isFalse(observed.some((event) => event.type === "turn.terminal"));
         yield* fake.emit({ type: "response", command: "prompt", success: true });

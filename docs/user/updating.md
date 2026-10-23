@@ -191,6 +191,14 @@ out on purpose: providers that only offer a manual update command, and
 Scient-managed runtimes, which update from their own actions or the sidebar
 circle.
 
+After a successful provider CLI update, Scient refreshes model discovery for
+every enabled instance of that provider using its own configuration. Connected
+clients receive the refreshed catalogs automatically.
+
 The provider update checks setting also controls whether Scient downloads model
 catalog updates. With it off, new models may not appear until you turn it on
 and refresh provider status.
+
+Provider updates do not restart running chats. An existing session can keep
+using the previous CLI until it ends. If discovery fails, check the provider
+status and refresh it again.

@@ -225,255 +225,256 @@ export const make = Effect.gen(function* () {
   // gate so two simultaneous requests cannot both see an idle state.
   const startGate = yield* Semaphore.make(1);
 
-  const publish = (
+  const publish = Effect.fn("LatexManagedToolchain.publish")(function* (
     update: (
       current: ScientLatexManagedInstallState,
     ) => Omit<ScientLatexManagedInstallState, "updatedAtEpochMs">,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      return yield* Ref.updateAndGet(stateRef, (current) => {
-        const next = update(current);
-        // A failure's step and detail describe that failure only, so a retry
-        // that moves on to downloading must not carry them along.
-        const published = { ...next, updatedAtEpochMs: now };
-        if (published.state !== "failed") {
-          delete published.failureStep;
-          delete published.failureDetail;
-        }
-        return published;
-      });
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    return yield* Ref.updateAndGet(stateRef, (current) => {
+      const next = update(current);
+      // A failure's step and detail describe that failure only, so a retry
+      // that moves on to downloading must not carry them along.
+      const published = { ...next, updatedAtEpochMs: now };
+      if (published.state !== "failed") {
+        delete published.failureStep;
+        delete published.failureDetail;
+      }
+      return published;
     });
+  });
 
   const phase = (next: ScientLatexManagedInstallState["state"]) =>
     publish((current) => ({ ...current, state: next, failureReason: null }));
 
   /** Follows the release redirect, checking every hop against the host list. */
-  const openArtifact = (url: string) =>
-    Effect.gen(function* () {
-      let current = url;
-      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-        const rejection = artifactUrlRejection(current);
-        if (rejection !== null) return yield* failInstall("download-failed", rejection);
-        const response = yield* Effect.tryPromise({
-          try: (signal) => fetch(current, { redirect: "manual", signal }),
-          catch: (cause) =>
-            new ManagedLatexInstallFailure({
-              reason: "download-failed",
-              detail: `Scient could not reach the LaTeX download: ${String(cause)}`,
-            }),
-        });
-        if (response.status < 300 || response.status >= 400) return response;
-        const location = response.headers.get("location");
-        yield* Effect.promise(async () => {
-          await response.body?.cancel().catch(() => undefined);
-        });
-        if (location === null) {
-          return yield* failInstall("download-failed", "The LaTeX download redirected nowhere.");
-        }
-        current = new URL(location, current).href;
-      }
-      return yield* failInstall("download-failed", "The LaTeX download redirected too many times.");
-    });
-
-  const download = (input: { readonly asset: TinyTexAsset; readonly destination: string }) =>
-    Effect.gen(function* () {
-      const response = yield* openArtifact(input.asset.url);
-      const body = response.body;
-      if (!response.ok || body === null) {
-        yield* Effect.promise(async () => {
-          await response.body?.cancel().catch(() => undefined);
-        });
-        return yield* failInstall(
-          "download-failed",
-          `The LaTeX download answered with HTTP ${String(response.status)}.`,
-        );
-      }
-      const declared = Number.parseInt(response.headers.get("content-length") ?? "", 10);
-      if (Number.isSafeInteger(declared) && declared !== input.asset.sizeBytes) {
-        return yield* failInstall(
-          "download-failed",
-          "The LaTeX download is not the size Scient pinned.",
-        );
-      }
-
-      const receivedRef = yield* Ref.make(0);
-      const publishedRef = yield* Ref.make(0);
-      yield* publish((current) => ({
-        ...current,
-        state: "downloading",
-        bytesReceived: 0,
-        totalBytes: input.asset.sizeBytes,
-        failureReason: null,
-      }));
-
-      yield* Stream.fromReadableStream<Uint8Array, ManagedLatexInstallFailure>({
-        evaluate: () => body,
-        onError: (cause) =>
+  const openArtifact = Effect.fn("LatexManagedToolchain.openArtifact")(function* (url: string) {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const rejection = artifactUrlRejection(current);
+      if (rejection !== null) return yield* failInstall("download-failed", rejection);
+      const response = yield* Effect.tryPromise({
+        try: (signal) => fetch(current, { redirect: "manual", signal }),
+        catch: (cause) =>
           new ManagedLatexInstallFailure({
             reason: "download-failed",
-            detail: `The LaTeX download was interrupted: ${String(cause)}`,
+            detail: `Scient could not reach the LaTeX download: ${String(cause)}`,
           }),
-      }).pipe(
-        Stream.tap((chunk) =>
-          Effect.gen(function* () {
-            const received = yield* Ref.updateAndGet(
-              receivedRef,
-              (total) => total + chunk.byteLength,
-            );
-            if (received > MAX_DOWNLOAD_BYTES || received > input.asset.sizeBytes) {
-              return yield* failInstall(
-                "download-failed",
-                "The LaTeX download is larger than Scient pinned.",
-              );
-            }
-            const published = yield* Ref.get(publishedRef);
-            if (received - published < PROGRESS_STEP_BYTES && received !== input.asset.sizeBytes) {
-              return;
-            }
-            yield* Ref.set(publishedRef, received);
-            yield* publish((current) => ({ ...current, bytesReceived: received }));
-          }),
-        ),
-        Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            failInstall(
+      });
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.get("location");
+      yield* Effect.promise(async () => {
+        await response.body?.cancel().catch(() => undefined);
+      });
+      if (location === null) {
+        return yield* failInstall("download-failed", "The LaTeX download redirected nowhere.");
+      }
+      current = new URL(location, current).href;
+    }
+    return yield* failInstall("download-failed", "The LaTeX download redirected too many times.");
+  });
+
+  const download = Effect.fn("LatexManagedToolchain.download")(function* (input: {
+    readonly asset: TinyTexAsset;
+    readonly destination: string;
+  }) {
+    const response = yield* openArtifact(input.asset.url);
+    const body = response.body;
+    if (!response.ok || body === null) {
+      yield* Effect.promise(async () => {
+        await response.body?.cancel().catch(() => undefined);
+      });
+      return yield* failInstall(
+        "download-failed",
+        `The LaTeX download answered with HTTP ${String(response.status)}.`,
+      );
+    }
+    const declared = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+    if (Number.isSafeInteger(declared) && declared !== input.asset.sizeBytes) {
+      return yield* failInstall(
+        "download-failed",
+        "The LaTeX download is not the size Scient pinned.",
+      );
+    }
+
+    const receivedRef = yield* Ref.make(0);
+    const publishedRef = yield* Ref.make(0);
+    yield* publish((current) => ({
+      ...current,
+      state: "downloading",
+      bytesReceived: 0,
+      totalBytes: input.asset.sizeBytes,
+      failureReason: null,
+    }));
+
+    yield* Stream.fromReadableStream<Uint8Array, ManagedLatexInstallFailure>({
+      evaluate: () => body,
+      onError: (cause) =>
+        new ManagedLatexInstallFailure({
+          reason: "download-failed",
+          detail: `The LaTeX download was interrupted: ${String(cause)}`,
+        }),
+    }).pipe(
+      Stream.tap((chunk) =>
+        Effect.gen(function* () {
+          const received = yield* Ref.updateAndGet(
+            receivedRef,
+            (total) => total + chunk.byteLength,
+          );
+          if (received > MAX_DOWNLOAD_BYTES || received > input.asset.sizeBytes) {
+            return yield* failInstall(
               "download-failed",
-              `Scient could not save the LaTeX download: ${cause.message}`,
-            ),
+              "The LaTeX download is larger than Scient pinned.",
+            );
+          }
+          const published = yield* Ref.get(publishedRef);
+          if (received - published < PROGRESS_STEP_BYTES && received !== input.asset.sizeBytes) {
+            return;
+          }
+          yield* Ref.set(publishedRef, received);
+          yield* publish((current) => ({ ...current, bytesReceived: received }));
         }),
-        Effect.timeoutOption(DOWNLOAD_TIMEOUT),
-        Effect.flatMap((finished) =>
-          Option.isSome(finished)
-            ? Effect.void
-            : failInstall("download-failed", "The LaTeX download took too long and was stopped."),
-        ),
+      ),
+      Stream.run(fileSystem.sink(input.destination, { flag: "wx" })),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall(
+            "download-failed",
+            `Scient could not save the LaTeX download: ${cause.message}`,
+          ),
+      }),
+      Effect.timeoutOption(DOWNLOAD_TIMEOUT),
+      Effect.flatMap((finished) =>
+        Option.isSome(finished)
+          ? Effect.void
+          : failInstall("download-failed", "The LaTeX download took too long and was stopped."),
+      ),
+    );
+
+    const received = yield* Ref.get(receivedRef);
+    if (received !== input.asset.sizeBytes) {
+      return yield* failInstall(
+        "download-failed",
+        "The LaTeX download ended early and is incomplete.",
       );
+    }
+  });
 
-      const received = yield* Ref.get(receivedRef);
-      if (received !== input.asset.sizeBytes) {
-        return yield* failInstall(
-          "download-failed",
-          "The LaTeX download ended early and is incomplete.",
-        );
-      }
-    });
-
-  const verify = (input: { readonly asset: TinyTexAsset; readonly archivePath: string }) =>
-    Effect.gen(function* () {
-      yield* phase("verifying");
-      const digest = yield* fileSystem.stream(input.archivePath).pipe(
-        Stream.runFold(
-          () => NodeCrypto.createHash("sha256"),
-          (hash, chunk) => hash.update(chunk),
-        ),
-        Effect.map((hash) => hash.digest("hex")),
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            failInstall(
-              "install-failed",
-              `Scient could not read the LaTeX download: ${cause.message}`,
-            ),
-        }),
+  const verify = Effect.fn("LatexManagedToolchain.verify")(function* (input: {
+    readonly asset: TinyTexAsset;
+    readonly archivePath: string;
+  }) {
+    yield* phase("verifying");
+    const digest = yield* fileSystem.stream(input.archivePath).pipe(
+      Stream.runFold(
+        () => NodeCrypto.createHash("sha256"),
+        (hash, chunk) => hash.update(chunk),
+      ),
+      Effect.map((hash) => hash.digest("hex")),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall(
+            "install-failed",
+            `Scient could not read the LaTeX download: ${cause.message}`,
+          ),
+      }),
+    );
+    if (digest !== input.asset.sha256.toLowerCase()) {
+      return yield* failInstall(
+        "checksum-mismatch",
+        "The LaTeX download does not match the digest Scient pinned.",
       );
-      if (digest !== input.asset.sha256.toLowerCase()) {
-        return yield* failInstall(
-          "checksum-mismatch",
-          "The LaTeX download does not match the digest Scient pinned.",
-        );
-      }
-    });
+    }
+  });
 
-  const unpack = (input: {
+  const unpack = Effect.fn("LatexManagedToolchain.unpack")(function* (input: {
     readonly asset: TinyTexAsset;
     readonly archivePath: string;
     readonly payloadPath: string;
-  }) =>
-    Effect.gen(function* () {
-      yield* phase("unpacking");
-      yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+  }) {
+    yield* phase("unpacking");
+    yield* fileSystem.makeDirectory(input.payloadPath, { recursive: true }).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
+      }),
+    );
+    yield* unpacker
+      .unpack({
+        archivePath: input.archivePath,
+        destination: input.payloadPath,
+        archive: input.asset.archive,
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          cause.reason === "unsupported-archive"
+            ? failInstall("unsupported-archive", cause.detail)
+            : failInstall("unpack-failed", cause.detail, "extract"),
+        ),
+      );
+    const executable = path.join(input.payloadPath, input.asset.executableRelativePath);
+    const present = yield* fileSystem.exists(executable).pipe(Effect.orElseSucceed(() => false));
+    if (!present) {
+      return yield* failInstall(
+        "unpack-failed",
+        "The LaTeX download did not contain the engine Scient expected.",
+        "engine-missing",
+      );
+    }
+    // GNU tar and bsdtar normally preserve executable bits, but a one-click
+    // install must not depend on archive-mode fidelity. Make the actual
+    // entry point executable on POSIX, then prove it starts before the tree
+    // is promoted or the state file can name it.
+    if (platform !== "win32") {
+      yield* fileSystem.chmod(executable, 0o755).pipe(
         Effect.catchTags({
           PlatformError: (cause) =>
-            failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-        }),
-      );
-      yield* unpacker
-        .unpack({
-          archivePath: input.archivePath,
-          destination: input.payloadPath,
-          archive: input.asset.archive,
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            cause.reason === "unsupported-archive"
-              ? failInstall("unsupported-archive", cause.detail)
-              : failInstall("unpack-failed", cause.detail, "extract"),
-          ),
-        );
-      const executable = path.join(input.payloadPath, input.asset.executableRelativePath);
-      const present = yield* fileSystem.exists(executable).pipe(Effect.orElseSucceed(() => false));
-      if (!present) {
-        return yield* failInstall(
-          "unpack-failed",
-          "The LaTeX download did not contain the engine Scient expected.",
-          "engine-missing",
-        );
-      }
-      // GNU tar and bsdtar normally preserve executable bits, but a one-click
-      // install must not depend on archive-mode fidelity. Make the actual
-      // entry point executable on POSIX, then prove it starts before the tree
-      // is promoted or the state file can name it.
-      if (platform !== "win32") {
-        yield* fileSystem.chmod(executable, 0o755).pipe(
-          Effect.catchTags({
-            PlatformError: (cause) =>
-              failInstall(
-                "unpack-failed",
-                `Scient could not make the LaTeX engine executable: ${cause.message}`,
-                "engine-failed",
-              ),
-          }),
-        );
-      }
-      const validation = yield* processRunner
-        .run({
-          command: executable,
-          args: ["-v"],
-          env: latexEngineEnvironment({
-            base: {},
-            hostEnvironment,
-            binDirectory: path.dirname(executable),
-            pathDelimiter,
-          }),
-          timeout: ENGINE_VALIDATION_TIMEOUT,
-          maxOutputBytes: ENGINE_VALIDATION_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.catch((cause) =>
             failInstall(
               "unpack-failed",
-              `Scient could not start the unpacked LaTeX engine: ${cause.message}`,
+              `Scient could not make the LaTeX engine executable: ${cause.message}`,
               "engine-failed",
             ),
+        }),
+      );
+    }
+    const validation = yield* processRunner
+      .run({
+        command: executable,
+        args: ["-v"],
+        env: latexEngineEnvironment({
+          base: {},
+          hostEnvironment,
+          binDirectory: path.dirname(executable),
+          pathDelimiter,
+        }),
+        timeout: ENGINE_VALIDATION_TIMEOUT,
+        maxOutputBytes: ENGINE_VALIDATION_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          failInstall(
+            "unpack-failed",
+            `Scient could not start the unpacked LaTeX engine: ${cause.message}`,
+            "engine-failed",
           ),
-        );
-      if (validation.timedOut || validation.code !== 0) {
-        return yield* failInstall(
-          "unpack-failed",
-          validation.timedOut
-            ? "The unpacked LaTeX engine did not start in time."
-            : `The unpacked LaTeX engine did not run: ${
-                validation.stderr.trim() ||
-                validation.stdout.trim() ||
-                `latexmk exited with ${String(validation.code)}`
-              }`,
-          "engine-failed",
-        );
-      }
-    });
+        ),
+      );
+    if (validation.timedOut || validation.code !== 0) {
+      return yield* failInstall(
+        "unpack-failed",
+        validation.timedOut
+          ? "The unpacked LaTeX engine did not start in time."
+          : `The unpacked LaTeX engine did not run: ${
+              validation.stderr.trim() ||
+              validation.stdout.trim() ||
+              `latexmk exited with ${String(validation.code)}`
+            }`,
+        "engine-failed",
+      );
+    }
+  });
 
   /**
    * Moves the finished tree beside any earlier one and records it as current.
@@ -486,8 +487,8 @@ export const make = Effect.gen(function* () {
    * only thing discovery reads — is the single moment the switch happens.
    * Best-effort cleanup runs only after this commit point.
    */
-  const promote = (input: { readonly payloadPath: string; readonly version: string }) =>
-    Effect.gen(function* () {
+  const promote = Effect.fn("LatexManagedToolchain.promote")(
+    function* (input: { readonly payloadPath: string; readonly version: string }) {
       const installRoot = managedLatexInstallRoot({
         managedRoot: paths.managedRoot,
         version: input.version,
@@ -507,12 +508,15 @@ export const make = Effect.gen(function* () {
         Effect.provideContext(fileContext),
       );
       return installRoot;
-    }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
-      }),
-    );
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
+        }),
+      ),
+  );
 
   /**
    * Removes managed install directories nothing points to any more.
@@ -534,8 +538,8 @@ export const make = Effect.gen(function* () {
    * must never become this install's problem, and an orphaned directory left
    * for the next cleanup to try again is a fully acceptable outcome.
    */
-  const cleanupSupersededInstalls = (promotedRoot: string) =>
-    Effect.gen(function* () {
+  const cleanupSupersededInstalls = Effect.fn("LatexManagedToolchain.cleanupSupersededInstalls")(
+    function* (promotedRoot: string) {
       const contents = yield* fileSystem
         .readFileString(paths.statePath)
         .pipe(Effect.orElseSucceed(() => null));
@@ -562,7 +566,9 @@ export const make = Effect.gen(function* () {
           }),
         { discard: true },
       );
-    }).pipe(Effect.ignoreCause());
+    },
+    (effect) => effect.pipe(Effect.ignoreCause()),
+  );
 
   /**
    * Fetches the collections an ordinary document needs, while the card still
@@ -572,8 +578,8 @@ export const make = Effect.gen(function* () {
    * bad day, a shutdown mid-fetch — costs a note on a finished install rather
    * than the install itself. Answers the note, or `null` when there is none.
    */
-  const preinstallCollections = (binDirectory: string) =>
-    Effect.gen(function* () {
+  const preinstallCollections = Effect.fn("LatexManagedToolchain.preinstallCollections")(
+    function* (binDirectory: string) {
       yield* phase("installing-packages");
       const outcome = yield* packageInstaller.install({
         packages: RECOMMENDED_PACKAGES,
@@ -585,10 +591,12 @@ export const make = Effect.gen(function* () {
         packages: outcome.failed,
       });
       return COLLECTIONS_WARNING;
-    }).pipe(Effect.catchCause(() => Effect.succeed(COLLECTIONS_WARNING)));
+    },
+    (effect) => effect.pipe(Effect.catchCause(() => Effect.succeed(COLLECTIONS_WARNING))),
+  );
 
-  const runInstall = (installable: TinyTexAsset) =>
-    Effect.gen(function* () {
+  const runInstall = Effect.fn("LatexManagedToolchain.runInstall")(
+    function* (installable: TinyTexAsset) {
       yield* fileSystem.makeDirectory(paths.stagingRoot, { recursive: true });
       const staging = yield* fileSystem.makeTempDirectory({
         directory: paths.stagingRoot,
@@ -615,74 +623,77 @@ export const make = Effect.gen(function* () {
           fileSystem.remove(staging, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
         ),
       );
-    }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
-      }),
-      Effect.flatMap((packagesWarning) =>
-        Effect.gen(function* () {
-          // The probe caches its answer, so the newly installed engine only
-          // becomes visible once that cache is dropped. Do it before the state
-          // says ready: a client that reacts to `ready` polls the toolchain
-          // next, and must not be told the engine is still missing.
-          yield* toolchain.probe(true).pipe(Effect.ignoreCause());
-          // Whatever an earlier distribution could not find is not this one's
-          // answer, and the machine is evidently online right now.
-          yield* Effect.sync(() => {
-            clearFailedPackageSearches();
-          });
-          yield* publish((current) => ({
-            ...current,
-            state: "ready",
-            version: manifest.version,
-            bytesReceived: null,
-            totalBytes: null,
-            failureReason: null,
-            ...(packagesWarning === null ? {} : { packagesWarning }),
-          }));
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
         }),
+        Effect.flatMap((packagesWarning) =>
+          Effect.gen(function* () {
+            // The probe caches its answer, so the newly installed engine only
+            // becomes visible once that cache is dropped. Do it before the state
+            // says ready: a client that reacts to `ready` polls the toolchain
+            // next, and must not be told the engine is still missing.
+            yield* toolchain.probe(true).pipe(Effect.ignoreCause());
+            // Whatever an earlier distribution could not find is not this one's
+            // answer, and the machine is evidently online right now.
+            yield* Effect.sync(() => {
+              clearFailedPackageSearches();
+            });
+            yield* publish((current) => ({
+              ...current,
+              state: "ready",
+              version: manifest.version,
+              bytesReceived: null,
+              totalBytes: null,
+              failureReason: null,
+              ...(packagesWarning === null ? {} : { packagesWarning }),
+            }));
+          }),
+        ),
+        Effect.timeoutOption(INSTALL_TIMEOUT),
+        Effect.flatMap((finished) =>
+          Option.isSome(finished)
+            ? Effect.void
+            : failInstall(
+                "install-failed",
+                "The LaTeX installation took too long and was stopped. Try again.",
+              ),
+        ),
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("scient latex managed install failed", {
+              reason: cause.reason,
+              ...(cause.step === undefined ? {} : { step: cause.step }),
+              detail: cause.detail,
+            });
+            yield* publish((current) => ({
+              ...current,
+              state: "failed",
+              bytesReceived: null,
+              totalBytes: null,
+              failureReason: cause.reason,
+              ...(cause.step === undefined ? {} : { failureStep: cause.step }),
+              failureDetail: managedInstallFailureDetail(cause.detail),
+            }));
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("scient latex managed install crashed", { cause });
+            yield* publish((current) => ({
+              ...current,
+              state: "failed",
+              bytesReceived: null,
+              totalBytes: null,
+              failureReason: "install-failed",
+            }));
+          }),
+        ),
       ),
-      Effect.timeoutOption(INSTALL_TIMEOUT),
-      Effect.flatMap((finished) =>
-        Option.isSome(finished)
-          ? Effect.void
-          : failInstall(
-              "install-failed",
-              "The LaTeX installation took too long and was stopped. Try again.",
-            ),
-      ),
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("scient latex managed install failed", {
-            reason: cause.reason,
-            ...(cause.step === undefined ? {} : { step: cause.step }),
-            detail: cause.detail,
-          });
-          yield* publish((current) => ({
-            ...current,
-            state: "failed",
-            bytesReceived: null,
-            totalBytes: null,
-            failureReason: cause.reason,
-            ...(cause.step === undefined ? {} : { failureStep: cause.step }),
-            failureDetail: managedInstallFailureDetail(cause.detail),
-          }));
-        }),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("scient latex managed install crashed", { cause });
-          yield* publish((current) => ({
-            ...current,
-            state: "failed",
-            bytesReceived: null,
-            totalBytes: null,
-            failureReason: "install-failed",
-          }));
-        }),
-      ),
-    );
+  );
 
   const install = startGate.withPermits(1)(
     Effect.gen(function* () {

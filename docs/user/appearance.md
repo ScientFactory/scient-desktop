@@ -29,6 +29,17 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Math
+
+Web and desktop retain Scient's scientific math renderer, including source-preserving copy
+and bounded wrapping; see [Math in chat](./math-in-chat.md).
+
+In the retained mobile client, **Render math** in **Settings → Appearance** is opt-in.
+It recognizes `$…$`, `$$…$$`, `\(…\)`, `\[…\]`, and fenced `math` blocks outside of code.
+With rendering off or unavailable, readable TeX stays visible. The composer keeps TeX source
+editable, and the preference is saved separately on each device. This retained capability
+does not establish a supported Scient mobile release.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

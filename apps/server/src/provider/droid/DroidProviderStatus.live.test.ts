@@ -6,8 +6,9 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DroidSettings, ProviderInstanceId } from "@t3tools/contracts";
-import { Duration, Effect, FileSystem, Layer, Schema, Stream } from "effect";
+import { Deferred, Duration, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
 import * as DateTime from "effect/DateTime";
+import { ChildProcessSpawner } from "effect/process";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeAll } from "vite-plus/test";
 
@@ -132,21 +133,53 @@ it.live.skipIf(!binary)(
         FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
         FACTORY_DISABLE_KEYRING: "true",
       }).map(([name, value]) => ({ name, value, sensitive: false }));
+      // Every periodic check is observable: it spawns the binary for a
+      // `--version` probe. Counting those spawns gives a real receipt for
+      // "many checks ran" without waiting on the wall clock.
+      const versionProbes = yield* Ref.make(0);
+      const probeTarget = yield* Ref.make(Number.POSITIVE_INFINITY);
+      const enoughProbes = yield* Deferred.make<void>();
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const countingSpawner = ChildProcessSpawner.ChildProcessSpawner.of({
+        ...spawner,
+        spawn: (command) =>
+          spawner.spawn(command).pipe(
+            Effect.tap(() =>
+              Effect.gen(function* () {
+                if (!("args" in command) || !command.args.includes("--version")) return;
+                const count = yield* Ref.updateAndGet(versionProbes, (n) => n + 1);
+                if (count >= (yield* Ref.get(probeTarget)))
+                  yield* Deferred.succeed(enoughProbes, undefined);
+              }),
+            ),
+          ),
+      });
       const instance = yield* DroidDriver.create({
         instanceId: ProviderInstanceId.make("droid_status_live"),
         displayName: undefined,
         environment,
         enabled: true,
         config: decodeDroidSettings({ enabled: true, binaryPath: binary! }),
-      });
-      // The startup probe.
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, countingSpawner));
+      // The startup probe. Subscribe before reading the current snapshot so a
+      // ready transition in between cannot be missed.
+      const ready = yield* Deferred.make<void>();
+      yield* instance.snapshot.streamChanges.pipe(
+        Stream.runForEach((snapshot) =>
+          snapshot.status === "ready"
+            ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Effect.forkChild,
+      );
       yield* Effect.gen(function* () {
-        while ((yield* instance.snapshot.getSnapshot).status !== "ready")
-          yield* Effect.sleep("50 millis");
+        if ((yield* instance.snapshot.getSnapshot).status !== "ready") yield* Deferred.await(ready);
       }).pipe(Effect.timeout("45 seconds"));
       expect(sessionFiles(home)).toHaveLength(1);
-      // Many periodic checks at 300ms.
-      yield* Effect.sleep("2500 millis");
+      // Many periodic checks at 300ms: six more version-probe spawns are their receipt.
+      yield* Ref.set(probeTarget, (yield* Ref.get(versionProbes)) + 6);
+      if ((yield* Ref.get(versionProbes)) < (yield* Ref.get(probeTarget)))
+        yield* Deferred.await(enoughProbes);
       expect(sessionFiles(home)).toHaveLength(1);
       expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
       // An explicit refresh is one more full probe: one more session, skills included.

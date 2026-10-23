@@ -1,11 +1,10 @@
-import "fake-indexeddb/auto";
+import { act, render, fakeTimers } from "../../../test/render";
 import { EnvironmentId } from "@t3tools/contracts";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
-import { act, StrictMode, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, useLayoutEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 interface Request {
   input: { contents: string; expectedRevision?: string; mutationId: string; createOnly?: boolean };
@@ -101,66 +100,75 @@ const props: FileSaveOptions = {
   saveResolution: null,
 };
 const key = projectFileOperationKey(props);
-let root: Root | null = null;
-// The actions of the latest commit, as the surface would hold them.
-let latestActions: FileSaveSessionActions | null = null;
-function Surface(input: FileSaveOptions) {
-  const coordinator = useFileSaveCoordinator(input);
-  useLayoutEffect(() => {
-    latestActions = coordinator;
-  });
-  return null;
-}
-function actions(): FileSaveSessionActions {
-  return latestActions!;
-}
-async function mount(input = props) {
-  await act(async () => {
-    root = createRoot(document.createElement("div"));
-    root.render(
-      <StrictMode>
-        <Surface {...input} />
-      </StrictMode>,
-    );
-  });
-  await act(async () => {
-    expect(await actions().ready()).toBe(true);
-  });
-}
-async function reconstruct(input = props) {
-  await act(async () => {
-    root!.unmount();
-    root = null;
-    latestActions = null;
-    clearWorkspaceFileSessionsForTests();
-  });
-  await mount(input);
-}
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function setup() {
+  const timers = fakeTimers();
   runtime.canWrite = true;
   runtime.projectedSource = "A";
   runtime.pending = false;
   runtime.kind = "transient";
   runtime.read = async () => ({ revision: "rA" });
   runtime.resolve = async (review) => ({ revision: review.currentRevision });
-});
-afterEach(async () => {
-  await act(async () => {
-    root?.unmount();
-    root = null;
+  const sessionKeys = new Set([key]);
+  let screen: Awaited<ReturnType<typeof render>> | null = null;
+  let latestActions: FileSaveSessionActions | null = null;
+  function Surface(input: FileSaveOptions) {
+    const coordinator = useFileSaveCoordinator(input);
+    useLayoutEffect(() => {
+      latestActions = coordinator;
+    });
+    return null;
+  }
+  const ui = (input: FileSaveOptions) => (
+    <StrictMode>
+      <Surface {...input} />
+    </StrictMode>
+  );
+  const actions = () => latestActions!;
+  async function mount(input = props) {
+    sessionKeys.add(projectFileOperationKey(input));
+    screen = await render(ui(input), { router: false });
+    await act(async () => {
+      expect(await actions().ready()).toBe(true);
+    });
+  }
+  async function reconstruct(input = props) {
+    await screen?.[Symbol.asyncDispose]();
+    screen = null;
     latestActions = null;
     clearWorkspaceFileSessionsForTests();
-  });
-  const copy = await indexedDbMarkdownDrafts.read(key);
-  if (copy) await indexedDbMarkdownDrafts.replace(key, copy.token, undefined);
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
+    await mount(input);
+  }
+  return {
+    actions,
+    mount,
+    reconstruct,
+    rerender: (input: FileSaveOptions) => {
+      sessionKeys.add(projectFileOperationKey(input));
+      return screen!.rerender(ui(input));
+    },
+    unmount: async () => {
+      await screen?.[Symbol.asyncDispose]();
+      screen = null;
+    },
+    async [Symbol.asyncDispose]() {
+      try {
+        await screen?.[Symbol.asyncDispose]();
+        clearWorkspaceFileSessionsForTests();
+        for (const sessionKey of sessionKeys) {
+          const copy = await indexedDbMarkdownDrafts.read(sessionKey);
+          if (copy) await indexedDbMarkdownDrafts.replace(sessionKey, copy.token, undefined);
+        }
+      } finally {
+        timers[Symbol.dispose]();
+      }
+    },
+  };
+}
 
 describe("actual generic consumer durable ownership", () => {
   it("restores C from IndexedDB instead of a stale optimistic cache and replays frozen B with its lost-ACK ID before refusing outside D", async () => {
+    await using fixture = await setup();
+    const { actions, mount, reconstruct } = fixture;
     let disk = { source: "A", revision: "rA" };
     let lost = true;
     const receipts = new Map<
@@ -220,6 +228,8 @@ describe("actual generic consumer durable ownership", () => {
   });
 
   it("keeps accepted missing current through complete renderer reconstruction and later typing; only explicit recreation reaches the RPC", async () => {
+    await using fixture = await setup();
+    const { actions, mount, reconstruct } = fixture;
     const attention = {
       recoveryId: "missing",
       mutationId: "prior",
@@ -268,6 +278,8 @@ describe("actual generic consumer durable ownership", () => {
   });
 
   it("ignores retired React callbacks and preserves denied input until permission returns", async () => {
+    await using fixture = await setup();
+    const { actions, mount, reconstruct } = fixture;
     let disk = "A";
     runtime.write = async ({ input }) => {
       disk = input.contents;
@@ -292,4 +304,93 @@ describe("actual generic consumer durable ownership", () => {
     expect(disk).toBe("B");
     expect(runtime.pending).toBe(false);
   });
+});
+
+it.each([
+  { relativePath: "other.txt" },
+  { cwd: "/other-workspace" },
+  { environmentId: EnvironmentId.make("other-environment") },
+])("retires editor callbacks when the file identity changes: %j", async (change) => {
+  await using fixture = await setup();
+  const { actions, mount, rerender } = fixture;
+  const writes: string[] = [];
+  runtime.write = async ({ input }) => {
+    writes.push(input.contents);
+    return AsyncResult.success({ revision: `r${input.contents}` });
+  };
+  await mount();
+  const retired = actions().change;
+  await act(async () => {
+    runtime.projectedSource = "old file edit";
+    retired("old file edit");
+    expect(await actions().flush()).toBe(true);
+  });
+  await rerender({ ...props, ...change });
+  await act(async () => {
+    expect(await actions().ready()).toBe(true);
+    retired("stale editor contents");
+    runtime.projectedSource = "new file edit";
+    actions().change("new file edit");
+    expect(await actions().flush()).toBe(true);
+  });
+  expect(writes).toEqual(["old file edit", "new file edit"]);
+});
+
+it.each([false, true])(
+  "retains input when permission is revoked before React updates, unmount=%s",
+  async (unmount) => {
+    await using fixture = await setup();
+    const { actions, mount } = fixture;
+    const write = vi.fn(async () => AsyncResult.success({ revision: "rB" }));
+    runtime.write = write;
+    await mount();
+    await act(async () => {
+      runtime.projectedSource = "B";
+      actions().change("B");
+      runtime.canWrite = false;
+      expect(await actions().flush()).toBe(false);
+    });
+    if (unmount) await fixture.unmount();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(write).not.toHaveBeenCalled();
+    expect(runtime.pending).toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({ draftSource: "B" });
+    runtime.canWrite = true;
+    if (unmount) {
+      runtime.projectedSource = "A";
+      await fixture.reconstruct();
+      expect(runtime.projectedSource).toBe("B");
+    }
+    await act(async () => {
+      expect(await actions().flush()).toBe(true);
+    });
+    expect(write).toHaveBeenCalledOnce();
+    expect(runtime.pending).toBe(false);
+  },
+);
+
+it("flushes on unmount and ignores the released editor callback", async () => {
+  await using fixture = await setup();
+  const completed = Promise.withResolvers<void>();
+  const writes = vi.fn(async (_request: Request) => AsyncResult.success({ revision: "rB" }));
+  runtime.write = writes;
+  await fixture.mount({
+    ...props,
+    onPendingChange: (_path, pending) => {
+      runtime.pending = pending;
+      if (!pending) completed.resolve();
+    },
+  });
+  const retired = fixture.actions().change;
+  await act(async () => {
+    runtime.projectedSource = "B";
+    retired("B");
+  });
+  await fixture.unmount();
+  retired("stale editor contents");
+  await completed.promise;
+  await fixture.mount({ ...props, initialSource: "B", revision: "rB" });
+  await act(async () => expect(await fixture.actions().flush()).toBe(true));
+  expect(writes).toHaveBeenCalledOnce();
+  expect(writes.mock.calls[0]?.[0].input.contents).toBe("B");
 });

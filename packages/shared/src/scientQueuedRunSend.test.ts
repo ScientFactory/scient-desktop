@@ -16,6 +16,8 @@ function run(id: string, ordinal: number, status: string, extra: object = {}) {
     id,
     ordinal,
     status,
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "test-model" },
     userMessageId: `message:${id}`,
     queuePosition: status === "queued" ? ordinal : null,
     queueHeld: status === "queued",
@@ -32,7 +34,10 @@ function projection(input: {
   readonly providerSessions?: ReadonlyArray<object>;
 }) {
   return {
-    thread: { providerInstanceId: "codex" },
+    thread: {
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "test-model" },
+    },
     runs: input.runs,
     messages: input.messages ?? [],
     turnItems: input.turnItems ?? [],
@@ -109,6 +114,70 @@ describe("canSendQueuedRun", () => {
       ],
     });
     expect(canSendQueuedRun(recovered, runId("run:a"))).toBe(true);
+  });
+
+  it("checks the provider Send selects, not the old queue head", () => {
+    const limited = projection({
+      runs: [
+        run("run:limited", 1, "failed"),
+        run("run:a", 2, "queued"),
+        run("run:b", 3, "queued", {
+          providerInstanceId: "alternate",
+          modelSelection: { instanceId: "alternate", model: "test-model" },
+        }),
+      ],
+      turnItems: [usageLimitError],
+    });
+    expect(canSendQueuedRun(limited, runId("run:a"))).toBe(false);
+    expect(canSendQueuedRun(limited, runId("run:b"))).toBe(true);
+    expect(canSendQueuedRun(limited, runId("run:b"), { usageLimited: true })).toBe(true);
+  });
+
+  it("checks an automatic completion before the selected user's provider", () => {
+    const limited = projection({
+      runs: [
+        run("run:limited", 1, "failed"),
+        run("run:a", 2, "queued", {
+          providerInstanceId: "alternate",
+          modelSelection: { instanceId: "alternate", model: "test-model" },
+        }),
+        run("run:automatic", 3, "queued"),
+      ],
+      messages: [
+        {
+          id: "message:run:automatic",
+          delegatedCompletion: { parentRunId: "run:parent", generation: 1, taskIds: ["task"] },
+        },
+      ],
+      turnItems: [usageLimitError],
+    });
+    expect(canSendQueuedRun(limited, runId("run:a"))).toBe(false);
+    expect(canSendQueuedRun(limited, runId("run:a"), { usageLimited: false })).toBe(true);
+  });
+
+  it("uses the current provider for an automatic monitor completion", () => {
+    const limited = projection({
+      runs: [
+        run("run:limited", 1, "failed"),
+        run("run:a", 2, "queued", {
+          providerInstanceId: "alternate",
+          modelSelection: { instanceId: "alternate", model: "test-model" },
+        }),
+        run("run:automatic", 3, "queued", {
+          providerInstanceId: "alternate",
+          modelSelection: { instanceId: "alternate", model: "test-model" },
+        }),
+      ],
+      messages: [
+        {
+          id: "message:run:automatic",
+          delegatedCompletion: { parentRunId: "run:parent", generation: 1, taskIds: ["task"] },
+          notification: { source: { kind: "monitor" } },
+        },
+      ],
+      turnItems: [usageLimitError],
+    });
+    expect(canSendQueuedRun(limited, runId("run:a"))).toBe(false);
   });
 
   it("allows a user message behind a delegated completion, never the completion itself", () => {

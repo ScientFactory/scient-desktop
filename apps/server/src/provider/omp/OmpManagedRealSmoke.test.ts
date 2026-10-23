@@ -22,90 +22,87 @@ import { ompTarget } from "./OmpTarget.ts";
  * exercises the catalog and state-machine seams.
  */
 describe.runIf(ompQualifyManaged)("real Oh My Pi managed runtime qualification", () => {
-  it.effect(
-    "installs, handshakes, resumes, and removes the reviewed OMP artifact",
-    () =>
-      Effect.gen(function* () {
-        const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-managed-real-${process.pid}`);
-        NodeFS.rmSync(root, { recursive: true, force: true });
-        const { environment, homePath } = ompLiveInstance(root, {
-          // Keep the host's independently installed OMP out of this
-          // qualification so the managed path is selected from a true miss.
-          baseEnv: { PATH: "/usr/bin:/bin" },
-        });
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const settings = OmpSettings.make({
-          enabled: true,
-          binaryPath: "omp",
-          customModels: [],
-          homePath,
-          profile: "",
-        });
-        const resolution = yield* makeOmpManagedRuntimeResolution({
-          settings,
-          baseDir: root,
-          environment,
-          spawner,
-          managedInstallationAllowed: true,
-        });
-        expect(resolution.usesManagedPath).toBe(true);
-        expect(resolution.summary.source).toBe("missing");
-        expect(resolution.summary.actions).toContain("install");
+  it.effect("installs, handshakes, resumes, and removes the reviewed OMP artifact", () =>
+    Effect.gen(function* () {
+      const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-managed-real-${process.pid}`);
+      NodeFS.rmSync(root, { recursive: true, force: true });
+      const { environment, homePath } = ompLiveInstance(root, {
+        // Keep the host's independently installed OMP out of this
+        // qualification so the managed path is selected from a true miss.
+        baseEnv: { PATH: "/usr/bin:/bin" },
+      });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const settings = OmpSettings.make({
+        enabled: true,
+        binaryPath: "omp",
+        customModels: [],
+        homePath,
+        profile: "",
+      });
+      const resolution = yield* makeOmpManagedRuntimeResolution({
+        settings,
+        baseDir: root,
+        environment,
+        spawner,
+        managedInstallationAllowed: true,
+      });
+      expect(resolution.usesManagedPath).toBe(true);
+      expect(resolution.summary.source).toBe("missing");
+      expect(resolution.summary.actions).toContain("install");
 
-        const plan = yield* resolution.actions.plan("install");
-        expect(plan.action).toBe("install");
-        expect(plan.version).toBe("18.2.8");
-        yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
-        const installed = yield* resolution.actions.getSummary;
-        expect(installed).toMatchObject({
-          source: "scient_managed",
-          managedVersion: "18.2.8",
-          availableManagedVersion: null,
-        });
+      const plan = yield* resolution.actions.plan("install");
+      expect(plan.action).toBe("install");
+      expect(plan.version).toBe("18.2.8");
+      yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+      const installed = yield* resolution.actions.getSummary;
+      expect(installed).toMatchObject({
+        source: "scient_managed",
+        managedVersion: "18.2.8",
+        availableManagedVersion: null,
+      });
 
-        // Recreate the resolution to prove the v3 OMP receipt survives a
-        // process restart, rather than only working in the installing process.
-        const recreated = yield* makeOmpManagedRuntimeResolution({
-          settings,
-          baseDir: root,
-          environment,
-          spawner,
-          managedInstallationAllowed: true,
-        });
-        expect(recreated.usesManagedPath).toBe(true);
-        expect(recreated.summary).toMatchObject({
-          source: "scient_managed",
-          managedVersion: "18.2.8",
-        });
+      // Recreate the resolution to prove the v3 OMP receipt survives a
+      // process restart, rather than only working in the installing process.
+      const recreated = yield* makeOmpManagedRuntimeResolution({
+        settings,
+        baseDir: root,
+        environment,
+        spawner,
+        managedInstallationAllowed: true,
+      });
+      expect(recreated.usesManagedPath).toBe(true);
+      expect(recreated.summary).toMatchObject({
+        source: "scient_managed",
+        managedVersion: "18.2.8",
+      });
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const client = yield* makeOmpRpcProcess({
-              target: ompTarget,
-              command: recreated.effectiveBinaryPath,
-              cwd: root,
-              env: environment,
-              sessionDir: NodePath.join(root, "session"),
-            }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-            const ready = yield* client.ready;
-            expect(ready.supportedProtocolVersions).toContain(2);
-            const state = yield* client.getState();
-            expect(state.isStreaming).not.toBe(true);
-            expect(state.sessionId).toBeTypeOf("string");
-            yield* client.shutdown;
-          }),
-        );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* makeOmpRpcProcess({
+            target: ompTarget,
+            command: recreated.effectiveBinaryPath,
+            cwd: root,
+            env: environment,
+            sessionDir: NodePath.join(root, "session"),
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+          const ready = yield* client.ready;
+          expect(ready.supportedProtocolVersions).toContain(2);
+          const state = yield* client.getState();
+          expect(state.isStreaming).not.toBe(true);
+          expect(state.sessionId).toBeTypeOf("string");
+          yield* client.shutdown;
+        }),
+      );
 
-        const removePlan = yield* resolution.actions.plan("remove");
-        yield* resolution.actions.run("remove", removePlan.catalogRevision, () => Effect.void);
-        const removed = yield* resolution.actions.getSummary;
-        expect(removed.source).toBe("missing");
-        expect(removed.managedVersion).toBeNull();
-        NodeFS.rmSync(root, { recursive: true, force: true });
-      }).pipe(
-        Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
-        Effect.timeout("10 minutes"),
-      ),
-    700_000,
+      const removePlan = yield* resolution.actions.plan("remove");
+      yield* resolution.actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+      const removed = yield* resolution.actions.getSummary;
+      expect(removed.source).toBe("missing");
+      expect(removed.managedVersion).toBeNull();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+      Effect.timeout("10 minutes"),
+    ),
   );
 });

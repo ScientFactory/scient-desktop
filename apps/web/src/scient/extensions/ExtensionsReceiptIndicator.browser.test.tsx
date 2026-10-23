@@ -5,9 +5,8 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { render } from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
@@ -19,8 +18,9 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { receipt: state.receipt }, error: null }),
 }));
 vi.mock("./extensionsState", () => ({ extensionsDeliveryReceipt: state.receiptAtom }));
-vi.mock("@tanstack/react-router", () => ({
-  Link: ({
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  Link: (({
     to,
     search,
     children,
@@ -33,7 +33,7 @@ vi.mock("@tanstack/react-router", () => ({
     <a href={to} data-machine={search?.machine} {...props}>
       {children}
     </a>
-  ),
+  )) as never,
 }));
 
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
@@ -67,44 +67,33 @@ function receipt(overrides: Partial<ExtensionDeliveryReceipt> = {}): ExtensionDe
   };
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
-async function render() {
-  await act(async () =>
-    root.render(<ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />),
-  );
+function setup() {
+  state.receipt = undefined;
+  state.receiptAtom.mockClear();
 }
 
+const indicator = () => (
+  <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />
+);
+
 describe("ExtensionsReceiptIndicator", () => {
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    state.receipt = undefined;
-    state.receiptAtom.mockClear();
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-
   it("renders nothing until the thread has a receipt", async () => {
-    await render();
+    setup();
+    await using screen = await render(indicator());
+    const { container } = screen;
     expect(container.innerHTML).toBe("");
     expect(state.receiptAtom).toHaveBeenCalledWith({ environmentId, input: { threadId } });
 
     state.receipt = receipt({ delivered: [], skipped: [] });
-    await render();
+    await screen.rerender(indicator());
     expect(container.innerHTML).toBe("");
   });
 
   it("summarizes delivery and lists every skip with its reason", async () => {
+    setup();
     state.receipt = receipt();
-    await render();
+    await using screen = await render(indicator());
+    const { container } = screen;
     const trigger = container.querySelector<HTMLButtonElement>("[data-extensions-receipt]")!;
     expect(trigger.getAttribute("aria-label")).toBe("Connected services: 1 delivered, 4 skipped");
     expect(trigger.textContent).toBe("1· 4 skipped");
@@ -128,8 +117,10 @@ describe("ExtensionsReceiptIndicator", () => {
   });
 
   it("omits the skipped list when everything was delivered", async () => {
+    setup();
     state.receipt = receipt({ skipped: [] });
-    await render();
+    await using screen = await render(indicator());
+    const { container } = screen;
     const trigger = container.querySelector<HTMLButtonElement>("[data-extensions-receipt]")!;
     expect(trigger.textContent).toBe("1");
     await userEvent.click(trigger);

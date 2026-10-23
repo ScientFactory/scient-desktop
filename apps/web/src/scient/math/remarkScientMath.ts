@@ -18,6 +18,7 @@ export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] sa
 const MAX_SCIENT_TEX_LENGTH = 1000;
 
 const MATH_CODE_CLASS_NAME = "language-math";
+export const SCIENT_MATH_TABLE_PIPE = "\uE000";
 
 /**
  * Recognizes the `<code>` nodes remark-math produces. It also tags them
@@ -52,6 +53,14 @@ function displayMathHastData(value: string) {
         children: [{ type: "text", value }],
       },
     ],
+  };
+}
+
+function inlineMathHastData(value: string) {
+  return {
+    hName: "code",
+    hProperties: { className: ["language-math", "math-inline"] },
+    hChildren: [{ type: "text", value }],
   };
 }
 
@@ -230,6 +239,70 @@ function downgradeToLiteral(node: MdastNode, literal: string): void {
   delete node.children;
 }
 
+/**
+ * The upstream tokenizer also recognizes native backslash math and own-line
+ * `$$x$$` as flow math. Recover Scient's authored inline intent, and reject
+ * formulas it tokenized inside raw HTML literal regions before rehype sees them.
+ */
+function recoverMathContext(tree: MdastNode, source: string, authored: string): void {
+  const literalElements: string[] = [];
+  const visit = (node: MdastNode) => {
+    if (node.type === "html") {
+      // Consume complete tags and comments so an attribute containing "<code>"
+      // cannot change the literal-region state.
+      const tags = /<!--[\s\S]*?(?:-->|$)|<\/?([a-z][\w:-]*)(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi;
+      for (const match of (node.value ?? "").matchAll(tags)) {
+        const name = match[1]?.toLowerCase();
+        if (name !== "code" && name !== "pre") continue;
+        if (match[0].startsWith("</")) {
+          const index = literalElements.lastIndexOf(name);
+          if (index !== -1) literalElements.splice(index);
+        } else literalElements.push(name);
+      }
+      return;
+    }
+    if (node.type === "math" || node.type === "inlineMath") {
+      const original = rawSlice(authored, node);
+      if (
+        node.value?.includes(SCIENT_MATH_TABLE_PIPE) &&
+        original?.includes("|") &&
+        !original.includes(SCIENT_MATH_TABLE_PIPE)
+      ) {
+        node.value = node.value.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
+        node.data =
+          node.type === "math" ? displayMathHastData(node.value) : inlineMathHastData(node.value);
+      }
+      if (literalElements.length > 0) {
+        node.type = "text";
+        node.value = (
+          rawSlice(authored, node) ??
+          rawSlice(source, node) ??
+          node.value ??
+          ""
+        ).replace(/\\([!-/:-@[-`{-~])/g, "$1");
+        delete node.data;
+        return;
+      }
+      if (node.type === "math" && authoredIntentAt(authored, node) === "inline") {
+        const value = node.value ?? "";
+        node.type = "paragraph";
+        node.children = [
+          {
+            type: "inlineMath",
+            value,
+            ...(node.position ? { position: node.position } : {}),
+            data: inlineMathHastData(value),
+          },
+        ];
+        delete node.value;
+        delete node.data;
+      }
+    }
+    node.children?.forEach(visit);
+  };
+  visit(tree);
+}
+
 function guardMathNodes(node: MdastNode, source: string): void {
   for (const child of node.children ?? []) {
     guardMathNodes(child, source);
@@ -273,6 +346,7 @@ export function remarkScientMathRefinements(options?: ScientMathRefinementOption
   const sourceText = options?.sourceText;
   return (tree: MdastNode, file: VFileLike) => {
     const source = String(file);
+    recoverMathContext(tree, source, sourceText ?? source);
     guardMathNodes(tree, source);
     extractAuthoredDisplayMath(tree, sourceText);
     promoteSoleInlineMathParagraphs(tree, sourceText, source);

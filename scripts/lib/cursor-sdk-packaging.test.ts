@@ -175,4 +175,4 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
   } finally {
     await NodeFSP.rm(scratch, { recursive: true, force: true });
   }
-}, 60_000);
+});

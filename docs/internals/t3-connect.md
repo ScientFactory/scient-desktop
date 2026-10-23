@@ -43,6 +43,8 @@ verification (`acceptsToken: "oauth_token"`), so the CLI's OAuth credential work
 template.
 
 For deployment prerequisites, see the inherited [Connect setup reference](../operations/connect-setup.md).
+Connection failures are described in the inherited
+[troubleshooting reference](./t3-connect-troubleshooting.md), not in Scient user Help.
 
 ## Application Keys
 

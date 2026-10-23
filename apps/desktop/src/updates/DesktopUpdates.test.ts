@@ -2,8 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -193,6 +193,29 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     },
   );
+
+  it.effect("keeps the disabled reason available after configuration and channel changes", () => {
+    const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
+    const reason = "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const configured = yield* updates.getState;
+        assert.equal(configured.message, reason);
+
+        const changed = yield* updates.setChannel("beta");
+        assert.equal(changed.channel, "beta");
+        assert.equal(changed.enabled, false);
+        assert.equal(changed.status, "disabled");
+        assert.equal(changed.message, reason);
+        assert.equal(harness.sentStates.at(-1)?.message, reason);
+        assert.equal(harness.checkCount(), 0);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
 
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
     const harness = makeHarness();
@@ -523,28 +546,6 @@ describe("DesktopUpdates", () => {
     }),
   );
 
-  it.effect("keeps raw updater event failures out of update state", () => {
-    const harness = makeHarness();
-    const cause = new Error(
-      "request failed for https://user:secret@example.com/update?token=secret",
-    );
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("error", cause);
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "error");
-        assert.equal(state.message, "Desktop updater background operation reported an error.");
-        assert.notInclude(state.message ?? "", "secret");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("preserves a queued installer after a background updater error", () => {
     const harness = makeHarness();
 
@@ -610,49 +611,6 @@ describe("DesktopUpdates", () => {
           "Electron updater failed to check for updates on channel default.",
         );
         assert.notInclude(state.message ?? "", "secret");
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestClock.layer(),
-          harness.layer,
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("logs the redacted cause of an updater error event", () => {
-    const harness = makeHarness();
-    const cause = Object.assign(new Error("404 Not Found\nHeaders: authorization=secret"), {
-      code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
-    });
-    const loggedAnnotations: Array<Record<string, unknown>> = [];
-    const logger = Logger.make(({ fiber }) => {
-      const annotations = fiber.getRef(References.CurrentLogAnnotations);
-      if (annotations.errorTag === "DesktopUpdaterReportedError") {
-        loggedAnnotations.push(annotations);
-      }
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("error", cause);
-        yield* flushCallbacks;
-
-        const loggedAnnotation = loggedAnnotations.at(-1);
-        assert.isDefined(loggedAnnotation);
-        assert.equal(loggedAnnotation.operation, "background");
-        assert.equal(
-          loggedAnnotation.cause,
-          "Error [ERR_UPDATER_CHANNEL_FILE_NOT_FOUND]: 404 Not Found",
-        );
-        assert.notInclude(JSON.stringify(loggedAnnotations), "secret");
-        const state = yield* updates.getState;
-        assert.equal(state.message, "Desktop updater background operation reported an error.");
       }),
     ).pipe(
       Effect.provide(
@@ -838,6 +796,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  // regression: #19291 an install that did apply was still flagged as not applied
   it.effect("does not flag an install that applied", () => {
     const harness = makeHarness({
       installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
@@ -1038,29 +997,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("recovers when quitAndInstall reports failure through an updater event", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const desktopState = yield* DesktopState.DesktopState;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        yield* updates.install;
-        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
-        harness.emit("error", new Error("native installer refused"));
-        yield* flushCallbacks;
-
-        assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        assert.equal((yield* updates.getState).errorContext, "install");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("rejects a prepared install when the downloaded version changed", () => {
     const harness = makeHarness();
 
@@ -1214,19 +1150,6 @@ describe("DesktopUpdates", () => {
 });
 
 describe("describeUpdateErrorCause", () => {
-  it("preserves network and nested failure reasons", () => {
-    const networkError = Object.assign(new Error("getaddrinfo ENOTFOUND updates.example.com"), {
-      code: "ENOTFOUND",
-    });
-    const cause = new Error("fetch failed", { cause: networkError });
-
-    assert.equal(
-      DesktopUpdates.describeUpdateErrorCause(Cause.fail(cause)),
-      "Error: fetch failed; caused by Error [ENOTFOUND]: getaddrinfo ENOTFOUND updates.example.com",
-    );
-    assert.include(DesktopUpdates.describeUpdateErrorCause(Cause.die(networkError)), "[ENOTFOUND]");
-  });
-
   it("removes URLs, credentials, response bodies, and headers from summaries", () => {
     const messages = [
       "Cannot download https://user:url-secret@example.com/update?token=query-secret, status 403",

@@ -137,7 +137,17 @@ describe("development app bundle", () => {
     // Killed while signing long ago: a full abandoned copy.
     const abandoned = NodePath.join(runtimeDir, ".staging-abandoned");
     writeBundle(NodePath.join(abandoned, "Scient (Dev).app"), "half-built");
-    const later = Date.now() + 11 * 60 * 1000;
+    const epoch = new Date("2020-01-01T00:00:00.000Z");
+    const fs = {
+      ...NodeFS,
+      statSync: (filePath) => {
+        const stat = NodeFS.statSync(filePath);
+        // Restoring `.previous` changes its parent's mtime; freeze that observation too.
+        stat.mtimeMs = epoch.getTime();
+        return stat;
+      },
+    };
+    const later = epoch.getTime() + 11 * 60 * 1000;
 
     let sawRestored = false;
     replaceAppBundleAtomically(
@@ -146,7 +156,7 @@ describe("development app bundle", () => {
         sawRestored = readMarker(target) === "old";
         writeBundle(staged, "new");
       },
-      { now: later },
+      { fs, now: later },
     );
 
     assert.isTrue(sawRestored);
@@ -159,8 +169,12 @@ describe("development app bundle", () => {
     const target = NodePath.join(runtimeDir, "Scient (Dev).app");
     const live = NodePath.join(runtimeDir, ".staging-live");
     writeBundle(NodePath.join(live, "Scient (Dev).app"), "in progress");
+    const epoch = new Date("2020-01-01T00:00:00.000Z");
+    NodeFS.utimesSync(live, epoch, epoch);
 
-    replaceAppBundleAtomically(target, (staged) => writeBundle(staged, "new"));
+    replaceAppBundleAtomically(target, (staged) => writeBundle(staged, "new"), {
+      now: epoch.getTime(),
+    });
 
     assert.isTrue(NodeFS.existsSync(live));
   });

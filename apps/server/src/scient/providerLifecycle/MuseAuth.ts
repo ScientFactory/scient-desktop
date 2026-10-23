@@ -296,16 +296,17 @@ export const makeMuseAuth = Effect.fn("MuseAuth.make")(function* (options: {
             : (controller.isChangingCredentials ?? Effect.succeed(false)),
         ),
       ),
-      withAccess: <A, E, R>(task: Effect.Effect<A, E, R>) =>
-        Effect.gen(function* () {
-          const change = yield* coordinator.currentForProvider(MUSE_DRIVER);
-          if ((yield* Ref.get(blocked)) || (change && !(usesKey && change.kind === "connection")))
-            return yield* failure(
-              "session",
-              "Muse account or runtime changes are still running, or require process-shutdown recovery.",
-            );
-          return yield* controller.withAccess ? controller.withAccess(task) : task;
-        }),
+      withAccess: Effect.fn("MuseAuth.withAccess")(function* <A, E, R>(
+        task: Effect.Effect<A, E, R>,
+      ) {
+        const change = yield* coordinator.currentForProvider(MUSE_DRIVER);
+        if ((yield* Ref.get(blocked)) || (change && !(usesKey && change.kind === "connection")))
+          return yield* failure(
+            "session",
+            "Muse account or runtime changes are still running, or require process-shutdown recovery.",
+          );
+        return yield* controller.withAccess ? controller.withAccess(task) : task;
+      }),
     },
     usesKey,
   };

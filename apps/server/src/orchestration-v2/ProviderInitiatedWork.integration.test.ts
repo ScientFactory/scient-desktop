@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { awaitThreadProjection } from "./testkit/awaitThreadProjection.testkit.ts";
 import {
   CommandId,
   ContextTransferId,
@@ -89,6 +90,7 @@ const withInitiatedWork = <A, E, R>(
     emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void>;
     clearStoppedWork: (workId: string) => Effect.Effect<void>;
     takeOffer: Effect.Effect<Offer, Cause.TimeoutError>;
+    takeDropped: Effect.Effect<string>;
     prompts: ReadonlyArray<string>;
     adopted: ReadonlyArray<string>;
     dropped: () => number;
@@ -150,6 +152,14 @@ const withInitiatedWork = <A, E, R>(
       const adopted: string[] = [];
       let closed = 0;
       let dropped = 0;
+      const dropReceipts = yield* Queue.unbounded<string>();
+      const clearBufferedWork = Effect.fn("ProviderInitiatedWorkTest.clearBufferedWork")(function* (
+        workId: string,
+      ) {
+        buffered.delete(workId);
+        dropped++;
+        yield* Queue.offer(dropReceipts, workId);
+      });
       let loads = 0;
       let markNativeRunning: Effect.Effect<void> = Effect.die("Native session must be open");
       let emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void> = () =>
@@ -241,11 +251,7 @@ const withInitiatedWork = <A, E, R>(
                           : {}),
                         ...overrides.initiated,
                       },
-                      clearIfCurrent: () =>
-                        Effect.sync(() => {
-                          buffered.delete(workId);
-                          dropped++;
-                        }),
+                      clearIfCurrent: () => clearBufferedWork(workId),
                     });
                   });
                 yield* Effect.addFinalizer(() =>
@@ -478,17 +484,9 @@ const withInitiatedWork = <A, E, R>(
           creationSource: "web",
         });
         const waitFor = (predicate: (p: OrchestrationV2ThreadProjection) => boolean) =>
-          Effect.gen(function* () {
-            for (let n = 0; n < 1000; n++) {
-              const p = yield* orchestrator.getThreadProjection(threadId);
-              if (predicate(p)) return p;
-              yield* Effect.sleep("5 millis");
-            }
-            const last = yield* orchestrator.getThreadProjection(threadId);
-            return yield* Effect.die(
-              `Missing durable initiated-work receipt: runs ${last.runs.map((run) => `${run.ordinal}:${run.status}`).join(",")}; sessions ${last.providerSessions.map((session) => session.status).join(",")}; closes ${closed}`,
-            );
-          });
+          awaitThreadProjection(threadId, predicate).pipe(
+            Effect.provideService(OrchestratorV2, orchestrator),
+          );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("first:initiated"),
@@ -515,12 +513,9 @@ const withInitiatedWork = <A, E, R>(
           workspaceB,
           relocateProject,
           emitWork: (id, override) => emitWork(id, override),
-          clearStoppedWork: (workId) =>
-            Effect.sync(() => {
-              buffered.delete(workId);
-              dropped++;
-            }),
+          clearStoppedWork: clearBufferedWork,
           takeOffer: Queue.take(offers).pipe(Effect.timeout("10 seconds")),
+          takeDropped: Queue.take(dropReceipts),
           prompts,
           adopted,
           closes: () => closed,
@@ -621,76 +616,83 @@ it.live.each([
   "archived",
   "busy",
 ] as const)("refuses premature unsolicited work without a current idle owner: %s", (scenario) =>
-  withInitiatedWork(({ orchestrator, emitWork, takeOffer, dropped, adopted, prompts, waitFor }) =>
-    Effect.gen(function* () {
-      let active: Offer | undefined;
-      if (scenario === "busy") {
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("busy:work"),
-          threadId,
-          messageId: MessageId.make("busy-message:work"),
-          text: "Busy user message",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        active = yield* takeOffer;
-      }
-      if (scenario === "archived")
-        yield* orchestrator.dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make("archive:initiated"),
-          threadId,
-        });
-      const overrides: WorkOverrides =
-        scenario === "foreign-driver"
-          ? { driver: ProviderDriverKind.make("foreign") }
-          : scenario === "foreign-thread"
-            ? { providerThreadId: ProviderThreadId.make("foreign-native-thread") }
-            : scenario === "foreign-session"
-              ? {
-                  initiated: {
-                    providerInstanceId: instanceId,
-                    providerSessionId: ProviderSessionId.make("foreign-session"),
-                    workId: scenario,
-                  },
-                }
-              : scenario === "stopped-generation"
+  withInitiatedWork(
+    ({ orchestrator, emitWork, takeOffer, takeDropped, dropped, adopted, prompts }) =>
+      Effect.gen(function* () {
+        let active: Offer | undefined;
+        if (scenario === "busy") {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("busy:work"),
+            threadId,
+            messageId: MessageId.make("busy-message:work"),
+            text: "Busy user message",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          active = yield* takeOffer;
+        }
+        if (scenario === "archived")
+          yield* orchestrator.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make("archive:initiated"),
+            threadId,
+          });
+        const overrides: WorkOverrides =
+          scenario === "foreign-driver"
+            ? { driver: ProviderDriverKind.make("foreign") }
+            : scenario === "foreign-thread"
+              ? { providerThreadId: ProviderThreadId.make("foreign-native-thread") }
+              : scenario === "foreign-session"
                 ? {
-                    dispatchIfCurrent: () =>
-                      Effect.sync(() => {
-                        return Option.none();
-                      }),
+                    initiated: {
+                      providerInstanceId: instanceId,
+                      providerSessionId: ProviderSessionId.make("foreign-session"),
+                      workId: scenario,
+                    },
                   }
-                : {};
-      // A producer acknowledges the dropped generation explicitly; no arbitrary sleep
-      // stands in for continuation processing.
-      const observed = yield* Queue.unbounded<void>();
-      const original = overrides.dispatchIfCurrent;
-      yield* emitWork(scenario, {
-        ...overrides,
-        dispatchIfCurrent: (dispatch) =>
-          (original === undefined ? dispatch.pipe(Effect.asSome) : original(dispatch)).pipe(
-            Effect.ensuring(Queue.offer(observed, undefined)),
-          ),
-      });
-      if (scenario !== "archived") yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
-      else yield* waitFor(() => dropped() === 1);
-      assert.deepEqual(adopted, []);
-      assert.deepEqual(
-        prompts,
-        scenario === "busy"
-          ? [expectedNativePrompt("First user message"), expectedNativePrompt("Busy user message")]
-          : [expectedNativePrompt("First user message")],
-      );
-      assert.lengthOf(
-        (yield* orchestrator.getThreadProjection(threadId)).runs,
-        scenario === "busy" ? 2 : 1,
-      );
-      if (active !== undefined) yield* active.finish;
-    }),
+                : scenario === "stopped-generation"
+                  ? {
+                      dispatchIfCurrent: () =>
+                        Effect.sync(() => {
+                          return Option.none();
+                        }),
+                    }
+                  : {};
+        // A producer acknowledges the dropped generation explicitly; no arbitrary sleep
+        // stands in for continuation processing.
+        const observed = yield* Queue.unbounded<void>();
+        const original = overrides.dispatchIfCurrent;
+        yield* emitWork(scenario, {
+          ...overrides,
+          dispatchIfCurrent: (dispatch) =>
+            (original === undefined ? dispatch.pipe(Effect.asSome) : original(dispatch)).pipe(
+              Effect.ensuring(Queue.offer(observed, undefined)),
+            ),
+        });
+        if (scenario !== "archived") yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
+        else {
+          assert.equal(yield* takeDropped, scenario);
+          assert.equal(dropped(), 1);
+        }
+        assert.deepEqual(adopted, []);
+        assert.deepEqual(
+          prompts,
+          scenario === "busy"
+            ? [
+                expectedNativePrompt("First user message"),
+                expectedNativePrompt("Busy user message"),
+              ]
+            : [expectedNativePrompt("First user message")],
+        );
+        assert.lengthOf(
+          (yield* orchestrator.getThreadProjection(threadId)).runs,
+          scenario === "busy" ? 2 : 1,
+        );
+        if (active !== undefined) yield* active.finish;
+      }),
   ),
 );
 
@@ -890,12 +892,12 @@ it.live("refuses unknown captured cwd without assigning the relocated project wo
       emitWork,
       adopted,
       dropped,
+      takeDropped,
       prompts,
       relocateProject,
       workspaceB,
       loads,
       closes,
-      waitFor,
     }) =>
       Effect.gen(function* () {
         const before = yield* orchestrator.getThreadProjection(threadId);
@@ -916,7 +918,8 @@ it.live("refuses unknown captured cwd without assigning the relocated project wo
             ),
         });
         yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
-        const after = yield* waitFor(() => dropped() === 1);
+        assert.equal(yield* takeDropped, "unknown-workspace");
+        const after = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(after.runs, 1);
         assert.deepEqual(after.checkpointScopes, before.checkpointScopes);
         assert.deepEqual(adopted, []);
@@ -1016,6 +1019,7 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
         prompts,
         adopted,
         dropped,
+        takeDropped,
         waitFor,
         captureEntered,
         releaseCapture,
@@ -1191,8 +1195,10 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
               ),
             );
           } else {
-            if (scenario !== "stopped-generation") yield* waitFor(() => dropped() === 1);
-            else {
+            if (scenario !== "stopped-generation") {
+              assert.equal(yield* takeDropped, workId);
+              assert.equal(dropped(), 1);
+            } else {
               yield* Deferred.await(observedNoncurrent).pipe(Effect.timeout("10 seconds"));
               assert.isTrue(Option.isNone(yield* receipts.getByCommandId(refusal.commandId)));
               assert.equal(dropped(), 1);
@@ -1209,7 +1215,8 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
               assert.isTrue(Option.isSome(receipt));
               if (Option.isSome(receipt)) assert.equal(receipt.value.status, "rejected");
               yield* emitWork(workId, { dispatchIfCurrent: guard });
-              yield* waitFor(() => dropped() === 2);
+              assert.equal(yield* takeDropped, workId);
+              assert.equal(dropped(), 2);
               assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
             }
           }

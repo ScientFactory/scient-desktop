@@ -7,12 +7,16 @@ import {
 
 const Draft = Schema.Struct({ source: Schema.String, baseRevision: Schema.String });
 type Draft = typeof Draft.Type;
+const DraftJson = Schema.fromJsonString(Draft);
+const encodeDraft = Schema.encodeSync(DraftJson);
+const decodeDraft = Schema.decodeSync(DraftJson);
+
 // This window's checkpoints that are not written yet. Anything written is read
 // from storage each time, because other windows share it.
 const drafts = new Map<string, Draft>();
-// Compare the slot against the version this writer observed. A delayed timer
-// must not replace a newer checkpoint written by a different app window.
-const observed = new Map<string, string | null>();
+// Only a successful write or adoption of accepted source owns a stored identity.
+// Observing another window's record does not authorize replacing it.
+const written = new Map<string, string | null>();
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 // Stored records that wait in their slot for the user's choice.
 const held = new Map<string, Draft>();
@@ -21,13 +25,6 @@ const storageKey = (key: string) => `scient:latex-visual-draft:source:${key}`;
 
 /** One source copy, coalesced off the input path. Workspace saving owns durability. */
 export function checkpointVisualDraft(key: string, source: string, baseRevision: string): void {
-  if (!observed.has(key)) {
-    try {
-      observed.set(key, localStorage.getItem(storageKey(key)));
-    } catch {
-      window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
-    }
-  }
   drafts.set(key, { source, baseRevision });
   if (pending.has(key)) return;
   pending.set(
@@ -46,15 +43,21 @@ export function flushVisualDraft(key: string): boolean {
   // unwritten, in memory, until that work is resolved.
   if (occupiedByHeldDraft(key, draft)) return false;
   try {
-    const persisted = readPersisted(key);
     const identity = localStorage.getItem(storageKey(key));
-    const expected = observed.get(key);
+    const persisted = identity === null ? null : decodeDraft(identity);
+    const expected = written.get(key);
     if (identity !== null && identity !== expected && (!persisted || !same(persisted, draft))) {
       window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
       return false;
     }
-    setLocalStorageItem(storageKey(key), draft, Draft);
-    observed.set(key, localStorage.getItem(storageKey(key)));
+    const nextIdentity = encodeDraft(draft);
+    localStorage.setItem(storageKey(key), nextIdentity);
+    written.set(key, nextIdentity);
+    // Another window's replacement is not an acknowledgement of our write.
+    if (localStorage.getItem(storageKey(key)) !== nextIdentity) {
+      window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+      return false;
+    }
     drafts.delete(key);
     return true;
   } catch {
@@ -85,7 +88,7 @@ function dropUnwritten(key: string): void {
   clearTimeout(pending.get(key));
   pending.delete(key);
   drafts.delete(key);
-  observed.delete(key);
+  written.delete(key);
 }
 
 function occupiedByHeldDraft(key: string, incoming: Draft): boolean {
@@ -163,6 +166,18 @@ export function storeVisualDraftInFreeSlot(key: string, draft: Draft): boolean {
 /** The record in storage now, ignoring this window's unwritten checkpoint. */
 export function readPersistedVisualDraft(key: string): Draft | null {
   return readPersisted(key);
+}
+
+/** A checkpoint already represented by accepted source can remain its live draft. */
+export function adoptPersistedVisualDraft(key: string, draft: Draft): void {
+  try {
+    const identity = localStorage.getItem(storageKey(key));
+    if (identity === null) return;
+    const persisted = decodeDraft(identity);
+    if (same(persisted, draft)) written.set(key, identity);
+  } catch {
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+  }
 }
 
 /** Find the checkpoint for the buffer being replaced, including a queued write. */

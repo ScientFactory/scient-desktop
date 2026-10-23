@@ -90,88 +90,87 @@ export const makeScientPiAdapterV2 = Effect.fn("makeScientPiAdapterV2")(function
   });
 });
 
-const resolvePiRuntime = (
+const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(function* (
   input: PiRuntimeResolverInput,
-): Effect.Effect<
+): Effect.fn.Return<
   PiRuntimeResolution<PiCompositionRequirements, PiCompositionExtension>,
   ProviderDriverError,
   PiCompositionRequirements
-> =>
-  Effect.gen(function* () {
-    const serverConfig = yield* ServerConfig;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const serverSettings = yield* ServerSettingsService;
-    const managedRuntime = yield* makePiManagedRuntimeResolution({
-      settings: input.config,
-      baseDir: input.baseDir,
-      environment: input.processEnv,
-      spawner,
-      managedInstallationAllowed: serverConfig.mode === "desktop",
-    });
-    const effectiveConfig = {
-      ...input.config,
-      enabled: input.enabled,
-      binaryPath: expandHomePath(
-        managedRuntime.effectiveBinaryPath,
-        yield* HostProcess.HomeDirectory,
-      ),
-    } satisfies PiSettings;
-    const customModelClientFactory = yield* makePiCustomModelsClientFactory(
-      serverSettings,
-      input.instanceId,
-      input.stateDir,
-    ).pipe(
+> {
+  const serverConfig = yield* ServerConfig;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const serverSettings = yield* ServerSettingsService;
+  const managedRuntime = yield* makePiManagedRuntimeResolution({
+    settings: input.config,
+    baseDir: input.baseDir,
+    environment: input.processEnv,
+    spawner,
+    managedInstallationAllowed: serverConfig.mode === "desktop",
+  });
+  const effectiveConfig = {
+    ...input.config,
+    enabled: input.enabled,
+    binaryPath: expandHomePath(
+      managedRuntime.effectiveBinaryPath,
+      yield* HostProcess.HomeDirectory,
+    ),
+  } satisfies PiSettings;
+  const customModelClientFactory = yield* makePiCustomModelsClientFactory(
+    serverSettings,
+    input.instanceId,
+    input.stateDir,
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderDriverError({
+          driver: PI_DRIVER,
+          instanceId: input.instanceId,
+          detail: "Could not prepare custom models.",
+          cause,
+        }),
+    ),
+  );
+  const makeRpcClient = (options: PiRpcSpawnOptions) =>
+    customModelClientFactory(options).pipe(
       Effect.mapError(
         (cause) =>
-          new ProviderDriverError({
-            driver: PI_DRIVER,
-            instanceId: input.instanceId,
-            detail: "Could not prepare custom models.",
+          new PiRpcProtocolError({
+            detail: "Pi custom-model RPC failed.",
             cause,
           }),
       ),
     );
-    const makeRpcClient = (options: PiRpcSpawnOptions) =>
-      customModelClientFactory(options).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PiRpcProtocolError({
-              detail: "Pi custom-model RPC failed.",
-              cause,
-            }),
-        ),
-      );
-    const makeConnection = yield* makePiCustomModelsConnectionFactory(
-      serverSettings,
-      input.instanceId,
-      input.stateDir,
-    );
+  const makeConnection = yield* makePiCustomModelsConnectionFactory(
+    serverSettings,
+    input.instanceId,
+    input.stateDir,
+  );
 
-    return {
-      effectiveConfig,
-      effectiveEnvironment: input.processEnv,
-      runtimeSummary: managedRuntime.summary,
-      makeRpcClient,
-      makeConnection,
-      customModelSnapshot: (settings: ServerSettingsData) =>
-        piCustomModelSnapshot(settings, input.instanceId),
-      adapterOptions: scientPiAdapterOptions,
-      decorateSnapshot: (snapshot: ServerProvider) => ({
-        ...snapshot,
-        connection: {
-          methods: [],
-          canDisconnect: false,
-          operation: snapshot.connection?.operation ?? null,
-          runtime: managedRuntime.summary,
-        },
+  return {
+    effectiveConfig,
+    effectiveEnvironment: input.processEnv,
+    runtimeSummary: managedRuntime.summary,
+    makeRpcClient,
+    makeConnection,
+    customModelSnapshot: (settings: ServerSettingsData) =>
+      piCustomModelSnapshot(settings, input.instanceId),
+    adapterOptions: scientPiAdapterOptions,
+    decorateSnapshot: (snapshot: ServerProvider) => ({
+      ...snapshot,
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: snapshot.connection?.operation ?? null,
+        runtime: managedRuntime.summary,
+      },
+    }),
+    composeInstance: (instance) =>
+      Effect.succeed({
+        ...instance,
+        managedRuntimeActions: managedRuntime.actions,
       }),
-      composeInstance: (instance) =>
-        Effect.succeed({
-          ...instance,
-          managedRuntimeActions: managedRuntime.actions,
-        }),
-    };
-  });
+  };
+});
 
 /** Production Pi driver with Scient-owned runtime, model and prompt policy. */
 export const PiDriver: ScientProviderDriver<PiSettings, PiCompositionRequirements, Path.Path> =

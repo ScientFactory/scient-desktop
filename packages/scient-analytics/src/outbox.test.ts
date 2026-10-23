@@ -29,7 +29,7 @@ function event(name: string): AnalyticsEvent {
     name,
     distinct_id: `installation:${NodeCrypto.randomUUID()}`,
     session_id: `session:${NodeCrypto.randomUUID()}`,
-    occurred_at: new Date().toISOString(),
+    occurred_at: "2026-10-20T00:00:00.000Z",
     privacy_level: normalized.privacyLevel,
     consent_level: normalized.privacyLevel,
     properties: normalized.properties,
@@ -63,7 +63,7 @@ describe("AnalyticsOutbox", () => {
     first.markFailed([usage.id], "network", 0);
     first.close();
     const reopened = new AnalyticsOutbox(path);
-    const pending = reopened.pending(50, Date.now());
+    const pending = reopened.pending(50, Date.parse("2026-10-20T00:00:00.000Z"));
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({
       id: usage.id,
@@ -78,11 +78,9 @@ describe("AnalyticsOutbox", () => {
     const priorities: AnalyticsPriority[] = ["summary", "critical", "core"];
 
     expect(outbox.enqueueBatch(events, priorities)).toBe(3);
-    expect(outbox.pending(3, Date.now()).map((pending) => pending.name)).toEqual([
-      "app.health",
-      "project.opened",
-      "surface.opened",
-    ]);
+    expect(
+      outbox.pending(3, Date.parse("2026-10-20T00:00:00.000Z")).map((pending) => pending.name),
+    ).toEqual(["app.health", "project.opened", "surface.opened"]);
     outbox.close();
   });
 
@@ -95,7 +93,7 @@ describe("AnalyticsOutbox", () => {
     } as unknown as AnalyticsEvent;
     expect(() => outbox.enqueueBatch([valid, invalid], ["core", "core"])).toThrow();
     expect(outbox.size()).toBe(0);
-    expect(outbox.pending(10, Date.now())).toEqual([]);
+    expect(outbox.pending(10, Date.parse("2026-10-20T00:00:00.000Z"))).toEqual([]);
     expect(outbox.enqueue(valid)).toBe(true);
     expect(outbox.size()).toBe(1);
     outbox.close();
@@ -110,13 +108,13 @@ describe("AnalyticsOutbox", () => {
     );
     outbox.enqueueBatch([event("app.health")], ["critical"]);
     expect(outbox.size()).toBe(10_000);
-    expect(outbox.pending(1, Date.now())[0]?.name).toBe("app.health");
+    expect(outbox.pending(1, Date.parse("2026-10-20T00:00:00.000Z"))[0]?.name).toBe("app.health");
     outbox.close();
   });
 
   it("quarantines forbidden persisted properties and retires expired or exhausted rows", () => {
     const outbox = new AnalyticsOutbox(fixturePath());
-    const now = Date.now();
+    const now = Date.parse("2026-10-20T00:00:00.000Z");
     const safe = event("app.health");
     const injected = {
       ...event("app.health"),

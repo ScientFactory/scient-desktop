@@ -1,6 +1,24 @@
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
+const CODEX_OWNER_RELOAD_FIXTURES = new Set([
+  "subagent_continue",
+  "multi_turn",
+  "queued_turn",
+  "thread_rollback",
+  "thread_rollback_after_restart",
+  "thread_rollback_to_stopped_turn",
+]);
+
+export function materializeCodexFixtureOwnerReload(
+  transcript: ProviderReplayTranscript,
+  fixtureName: string,
+): ProviderReplayTranscript {
+  return CODEX_OWNER_RELOAD_FIXTURES.has(fixtureName)
+    ? materializeCodexOwnerReload(transcript, 2)
+    : transcript;
+}
+
 /**
  * These older recordings predate the canonical app-owned provider-thread cache key.
  * Declare the reload point from fixture intent; never derive expectations from outbound traffic.

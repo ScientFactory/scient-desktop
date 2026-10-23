@@ -11,6 +11,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -457,6 +458,13 @@ export interface OmpCustomModelsTiming {
   readonly connectionsCheckingIntervalMs?: number | undefined;
 }
 
+/** Passive observation of a long-poll's subscribed generation. */
+export interface OmpCustomModelsWaitSnapshot {
+  readonly request: NodeHttp.IncomingMessage;
+  readonly after: number;
+  readonly generation: number;
+}
+
 const OMP_MODELS_REFRESH_TIMEOUT_MS = 5_000;
 const OMP_MODELS_WAIT_HOLD_MS = 25_000;
 const OMP_MODELS_REQUEST_TIMEOUT_MS = 5_000;
@@ -525,6 +533,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
     stateDir: string,
     makeProcess: OmpProcessFactory = makeOmpRpcProcess,
     timing: OmpCustomModelsTiming = {},
+    waitSnapshots?: Queue.Enqueue<OmpCustomModelsWaitSnapshot>,
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -603,24 +612,25 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           return current.filter((connection) => !pendingCredentialIds.has(connection.id));
         };
         /** Adopt a fresh resolution. Runs under the authority permit. */
-        const adopt = (current: ReadonlyArray<ResolvedModelConnection>) =>
-          Effect.gen(function* () {
-            resolvedConnections = current;
-            const active = activeConnections(current);
-            const change = customModelRuntimeChange(loaded, current, instanceId);
-            if (change === "revoke" || requiresCredentialRestart(loaded, current)) {
-              yield* retire;
-              return yield* fail(modelsChangedDetail);
-            }
-            const signature = payloadSignature(active);
-            if (signature !== publishedSignature) {
-              publishedSignature = signature;
-              yield* SubscriptionRef.update(barrier, (state) => ({
-                ...state,
-                generation: state.generation + 1,
-              }));
-            }
-          });
+        const adopt = Effect.fn("OmpCustomModels.adopt")(function* (
+          current: ReadonlyArray<ResolvedModelConnection>,
+        ) {
+          resolvedConnections = current;
+          const active = activeConnections(current);
+          const change = customModelRuntimeChange(loaded, current, instanceId);
+          if (change === "revoke" || requiresCredentialRestart(loaded, current)) {
+            yield* retire;
+            return yield* fail(modelsChangedDetail);
+          }
+          const signature = payloadSignature(active);
+          if (signature !== publishedSignature) {
+            publishedSignature = signature;
+            yield* SubscriptionRef.update(barrier, (state) => ({
+              ...state,
+              generation: state.generation + 1,
+            }));
+          }
+        });
         /**
          * Re-read the connections when the settings revision changed (or it is
          * unknown, or `force` is set). This is the only secret-store read after
@@ -682,15 +692,16 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           ),
           Effect.mapError((cause) => new OmpRpcProtocolError({ detail: cause.detail, cause })),
         );
-        const refreshModels = (): Effect.Effect<void, OmpRpcError | OmpModelRefreshError> =>
-          Effect.gen(function* () {
+        const refreshModels = Effect.fn("OmpCustomModels.refreshModels")(
+          function* (): Effect.fn.Return<void, OmpRpcError | OmpModelRefreshError> {
             yield* synchronize(undefined, true);
             const target = yield* SubscriptionRef.modify(barrier, (state) => [
               state.generation + 1,
               { ...state, generation: state.generation + 1 },
             ]);
             yield* awaitApplied(target);
-          });
+          },
+        );
         const effectContext = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(effectContext);
 
@@ -739,6 +750,16 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           response.once("close", () => abandoned.abort());
           void run(
             SubscriptionRef.changes(barrier).pipe(
+              Stream.tap((state) =>
+                Effect.sync(() => {
+                  if (waitSnapshots)
+                    Queue.offerUnsafe(waitSnapshots, {
+                      request,
+                      after,
+                      generation: state.generation,
+                    });
+                }),
+              ),
               Stream.filter((state) => state.retired || state.generation > after),
               Stream.runHead,
               Effect.timeoutOption(Duration.millis(waitHoldMs)),

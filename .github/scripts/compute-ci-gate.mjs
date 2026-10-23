@@ -12,6 +12,7 @@ export function computeQualificationSuites(paths) {
   ]);
   const managedOnly = new Set([
     "apps/server/src/scient/compute/ManagedPythonProduct.live.test.ts",
+    "apps/server/src/scient/compute/ManagedPythonProduct.bench.ts",
     "apps/server/src/scient/compute/ComputeRecipe.live.test.ts",
     "apps/server/src/scient/compute/managed-python/pyproject.toml",
     "apps/server/src/scient/compute/managed-python/uv.lock",

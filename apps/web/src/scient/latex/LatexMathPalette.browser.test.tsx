@@ -1,4 +1,5 @@
-import { createRoot } from "react-dom/client";
+import { render as _fixtureRender } from "../../../test/render";
+
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import {
@@ -11,15 +12,17 @@ import { labelKeys } from "../keyboard/keys";
 import { LatexMathPalette } from "./LatexMathPalette";
 
 it("a closed palette opens with current shortcut hints and still inserts the chosen symbol", async () => {
+  await using _fixture = _createFixture();
+
   const previous = localStorage.getItem(KEYBOARD_PREFERENCES_KEY);
   const host = document.createElement("div");
   host.className = "scient-latex-reader-footer";
   document.body.append(host);
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   const insert = vi.fn();
   try {
     saveKeyboardPreferences(DEFAULT_KEYBOARD_PREFERENCES);
-    root.render(
+    await root.rerender(
       <LatexMathPalette
         onInsert={insert}
         onReturnToMath={() => {}}
@@ -48,10 +51,27 @@ it("a closed palette opens with current shortcut hints and still inserts the cho
     expect(insert).toHaveBeenCalledOnce();
     expect(insert.mock.calls[0]![0].command).toBe("\\alpha");
   } finally {
-    root.unmount();
+    await root.unmount();
     host.remove();
     if (previous === null) localStorage.removeItem(KEYBOARD_PREFERENCES_KEY);
     else localStorage.setItem(KEYBOARD_PREFERENCES_KEY, previous);
     reloadKeyboardPreferences();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

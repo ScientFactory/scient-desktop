@@ -196,13 +196,15 @@ export const resolveLatexTexDirectory = Effect.fn("scient.latex.resolveLatexTexD
      * `dev:ino` of a real folder at `directory`, or `null` for anything else.
      * A link answers `readLink`; a folder does not.
      */
-    const folderIdentity = (directory: string) =>
-      Effect.gen(function* () {
+    const folderIdentity = Effect.fn("latexTexDirectory.folderIdentity")(
+      function* (directory: string) {
         if (Option.isSome(yield* fileSystem.readLink(directory).pipe(Effect.option))) return null;
         const info = yield* fileSystem.stat(directory);
         if (info.type !== "Directory" || Option.isNone(info.ino)) return null;
         return `${String(info.dev)}:${String(info.ino.value)}`;
-      }).pipe(Effect.orElseSucceed(() => null));
+      },
+      (effect) => effect.pipe(Effect.orElseSucceed(() => null)),
+    );
 
     /** The folder the record names, if it is still the very folder made. */
     const recordedFolder = Effect.gen(function* () {

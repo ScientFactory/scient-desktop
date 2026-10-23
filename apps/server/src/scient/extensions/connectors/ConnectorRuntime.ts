@@ -470,28 +470,27 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
    * Applies a change to one record and publishes it. A change that returns the
    * record it was given leaves the state (and the change feed) untouched.
    */
-  const updateRecord = (
+  const updateRecord = Effect.fn("ConnectorRuntime.updateRecord")(function* (
     connectorId: string,
     change: (record: ConnectorRecord, updatedAt: string) => ConnectorRecord,
-  ) =>
-    Effect.gen(function* () {
-      const updatedAt = yield* isoNow;
-      const changed = yield* store.update((current) => {
-        const index = current.connectors.findIndex((record) => record.connectorId === connectorId);
-        if (index === -1 || !isLive(connectorId)) {
-          return Effect.fail(
-            extensionsError("not-found", "That connected service no longer exists."),
-          );
-        }
-        const previous = current.connectors[index]!;
-        const next = change(previous, updatedAt);
-        if (next === previous) return Effect.succeed([false, current] as const);
-        const connectors = [...current.connectors];
-        connectors[index] = next;
-        return Effect.succeed([true, { ...current, connectors }] as const);
-      });
-      if (changed) yield* publishChange;
+  ) {
+    const updatedAt = yield* isoNow;
+    const changed = yield* store.update((current) => {
+      const index = current.connectors.findIndex((record) => record.connectorId === connectorId);
+      if (index === -1 || !isLive(connectorId)) {
+        return Effect.fail(
+          extensionsError("not-found", "That connected service no longer exists."),
+        );
+      }
+      const previous = current.connectors[index]!;
+      const next = change(previous, updatedAt);
+      if (next === previous) return Effect.succeed([false, current] as const);
+      const connectors = [...current.connectors];
+      connectors[index] = next;
+      return Effect.succeed([true, { ...current, connectors }] as const);
     });
+    if (changed) yield* publishChange;
+  });
 
   /** Deduplicated (first occurrence kept); every project must exist and not be deleted. */
   const checkAvailability = Effect.fn("ConnectorRuntime.checkAvailability")(function* (
@@ -569,19 +568,20 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }),
     );
 
-  const readStoredOAuth = (record: ConnectorRecord) =>
-    Effect.gen(function* () {
-      if (record.auth.type !== "oauth" || record.auth.credentialRef === undefined) {
-        return undefined;
-      }
-      const stored = yield* credentials.readOwned(record.auth.credentialRef, {
-        type: "connector",
-        connectorId: record.connectorId,
-      });
-      if (Option.isNone(stored)) return undefined;
-      const material = decodeOAuthMaterial(stored.value.material);
-      return material === undefined ? undefined : { material, version: stored.value.version };
+  const readStoredOAuth = Effect.fn("ConnectorRuntime.readStoredOAuth")(function* (
+    record: ConnectorRecord,
+  ) {
+    if (record.auth.type !== "oauth" || record.auth.credentialRef === undefined) {
+      return undefined;
+    }
+    const stored = yield* credentials.readOwned(record.auth.credentialRef, {
+      type: "connector",
+      connectorId: record.connectorId,
     });
+    if (Option.isNone(stored)) return undefined;
+    const material = decodeOAuthMaterial(stored.value.material);
+    return material === undefined ? undefined : { material, version: stored.value.version };
+  });
 
   const loadOAuth = Effect.fn("ConnectorRuntime.loadOAuth")(function* (record: ConnectorRecord) {
     const cached = oauthCache.get(record.connectorId);
@@ -691,29 +691,28 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }
         // The grant being refreshed is gone (or unusable): drop its session from
         // memory and storage, then publish the loss for the record it belongs to.
-        const loseGrant = (lastError: string) =>
-          Effect.gen(function* () {
-            const { session: _dropped, ...withoutSession } = entry.material;
-            publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
-            if (record.auth.type === "oauth" && record.auth.credentialRef !== undefined) {
-              yield* credentials
-                .replace(
-                  record.auth.credentialRef,
-                  encodeOAuthMaterial(withoutSession),
-                  entry.version,
-                )
-                .pipe(
-                  Effect.flatMap((version) =>
-                    Effect.sync(() =>
-                      publishOAuth(record.connectorId, { material: withoutSession, version }),
-                    ),
+        const loseGrant = Effect.fn("ConnectorRuntime.loseGrant")(function* (lastError: string) {
+          const { session: _dropped, ...withoutSession } = entry.material;
+          publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
+          if (record.auth.type === "oauth" && record.auth.credentialRef !== undefined) {
+            yield* credentials
+              .replace(
+                record.auth.credentialRef,
+                encodeOAuthMaterial(withoutSession),
+                entry.version,
+              )
+              .pipe(
+                Effect.flatMap((version) =>
+                  Effect.sync(() =>
+                    publishOAuth(record.connectorId, { material: withoutSession, version }),
                   ),
-                  Effect.ignore,
-                );
-            }
-            yield* markStatus(record, "needs-auth", lastError);
-            return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
-          });
+                ),
+                Effect.ignore,
+              );
+          }
+          yield* markStatus(record, "needs-auth", lastError);
+          return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
+        });
         if (Exit.isSuccess(refreshed) && !sessionProtectable(refreshed.value)) {
           yield* revokeLater(record, refreshed.value);
           return yield* loseGrant(UNPROTECTABLE_GRANT);

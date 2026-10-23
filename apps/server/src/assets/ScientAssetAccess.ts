@@ -40,59 +40,58 @@ export const isScientAssetClaims = (claims: {
   readonly kind: string;
 }): claims is ScientAssetClaims => SCIENT_ASSET_CLAIM_KINDS.has(claims.kind);
 
-const resolveCanonicalEnvironmentDocumentFileForRequest = (input: {
-  readonly baseDirectory: string;
-  readonly relativePath: string;
-}) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const canonicalCandidate = yield* optionOnNotFound(
-      fileSystem.realPath(path.join(input.baseDirectory, input.relativePath)),
-    ).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to resolve environment HTML asset.", {
-          baseDirectory: input.baseDirectory,
-          relativePath: input.relativePath,
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    if (Option.isNone(canonicalCandidate)) return null;
-    const relative = path.relative(input.baseDirectory, canonicalCandidate.value);
-    if (
-      relative === "" ||
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      return null;
-    }
-    const info = yield* optionOnNotFound(fileSystem.stat(canonicalCandidate.value)).pipe(
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    return Option.isSome(info) && info.value.type === "File" ? canonicalCandidate.value : null;
-  });
+const resolveCanonicalEnvironmentDocumentFileForRequest = Effect.fn(
+  "ScientAssetAccess.resolveCanonicalEnvironmentDocumentFileForRequest",
+)(function* (input: { readonly baseDirectory: string; readonly relativePath: string }) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonicalCandidate = yield* optionOnNotFound(
+    fileSystem.realPath(path.join(input.baseDirectory, input.relativePath)),
+  ).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to resolve environment HTML asset.", {
+        baseDirectory: input.baseDirectory,
+        relativePath: input.relativePath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  if (Option.isNone(canonicalCandidate)) return null;
+  const relative = path.relative(input.baseDirectory, canonicalCandidate.value);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return null;
+  }
+  const info = yield* optionOnNotFound(fileSystem.stat(canonicalCandidate.value)).pipe(
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  return Option.isSome(info) && info.value.type === "File" ? canonicalCandidate.value : null;
+});
 
-const resolveCanonicalEnvironmentFileForRequest = (canonicalPath: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const resolved = yield* optionOnNotFound(fileSystem.realPath(canonicalPath)).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to resolve exact environment asset.", {
-          canonicalPath,
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    if (Option.isNone(resolved) || resolved.value !== canonicalPath) return null;
-    const info = yield* optionOnNotFound(fileSystem.stat(resolved.value)).pipe(
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    return Option.isSome(info) && info.value.type === "File" ? resolved.value : null;
-  });
+const resolveCanonicalEnvironmentFileForRequest = Effect.fn(
+  "ScientAssetAccess.resolveCanonicalEnvironmentFileForRequest",
+)(function* (canonicalPath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const resolved = yield* optionOnNotFound(fileSystem.realPath(canonicalPath)).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to resolve exact environment asset.", {
+        canonicalPath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  if (Option.isNone(resolved) || resolved.value !== canonicalPath) return null;
+  const info = yield* optionOnNotFound(fileSystem.stat(resolved.value)).pipe(
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  return Option.isSome(info) && info.value.type === "File" ? resolved.value : null;
+});
 
 /** The issueAssetUrl inputs Scient's asset kinds read. */
 export interface ScientAssetIssueInput {

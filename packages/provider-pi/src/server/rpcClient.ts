@@ -298,51 +298,50 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
       ),
     );
 
-  const request = <A>(
+  const request = Effect.fn("rpcClient.request")(function* <A>(
     command: string,
     payload: object,
     decode: (data: unknown) => Effect.Effect<A, PiRpcError>,
-  ) =>
-    Effect.gen(function* () {
-      if (yield* Ref.get(closed))
-        return yield* new PiRpcProcessExitedError({ detail: "Pi RPC client is closed" });
-      const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1).pipe(
-        Effect.map((value) => `t3-pi-${String(value)}`),
+  ) {
+    if (yield* Ref.get(closed))
+      return yield* new PiRpcProcessExitedError({ detail: "Pi RPC client is closed" });
+    const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1).pipe(
+      Effect.map((value) => `t3-pi-${String(value)}`),
+    );
+    const waiter = yield* Deferred.make<PiRpcResponse, PiRpcError>();
+    if ((yield* Ref.get(pending)).size >= 256)
+      return yield* new PiRpcProtocolError({ detail: "Too many pending Pi RPC requests" });
+    yield* Ref.update(pending, (current) => new Map(current).set(id, waiter));
+    const timed = <A>(effect: Effect.Effect<A, PiRpcError>) =>
+      effect.pipe(
+        Effect.timeout(Duration.millis(timeoutMs)),
+        Effect.catchTags({
+          TimeoutError: () =>
+            close.pipe(
+              Effect.andThen(new PiRpcRequestTimeoutError({ command, requestId: id, timeoutMs })),
+            ),
+        }),
       );
-      const waiter = yield* Deferred.make<PiRpcResponse, PiRpcError>();
-      if ((yield* Ref.get(pending)).size >= 256)
-        return yield* new PiRpcProtocolError({ detail: "Too many pending Pi RPC requests" });
-      yield* Ref.update(pending, (current) => new Map(current).set(id, waiter));
-      const timed = <A>(effect: Effect.Effect<A, PiRpcError>) =>
-        effect.pipe(
-          Effect.timeout(Duration.millis(timeoutMs)),
-          Effect.catchTags({
-            TimeoutError: () =>
-              close.pipe(
-                Effect.andThen(new PiRpcRequestTimeoutError({ command, requestId: id, timeoutMs })),
-              ),
-          }),
-        );
-      const response = yield* Effect.gen(function* () {
-        // Prompt acknowledgement may wait on human extension input. Writes are
-        // still bounded, and Stop closes this owned transport independently.
-        if (command === "prompt") {
-          yield* timed(write({ ...payload, type: command, id }));
-          return yield* Deferred.await(waiter);
-        }
-        return yield* timed(
-          write({ ...payload, type: command, id }).pipe(Effect.andThen(Deferred.await(waiter))),
-        );
-      }).pipe(Effect.ensuring(remove(id)));
-      if (!response.success) {
-        return yield* new PiRpcCommandError({
-          command,
-          requestId: id,
-          detail: response.error ?? "Pi RPC command failed",
-        });
+    const response = yield* Effect.gen(function* () {
+      // Prompt acknowledgement may wait on human extension input. Writes are
+      // still bounded, and Stop closes this owned transport independently.
+      if (command === "prompt") {
+        yield* timed(write({ ...payload, type: command, id }));
+        return yield* Deferred.await(waiter);
       }
-      return yield* decode(response.data);
-    });
+      return yield* timed(
+        write({ ...payload, type: command, id }).pipe(Effect.andThen(Deferred.await(waiter))),
+      );
+    }).pipe(Effect.ensuring(remove(id)));
+    if (!response.success) {
+      return yield* new PiRpcCommandError({
+        command,
+        requestId: id,
+        detail: response.error ?? "Pi RPC command failed",
+      });
+    }
+    return yield* decode(response.data);
+  });
 
   const close = Ref.getAndSet(cleanupStarted, true).pipe(
     Effect.flatMap((wasClosed) =>
@@ -369,18 +368,18 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
       Stream.filter(Option.isSome),
       Stream.map((value) => value.value),
     ),
-    synchronizeEvents: () =>
-      Effect.gen(function* () {
+    synchronizeEvents: Effect.fn("rpcClient.synchronizeEvents")(
+      function* () {
         if (yield* Ref.get(closed)) return;
         const fence = yield* Deferred.make<void>();
         yield* Queue.offer(events, { fence });
         yield* Deferred.await(fence);
-      }).pipe(
-        Effect.timeout(Duration.millis(timeoutMs)),
-        Effect.catchTags({
-          TimeoutError: () => new PiRpcProtocolError({ detail: "Pi event consumer did not drain" }),
-        }),
-      ),
+      },
+      Effect.timeout(Duration.millis(timeoutMs)),
+      Effect.catchTags({
+        TimeoutError: () => new PiRpcProtocolError({ detail: "Pi event consumer did not drain" }),
+      }),
+    ),
     getState: () => request("get_state", {}, decodeState),
     getAvailableModels: () => request("get_available_models", {}, decodeModels),
     getCommands: () => request("get_commands", {}, decodeCommands),

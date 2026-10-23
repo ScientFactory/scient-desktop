@@ -15,6 +15,8 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/Drivers/DroidDriver.ts",
     "apps/server/src/provider/Drivers/DroidSkills.ts",
+    "apps/server/src/scient/operations/AgentCapabilityBudget.bench.ts",
+    "apps/server/src/scient/operations/AgentCapabilityBudget.testkit.ts",
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
     "apps/server/src/scient/threadQueue/Ledger.ts",
@@ -43,9 +45,9 @@
   ],
   "upstreamMounts": [
     {
-      "path": "apps/server/src/testUtils/shardWeights.json",
-      "anchor": "src/scient/skills/ScientV2SkillTurn.test.ts",
-      "purpose": "Record CI durations for skills behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+      "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
+      "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
+      "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
       "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",

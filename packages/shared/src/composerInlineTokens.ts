@@ -1,4 +1,5 @@
 import { collectComposerContextReferences } from "./composerContextReferences.ts";
+import { markdownMathRanges } from "./markdownMath.ts";
 
 export type ComposerInlineToken =
   | {
@@ -53,6 +54,7 @@ const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
+const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200c\u200d]*\(/u;
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -88,7 +90,11 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
     const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
-    if (!path || (quotedPath === undefined && SCOPED_PACKAGE_REFERENCE_REGEX.test(path))) {
+    if (
+      !path ||
+      (quotedPath === undefined &&
+        (SCOPED_PACKAGE_REFERENCE_REGEX.test(path) || DECORATOR_CALL_REFERENCE_REGEX.test(path)))
+    ) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;
@@ -145,7 +151,11 @@ export function collectComposerInlineTokens(
   // Context chip labels are captured/display data, not composer Skill or file
   // selections. Preserve token offsets for the editor without parsing the labels.
   const references = collectComposerContextReferences(text);
+  const math = matches.length > 0 ? markdownMathRanges(text) : [];
+  const excludedRanges = [...references, ...math];
   return matches
-    .filter((token) => !references.some((ref) => token.start < ref.end && token.end > ref.start))
+    .filter(
+      (token) => !excludedRanges.some((ref) => token.start < ref.end && token.end > ref.start),
+    )
     .sort((left, right) => left.start - right.start);
 }

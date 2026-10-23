@@ -319,22 +319,19 @@ const REQUEST_LIMIT_CANCEL_GRACE = "5 seconds";
  * this cancels the Droid prompt and ends it with the truncation outcome, so
  * partial output stands and the turn ends as a token-limit stop.
  */
-const promptWithinBudget = (
+const promptWithinBudget = Effect.fn("DroidCustomModels.promptWithinBudget")(function* (
   runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "cancel">,
   broker: Pick<DroidKeyBroker, "turnBreached" | "currentBreach">,
   prompt: Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
-) =>
-  Effect.gen(function* () {
-    const fiber = yield* Effect.forkChild(prompt);
-    yield* Effect.raceFirst(Fiber.await(fiber), broker.turnBreached);
-    if (broker.currentBreach() === undefined) return yield* Fiber.join(fiber);
-    yield* runtime.cancel.pipe(Effect.ignore);
-    const stopped = yield* Fiber.await(fiber).pipe(
-      Effect.timeoutOption(REQUEST_LIMIT_CANCEL_GRACE),
-    );
-    if (Option.isNone(stopped)) yield* Fiber.interrupt(fiber);
-    return { stopReason: "max_tokens" } satisfies EffectAcpSchema.PromptResponse;
-  });
+) {
+  const fiber = yield* Effect.forkChild(prompt);
+  yield* Effect.raceFirst(Fiber.await(fiber), broker.turnBreached);
+  if (broker.currentBreach() === undefined) return yield* Fiber.join(fiber);
+  yield* runtime.cancel.pipe(Effect.ignore);
+  const stopped = yield* Fiber.await(fiber).pipe(Effect.timeoutOption(REQUEST_LIMIT_CANCEL_GRACE));
+  if (Option.isNone(stopped)) yield* Fiber.interrupt(fiber);
+  return { stopReason: "max_tokens" } satisfies EffectAcpSchema.PromptResponse;
+});
 
 /**
  * Adds Scient-managed models to every disposable Droid process through a
@@ -583,23 +580,22 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
           // call; Droid dispatches it, and only the hook refuses it (verified
           // against Droid 0.213.0 and 0.230.0: without the hook a Read returns the
           // file to the endpoint).
-          backgroundToolGuard: () =>
-            Effect.gen(function* () {
-              if (modelTools !== "disabled") return "unconfirmed" as const;
-              const policy = yield* readPolicy({
-                environment: input.environment ?? process.env,
-                cwd: input.cwd,
-              }).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(Path.Path, path),
-              );
-              if (policy === "managed-hooks-only") return "disabled-by-policy" as const;
-              if (policy === "unknown") return "unconfirmed" as const;
-              const started = yield* fs
-                .exists(sessionStartMarker)
-                .pipe(Effect.orElseSucceed(() => false));
-              return started ? ("enforced" as const) : ("unconfirmed" as const);
-            }),
+          backgroundToolGuard: Effect.fn("DroidCustomModels.backgroundToolGuard")(function* () {
+            if (modelTools !== "disabled") return "unconfirmed" as const;
+            const policy = yield* readPolicy({
+              environment: input.environment ?? process.env,
+              cwd: input.cwd,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+            );
+            if (policy === "managed-hooks-only") return "disabled-by-policy" as const;
+            if (policy === "unknown") return "unconfirmed" as const;
+            const started = yield* fs
+              .exists(sessionStartMarker)
+              .pipe(Effect.orElseSucceed(() => false));
+            return started ? ("enforced" as const) : ("unconfirmed" as const);
+          }),
           isConfigurationCurrent: () => !invalidated && !refreshPending,
           isConfigurationRetired: () => invalidated,
           checkConfiguration: () => assertCurrent,

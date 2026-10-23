@@ -1,9 +1,11 @@
+import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -16,7 +18,7 @@ import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { latexPagedKey, pagedPositionAtPoint, pagedLayoutSettled } from "./latexPagedGeometry";
 import { measureNatural, naturalTextLines } from "./latexNaturalMeasurement";
 import { clearVisualDraft } from "./visualDrafts";
-import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 import template15 from "./fixtures/paging-long-table.tex?raw";
 import template26 from "./fixtures/paging-hebrew.tex?raw";
 import template28 from "./fixtures/paging-medical-article.tex?raw";
@@ -24,28 +26,28 @@ import twoColumnArticle from "./fixtures/paging-two-column-article.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
-let root: Root,
-  host: HTMLElement,
-  published: string,
-  key = "";
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+let published: string;
+let key = "";
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   clearVisualDraft(key);
-});
-const frames = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-async function mount(source: string, name: string) {
+}
+async function editAndLayout(editor: Editor, context: TestContext, edit: () => void) {
+  await act(edit);
+  await waitForLatexVisualTestReadiness(editor.view.dom.parentElement!, context, "edit layout");
+}
+async function mount(_fixture: _Fixture, source: string, name: string) {
   await page.viewport(1250, 950);
   key = `paging-${name}`;
   clearVisualDraft(key);
   published = source;
-  host = document.createElement("div");
-  host.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   function Harness() {
     const [value, setValue] = useState(source);
     const owner = useLatexVisualTestOwner(value);
@@ -69,73 +71,168 @@ async function mount(source: string, name: string) {
       />
     );
   }
-  root.render(<Harness />);
-  const editor = () =>
-    (
-      host.querySelector(".scient-latex-visual-document") as
-        | (HTMLElement & { editor?: Editor })
-        | null
-    )?.editor;
-  await expect
-    .poll(
-      () => ({
-        editor: !!editor(),
-        loading: editor()?.view.dom.hasAttribute("data-latex-loading"),
-        plan: !!editor() && !!latexPagedKey.getState(editor()!.state)?.plan,
-      }),
-      { timeout: 25000 },
-    )
-    .toMatchObject({ editor: true, loading: false, plan: true });
-  await document.fonts.ready;
-  await expect
-    .poll(
-      () => [...host.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
-      { timeout: 25000 },
-    )
-    .toBe(true);
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor()!.view), { timeout: 25000 }).toBe(true);
-  return editor()!;
+  await _fixture.root0.rerender(<Harness />);
+  return waitForLatexVisualTestReadiness(_fixture.host, _fixture.context, `pagination ${name}`);
 }
 
-it.each([
+it.for(["detached", "hidden", "briefly hidden"] as const)(
+  "retires a measurement continuation when its paper becomes %s and resumes when visible",
+  async (unavailable, context) => {
+    await using _fixture = _createFixture(context);
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    const editor = await mount(
+      _fixture,
+      String.raw`\documentclass{article}
+\begin{document}
+First paragraph remains owned by the document.
+
+Second paragraph has not been measured when the paper disappears.
+
+Third paragraph must return with the same source after showing the paper.
+\end{document}`,
+      `measurement-${unavailable}`,
+    );
+    const view = editor.view;
+    const source = published;
+    const display = _fixture.host.style.display;
+    const restore = () => {
+      _fixture.host.style.display = display;
+      if (!_fixture.host.isConnected) document.body.append(_fixture.host);
+    };
+    using _restore = { [Symbol.dispose]: restore };
+    const visibleSize = Promise.withResolvers<void>();
+    const hiddenSize = Promise.withResolvers<void>();
+    let observedHidden = false;
+    const sizeObserver = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.contentRect.width > 0)) visibleSize.resolve();
+      if (entries.some((entry) => entry.contentRect.width === 0)) {
+        observedHidden = true;
+        hiddenSize.resolve();
+      }
+    });
+    sizeObserver.observe(view.dom);
+    using _sizeObserver = { [Symbol.dispose]: () => sizeObserver.disconnect() };
+    await waitForTestReceipt(context.signal, visibleSize.promise);
+    await vi.waitFor(() => expect(pagedLayoutSettled(view)).toBe(true));
+    const previous = latexPagedKey.getState(editor.state)!;
+    {
+      using _timers = fakeTimers();
+      const continuations = new Map<number, FrameRequestCallback>();
+      let nextId = 0;
+      using _request = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        const id = --nextId;
+        continuations.set(id, callback);
+        return id;
+      });
+      using _cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+        continuations.delete(id);
+      });
+      let measuredTime = 0;
+      // Each measurement exhausts the cooperative work budget, independent of machine speed.
+      using _measurementClock = vi
+        .spyOn(performance, "now")
+        .mockImplementation(() => (measuredTime += 100));
+      const takeContinuation = () => {
+        expect(continuations.size).toBe(1);
+        const [id, callback] = continuations.entries().next().value!;
+        continuations.delete(id);
+        return callback;
+      };
+      view.dom.dispatchEvent(new Event("scient-latex-layout-config"));
+      takeContinuation()(0);
+      const resume = takeContinuation();
+      expect(pagedLayoutSettled(view)).toBe(false);
+      expect(latexPagedKey.getState(editor.state)).toBe(previous);
+      if (unavailable === "detached") _fixture.host.remove();
+      else _fixture.host.style.display = "none";
+      expect(editor.isDestroyed).toBe(false);
+      expect(view.dom.offsetWidth).toBe(0);
+      using geometry = vi.spyOn(view.dom, "getBoundingClientRect");
+      resume(0);
+      expect(geometry).not.toHaveBeenCalled();
+      expect(continuations.size).toBe(1);
+      expect(latexPagedKey.getState(editor.state)).toBe(previous);
+      expect(pagedLayoutSettled(view)).toBe(false);
+      const recovery = takeContinuation();
+      if (unavailable === "briefly hidden") {
+        restore();
+        // The full controlled clock gives the recovered pass an uninterrupted work budget.
+        _measurementClock.mockRestore();
+        recovery(0);
+        expect(pagedLayoutSettled(view)).toBe(true);
+      } else {
+        // An owned wake-up must park if the paper is still unavailable.
+        recovery(0);
+      }
+      expect(continuations.size).toBe(0);
+    }
+    if (unavailable !== "briefly hidden") {
+      await waitForTestReceipt(context.signal, hiddenSize.promise);
+      restore();
+    }
+    await vi.waitFor(() => {
+      expect({ settled: pagedLayoutSettled(view), observedHidden }).toEqual({
+        settled: true,
+        observedHidden: unavailable !== "briefly hidden",
+      });
+      const presentation = latexPagedKey.getState(editor.state)!;
+      expect(presentation.revision).toBeGreaterThan(previous.revision);
+      expect(presentation.plan!.sheets!.length).toBeGreaterThan(0);
+      expect(presentation.plan!.sheets!.every((sheet) => Number.isFinite(sheet.top))).toBe(true);
+    });
+    expect(published).toBe(source);
+  },
+);
+
+it.for([
   ["15", template15, 2],
   ["26", template26, 4],
   ["28", template28, 3],
 ] as const)(
   "template %s has the compiled PDF's page count and opens without source or undo changes",
-  async (name, source, pages) => {
-    const editor = await mount(source, name);
+  async ([name, source, pages], context) => {
+    await using _fixture = _createFixture(context);
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const editor = await mount(_fixture, source, name);
     // Page counts match the PDF only with the document's own fonts. Template 26
     // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
     // do not; there a substitute with other metrics gives a different count.
     if (name !== "26" || !/Linux/u.test(navigator.userAgent))
-      await expect
-        .poll(() => latexPagedKey.getState(editor.state)?.plan?.pages, { timeout: 15000 })
-        .toBe(pages);
+      expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
     expect(published).toBe(source);
     expect(undoDepth(editor.state)).toBe(0);
-    expect(host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
+    expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
       latexPagedKey.getState(editor.state)!.plan!.pages,
     );
     const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
     if (screenshotDirectory) {
       await page.viewport(1250, 1700);
-      host.style.height = "1650px";
-      const scroll = host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+      _fixture.host.style.height = "1650px";
+      const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
       scroll.style.flex = "none";
-      scroll.style.height = `${host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
+      scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
       const spacer = document.createElement("div");
       spacer.style.height = "700px";
       scroll.append(spacer);
-      await frames();
+      await vi.waitFor(() =>
+        expect(scroll.clientHeight).toBeCloseTo(
+          _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
+            20,
+          0,
+        ),
+      );
       for (let number = 1; number <= pages; number++) {
-        const sheet = host.querySelector<HTMLElement>(
+        const sheet = _fixture.host.querySelector<HTMLElement>(
           `.scient-latex-page-sheet[data-page="${number}"]`,
         )!;
         scroll.scrollTop +=
           sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
-        await frames();
+        await vi.waitFor(() =>
+          expect(
+            Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
+          ).toBeLessThan(2),
+        );
         await page.screenshot({
           path: `${screenshotDirectory}/${name}-visual-${number}.png`,
           element: scroll,
@@ -144,19 +241,21 @@ it.each([
       spacer.remove();
     }
   },
-  60000,
 );
 
-it("template 15 repeats furniture at the next printable origin and preserves every editable row", async () => {
-  const editor = await mount(template15, "longtable");
+it("template 15 repeats furniture at the next printable origin and preserves every editable row", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template15, "longtable");
   await expect
-    .poll(() => host.querySelectorAll('[data-paged-repeat="true"]').length)
+    .poll(() => _fixture.host.querySelectorAll('[data-paged-repeat="true"]').length)
     .toBeGreaterThan(0);
-  expect(host.querySelectorAll("tr[data-latex-table-row]")).toHaveLength(41);
+  expect(_fixture.host.querySelectorAll("tr[data-latex-table-row]")).toHaveLength(41);
   const dimensions = latexPagedKey.getState(editor.state)!.plan!.dimensions;
   const paper = editor.view.dom.getBoundingClientRect();
   const scale = paper.width / editor.view.dom.offsetWidth;
-  const head = host.querySelector<HTMLElement>(
+  const head = _fixture.host.querySelector<HTMLElement>(
     '[data-paged-repeat="true"][data-latex-longtable-band="head"]',
   )!;
   expect(
@@ -169,7 +268,10 @@ it("template 15 repeats furniture at the next printable origin and preserves eve
   ).toBeLessThan(2);
   expect(published).toBe(template15);
 });
-it("mirrors body margins on facing pages while retaining authored paragraph positions", async () => {
+it("mirrors body margins on facing pages while retaining authored paragraph positions", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const source = String.raw`\documentclass[twoside,a5paper]{article}
 \usepackage[inner=20mm,outer=30mm,top=18mm,bottom=18mm,bindingoffset=5mm]{geometry}
 \begin{document}
@@ -177,7 +279,7 @@ First page text.
 \newpage
 Second page text.
 \end{document}`;
-  const editor = await mount(source, "facing-pages");
+  const editor = await mount(_fixture, source, "facing-pages");
   const paragraphs = [...editor.view.dom.querySelectorAll("p")];
   const scale = editor.view.dom.getBoundingClientRect().width / editor.view.dom.offsetWidth;
   expect(
@@ -187,13 +289,16 @@ Second page text.
   expect(published).toBe(source);
 });
 
-it("a paragraph can cross both columns and pages while every visible text fragment maps to its original position", async () => {
+it("a paragraph can cross both columns and pages while every visible text fragment maps to its original position", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const source = String.raw`\documentclass[twocolumn,a5paper]{article}
 \usepackage[margin=18mm]{geometry}
 \begin{document}
 ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
 \end{document}`;
-  const editor = await mount(source, "long-paragraph");
+  const editor = await mount(_fixture, source, "long-paragraph");
   const state = latexPagedKey.getState(editor.state)!;
   expect(state.geometry.some((part) => part.column === 1)).toBe(true);
   expect(state.geometry.some((part) => part.page === 1)).toBe(true);
@@ -201,15 +306,16 @@ ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
   for (const part of state.geometry.filter((part) => part.column === 1).slice(0, 3)) {
     const rect = editor.view.coordsAtPos(part.from + 1);
     scroll.scrollTop += rect.top - scroll.getBoundingClientRect().top - 100;
-    await frames();
-    const visible = editor.view.coordsAtPos(part.from + 1);
-    const position = pagedPositionAtPoint(
-      editor.view,
-      visible.left + 1,
-      (visible.top + visible.bottom) / 2,
-    );
-    expect(position).toBeGreaterThanOrEqual(part.from);
-    expect(position).toBeLessThan(part.to);
+    await vi.waitFor(() => {
+      const visible = editor.view.coordsAtPos(part.from + 1);
+      const position = pagedPositionAtPoint(
+        editor.view,
+        visible.left + 1,
+        (visible.top + visible.bottom) / 2,
+      );
+      expect(position).toBeGreaterThanOrEqual(part.from);
+      expect(position).toBeLessThan(part.to);
+    });
   }
   expect(published).toBe(source);
   const target = state.geometry.find((part) => part.column === 1)!;
@@ -223,8 +329,11 @@ ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
   await expect.poll(() => published).toBe(source);
 });
 
-it("template 28 keeps its title full width, restores two columns and renders running furniture as text", async () => {
-  const editor = await mount(template28, "article");
+it("template 28 keeps its title full width, restores two columns and renders running furniture as text", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template28, "article");
   const paper = editor.view.dom.getBoundingClientRect();
   const scale = paper.width / editor.view.dom.offsetWidth;
   const dimensions = latexPagedKey.getState(editor.state)!.plan!.dimensions;
@@ -232,9 +341,9 @@ it("template 28 keeps its title full width, restores two columns and renders run
     ["Methods", 2],
     ["Discussion", 3],
   ] as const) {
-    const heading = [...host.querySelectorAll<HTMLElement>('[data-layout="macroHeading"]')].find(
-      (element) => element.textContent?.trim() === text,
-    )!;
+    const heading = [
+      ..._fixture.host.querySelectorAll<HTMLElement>('[data-layout="macroHeading"]'),
+    ].find((element) => element.textContent?.trim() === text)!;
     const expected =
       paper.top +
       ((pageNumber - 1) * (dimensions.height + dimensions.gap) + dimensions.top) * scale;
@@ -243,21 +352,21 @@ it("template 28 keeps its title full width, restores two columns and renders run
     expect(offset).toBeGreaterThanOrEqual(-1);
     expect(offset).toBeLessThan(3 * parseFloat(getComputedStyle(editor.view.dom).lineHeight));
   }
-  const tables = [...host.querySelectorAll("table")];
+  const tables = [..._fixture.host.querySelectorAll("table")];
   expect(tables).toHaveLength(2);
   expect(parseFloat(getComputedStyle(tables[1]!).fontSize)).toBeCloseTo(
     parseFloat(getComputedStyle(tables[0]!).fontSize),
     2,
   );
-  const title = host.querySelector<HTMLElement>('[data-layout="fullWidthTitle"]')!;
-  const paragraph = host.querySelector<HTMLElement>('[data-layout="sourceColumns"] p')!;
+  const title = _fixture.host.querySelector<HTMLElement>('[data-layout="fullWidthTitle"]')!;
+  const paragraph = _fixture.host.querySelector<HTMLElement>('[data-layout="sourceColumns"] p')!;
   expect(title.getBoundingClientRect().width).toBeGreaterThan(
     paragraph.getBoundingClientRect().width * 1.8,
   );
-  expect(host.querySelector(".scient-latex-running-header")!.textContent).toContain(
+  expect(_fixture.host.querySelector(".scient-latex-running-header")!.textContent).toContain(
     "Northbridge Journal",
   );
-  expect(host.querySelector(".scient-latex-running-header")!.textContent).not.toContain(
+  expect(_fixture.host.querySelector(".scient-latex-running-header")!.textContent).not.toContain(
     "\\scriptsize",
   );
   expect(latexPagedKey.getState(editor.state)?.geometry.some((part) => part.column === 1)).toBe(
@@ -265,8 +374,11 @@ it("template 28 keeps its title full width, restores two columns and renders run
   );
 });
 
-it("detached measurements preserve mixed-script paragraph line heights", async () => {
-  const editor = await mount(template26, "natural-parity");
+it("detached measurements preserve mixed-script paragraph line heights", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template26, "natural-parity");
   const scale = editor.view.dom.getBoundingClientRect().width / editor.view.dom.offsetWidth;
   let checked = 0;
   for (const element of editor.view.dom.querySelectorAll<HTMLElement>(":scope > p")) {
@@ -289,8 +401,12 @@ it("detached measurements preserve mixed-script paragraph line heights", async (
   expect(checked).toBeGreaterThan(0);
 });
 
-it("keeps paragraphs in source order around a note moved to the foot of the page", async () => {
+it("keeps paragraphs in source order around a note moved to the foot of the page", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass[10pt]{article}
 \usepackage[letterpaper,margin=1in]{geometry}
 \begin{document}
@@ -322,7 +438,7 @@ The second page starts here.
       );
       expect(parseFloat(blocks[index]!.style.top) || 0).toBeGreaterThanOrEqual(0);
     }
-    const notes = [...host.querySelectorAll<HTMLElement>(".scient-latex-footnote")];
+    const notes = [..._fixture.host.querySelectorAll<HTMLElement>(".scient-latex-footnote")];
     expect(notes).toHaveLength(2);
     for (const note of notes)
       expect(note.getBoundingClientRect().top).toBeGreaterThan(
@@ -335,27 +451,29 @@ The second page starts here.
   editor.state.doc.forEach((node, offset) => {
     if (node.textContent.startsWith("Alpha")) end = offset + node.nodeSize - 1;
   });
-  editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, context, () =>
+    editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end)),
+  );
   inOrder();
-}, 60000);
+});
 
-it("breaks a word across lines or columns only once, at a hyphen", async () => {
-  const editor = await mount(twoColumnArticle, "column-words");
+it("breaks a word across lines or columns only once, at a hyphen", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, twoColumnArticle, "column-words");
   // Words inserted at the start slide the column cut through the text until a
   // hyphenated word lands on it; every layout on the way keeps words whole.
   let cut = false;
   for (let step = 0; step < 16 && !cut; step++) {
     expectWholeWords(editor);
     cut = cutsInsideWord(editor);
-    if (!cut) await insertAtArticleStart(editor, "word ");
+    if (!cut) await insertAtArticleStart(editor, context, "word ");
   }
   expect(cut).toBe(true);
   expectWholeWords(editor);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen").length).toBeGreaterThan(0);
-}, 120000);
+});
 
 /** Whether a column or page cut falls between two letters of one word. */
 function cutsInsideWord(editor: Editor) {
@@ -399,8 +517,8 @@ function expectWholeWords(editor: Editor) {
       const text = word.map((item) => item.character).join("");
       let breaks = 0;
       for (let at = 1; at < word.length; at++) {
-        const previous = word[at - 1]!.box,
-          current = word[at]!.box;
+        const previous = word[at - 1]!.box;
+        const current = word[at]!.box;
         if (!previous || !current) continue;
         if (Math.abs(current.top - previous.top) < 2) {
           expect(current.left, text).toBeGreaterThan(previous.left - 1);
@@ -418,7 +536,7 @@ function expectWholeWords(editor: Editor) {
 }
 
 /** Inserts at the start of the article's first paragraph, the same one each time. */
-async function insertAtArticleStart(editor: Editor, text: string) {
+async function insertAtArticleStart(editor: Editor, context: TestContext, text: string) {
   let at = -1;
   editor.state.doc.descendants((node, position) => {
     if (at < 0 && node.type.name === "paragraph" && node.textContent.includes("Alpha begins"))
@@ -426,20 +544,22 @@ async function insertAtArticleStart(editor: Editor, text: string) {
     return at < 0;
   });
   expect(at).toBeGreaterThan(0);
-  editor.view.dispatch(editor.state.tr.insertText(text, at));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, context, () =>
+    editor.view.dispatch(editor.state.tr.insertText(text, at)),
+  );
 }
 
-it("finds the first letter of a line that follows a hyphenation break", async () => {
+it("finds the first letter of a line that follows a hyphenation break", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const block = document.createElement("div");
   block.lang = "en";
   block.style.cssText = "width:120px;font:16px serif;hyphens:auto;text-align:justify";
   block.textContent = "Make differences from the compiled output easy to understand differences.";
   document.body.append(block);
   try {
-    await document.fonts.ready;
+    await waitForTestReceipt(context.signal, document.fonts.ready);
     const text = block.firstChild as Text;
     const range = document.createRange();
     const top = (offset: number) => {
@@ -461,8 +581,11 @@ it("finds the first letter of a line that follows a hyphenation break", async ()
   }
 });
 
-it("sets a two-column article's title across both columns, above the body", async () => {
-  const editor = await mount(twoColumnArticle, "column-title");
+it("sets a two-column article's title across both columns, above the body", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, twoColumnArticle, "column-title");
   const heading = [...editor.view.dom.querySelectorAll<HTMLElement>("*")].find((element) =>
     element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
       ? element.value === "Layout fidelity specimen"
@@ -483,14 +606,18 @@ it("sets a two-column article's title across both columns, above the body", asyn
   for (const paragraph of body)
     expect(paragraph.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom - 1);
   expect(published).toBe(twoColumnArticle);
-}, 60000);
+});
 
-it("draws no hyphen at line ends that stay in their column", async () => {
+it("draws no hyphen at line ends that stay in their column", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const han = "中文段落的每一行都在字与字之间换行".repeat(12);
   const words = "Hyphenation of considerably extraordinary vocabulary continues naturally. ".repeat(
     12,
   );
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass{article}
 \begin{document}
 ${han}
@@ -504,18 +631,20 @@ ${words}
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 });
 
-it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async () => {
-  let editor = await mount(twoColumnArticle, "hyphen-edit");
+it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  let editor = await mount(_fixture, twoColumnArticle, "hyphen-edit");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
-    await insertAtArticleStart(editor, "word ");
+    await insertAtArticleStart(editor, context, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
   const paragraph = editor.state.doc.resolve(at).start();
-  editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, context, () =>
+    editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph)),
+  );
   await expect.poll(() => published).toContain("Inserted words shift the wrap.");
   const layout = (current: Editor) =>
     latexPagedKey
@@ -527,24 +656,26 @@ it("lays out an edit next to a drawn hyphen as a fresh opening of the result doe
     );
   const edited = { layout: layout(editor), hyphens: hyphens(editor) };
   const source = published;
-  root.unmount();
-  host.remove();
-  editor = await mount(source, "hyphen-edit-fresh");
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+  editor = await mount(_fixture, source, "hyphen-edit-fresh");
   expect(layout(editor)).toEqual(edited.layout);
   expect(hyphens(editor)).toEqual(edited.hyphens);
-}, 90000);
+});
 
-it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async () => {
-  let editor = await mount(twoColumnArticle, "hyphen-replaced");
+it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  let editor = await mount(_fixture, twoColumnArticle, "hyphen-replaced");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
-    await insertAtArticleStart(editor, "word ");
+    await insertAtArticleStart(editor, context, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
-  editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1));
-  await frames();
-  await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  await frames();
+  await editAndLayout(editor, context, () =>
+    editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1)),
+  );
   await expect.poll(() => published).toContain("-");
   const hyphens = (current: Editor) =>
     [...current.view.dom.querySelectorAll(".scient-paged-hyphen")].map((element) =>
@@ -552,16 +683,20 @@ it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh 
     );
   const edited = hyphens(editor);
   const source = published;
-  root.unmount();
-  host.remove();
-  editor = await mount(source, "hyphen-replaced-fresh");
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+  editor = await mount(_fixture, source, "hyphen-replaced-fresh");
   expect(hyphens(editor)).toEqual(edited);
-}, 120000);
+});
 
-it("draws no hyphen where Han text continues in the next column", async () => {
+it("draws no hyphen where Han text continues in the next column", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const han =
     "\u4e2d\u6587\u6bb5\u843d\u7684\u6bcf\u4e00\u884c\u90fd\u5728\u5b57\u4e0e\u5b57\u4e4b\u95f4\u6362\u884c";
   const editor = await mount(
+    _fixture,
     String.raw`\documentclass[twocolumn]{article}
 \begin{document}
 ${han.repeat(240)}
@@ -573,4 +708,24 @@ ${han.repeat(240)}
   // fallback font metrics; short paragraphs can all end at column boundaries.
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
-}, 60000);
+});
+
+function _createFixture(context: TestContext) {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    context,
+    host: undefined! as HTMLElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

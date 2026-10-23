@@ -89,6 +89,7 @@ import {
   type LatexOpeningPlan,
 } from "./latexProgressiveLoading";
 import {
+  cancelLatexReadingPosition,
   rememberLatexReadingPosition,
   rememberedLatexReadingBlock,
   restoreLatexReadingPosition,
@@ -4392,7 +4393,6 @@ function LatexRichPreviewView({
                   <Fragment key={key}>
                     {longtable && pageBreaks.some((part) => part.row === rowIndex) ? (
                       <>
-                        {" "}
                         <LatexLongTableBand
                           repeat
                           editor={editor}
@@ -4427,7 +4427,7 @@ function LatexRichPreviewView({
                           columns={Math.max(1, rows[0]?.length ?? 1)}
                           alignments={columnAlignments}
                           number={tableNumber ?? null}
-                        />{" "}
+                        />
                       </>
                     ) : null}
                     <tr
@@ -9000,7 +9000,10 @@ function LatexVisualEditorReady(
   }, [canvasWidth]);
 
   const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
-  const changeZoom = useLatexPinchZoom(visualScroll, zoom, setZoomMode);
+  const readingNavigation = useStableCallback(() => {
+    if (editor && !editor.isDestroyed) cancelLatexReadingPosition(editor.view);
+  });
+  const changeZoom = useLatexPinchZoom(visualScroll, zoom, setZoomMode, readingNavigation);
   const fitWidth = () => {
     // The resize observer may not have delivered the pane's latest dimensions yet.
     const scale = measureFitZoom() ?? fitZoom;
@@ -9057,7 +9060,7 @@ function LatexVisualEditorReady(
     if (!plan) {
       // The whole document fit the opening; it still returns to where it was read.
       restoreLatexReadingPosition(readingKey, view, 0);
-      return;
+      return () => cancelLatexReadingPosition(view);
     }
     view.dom.setAttribute("data-latex-loading", "true");
     // Nested fields cannot be entered while blocks are still arriving.
@@ -9091,6 +9094,7 @@ function LatexVisualEditorReady(
       finish();
     };
     return () => {
+      cancelLatexReadingPosition(view);
       cancel();
       stopLoading.current = null;
       view.dom.removeEventListener("focusin", refuseFocus);
@@ -9785,6 +9789,7 @@ function LatexVisualEditorReady(
   const goToPage = (requested: number) => {
     const scroll = visualScroll.current;
     if (!scroll || !editor || pageCount === 0) return;
+    readingNavigation();
     const requestedPage = clampPdfPage(requested, pageCount);
     const planned = latexPagedKey.getState(editor.state)?.plan;
     if (planned) {

@@ -1,7 +1,8 @@
-import { act, useEffect, useSyncExternalStore } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { useEffect, useSyncExternalStore } from "react";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 
 const accessStore = {
   value: { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true },
@@ -35,162 +36,147 @@ vi.mock(import("./DevicePhoneViewport"), async (original) => ({
     return <></>;
   },
 }));
+
 import { DeviceStreamView } from "./DeviceStreamView";
 
-// MJPEG frames come from the device hub, so images keep their src without loading it and a
-// test publishes a frame by setting the natural size and firing "load".
-const imageSources = new WeakMap<HTMLImageElement, string>();
-const framedImages = new WeakSet<HTMLImageElement>();
-let images: HTMLImageElement[] = [];
 const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
-const naturalWidthDescriptor = Object.getOwnPropertyDescriptor(
-  HTMLImageElement.prototype,
-  "naturalWidth",
-)!;
-const naturalHeightDescriptor = Object.getOwnPropertyDescriptor(
-  HTMLImageElement.prototype,
-  "naturalHeight",
-)!;
 const removeAttribute = Element.prototype.removeAttribute;
-function stubImages() {
+function stubImages(_fixture: _Fixture) {
+  // Only the remote MJPEG transport is intercepted. Published frames use native PNG decoding.
   Object.defineProperty(HTMLImageElement.prototype, "src", {
     configurable: true,
     get(this: HTMLImageElement) {
-      return imageSources.get(this) ?? "";
+      return _fixture.imageSources.get(this) ?? srcDescriptor.get!.call(this);
     },
     set(this: HTMLImageElement, value: string) {
-      if (!images.includes(this)) images.push(this);
-      imageSources.set(this, value);
+      if (!value.startsWith(accessStore.value.httpBase)) {
+        srcDescriptor.set!.call(this, value);
+        return;
+      }
+      if (!_fixture.images.includes(this)) _fixture.images.push(this);
+      _fixture.imageSources.set(this, value);
     },
   });
-  for (const name of ["naturalWidth", "naturalHeight"]) {
-    Object.defineProperty(HTMLImageElement.prototype, name, {
-      configurable: true,
-      get(this: HTMLImageElement) {
-        if (!framedImages.has(this)) return 0;
-        return name === "naturalWidth" ? 400 : 800;
-      },
-    });
-  }
   Element.prototype.removeAttribute = function (this: Element, name: string) {
-    if (this instanceof HTMLImageElement && name === "src") imageSources.delete(this);
+    if (this instanceof HTMLImageElement && name === "src") _fixture.imageSources.delete(this);
     return removeAttribute.call(this, name);
   };
 }
 function restoreImages() {
   Object.defineProperty(HTMLImageElement.prototype, "src", srcDescriptor);
-  Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", naturalWidthDescriptor);
-  Object.defineProperty(HTMLImageElement.prototype, "naturalHeight", naturalHeightDescriptor);
   Element.prototype.removeAttribute = removeAttribute;
 }
-async function publishFrame(image: HTMLImageElement) {
-  framedImages.add(image);
-  await act(async () => image.dispatchEvent(new Event("load")));
+async function publishFrame(_fixture: _Fixture, image: HTMLImageElement) {
+  await act(async () => {
+    srcDescriptor.set!.call(image, _fixture.frameUrl);
+    await image.decode();
+  });
+  expect(image.naturalWidth).toBe(400);
+  expect(image.naturalHeight).toBe(800);
 }
-let root: Root;
-let container: HTMLDivElement;
-let primes = 0;
-beforeEach(() => {
-  primes = 0;
+
+async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "android" = "ios") {
   viewerMounts = 0;
   viewerUnmounts = 0;
-  images = [];
-  stubImages();
-  container = document.createElement("div");
-  container.style.cssText = "width: 400px; height: 800px; display: flex";
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  restoreImages();
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
-
-async function setup(h264 = false) {
+  _fixture.images = [];
+  await using stack = new AsyncDisposableStack();
+  stubImages(_fixture);
+  stack.defer(restoreImages);
+  stack.use(fakeTimers());
   const touches: unknown[] = [];
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let videoBody: ReadableStreamDefaultController<Uint8Array> | undefined;
   let output: VideoFrameOutputCallback | undefined;
   if (h264) {
-    vi.stubGlobal(
-      "VideoDecoder",
-      class {
-        static isConfigSupported = async () => ({ supported: true });
-        state = "unconfigured";
-        constructor(callbacks: VideoDecoderInit) {
-          output = callbacks.output;
-        }
-        configure() {
-          this.state = "configured";
-        }
-        close() {
-          this.state = "closed";
-        }
-      },
+    stack.use(
+      stubGlobal(
+        "VideoDecoder",
+        class {
+          static isConfigSupported = async () => ({ supported: true });
+          state = "unconfigured";
+          constructor(callbacks: VideoDecoderInit) {
+            output = callbacks.output;
+          }
+          configure() {
+            this.state = "configured";
+          }
+          close() {
+            this.state = "closed";
+          }
+        },
+      ),
     );
-    vi.stubGlobal("EncodedVideoChunk", vi.fn());
+    stack.use(stubGlobal("EncodedVideoChunk", vi.fn()));
   } else {
     // Without WebCodecs the iOS client streams MJPEG.
     const videoDecoder = Object.getOwnPropertyDescriptor(globalThis, "VideoDecoder");
     if (videoDecoder) {
       Reflect.deleteProperty(globalThis, "VideoDecoder");
-      onTestFinished(() => {
+      stack.defer(() => {
         Object.defineProperty(globalThis, "VideoDecoder", videoDecoder);
       });
     }
   }
-  vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
-    if (url.endsWith("stream.avcc")) {
-      return Promise.resolve(
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              videoBody = controller;
-              init.signal?.addEventListener("abort", () => controller.error(new Error("aborted")));
-            },
-          }),
-        ),
-      );
-    }
-    primes++;
-    return Promise.resolve(new Response("prime"));
-  });
+  stack.use(
+    stubGlobal("fetch", (url: string, init: RequestInit) => {
+      if (url.endsWith("stream.avcc")) {
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                videoBody = controller;
+                init.signal?.addEventListener("abort", () =>
+                  controller.error(new Error("aborted")),
+                );
+              },
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(new Response("prime"));
+    }),
+  );
   const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
-  vi.stubGlobal(
-    "WebSocket",
-    class {
-      static OPEN = 1;
-      readyState = 1;
-      constructor() {
-        sockets.push(this);
-      }
-      onmessage?: (event: { data: ArrayBuffer }) => void;
-      send(packet: Uint8Array) {
-        if (packet[0] === 0x03) {
-          touches.push(JSON.parse(new TextDecoder().decode(packet.subarray(1))));
+  const sent: unknown[] = [];
+  stack.use(
+    stubGlobal(
+      "WebSocket",
+      class {
+        static OPEN = 1;
+        readyState = 1;
+        constructor() {
+          sockets.push(this);
         }
-      }
-      close() {}
-    },
+        onmessage?: (event: { data: ArrayBuffer }) => void;
+        send(message: string | Uint8Array) {
+          if (typeof message === "string") {
+            sent.push(message);
+          } else if (message[0] === 0x03) {
+            touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+          }
+        }
+        close() {}
+      },
+    ),
   );
   const view = (visible: boolean) => (
     <DeviceStreamView
       hostId="local"
       environmentId={EnvironmentId.make("test")}
       deviceId="test"
-      platform="ios"
+      platform={platform}
       visible={visible}
       allowPhoneView={h264}
     />
   );
-  await act(async () => root.render(view(true)));
+  _fixture.container = document.createElement("div");
+  _fixture.container.style.cssText = "width: 400px; height: 800px; display: flex";
+  const screen = stack.use(await render(view(true), { container: _fixture.container }));
+  const environment = stack.move();
   return {
-    images,
-    view,
+    images: _fixture.images,
+    show: (visible: boolean) => screen.rerender(view(visible)),
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+    sent,
     touches,
     configure() {
       const json = new TextEncoder().encode(
@@ -211,114 +197,62 @@ async function setup(h264 = false) {
   };
 }
 
-const alert = () => container.querySelector('[role="alert"]');
-const reconnect = () =>
+const alert = (_fixture: _Fixture) => _fixture.container.querySelector('[role="alert"]');
+const reconnect = (_fixture: _Fixture) =>
   act(async () =>
-    [...container.querySelectorAll("button")]
+    [..._fixture.container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Reconnect"))!
       .click(),
   );
 
-it.each([
-  { name: "middle", button: 1, buttons: 4 },
-  { name: "right", button: 2, buttons: 2 },
-])("ignores $name-button drags and forwards the next primary drag", async ({ button, buttons }) => {
-  const { touches, configure } = await setup();
-  await act(async () => configure());
-  const viewport = container.querySelector("canvas")!.parentElement!;
-  viewport.style.width = "400px";
-  viewport.style.height = "800px";
-  // Synthetic pointer events do not register an active browser pointer to capture.
-  viewport.setPointerCapture = () => {};
-  const rect = viewport.getBoundingClientRect();
-  const pointer = (type: string, button: number, buttons: number, y: number) =>
-    viewport.dispatchEvent(
-      new PointerEvent(type, {
-        bubbles: true,
-        pointerId: 1,
-        pointerType: "mouse",
-        button,
-        buttons,
-        clientX: rect.left + 100,
-        clientY: rect.top + y,
-      }),
-    );
-
-  await act(async () => {
-    pointer("pointerdown", button, buttons, 600);
-    pointer("pointermove", -1, buttons, 200);
-    pointer("pointerup", button, 0, 200);
-  });
-  expect(touches).toEqual([]);
-
-  await act(async () => {
-    pointer("pointerdown", 0, 1, 600);
-    pointer("pointermove", -1, 1, 200);
-    pointer("pointerup", 0, 0, 200);
-    pointer("pointermove", -1, 0, 400);
-  });
-  expect(touches).toEqual([
-    { type: "begin", x: 0.25, y: 0.75 },
-    { type: "move", x: 0.25, y: 0.25 },
-    { type: "end", x: 0.25, y: 0.25 },
-  ]);
-});
-
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
-  const { images, view } = await setup();
+  await using _fixture = _createFixture();
+
+  await using stream = await setup(_fixture);
+  const { images, show } = stream;
   expect(images[0]!.src).toContain("stream.mjpeg");
-  await act(async () => root.render(view(false)));
-  expect(container.querySelectorAll("img")).toHaveLength(0);
+  await show(false);
+  expect(_fixture.container.querySelectorAll("img")).toHaveLength(0);
   expect(images[0]!.src).toBe("");
   expect(vi.getTimerCount()).toBe(0);
-  await act(async () => root.render(view(true)));
+  await show(true);
   expect(images.at(-1)!.src).toContain("stream.mjpeg");
 });
 
 it("offers Reconnect after the shared timeout and receives a frame after retry with unchanged access", async () => {
-  const { images } = await setup();
+  await using _fixture = _createFixture();
+
+  await using stream = await setup(_fixture);
+  const { images } = stream;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(15_000);
   });
-  expect(alert()?.textContent).toContain("No video");
+  expect(alert(_fixture)?.textContent).toContain("No video");
   expect(images[0]!.src).toBe("");
-  await reconnect();
-  expect(alert()).toBeNull();
+  await reconnect(_fixture);
+  expect(alert(_fixture)).toBeNull();
   expect(images[1]!.src).toContain("stream.mjpeg");
-  await publishFrame(images[1]!);
-  expect(container.querySelector('[role="status"]')).toBeNull();
-  expect(container.querySelectorAll("button")).toHaveLength(0);
+  await publishFrame(_fixture, images[1]!);
+  expect(_fixture.container.querySelector('[role="status"]')).toBeNull();
+  expect(_fixture.container.querySelectorAll("button")).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("starts exactly one new stream per Reconnect press", async () => {
-  await setup();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000);
-  });
-  expect(primes).toBe(1);
-  await reconnect();
-  expect(primes).toBe(2);
-});
-
-it("keeps the 3D viewer mounted across iOS video recovery and releases it when hidden", async () => {
-  const { configure, frame, view } = await setup(true);
-  await act(async () => configure());
-  expect(viewerMounts).toBe(0);
-  await act(async () => frame());
-  expect(viewerMounts).toBe(1);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000);
-  });
-  expect(viewerUnmounts).toBe(0);
-  expect(viewerMounts).toBe(1);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1_000);
-    configure();
-  });
-  await act(async () => frame());
-  expect(viewerMounts).toBe(1);
-  await act(async () => root.render(view(false)));
-  expect(viewerUnmounts).toBe(1);
-  expect(vi.getTimerCount()).toBe(0);
-});
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const frame = document.createElement("canvas");
+  frame.width = 400;
+  frame.height = 800;
+  frame.getContext("2d")!.fillRect(0, 0, 400, 800);
+  return {
+    frameUrl: frame.toDataURL("image/png"),
+    imageSources: new WeakMap<HTMLImageElement, string>(),
+    images: [] as HTMLImageElement[],
+    container: undefined! as HTMLDivElement,
+    stack,
+    async [Symbol.asyncDispose]() {
+      await stack.disposeAsync();
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -5,15 +5,14 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 /**
- * Hooks into every filesystem call the lock makes. `jitter` delays each call
- * by a random 0-2ms, so concurrent contenders interleave in orders a quiet
- * machine rarely shows; `before` runs ahead of each call.
+ * Filesystem calls can be admitted in randomized order without depending on
+ * timer jitter; `before` also permits an exact stale-contender interleaving.
  */
 const fsHooks = vi.hoisted(() => ({
-  jitter: false,
+  schedule: undefined as (<A>(operation: () => Promise<A>) => Promise<A>) | undefined,
   before: undefined as ((call: string, args: ReadonlyArray<unknown>) => Promise<void>) | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -21,9 +20,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const hooked =
     <Args extends unknown[], Result>(name: string, call: (...args: Args) => Promise<Result>) =>
     async (...args: Args): Promise<Result> => {
-      if (fsHooks.jitter) await new Promise((resolve) => setTimeout(resolve, Math.random() * 2));
       await fsHooks.before?.(name, args);
-      return call(...args);
+      return fsHooks.schedule ? fsHooks.schedule(() => call(...args)) : call(...args);
     };
   return {
     ...original,
@@ -45,9 +43,15 @@ import {
 
 const temporaryRoots: string[] = [];
 
+beforeEach(() => {
+  vi.useFakeTimers({ now: new Date("2026-10-20T00:00:00.000Z") });
+});
+
 afterEach(async () => {
-  fsHooks.jitter = false;
+  fsHooks.schedule = undefined;
   fsHooks.before = undefined;
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   await Promise.all(
     temporaryRoots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -59,23 +63,40 @@ async function lockPath(): Promise<string> {
   return NodePath.join(root, "mutation.lock");
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+function now(): number {
+  const date = vi.getMockedSystemTime();
+  if (!date) throw new Error("The complete mutation-lock clock must be installed");
+  return date.getTime();
+}
 
 async function mtimeAge(path: string): Promise<number> {
-  return Date.now() - (await NodeFSP.stat(path)).mtimeMs;
+  return now() - (await NodeFSP.stat(path)).mtimeMs;
 }
 
 async function backdate(path: string, ageMs: number): Promise<void> {
-  const then = new Date(Date.now() - ageMs);
+  const then = new Date(now() - ageMs);
   await NodeFSP.utimes(path, then, then);
 }
 
-async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 2_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await predicate())) {
-    if (Date.now() > deadline) throw new Error("condition was not met in time");
-    await sleep(10);
-  }
+function heartbeatClock(intervalMs: number) {
+  const timer = globalThis.setTimeout;
+  let scheduled = Promise.withResolvers<void>();
+  vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+    const handle = timer(callback, delay, ...args);
+    if (delay === intervalMs) {
+      scheduled.resolve();
+      scheduled = Promise.withResolvers<void>();
+    }
+    return handle;
+  });
+  return {
+    advance: async () => {
+      // Rescheduling follows refreshLock's native FileHandle.close, not merely timer dispatch.
+      const completed = scheduled.promise;
+      await vi.advanceTimersByTimeAsync(intervalMs);
+      await completed;
+    },
+  };
 }
 
 /**
@@ -140,13 +161,15 @@ describe("managed runtime mutation lock heartbeat", () => {
   it("never lets a live owner that keeps refreshing be reclaimed, even past the stale bound", async () => {
     const path = await lockPath();
     const heartbeatIntervalMs = 100;
+    const clock = heartbeatClock(heartbeatIntervalMs);
     const owner = await tryAcquireManagedRuntimeMutationLock(path, { heartbeatIntervalMs });
     expect(owner).toBeDefined();
     const ownerRecord = await NodeFSP.readFile(path, "utf8");
+    await backdate(path, 0);
     const publishedAt = (await NodeFSP.stat(path)).mtimeMs;
 
     // Well past the 4x-interval stale bound.
-    await sleep(heartbeatIntervalMs * 10);
+    for (let beat = 0; beat < 10; beat++) await clock.advance();
 
     expect((await NodeFSP.stat(path)).mtimeMs).toBeGreaterThan(publishedAt);
     expect(await mtimeAge(path)).toBeLessThan(heartbeatIntervalMs * 4);
@@ -158,15 +181,17 @@ describe("managed runtime mutation lock heartbeat", () => {
   it("stops refreshing once released and never re-creates or touches a later owner's lock", async () => {
     const path = await lockPath();
     const heartbeatIntervalMs = 30;
+    const clock = heartbeatClock(heartbeatIntervalMs);
     const first = await tryAcquireManagedRuntimeMutationLock(path, { heartbeatIntervalMs });
     expect(first).toBeDefined();
     // Prove the heartbeat is running before release.
     await backdate(path, 60_000);
-    await waitFor(async () => (await mtimeAge(path)) < 5_000);
+    await clock.advance();
+    expect(await mtimeAge(path)).toBeLessThan(5_000);
 
     await first?.release();
     await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    await sleep(heartbeatIntervalMs * 5);
+    await vi.advanceTimersByTimeAsync(heartbeatIntervalMs * 5);
     await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
 
     const second = await tryAcquireManagedRuntimeMutationLock(path, {
@@ -175,7 +200,7 @@ describe("managed runtime mutation lock heartbeat", () => {
     expect(second).toBeDefined();
     const secondRecord = await NodeFSP.readFile(path, "utf8");
     await backdate(path, 30_000);
-    await sleep(heartbeatIntervalMs * 5);
+    await vi.advanceTimersByTimeAsync(heartbeatIntervalMs * 5);
 
     expect(await mtimeAge(path)).toBeGreaterThan(25_000);
     expect(await NodeFSP.readFile(path, "utf8")).toBe(secondRecord);
@@ -185,16 +210,22 @@ describe("managed runtime mutation lock heartbeat", () => {
   it("stops refreshing a lock that another owner has taken over", async () => {
     const path = await lockPath();
     const heartbeatIntervalMs = 30;
+    const clock = heartbeatClock(heartbeatIntervalMs);
     const owner = await tryAcquireManagedRuntimeMutationLock(path, { heartbeatIntervalMs });
     expect(owner).toBeDefined();
     await backdate(path, 60_000);
-    await waitFor(async () => (await mtimeAge(path)) < 5_000);
+    await clock.advance();
+    expect(await mtimeAge(path)).toBeLessThan(5_000);
+    const lost = new Promise<void>((resolve) =>
+      owner!.signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
 
     const replacement = livePidLock({ heartbeatIntervalMs: 60_000 });
     await NodeFSP.rm(path);
     await NodeFSP.writeFile(path, replacement);
     await backdate(path, 30_000);
-    await sleep(heartbeatIntervalMs * 5);
+    await vi.advanceTimersByTimeAsync(heartbeatIntervalMs * 5);
+    await lost;
 
     expect(await mtimeAge(path)).toBeGreaterThan(25_000);
     await owner?.release();
@@ -267,11 +298,16 @@ describe("managed runtime mutation lock ownership", () => {
     const path = await lockPath();
     const owner = await tryAcquireManagedRuntimeMutationLock(path, { heartbeatIntervalMs: 20 });
     expect(owner?.signal.aborted).toBe(false);
+    const lost = new Promise<void>((resolve) =>
+      owner!.signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
 
     await NodeFSP.rm(path);
     await NodeFSP.writeFile(path, livePidLock({ heartbeatIntervalMs: 60_000 }));
 
-    await expect.poll(() => owner?.signal.aborted, { timeout: 2_000 }).toBe(true);
+    await vi.advanceTimersByTimeAsync(20);
+    await lost;
+    expect(owner?.signal.aborted).toBe(true);
     expect(owner?.signal.reason).toBeInstanceOf(ManagedRuntimeMutationLockLostError);
     await owner?.release();
   });
@@ -321,13 +357,51 @@ describe("managed runtime mutation lock ownership", () => {
 
   it("never lets three concurrent contenders for a stale lock both become its owner", async () => {
     const path = await lockPath();
-    fsHooks.jitter = true;
     for (let iteration = 0; iteration < 150; iteration += 1) {
       await NodeFSP.writeFile(path, deadOwnerLock(`stale-${iteration}`));
-
-      const contenders = await Promise.all(
+      const ready: Array<() => void> = [];
+      let changed = Promise.withResolvers<void>();
+      const notify = () => {
+        changed.resolve();
+        changed = Promise.withResolvers<void>();
+      };
+      fsHooks.schedule = <A>(operation: () => Promise<A>) =>
+        new Promise<A>((resolve, reject) => {
+          ready.push(() => {
+            operation().then(
+              (value) => {
+                resolve(value);
+                notify();
+              },
+              (error: unknown) => {
+                reject(error);
+                notify();
+              },
+            );
+          });
+          notify();
+        });
+      let settled = false;
+      const pending = Promise.all(
         Array.from({ length: 3 }, () => tryAcquireManagedRuntimeMutationLock(path)),
       );
+      void pending.then(
+        () => {
+          settled = true;
+          notify();
+        },
+        () => {
+          settled = true;
+          notify();
+        },
+      );
+      while (!settled) {
+        const completion = changed.promise;
+        if (ready.length > 0) ready.splice(Math.floor(Math.random() * ready.length), 1)[0]!();
+        else await completion;
+      }
+      fsHooks.schedule = undefined;
+      const contenders = await pending;
       const owners = contenders.filter((lock) => lock !== undefined);
 
       expect(owners, `iteration ${iteration}`).toHaveLength(1);
@@ -336,5 +410,5 @@ describe("managed runtime mutation lock ownership", () => {
       await Promise.all(owners.map((lock) => lock.release()));
       await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
     }
-  }, 30_000);
+  });
 });

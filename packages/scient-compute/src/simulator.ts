@@ -132,260 +132,254 @@ function transportError(
  */
 export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): ComputeTransport {
   return {
-    open(request: ComputeTransportOpenRequest) {
-      return Effect.gen(function* () {
-        const missing = missingComputeCapabilities(
-          plan.capabilities,
-          new Set(request.requiredCapabilities),
+    open: Effect.fn("simulator.open")(function* (request: ComputeTransportOpenRequest) {
+      const missing = missingComputeCapabilities(
+        plan.capabilities,
+        new Set(request.requiredCapabilities),
+      );
+      if (missing.length > 0) {
+        return yield* transportError(
+          "handshake",
+          `The runtime does not support ${missing.join(", ")}.`,
         );
-        if (missing.length > 0) {
-          return yield* transportError(
-            "handshake",
-            `The runtime does not support ${missing.join(", ")}.`,
-          );
-        }
+      }
 
-        // `Done` is how a queue says it will produce nothing further, which is
-        // what shutting the channel down means.
-        const events = yield* Queue.unbounded<ComputeTransportEvent, Cause.Done>();
-        const inFlight = MutableRef.make<ComputeRequestId | undefined>(undefined);
-        const inFlightBoundary = MutableRef.make<
-          { readonly sequence: number; readonly observedAt: string } | undefined
-        >(undefined);
-        const generation = MutableRef.make(request.generation);
-        const closed = MutableRef.make(false);
+      // `Done` is how a queue says it will produce nothing further, which is
+      // what shutting the channel down means.
+      const events = yield* Queue.unbounded<ComputeTransportEvent, Cause.Done>();
+      const inFlight = MutableRef.make<ComputeRequestId | undefined>(undefined);
+      const inFlightBoundary = MutableRef.make<
+        { readonly sequence: number; readonly observedAt: string } | undefined
+      >(undefined);
+      const generation = MutableRef.make(request.generation);
+      const closed = MutableRef.make(false);
 
-        const emit = (event: ComputeTransportEvent) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
-        const finish = (
-          requestId: ComputeRequestId,
-          outcome: "succeeded" | "failed" | "cancelled",
-        ) =>
-          Effect.suspend(() => {
-            const boundary = MutableRef.get(inFlightBoundary) ?? {
-              sequence: Sequence.make(0),
-              observedAt: SIMULATED_OBSERVED_AT,
-            };
-            MutableRef.set(inFlight, undefined);
-            MutableRef.set(inFlightBoundary, undefined);
-            return emit({
-              _tag: "completed",
-              ...boundary,
-              requestId,
-              generation: MutableRef.get(generation),
-              outcome,
-            });
+      const emit = (event: ComputeTransportEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
+      const finish = (requestId: ComputeRequestId, outcome: "succeeded" | "failed" | "cancelled") =>
+        Effect.suspend(() => {
+          const boundary = MutableRef.get(inFlightBoundary) ?? {
+            sequence: Sequence.make(0),
+            observedAt: SIMULATED_OBSERVED_AT,
+          };
+          MutableRef.set(inFlight, undefined);
+          MutableRef.set(inFlightBoundary, undefined);
+          return emit({
+            _tag: "completed",
+            ...boundary,
+            requestId,
+            generation: MutableRef.get(generation),
+            outcome,
           });
-        const whenOpen = <A>(
-          operation: ComputeTransportError["operation"],
-          effect: Effect.Effect<A, ComputeTransportError>,
-        ) =>
-          Effect.suspend(() =>
-            MutableRef.get(closed)
-              ? Effect.fail(transportError(operation, "The runtime is no longer reachable."))
-              : effect,
-          );
-        const requireCurrentGeneration = (
-          operation: ComputeTransportError["operation"],
-          expectedGeneration: ComputeSessionGeneration,
-        ) =>
-          Effect.suspend(() => {
-            const currentGeneration = MutableRef.get(generation);
-            return expectedGeneration === currentGeneration
-              ? Effect.void
-              : Effect.fail(
-                  transportError(
-                    operation,
-                    `The command expected generation ${String(expectedGeneration)}, but the session is at generation ${String(currentGeneration)}.`,
-                  ),
-                );
-          });
-        const mutateCurrentGeneration = <A>(
-          operation: ComputeTransportError["operation"],
-          expectedGeneration: ComputeSessionGeneration,
-          effect: Effect.Effect<A, ComputeTransportError>,
-        ) =>
-          whenOpen(
-            operation,
-            requireCurrentGeneration(operation, expectedGeneration).pipe(Effect.andThen(effect)),
-          );
-        // Work in flight when the namespace goes away ends with it, whether it
-        // was interrupted, restarted, or shut down.
-        const settleInFlight = Effect.suspend(() => {
-          const requestId = MutableRef.get(inFlight);
-          return requestId === undefined ? Effect.void : finish(requestId, "cancelled");
         });
-        const lose = (reason: string) =>
-          Effect.suspend(() => {
-            MutableRef.set(closed, true);
-            return emit({ _tag: "lost", reason }).pipe(
-              Effect.andThen(Queue.end(events)),
-              Effect.asVoid,
-            );
-          });
-
-        yield* emit({
-          _tag: "ready",
-          runtime: plan.runtime,
-          capabilities: plan.capabilities,
+      const whenOpen = <A>(
+        operation: ComputeTransportError["operation"],
+        effect: Effect.Effect<A, ComputeTransportError>,
+      ) =>
+        Effect.suspend(() =>
+          MutableRef.get(closed)
+            ? Effect.fail(transportError(operation, "The runtime is no longer reachable."))
+            : effect,
+        );
+      const requireCurrentGeneration = (
+        operation: ComputeTransportError["operation"],
+        expectedGeneration: ComputeSessionGeneration,
+      ) =>
+        Effect.suspend(() => {
+          const currentGeneration = MutableRef.get(generation);
+          return expectedGeneration === currentGeneration
+            ? Effect.void
+            : Effect.fail(
+                transportError(
+                  operation,
+                  `The command expected generation ${String(expectedGeneration)}, but the session is at generation ${String(currentGeneration)}.`,
+                ),
+              );
+        });
+      const mutateCurrentGeneration = <A>(
+        operation: ComputeTransportError["operation"],
+        expectedGeneration: ComputeSessionGeneration,
+        effect: Effect.Effect<A, ComputeTransportError>,
+      ) =>
+        whenOpen(
+          operation,
+          requireCurrentGeneration(operation, expectedGeneration).pipe(Effect.andThen(effect)),
+        );
+      // Work in flight when the namespace goes away ends with it, whether it
+      // was interrupted, restarted, or shut down.
+      const settleInFlight = Effect.suspend(() => {
+        const requestId = MutableRef.get(inFlight);
+        return requestId === undefined ? Effect.void : finish(requestId, "cancelled");
+      });
+      const lose = (reason: string) =>
+        Effect.suspend(() => {
+          MutableRef.set(closed, true);
+          return emit({ _tag: "lost", reason }).pipe(
+            Effect.andThen(Queue.end(events)),
+            Effect.asVoid,
+          );
         });
 
-        const execute: ComputeChannel["execute"] = (executeRequest) =>
-          mutateCurrentGeneration(
-            "execute",
-            executeRequest.expectedGeneration,
-            Effect.suspend(() => {
-              if (MutableRef.get(inFlight) !== undefined) {
-                return Effect.fail(
-                  transportError("execute", "The runtime is already running an execution."),
-                );
-              }
-              MutableRef.set(inFlight, executeRequest.requestId);
-              const scripted = plan.resolveExecution(executeRequest.code);
-              if (scripted._tag === "loses-runtime") {
-                return emit({
-                  _tag: "accepted",
-                  requestId: executeRequest.requestId,
-                  generation: MutableRef.get(generation),
-                }).pipe(Effect.andThen(lose(scripted.reason)));
-              }
-              MutableRef.set(inFlightBoundary, completionBoundary(scripted));
-              const imageBytes = scripted.imageBytes;
-              const resourceBytes = scripted.resourceBytes;
-              const announce = emit({
+      yield* emit({
+        _tag: "ready",
+        runtime: plan.runtime,
+        capabilities: plan.capabilities,
+      });
+
+      const execute: ComputeChannel["execute"] = (executeRequest) =>
+        mutateCurrentGeneration(
+          "execute",
+          executeRequest.expectedGeneration,
+          Effect.suspend(() => {
+            if (MutableRef.get(inFlight) !== undefined) {
+              return Effect.fail(
+                transportError("execute", "The runtime is already running an execution."),
+              );
+            }
+            MutableRef.set(inFlight, executeRequest.requestId);
+            const scripted = plan.resolveExecution(executeRequest.code);
+            if (scripted._tag === "loses-runtime") {
+              return emit({
                 _tag: "accepted",
                 requestId: executeRequest.requestId,
                 generation: MutableRef.get(generation),
-              }).pipe(
-                Effect.andThen(
-                  Effect.forEach(
-                    scripted.outputs,
-                    (output) => {
-                      const bytes =
-                        output._tag === "image" ? imageBytes?.get(output.sequence) : undefined;
-                      return emit({
-                        _tag: "output",
-                        requestId: executeRequest.requestId,
-                        generation: MutableRef.get(generation),
-                        output,
-                        image: bytes === undefined ? null : { bytes },
-                        resources: [...(resourceBytes?.get(output.sequence) ?? [])],
-                      });
-                    },
-                    { discard: true },
-                  ),
+              }).pipe(Effect.andThen(lose(scripted.reason)));
+            }
+            MutableRef.set(inFlightBoundary, completionBoundary(scripted));
+            const imageBytes = scripted.imageBytes;
+            const resourceBytes = scripted.resourceBytes;
+            const announce = emit({
+              _tag: "accepted",
+              requestId: executeRequest.requestId,
+              generation: MutableRef.get(generation),
+            }).pipe(
+              Effect.andThen(
+                Effect.forEach(
+                  scripted.outputs,
+                  (output) => {
+                    const bytes =
+                      output._tag === "image" ? imageBytes?.get(output.sequence) : undefined;
+                    return emit({
+                      _tag: "output",
+                      requestId: executeRequest.requestId,
+                      generation: MutableRef.get(generation),
+                      output,
+                      image: bytes === undefined ? null : { bytes },
+                      resources: [...(resourceBytes?.get(output.sequence) ?? [])],
+                    });
+                  },
+                  { discard: true },
                 ),
-              );
-              if (scripted._tag !== "completes") return announce;
-              const runtimeError = scripted.runtimeError;
-              return announce.pipe(
-                Effect.andThen(
-                  runtimeError === undefined
-                    ? Effect.void
-                    : emit({
-                        _tag: "runtime-error",
-                        sequence: runtimeError.sequence,
-                        observedAt: runtimeError.observedAt,
-                        requestId: executeRequest.requestId,
-                        generation: MutableRef.get(generation),
-                        report: runtimeError.report,
-                      }),
-                ),
-                Effect.andThen(finish(executeRequest.requestId, scripted.outcome)),
-              );
-            }),
-          );
+              ),
+            );
+            if (scripted._tag !== "completes") return announce;
+            const runtimeError = scripted.runtimeError;
+            return announce.pipe(
+              Effect.andThen(
+                runtimeError === undefined
+                  ? Effect.void
+                  : emit({
+                      _tag: "runtime-error",
+                      sequence: runtimeError.sequence,
+                      observedAt: runtimeError.observedAt,
+                      requestId: executeRequest.requestId,
+                      generation: MutableRef.get(generation),
+                      report: runtimeError.report,
+                    }),
+              ),
+              Effect.andThen(finish(executeRequest.requestId, scripted.outcome)),
+            );
+          }),
+        );
 
-        const interrupt: ComputeChannel["interrupt"] = (interruptRequest) =>
-          mutateCurrentGeneration(
-            "interrupt",
-            interruptRequest.expectedGeneration,
-            Effect.suspend((): Effect.Effect<ComputeInterruptOutcome, ComputeTransportError> => {
-              const activeRequestId = MutableRef.get(inFlight);
-              // Nothing to signal is `terminal`, not success: the execution the
-              // caller wanted to stop had already ended.
-              if (activeRequestId === undefined) return Effect.succeed("terminal");
-              return activeRequestId === interruptRequest.requestId
-                ? settleInFlight.pipe(Effect.as("interrupted" as const))
-                : Effect.fail(
-                    transportError(
-                      "interrupt",
-                      `Execution '${interruptRequest.requestId}' is not the active execution.`,
-                    ),
-                  );
-            }),
-          );
-
-        const inspectVariables: ComputeChannel["inspectVariables"] = (variablesRequest) =>
-          mutateCurrentGeneration(
-            "variables",
-            variablesRequest.expectedGeneration,
-            plan.capabilities.includes("variables")
-              ? Effect.succeed({
-                  generation: variablesRequest.expectedGeneration,
-                  variables: [],
-                  truncated: false,
-                })
+      const interrupt: ComputeChannel["interrupt"] = (interruptRequest) =>
+        mutateCurrentGeneration(
+          "interrupt",
+          interruptRequest.expectedGeneration,
+          Effect.suspend((): Effect.Effect<ComputeInterruptOutcome, ComputeTransportError> => {
+            const activeRequestId = MutableRef.get(inFlight);
+            // Nothing to signal is `terminal`, not success: the execution the
+            // caller wanted to stop had already ended.
+            if (activeRequestId === undefined) return Effect.succeed("terminal");
+            return activeRequestId === interruptRequest.requestId
+              ? settleInFlight.pipe(Effect.as("interrupted" as const))
               : Effect.fail(
-                  transportError("variables", "The runtime does not support variable inspection."),
-                ),
-          );
-
-        const restart: ComputeChannel["restart"] = (restartRequest) =>
-          mutateCurrentGeneration(
-            "restart",
-            restartRequest.expectedGeneration,
-            Effect.suspend(() => {
-              const currentGeneration = MutableRef.get(generation);
-              const requiredNextGeneration = nextComputeSessionGeneration(currentGeneration);
-              if (restartRequest.nextGeneration !== requiredNextGeneration) {
-                return Effect.fail(
                   transportError(
-                    "restart",
-                    `A restart from generation ${String(currentGeneration)} must create generation ${String(requiredNextGeneration)}.`,
+                    "interrupt",
+                    `Execution '${interruptRequest.requestId}' is not the active execution.`,
                   ),
                 );
-              }
-              return settleInFlight.pipe(
-                Effect.andThen(
-                  Effect.sync(() => MutableRef.set(generation, restartRequest.nextGeneration)),
-                ),
-                Effect.andThen(
-                  emit({
-                    _tag: "restarted",
-                    generation: restartRequest.nextGeneration,
-                    runtime: plan.runtime,
-                  }),
+          }),
+        );
+
+      const inspectVariables: ComputeChannel["inspectVariables"] = (variablesRequest) =>
+        mutateCurrentGeneration(
+          "variables",
+          variablesRequest.expectedGeneration,
+          plan.capabilities.includes("variables")
+            ? Effect.succeed({
+                generation: variablesRequest.expectedGeneration,
+                variables: [],
+                truncated: false,
+              })
+            : Effect.fail(
+                transportError("variables", "The runtime does not support variable inspection."),
+              ),
+        );
+
+      const restart: ComputeChannel["restart"] = (restartRequest) =>
+        mutateCurrentGeneration(
+          "restart",
+          restartRequest.expectedGeneration,
+          Effect.suspend(() => {
+            const currentGeneration = MutableRef.get(generation);
+            const requiredNextGeneration = nextComputeSessionGeneration(currentGeneration);
+            if (restartRequest.nextGeneration !== requiredNextGeneration) {
+              return Effect.fail(
+                transportError(
+                  "restart",
+                  `A restart from generation ${String(currentGeneration)} must create generation ${String(requiredNextGeneration)}.`,
                 ),
               );
-            }),
-          );
+            }
+            return settleInFlight.pipe(
+              Effect.andThen(
+                Effect.sync(() => MutableRef.set(generation, restartRequest.nextGeneration)),
+              ),
+              Effect.andThen(
+                emit({
+                  _tag: "restarted",
+                  generation: restartRequest.nextGeneration,
+                  runtime: plan.runtime,
+                }),
+              ),
+            );
+          }),
+        );
 
-        const close = Effect.suspend(() => {
-          if (MutableRef.get(closed)) return Effect.void;
-          MutableRef.set(closed, true);
-          return settleInFlight.pipe(Effect.andThen(Queue.end(events)), Effect.asVoid);
-        });
-        const shutdown: ComputeChannel["shutdown"] = (shutdownRequest) =>
-          Effect.suspend(() =>
-            MutableRef.get(closed)
-              ? Effect.void
-              : mutateCurrentGeneration("shutdown", shutdownRequest.expectedGeneration, close),
-          );
-
-        // A real runtime dies with the scope that owns it, so this one closes
-        // too; a test that forgets to shut down still ends its event stream.
-        yield* Effect.addFinalizer(() => close);
-
-        return {
-          events: Stream.fromQueue(events),
-          execute,
-          interrupt,
-          inspectVariables,
-          restart,
-          shutdown,
-        } satisfies ComputeChannel;
+      const close = Effect.suspend(() => {
+        if (MutableRef.get(closed)) return Effect.void;
+        MutableRef.set(closed, true);
+        return settleInFlight.pipe(Effect.andThen(Queue.end(events)), Effect.asVoid);
       });
-    },
+      const shutdown: ComputeChannel["shutdown"] = (shutdownRequest) =>
+        Effect.suspend(() =>
+          MutableRef.get(closed)
+            ? Effect.void
+            : mutateCurrentGeneration("shutdown", shutdownRequest.expectedGeneration, close),
+        );
+
+      // A real runtime dies with the scope that owns it, so this one closes
+      // too; a test that forgets to shut down still ends its event stream.
+      yield* Effect.addFinalizer(() => close);
+
+      return {
+        events: Stream.fromQueue(events),
+        execute,
+        interrupt,
+        inspectVariables,
+        restart,
+        shutdown,
+      } satisfies ComputeChannel;
+    }),
   };
 }

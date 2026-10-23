@@ -282,9 +282,9 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
-            faviconResolver
-              .invalidate(workspaceRoot)
-              .pipe(Effect.andThen(Cache.invalidate(faviconCache, workspaceRoot))),
+            Cache.invalidate(faviconCache, workspaceRoot),
+            // The resolver keeps its own misses, which would outlive a clone filling the folder.
+            faviconResolver.invalidate(workspaceRoot),
           ],
           { concurrency: "unbounded", discard: true },
         ),

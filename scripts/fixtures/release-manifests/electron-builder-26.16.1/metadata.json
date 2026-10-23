@@ -1,0 +1,15 @@
+{
+  "electronBuilderVersion": "26.16.1",
+  "capture": "writeUpdateInfoFiles with historical artifact records; no native build or publication",
+  "emitterSha256": "e0d01c7e9496dfea814a76661c1ffc664610ce8446c6d9639efca1267715fa29",
+  "inputSha256": {
+    "latest-mac.yml": "98835997568dec849c92ce96a5833d2d75073df3ca1e7102498c17614974cef2",
+    "latest.yml": "de2366c157a5cede5c3b29dac65f346358b6bddf069d528e1f683efd2045039d",
+    "latest-linux.yml": "8e8c07410c69dc7f95bbb62b1be5ccb3c68c631b081e12c7e7fb306fa9620bdf"
+  },
+  "outputSha256": {
+    "latest-mac.yml": "04e37e0f3f592207d2bb0b9b73d0cff28a9d35fa76e09ba3e3d85fad2ca1e93e",
+    "latest.yml": "843c4a6e21ef80f8057e777f0ca270eb7c16c8c1539194162b86f1fc199e77b2",
+    "latest-linux.yml": "c828a4d882b33739426365191a1edd1cbea24c1a068939e848ab40132f2560e7"
+  }
+}

@@ -108,7 +108,10 @@ export function makeManagedPythonRuntimeController(input: {
     /** The independently qualified interpreter version for this managed recipe. */
     readonly pythonVersion: string;
   };
-}): NonNullable<ComputeRuntimeBinding["managedRuntime"]> & { readonly dispose: () => void } {
+}): NonNullable<ComputeRuntimeBinding["managedRuntime"]> & {
+  readonly dispose: () => void;
+  readonly awaitSettled: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+} {
   const displayName = input.configuration?.displayName ?? "Scientific Python";
   const toolkitRevision = input.configuration?.toolkitRevision ?? MANAGED_PYTHON_TOOLKIT_REVISION;
   const pythonVersion = input.configuration?.pythonVersion ?? MANAGED_PYTHON_VERSION;
@@ -120,6 +123,7 @@ export function makeManagedPythonRuntimeController(input: {
   let disposed = false;
   // Serialize short commands, never the background provisioning work.
   let commandTail: Promise<unknown> = Promise.resolve();
+  let background: Promise<void> | undefined;
   const serial = <A>(command: () => Promise<A>): Promise<A> => {
     const result = commandTail.then(command);
     commandTail = result.catch(() => undefined);
@@ -332,7 +336,7 @@ export function makeManagedPythonRuntimeController(input: {
         revision++;
         await drainChanges();
       });
-    void run
+    const completion = run
       .then(
         () => settle(),
         (cause: unknown) => settle(cause),
@@ -341,6 +345,10 @@ export function makeManagedPythonRuntimeController(input: {
         failureMessage = shortMessage(cause);
         failure = managedRuntimeFailure(cause, action, displayName);
       });
+    background = completion;
+    void completion.then(() => {
+      if (background === completion) background = undefined;
+    });
   };
 
   const drainChanges = async (): Promise<void> => {
@@ -472,11 +480,31 @@ export function makeManagedPythonRuntimeController(input: {
       catch: (cause) => operationError(`Unable to cancel ${displayName} setup.`, cause),
     });
 
+  const awaitSettled = Effect.fn("ManagedPythonRuntimeController.awaitSettled")(() =>
+    Effect.tryPromise({
+      try: async () => {
+        for (;;) {
+          const commands = commandTail;
+          await commands;
+          const pending = background;
+          if (pending !== undefined) {
+            await pending;
+            continue;
+          }
+          const current = await readStatus();
+          if (background === undefined && commands === commandTail) return current;
+        }
+      },
+      catch: (cause) => operationError(`Unable to await ${displayName} setup.`, cause),
+    }),
+  );
+
   return {
     isRemoving: () => operation?.action === "remove",
     status,
     manage,
     cancel,
+    awaitSettled,
     dispose: () => {
       input.recipes?.dispose();
       disposed = true;

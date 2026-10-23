@@ -1,0 +1,205 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { AuthOrchestrationOperateScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { type ReactNode } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
+import { ScientProjectImportAction } from "./ScientProjectImportAction";
+
+const mocks = vi.hoisted(() => ({
+  access: "granted",
+  importer: vi.fn(),
+  openProject: vi.fn(),
+  toast: vi.fn(),
+}));
+const environmentId = EnvironmentId.make("local");
+const projectId = ProjectId.make("imported");
+vi.mock("../../providerOperateAccess", () => ({ resolvePrimaryOperateAccess: () => mocks.access }));
+vi.mock("../../environments/primary", () => ({
+  usePrimarySessionState: () => ({
+    data: {
+      authenticated: true,
+      permissions: mocks.access === "granted" ? [AuthOrchestrationOperateScope] : [],
+    },
+    isPending: false,
+    error: null,
+  }),
+}));
+vi.mock("../../state/environments", () => ({
+  usePrimaryEnvironment: () => ({ environmentId, label: "Test machine" }),
+}));
+vi.mock("../../hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => mocks.openProject }));
+vi.mock("../../components/ui/toast", () => ({ toastManager: { add: mocks.toast } }));
+vi.mock("../../components/ui/dialog", () => ({
+  Dialog: ({
+    children,
+    onOpenChange,
+  }: {
+    children: ReactNode;
+    onOpenChange: (open: boolean) => void;
+  }) => (
+    <section role="dialog">
+      {children}
+      <button onClick={() => onOpenChange(false)}>Dismiss</button>
+    </section>
+  ),
+  DialogPopup: ({ children }: { children: ReactNode }) => children,
+  DialogPanel: ({ children }: { children: ReactNode }) => children,
+  DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+}));
+vi.mock("../../components/onboarding/ProjectImportStep", () => ({
+  ProjectImportStep: (props: unknown) => {
+    mocks.importer(props);
+    return <p>Import choices</p>;
+  },
+}));
+
+const imported = vi.fn();
+async function render(_fixture: _Fixture) {
+  await act(
+    async () => await _fixture.root0.rerender(<ScientProjectImportAction onImported={imported} />),
+  );
+}
+async function click(_fixture: _Fixture, label: string) {
+  const button = [..._fixture.container.querySelectorAll("button")].find(
+    (item) => item.textContent === label,
+  );
+  expect(button).toBeDefined();
+  await act(() => button!.click());
+}
+function importProps() {
+  return mocks.importer.mock.lastCall![0] as {
+    onDone: (
+      projectRef?: {
+        environmentId: EnvironmentId;
+        projectId: ProjectId;
+      },
+      importWarning?: string,
+      importedThreadCount?: number,
+    ) => Promise<boolean>;
+    onImportingChange: (busy: boolean) => void;
+  };
+}
+async function _setupFixture0(_fixture: _Fixture) {
+  vi.clearAllMocks();
+  mocks.access = "granted";
+  mocks.openProject.mockResolvedValue({ threadId: "draft", draftId: "draft" });
+  _fixture.container = document.createElement("div");
+  document.body.append(_fixture.container);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0.unmount());
+  _fixture.container.remove();
+  vi.unstubAllGlobals();
+}
+describe("optional project import entry point", () => {
+  it("mounts no scanner until requested, and cancelling does not complete onboarding", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    expect(mocks.importer).not.toHaveBeenCalled();
+    await click(_fixture, "Import projects and conversations");
+    await vi.waitFor(() => expect(mocks.importer).toHaveBeenCalled());
+    await act(() => importProps().onDone());
+    expect(_fixture.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(imported).not.toHaveBeenCalled();
+    expect(mocks.openProject).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("reports partial and successful history only after the import view closes", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await click(_fixture, "Import projects and conversations");
+    await vi.waitFor(() => expect(mocks.importer).toHaveBeenCalled());
+    await act(() =>
+      importProps().onDone(undefined, "Imported 28 threads. 1 thread could not be imported.", 28),
+    );
+    expect(_fixture.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.toast).toHaveBeenLastCalledWith({
+      type: "warning",
+      title: "Some history was not imported",
+      description: "Imported 28 threads. 1 thread could not be imported.",
+      timeout: 0,
+    });
+
+    await click(_fixture, "Import projects and conversations");
+    await vi.waitFor(() => expect(mocks.importer).toHaveBeenCalledTimes(2));
+    await act(() => importProps().onDone(undefined, undefined, 1));
+    expect(mocks.toast).toHaveBeenLastCalledWith({
+      type: "success",
+      title: "Imported 1 thread",
+    });
+  });
+
+  it("does not dismiss an active import or expose it to a read-only session", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    mocks.access = "denied";
+    await render(_fixture);
+    expect(_fixture.container.querySelector("button")?.disabled).toBe(true);
+    await click(_fixture, "Import projects and conversations");
+    expect(mocks.importer).not.toHaveBeenCalled();
+    mocks.access = "granted";
+    await render(_fixture);
+    await click(_fixture, "Import projects and conversations");
+    await act(() => importProps().onImportingChange(true));
+    await click(_fixture, "Dismiss");
+    expect(_fixture.container.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(() => importProps().onImportingChange(false));
+    await click(_fixture, "Dismiss");
+    expect(_fixture.container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("retains the import view when opening fails, then completes only after successful navigation", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    await click(_fixture, "Import projects and conversations");
+    mocks.openProject.mockRejectedValueOnce(new Error("offline"));
+    let result = true;
+    await act(async () => {
+      result = await importProps().onDone({ environmentId, projectId });
+    });
+    expect(result).toBe(false);
+    expect(imported).not.toHaveBeenCalled();
+    expect(_fixture.container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(mocks.toast).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      result = await importProps().onDone({ environmentId, projectId });
+    });
+    expect(result).toBe(true);
+    expect(imported).toHaveBeenCalledTimes(1);
+    expect(_fixture.container.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

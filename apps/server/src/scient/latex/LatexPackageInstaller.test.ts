@@ -722,12 +722,14 @@ describe("LatexPackageInstaller", () => {
   it.live("runs one tlmgr at a time against the distribution", () =>
     Effect.gen(function* () {
       const events = yield* Ref.make<ReadonlyArray<string>>([]);
-      const { layer } = yield* harness({
+      const release = yield* Deferred.make<void>();
+      const requested = yield* Queue.unbounded<string>();
+      const { layer, started } = yield* harness({
         respond: (args) =>
           Effect.gen(function* () {
             const name = args.at(-1) ?? "";
             yield* Ref.update(events, (previous) => [...previous, `start:${name}`]);
-            yield* Effect.sleep(Duration.millis(20));
+            yield* Deferred.await(release);
             yield* Ref.update(events, (previous) => [...previous, `end:${name}`]);
             return { output: `install: ${name}` };
           }),
@@ -735,12 +737,22 @@ describe("LatexPackageInstaller", () => {
       yield* Effect.gen(function* () {
         const installer = yield* LatexPackageInstaller;
         const binDirectory = yield* FixtureBinDirectory;
-        yield* Effect.all(
-          ["first", "second"].map((packageName) =>
-            installer.install({ packages: [packageName], binDirectory }),
+        const installs = yield* Effect.forkChild(
+          Effect.all(
+            ["first", "second"].map((packageName) =>
+              Queue.offer(requested, packageName).pipe(
+                Effect.andThen(installer.install({ packages: [packageName], binDirectory })),
+              ),
+            ),
+            { concurrency: "unbounded" },
           ),
-          { concurrency: "unbounded" },
         );
+        yield* Queue.take(requested);
+        yield* Queue.take(requested);
+        yield* Queue.take(started);
+        expect(yield* Ref.get(events)).toHaveLength(1);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(installs);
       }).pipe(Effect.provide(layer));
 
       // `tlmgr` writes the distribution's own package database; two of them

@@ -28,6 +28,7 @@ NodeTest.test("known suite-specific inputs select only their consumer", () => {
     NodeAssert.deepEqual(computeQualificationSuites([path]), kernel, path);
   for (const path of [
     "apps/server/src/scient/compute/ManagedPythonProduct.live.test.ts",
+    "apps/server/src/scient/compute/ManagedPythonProduct.bench.ts",
     "apps/server/src/scient/compute/ComputeRecipe.live.test.ts",
     "apps/server/src/scient/compute/managed-python/pyproject.toml",
     "apps/server/src/scient/compute/managed-python/uv.lock",

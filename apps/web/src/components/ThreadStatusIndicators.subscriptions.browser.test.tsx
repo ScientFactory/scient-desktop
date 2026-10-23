@@ -1,9 +1,12 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ProjectId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
 
+import { expect, it, vi } from "vite-plus/test";
+
+import { SourceControlProviderKind } from "@t3tools/contracts";
+
+import "../index.css";
+
+import { act, render, stubGlobal } from "../../test/render";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { makeThreadFixture } from "../test-fixtures";
 
@@ -78,22 +81,17 @@ vi.mock(import("../state/pullRequests"), async (importOriginal) => {
 });
 import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
 // The lease overscans 160px around a 20px viewport, a 340px band. With 45px rows the band
 // covers exactly 8 rows at each scroll position below.
 const ROW_HEIGHT = 45;
 const SPACER = 1000;
 
 it("leases only visible palette results while retaining observed and cached PR badges", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // SCIENT-FORK:START — verify pooling while real browser intersections drive visibility.
   const NativeIntersectionObserver = globalThis.IntersectionObserver;
   const observers: IntersectionObserver[] = [];
   const observedRows = new Set<Element>();
-  vi.stubGlobal(
+  using _observer = stubGlobal(
     "IntersectionObserver",
     class extends NativeIntersectionObserver {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
@@ -123,76 +121,68 @@ it("leases only visible palette results while retaining observed and cached PR b
             },
     }),
   );
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
   state.queries.length = 0;
   const viewport = () =>
-    container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-  const scrollTo = async (top: number) => {
-    await act(async () => {
+    screen.container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+  const scrollTo = async (top: number, queries: number, badges: number) => {
+    await act(() => {
       viewport().scrollTop = top;
-      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
+    });
+    await vi.waitFor(() => {
+      expect(state.queries).toHaveLength(queries);
+      expect(badgeCount()).toBe(badges);
     });
   };
   const badgeCount = () =>
-    [...container.querySelectorAll("[aria-label]")].filter((node) =>
+    [...screen.container.querySelectorAll("[aria-label]")].filter((node) =>
       node.getAttribute("aria-label")!.startsWith("PR #"),
     ).length;
-  try {
-    await act(async () =>
-      root.render(
-        <AppAtomRegistryProvider>
-          <div data-slot="scroll-area-viewport" style={{ height: 20, overflowY: "auto" }}>
-            <div style={{ height: SPACER }} />
-            {threads.map((thread, index) => (
-              <div key={thread.id} style={{ height: ROW_HEIGHT, overflow: "hidden" }}>
-                <ThreadRowLeadingStatus
-                  thread={thread}
-                  snapshot={
-                    index === 126
-                      ? {
-                          branch: "feature/test",
-                          sourceControlProvider: undefined,
-                          pr: {
-                            number: 126,
-                            title: "Cached badge",
-                            url: "https://github.com/example/repo/pull/126",
-                            baseRef: "main",
-                            headRef: "feature/test",
-                            state: "open",
-                          },
-                        }
-                      : undefined
-                  }
-                />
-                {thread.title}
-              </div>
-            ))}
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <div data-slot="scroll-area-viewport" style={{ height: 20, overflowY: "auto" }}>
+        <div style={{ height: SPACER }} />
+        {threads.map((thread, index) => (
+          <div key={thread.id} style={{ height: ROW_HEIGHT, overflow: "hidden" }}>
+            <ThreadRowLeadingStatus
+              thread={thread}
+              snapshot={
+                index === 126
+                  ? {
+                      branch: "feature/test",
+                      sourceControlProvider: undefined,
+                      pr: {
+                        number: 126,
+                        title: "Cached badge",
+                        url: "https://github.com/example/repo/pull/126",
+                        baseRef: "main",
+                        headRef: "feature/test",
+                        state: "open",
+                      },
+                    }
+                  : undefined
+              }
+            />
+            {thread.title}
           </div>
-        </AppAtomRegistryProvider>,
-      ),
-    );
-    await scrollTo(0);
-    // SCIENT-FORK: one viewport observer leases all 128 palette rows.
-    expect(observers).toHaveLength(1);
-    expect(observedRows.size).toBe(128);
-    expect(state.queries).toEqual([]);
-    expect(badgeCount()).toBe(1);
+        ))}
+      </div>
+    </AppAtomRegistryProvider>,
+  );
+  await scrollTo(0, 0, 1);
+  expect(state.queries).toEqual([]);
+  expect(badgeCount()).toBe(1);
+  expect(observers).toHaveLength(1);
+  expect(observedRows.size).toBe(128);
 
-    // Band [1000, 1340]: rows 0..7.
-    await scrollTo(SPACER + 160);
-    expect(state.queries).toHaveLength(8);
-    expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
-    expect(state.queries.filter((key) => key.startsWith("pr:"))).toHaveLength(4);
-    expect(badgeCount()).toBe(9);
+  // Band [1000, 1340]: rows 0..7.
+  await scrollTo(SPACER + 160, 8, 9);
+  expect(state.queries).toHaveLength(8);
+  expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
+  expect(state.queries.filter((key) => key.startsWith("pr:"))).toHaveLength(4);
+  expect(badgeCount()).toBe(9);
 
-    // Band [1370, 1710]: rows 8..15.
-    await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160);
-    expect(state.queries).toHaveLength(16);
-    expect(badgeCount()).toBe(17);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-  }
+  // Band [1370, 1710]: rows 8..15.
+  await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160, 16, 17);
+  expect(state.queries).toHaveLength(16);
+  expect(badgeCount()).toBe(17);
 });

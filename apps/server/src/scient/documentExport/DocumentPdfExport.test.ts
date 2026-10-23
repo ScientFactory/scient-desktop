@@ -380,47 +380,42 @@ describe("Markdown source read", () => {
     );
 
     // Without a non-blocking open this would hang on the pipe.
-    it.effect(
-      "refuses a pipe swapped in for the file without blocking on it",
-      () =>
-        Effect.gen(function* () {
-          // mkfifo exists only on the POSIX hosts that run this test.
-          if ((yield* HostProcess.Platform) === "win32") return;
-          const contents = "# Report\n\nSaved text.\n";
-          const root = yield* Effect.promise(() =>
-            makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
-          );
-          const filePath = yield* Effect.promise(() =>
-            writeFixtureFile(root, "report.md", contents),
-          );
-          const fileSystem = yield* FileSystem.FileSystem;
-          const racingFileSystem = FileSystem.FileSystem.of({
-            ...fileSystem,
-            stat: (candidate) =>
-              fileSystem.stat(candidate).pipe(
-                Effect.tap(() =>
-                  candidate === filePath
-                    ? Effect.promise(async () => {
-                        await NodeFSP.rm(filePath);
-                        NodeChildProcess.execFileSync("mkfifo", [filePath]);
-                      })
-                    : Effect.void,
-                ),
+    it.effect("refuses a pipe swapped in for the file without blocking on it", () =>
+      Effect.gen(function* () {
+        // mkfifo exists only on the POSIX hosts that run this test.
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const contents = "# Report\n\nSaved text.\n";
+        const root = yield* Effect.promise(() =>
+          makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
+        );
+        const filePath = yield* Effect.promise(() => writeFixtureFile(root, "report.md", contents));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const racingFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (candidate) =>
+            fileSystem.stat(candidate).pipe(
+              Effect.tap(() =>
+                candidate === filePath
+                  ? Effect.promise(async () => {
+                      await NodeFSP.rm(filePath);
+                      NodeChildProcess.execFileSync("mkfifo", [filePath]);
+                    })
+                  : Effect.void,
               ),
-          });
-          const error = yield* onWindows(
-            readProjectMarkdownFile(
-              root,
-              "report.md",
-              sha256Digest(new TextEncoder().encode(contents)),
             ),
-          ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
-          expect(error).toMatchObject({
-            reason: "source-changed",
-            detail: "The file changed while exporting. Try again.",
-          });
-        }).pipe(Effect.provide(layer)),
-      10_000,
+        });
+        const error = yield* onWindows(
+          readProjectMarkdownFile(
+            root,
+            "report.md",
+            sha256Digest(new TextEncoder().encode(contents)),
+          ),
+        ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
+        expect(error).toMatchObject({
+          reason: "source-changed",
+          detail: "The file changed while exporting. Try again.",
+        });
+      }).pipe(Effect.provide(layer)),
     );
 
     it.effect("refuses the agent tool's export, which has no saved revision to check", () =>

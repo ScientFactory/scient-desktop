@@ -1,20 +1,18 @@
+import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { EnvironmentId, MessageId, ThreadId, type ScientThreadQueueItem } from "@t3tools/contracts";
 import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 import { ThreadQueueStrip } from "./ThreadQueueStrip";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+}
 
 const quote = serializeComposerCitation({
   version: 1,
@@ -47,34 +45,42 @@ const items: ScientThreadQueueItem[] = [
   updatedAt: "2026-09-29T00:00:00.000Z",
 }));
 
-function mount(width: number, busy: boolean, queueItems = items) {
+async function mount(_fixture: _Fixture, width: number, busy: boolean, queueItems = items) {
   const callbacks = { onEdit: vi.fn(), onDelete: vi.fn(), onSteer: vi.fn(), onSend: vi.fn() };
-  host = document.createElement("div");
-  host.style.width = `${width}px`;
-  document.body.append(host);
-  root = createRoot(host);
-  flushSync(() =>
-    root!.render(
-      <ThreadQueueStrip
-        items={queueItems}
-        error={null}
-        threadBusy={busy}
-        supportsExplicitSend
-        awaitingCompletion={!busy}
-        paused={false}
-        dispatchingItemId={null}
-        retryable={false}
-        onReorder={() => {}}
-        {...callbacks}
-      />,
-    ),
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.width = `${width}px`;
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixtureAct(
+    async () =>
+      await _fixture.root0!.rerender(
+        <ThreadQueueStrip
+          items={queueItems}
+          error={null}
+          threadBusy={busy}
+          supportsExplicitSend
+          awaitingCompletion={!busy}
+          paused={false}
+          dispatchingItemId={null}
+          retryable={false}
+          onReorder={() => {}}
+          {...callbacks}
+        />,
+      ),
   );
   return callbacks;
 }
 
-it.each([320, 800])("keeps attached and quoted queue rows compact at %i px", (width) => {
-  mount(width, true);
-  const rows = [...host!.querySelectorAll<HTMLElement>('[data-testid^="thread-queue-row-"]')];
+it.each([320, 800])("keeps attached and quoted queue rows compact at %i px", async (width) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mount(_fixture, width, true);
+  const rows = [
+    ..._fixture.host!.querySelectorAll<HTMLElement>('[data-testid^="thread-queue-row-"]'),
+  ];
   const height = rows[0]!.getBoundingClientRect().height;
   for (const row of rows) {
     const bounds = row.getBoundingClientRect();
@@ -100,13 +106,18 @@ it.each([320, 800])("keeps attached and quoted queue rows compact at %i px", (wi
   expect(preview.textContent).toBe(
     "Please explain A quoted passage\nwith another line\nComment: Explain this",
   );
-  expect(host!.textContent).not.toContain("t3-citation:");
+  expect(_fixture.host!.textContent).not.toContain("t3-citation:");
   expect(rows[2]!.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("2 attachments");
 });
 
 it.each([false, true])("preserves original payloads for row actions (busy: %s)", async (busy) => {
-  const callbacks = mount(320, busy, [items[1]!, items[0]!, ...items.slice(2)]);
-  const row = host!.querySelector<HTMLElement>('[data-testid="thread-queue-row-qitem_1"]')!;
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const callbacks = await mount(_fixture, 320, busy, [items[1]!, items[0]!, ...items.slice(2)]);
+  const row = _fixture.host!.querySelector<HTMLElement>(
+    '[data-testid="thread-queue-row-qitem_1"]',
+  )!;
   const before = JSON.stringify(items);
   await userEvent.click(
     row.querySelector<HTMLButtonElement>('[aria-label="Edit queued message"]')!,
@@ -123,7 +134,7 @@ it.each([false, true])("preserves original payloads for row actions (busy: %s)",
     );
     expect(callbacks.onSteer).toHaveBeenCalledWith(items[1]);
   } else {
-    const send = [...host!.querySelectorAll("button")].find(
+    const send = [..._fixture.host!.querySelectorAll("button")].find(
       (button) => button.textContent === "Send",
     )!;
     await userEvent.click(send);
@@ -140,10 +151,15 @@ it.each([
 ])(
   "keeps Cancel reachable after extraction at $width px (tail=$hasTail)",
   async ({ width, hasTail }) => {
-    host = document.createElement("div");
-    host.style.width = `${width}px`;
-    document.body.append(host);
-    root = createRoot(host);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    _fixture.host = document.createElement("div");
+    _fixture.host.style.width = `${width}px`;
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
     const callbacks = {
       onEdit: vi.fn(),
       onDelete: vi.fn(),
@@ -155,42 +171,47 @@ it.each([
     const head = items[0]!;
     const before = hasTail ? [head, items[1]!] : [head];
     const after = hasTail ? [items[1]!] : [];
-    const render = (
+    const render = async (
       queueItems: ReadonlyArray<ScientThreadQueueItem>,
       editingItemId: string | null,
     ) =>
-      flushSync(() =>
-        root!.render(
-          <ThreadQueueStrip
-            items={queueItems}
-            error={null}
-            threadBusy={false}
-            supportsExplicitSend
-            awaitingCompletion
-            paused={false}
-            dispatchingItemId={null}
-            retryable={false}
-            editingItemId={editingItemId}
-            onCancelEdit={onCancelEdit}
-            {...callbacks}
-          />,
-        ),
+      await _fixtureAct(
+        async () =>
+          await _fixture.root0!.rerender(
+            <ThreadQueueStrip
+              items={queueItems}
+              error={null}
+              threadBusy={false}
+              supportsExplicitSend
+              awaitingCompletion
+              paused={false}
+              dispatchingItemId={null}
+              retryable={false}
+              editingItemId={editingItemId}
+              onCancelEdit={onCancelEdit}
+              {...callbacks}
+            />,
+          ),
       );
-    render(before, head.queueItemId);
-    expect(host.querySelectorAll('[aria-label="Cancel editing queued message"]')).toHaveLength(1);
-    render(after, head.queueItemId);
-    expect(host.querySelector(`[data-testid="thread-queue-row-${head.queueItemId}"]`)).toBeNull();
-    const controls = host.querySelectorAll<HTMLButtonElement>(
+    await render(before, head.queueItemId);
+    expect(
+      _fixture.host.querySelectorAll('[aria-label="Cancel editing queued message"]'),
+    ).toHaveLength(1);
+    await render(after, head.queueItemId);
+    expect(
+      _fixture.host.querySelector(`[data-testid="thread-queue-row-${head.queueItemId}"]`),
+    ).toBeNull();
+    const controls = _fixture.host.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Cancel editing queued message"]',
     );
     expect(controls).toHaveLength(1);
-    expect(host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
+    expect(_fixture.host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
       hasTail ? 1 : 0,
     );
     const cancel = controls[0]!;
     expect(cancel.disabled).toBe(false);
     const bounds = cancel.getBoundingClientRect();
-    const strip = host.querySelector<HTMLElement>('[data-testid="thread-queue-strip"]')!;
+    const strip = _fixture.host.querySelector<HTMLElement>('[data-testid="thread-queue-strip"]')!;
     expect(bounds.width).toBeGreaterThan(0);
     expect(bounds.height).toBeGreaterThan(0);
     expect(bounds.left).toBeGreaterThanOrEqual(strip.getBoundingClientRect().left);
@@ -198,11 +219,31 @@ it.each([
     await userEvent.click(cancel);
     expect(onCancelEdit).toHaveBeenCalledTimes(1);
     for (const callback of Object.values(callbacks)) expect(callback).not.toHaveBeenCalled();
-    render(after, null);
-    expect(host.querySelector('[aria-label="Cancel editing queued message"]')).toBeNull();
-    expect(host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
+    await render(after, null);
+    expect(_fixture.host.querySelector('[aria-label="Cancel editing queued message"]')).toBeNull();
+    expect(_fixture.host.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(
       hasTail ? 1 : 0,
     );
-    if (!hasTail) expect(host.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+    if (!hasTail)
+      expect(_fixture.host.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
   },
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

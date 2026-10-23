@@ -102,47 +102,48 @@ export function makeCustomModelSettingsMethods(
 
   const customModelFailure = () =>
     new CustomModelError({ message: "Could not save custom models." });
-  const commitCustomModels = (current: ServerSettings, customModels: CustomModelsSettings) =>
-    Effect.gen(function* () {
+  const commitCustomModels = Effect.fn("scientServerSettings.commitCustomModels")(
+    function* (current: ServerSettings, customModels: CustomModelsSettings) {
       const next = yield* normalizeServerSettings({ ...current, customModels });
       yield* writeSettingsAtomically(next);
       yield* cacheSettings(next);
       yield* emitChange(next);
-    }).pipe(Effect.mapError(customModelFailure));
+    },
+    (effect) => effect.pipe(Effect.mapError(customModelFailure)),
+  );
 
   return {
-    saveCustomModel: (input) =>
-      Effect.gen(function* () {
-        const prepared = yield* writeSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
-            return yield* prepareCustomModelSave(current, input, secretStore);
-          }),
-        );
-        // Explicit setup only: slow endpoints must not block settings reads or other writes.
-        const enriched = yield* modelReasoning.prepare(
-          prepared.connection,
-          prepared.previous,
-          input.refreshModelId,
-        );
-        const metadata = new Map(
-          enriched.models.flatMap((model) =>
-            model.reasoningMetadata ? [[model.id, model.reasoningMetadata] as const] : [],
-          ),
-        );
-        return yield* writeSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
-            return yield* saveCustomModel(
-              current,
-              input,
-              secretStore,
-              (next) => commitCustomModels(current, next),
-              metadata,
-            );
-          }).pipe(Effect.uninterruptible),
-        );
-      }),
+    saveCustomModel: Effect.fn("scientServerSettings.saveCustomModel")(function* (input) {
+      const prepared = yield* writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+          return yield* prepareCustomModelSave(current, input, secretStore);
+        }),
+      );
+      // Explicit setup only: slow endpoints must not block settings reads or other writes.
+      const enriched = yield* modelReasoning.prepare(
+        prepared.connection,
+        prepared.previous,
+        input.refreshModelId,
+      );
+      const metadata = new Map(
+        enriched.models.flatMap((model) =>
+          model.reasoningMetadata ? [[model.id, model.reasoningMetadata] as const] : [],
+        ),
+      );
+      return yield* writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+          return yield* saveCustomModel(
+            current,
+            input,
+            secretStore,
+            (next) => commitCustomModels(current, next),
+            metadata,
+          );
+        }).pipe(Effect.uninterruptible),
+      );
+    }),
     removeCustomModel: (input) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {

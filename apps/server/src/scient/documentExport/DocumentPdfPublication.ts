@@ -205,18 +205,19 @@ const storeErrorToExportError = (
     detail: cause.detail.slice(0, 2_048) || "Scient could not store the generated PDF.",
   });
 
-export const beginDocumentPdfProduction = (record: DocumentCaptureRecord) =>
-  Effect.gen(function* () {
-    yield* confirmCapturedSourceCurrent(record);
-    const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
-    return yield* store
-      .beginProduction({
-        logicalDocumentKey: record.logicalDocumentKey,
-        operationId: ProducingOperationId.make(`document-pdf-${NodeCrypto.randomUUID()}`),
-        producerId: DOCUMENT_PDF_PRODUCER_ID,
-      })
-      .pipe(Effect.mapError(storeErrorToExportError));
-  });
+export const beginDocumentPdfProduction = Effect.fn(
+  "DocumentPdfPublication.beginDocumentPdfProduction",
+)(function* (record: DocumentCaptureRecord) {
+  yield* confirmCapturedSourceCurrent(record);
+  const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
+  return yield* store
+    .beginProduction({
+      logicalDocumentKey: record.logicalDocumentKey,
+      operationId: ProducingOperationId.make(`document-pdf-${NodeCrypto.randomUUID()}`),
+      producerId: DOCUMENT_PDF_PRODUCER_ID,
+    })
+    .pipe(Effect.mapError(storeErrorToExportError));
+});
 
 /** Publishes an authenticated client's rendered bytes, without claiming server attestation. */
 export const publishDocumentPdfBytes = Effect.fn("DocumentPdfPublication.publishBytes")(function* (

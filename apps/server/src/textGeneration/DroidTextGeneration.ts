@@ -135,11 +135,11 @@ function lowestDroidEffort(
  */
 const BACKGROUND_AUTONOMY = "normal";
 
-const applyBackgroundAutonomy = (
-  runtime: Pick<DroidAcpRuntime, "getConfigOptions" | "setConfigOption">,
-  operation: TextGenerationOperation,
-): Effect.Effect<void, TextGenerationError> =>
-  Effect.gen(function* () {
+const applyBackgroundAutonomyEffect = Effect.fn("DroidTextGeneration.applyBackgroundAutonomy")(
+  function* (
+    runtime: Pick<DroidAcpRuntime, "getConfigOptions" | "setConfigOption">,
+    operation: TextGenerationOperation,
+  ) {
     const option = findDroidAutonomyOption(yield* runtime.getConfigOptions);
     const offered =
       option?.type === "select" &&
@@ -162,18 +162,26 @@ const applyBackgroundAutonomy = (
         operation,
         detail: "Droid did not confirm read-only autonomy, so the background request was not sent.",
       });
-  }).pipe(
-    Effect.mapError((cause) =>
-      isTextGenerationError(cause)
-        ? cause
-        : new TextGenerationError({
-            operation,
-            detail:
-              "Droid could not set read-only autonomy, so the background request was not sent.",
-            cause,
-          }),
+  },
+  (effect, _runtime, operation) =>
+    effect.pipe(
+      Effect.mapError((cause) =>
+        isTextGenerationError(cause)
+          ? cause
+          : new TextGenerationError({
+              operation,
+              detail:
+                "Droid could not set read-only autonomy, so the background request was not sent.",
+              cause,
+            }),
+      ),
     ),
-  );
+);
+
+const applyBackgroundAutonomy = (
+  runtime: Pick<DroidAcpRuntime, "getConfigOptions" | "setConfigOption">,
+  operation: TextGenerationOperation,
+): Effect.Effect<void, TextGenerationError> => applyBackgroundAutonomyEffect(runtime, operation);
 
 /**
  * `environment` is the complete Droid process environment (the agent
@@ -216,11 +224,11 @@ export const droidToolGuardTestRefusal = (error: TextGenerationError): string | 
  * call (see `backgroundToolGuard`); otherwise nothing is sent, whatever the
  * model.
  */
-const requireBackgroundToolGuard = (
-  runtime: Pick<DroidAcpRuntime, "backgroundToolGuard">,
-  operation: TextGenerationOperation,
-): Effect.Effect<void, TextGenerationError> =>
-  Effect.gen(function* () {
+const requireBackgroundToolGuard = Effect.fn("DroidTextGeneration.requireBackgroundToolGuard")(
+  function* (
+    runtime: Pick<DroidAcpRuntime, "backgroundToolGuard">,
+    operation: TextGenerationOperation,
+  ): Effect.fn.Return<void, TextGenerationError> {
     const guard = runtime.backgroundToolGuard
       ? yield* runtime.backgroundToolGuard()
       : "unconfirmed";
@@ -230,7 +238,8 @@ const requireBackgroundToolGuard = (
         detail: droidToolGuardRefusal(guard),
         cause: new DroidToolGuardUnconfirmed({ guard }),
       });
-  });
+  },
+);
 
 export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(function* (
   droidSettings: DroidSettings,
@@ -240,20 +249,20 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runDroidJson = <S extends Schema.Top>({
-    operation,
-    cwd,
-    prompt,
-    outputSchemaJson,
-    modelSelection,
-  }: {
-    operation: TextGenerationOperation;
-    cwd: string;
-    prompt: string;
-    outputSchemaJson: S;
-    modelSelection: ModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
+  const runDroidJsonEffect = Effect.fn("DroidTextGeneration.runDroidJson")(
+    function* <S extends Schema.Top>({
+      operation,
+      cwd,
+      prompt,
+      outputSchemaJson,
+      modelSelection,
+    }: {
+      operation: TextGenerationOperation;
+      cwd: string;
+      prompt: string;
+      outputSchemaJson: S;
+      modelSelection: ModelSelection;
+    }) {
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeAcpRuntime({
         droidSettings,
@@ -372,18 +381,42 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
             ),
         }),
       );
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Droid ACP text generation failed.",
-              cause,
-            }),
+    },
+    (effect, { operation }) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Droid ACP text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
       ),
-      Effect.scoped,
-    );
+  );
+
+  const runDroidJson = <S extends Schema.Top>({
+    operation,
+    cwd,
+    prompt,
+    outputSchemaJson,
+    modelSelection,
+  }: {
+    operation: TextGenerationOperation;
+    cwd: string;
+    prompt: string;
+    outputSchemaJson: S;
+    modelSelection: ModelSelection;
+  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
+    runDroidJsonEffect({
+      operation,
+      cwd,
+      prompt,
+      outputSchemaJson,
+      modelSelection,
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("DroidTextGeneration.generateCommitMessage")(function* (input) {

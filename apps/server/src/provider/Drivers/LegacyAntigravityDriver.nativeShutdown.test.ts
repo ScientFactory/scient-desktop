@@ -756,7 +756,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(yield* h.registry.getInstance(second)).toBe(h.peer);
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "cancels registered pending opening and its staging without a late native process or offer",
@@ -790,7 +789,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "makes racing closes wait for one physical teardown and refuses competing opens and old offers",
@@ -836,7 +834,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         expect(fresh.instanceId).toBe(first);
         expect(yield* h.launches.at(-1)!.handle.isRunning).toBe(true);
       }).pipe(Effect.scoped),
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "caller interruption waits for admitted native cleanup and leaves the synthetic account intact",
@@ -873,7 +870,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         const fresh = yield* h.open(first, "after-cancel");
         expect(fresh.instanceId).toBe(first);
       }).pipe(Effect.scoped),
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "closes every native sibling after a finalizer defect and retains repeat-close failure while peer delivery survives",
@@ -931,7 +927,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         }),
       );
     },
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "refuses closed callers and retired configured factories without closing a peer or changing account state",
@@ -967,7 +962,6 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         for (const launch of h.launches.filter((item) => item.instanceId === second))
           expect(yield* launch.handle.isRunning).toBe(true);
       }).pipe(Effect.scoped),
-    20_000,
   );
   it.effect.skipIf(windowsHost)(
     "ordinary next send recovers an idle native death with the observed conversation",
@@ -1178,6 +1172,5 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(fresh.projection).toEqual(recovered);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped),
-    60_000,
   );
 });

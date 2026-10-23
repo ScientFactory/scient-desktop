@@ -1,3 +1,10 @@
+import {
+  render as _fixtureRender,
+  type Screen,
+  stubGlobal as _fixtureStubGlobal,
+  act,
+  fakeTimers,
+} from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
@@ -6,9 +13,8 @@ import {
   type ScientDocumentHostStreamEvent,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 type StreamResult = AsyncResult.AsyncResult<ScientDocumentHostStreamEvent, Error>;
 const mocks = vi.hoisted(() => ({
@@ -54,8 +60,7 @@ const artifact = {
   blockedRequestCount: 0,
   data: new Uint8Array([37, 80, 68, 70]),
 };
-let registry: AtomRegistry.AtomRegistry;
-let renderer: Root | undefined;
+
 const latexRequest = (requestId: string): ScientDocumentHostRequest => ({
   requestId,
   threadId,
@@ -74,44 +79,57 @@ const renderRequest = (requestId: string): ScientDocumentHostRequest => ({
   input: { assetRelativeUrl: "/assets/study.html" },
 });
 // A stream atom marks every emission as waiting while its stream stays open.
-const emit = (event: ScientDocumentHostStreamEvent) =>
-  registry.set(mocks.requestsAtom!, AsyncResult.success(event, { waiting: true }));
-const mount = async () => {
+const emit = (_fixture: _Fixture, event: ScientDocumentHostStreamEvent) =>
+  _fixture.registry.set(mocks.requestsAtom!, AsyncResult.success(event, { waiting: true }));
+const mount = async (_fixture: _Fixture) => {
   await act(async () => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(
-      <RegistryContext.Provider value={registry}>
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(
+      <RegistryContext.Provider value={_fixture.registry}>
         <ScientDocumentHosts />
       </RegistryContext.Provider>,
     );
   });
 };
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("desktopBridge", {});
-  registry = AtomRegistry.make();
+async function _setupFixture0(_fixture: _Fixture) {
+  _fixture.stack.use(_fixtureStubGlobal("desktopBridge", {}));
+  _fixture.registry = AtomRegistry.make();
   mocks.requestsAtom = Atom.make<StreamResult>(AsyncResult.initial(false)).pipe(Atom.keepAlive);
   mocks.httpBaseUrl = "http://localhost:3773";
   mocks.respond.mockReset().mockResolvedValue(AsyncResult.success({ accepted: true }));
   mocks.renderHtmlPdf.mockReset().mockResolvedValue(artifact);
   mocks.openFile.mockReset();
   mocks.openScient.mockReset();
-});
-afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
-  registry.dispose();
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
+  _fixture.registry.dispose();
   vi.unstubAllGlobals();
-});
+}
 
 describe("mounted controlled document host", () => {
   it("consumes both requests emitted before React can commit another render", async () => {
-    await mount();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture);
     await act(async () => {
-      emit({ type: "connected", connectionId: "connection-1" });
+      emit(_fixture, { type: "connected", connectionId: "connection-1" });
       // No render or asynchronous boundary occurs between these two stream emissions.
-      emit({ type: "request", connectionId: "connection-1", request: latexRequest("first") });
-      emit({ type: "request", connectionId: "connection-1", request: latexRequest("second") });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "connection-1",
+        request: latexRequest("first"),
+      });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "connection-1",
+        request: latexRequest("second"),
+      });
     });
     await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(2));
     expect(mocks.openFile.mock.calls.map((call) => call[1])).toEqual([
@@ -147,19 +165,31 @@ describe("mounted controlled document host", () => {
   });
 
   it("consumes the pending initial request and updates its environment URL without reconnecting", async () => {
-    emit({ type: "request", connectionId: "connection-1", request: renderRequest("cached") });
-    await mount();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    emit(_fixture, {
+      type: "request",
+      connectionId: "connection-1",
+      request: renderRequest("cached"),
+    });
+    await mount(_fixture);
     await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(1));
     mocks.httpBaseUrl = "http://localhost:4884";
     await act(async () => {
-      renderer!.render(
-        <RegistryContext.Provider value={registry}>
+      await _fixture.root0!.rerender(
+        <RegistryContext.Provider value={_fixture.registry}>
           <ScientDocumentHosts />
         </RegistryContext.Provider>,
       );
     });
     await act(async () => {
-      emit({ type: "request", connectionId: "connection-1", request: renderRequest("fresh") });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "connection-1",
+        request: renderRequest("fresh"),
+      });
     });
     await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(2));
     expect(mocks.renderHtmlPdf.mock.calls.map(([url]) => url)).toEqual([
@@ -169,6 +199,10 @@ describe("mounted controlled document host", () => {
   });
 
   it("suppresses a completed old render and old-stream presentation after connection replacement", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let finish: ((value: typeof artifact) => void) | undefined;
     mocks.renderHtmlPdf.mockImplementationOnce(
       () =>
@@ -176,10 +210,10 @@ describe("mounted controlled document host", () => {
           finish = resolve;
         }),
     );
-    await mount();
+    await mount(_fixture);
     await act(async () => {
-      emit({ type: "connected", connectionId: "old-connection" });
-      emit({
+      emit(_fixture, { type: "connected", connectionId: "old-connection" });
+      emit(_fixture, {
         type: "request",
         connectionId: "old-connection",
         request: renderRequest("old-print"),
@@ -187,9 +221,17 @@ describe("mounted controlled document host", () => {
     });
     expect(mocks.renderHtmlPdf).toHaveBeenCalledTimes(1);
     await act(async () => {
-      emit({ type: "connected", connectionId: "new-connection" });
-      emit({ type: "request", connectionId: "old-connection", request: latexRequest("stale") });
-      emit({ type: "request", connectionId: "new-connection", request: latexRequest("current") });
+      emit(_fixture, { type: "connected", connectionId: "new-connection" });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "old-connection",
+        request: latexRequest("stale"),
+      });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "new-connection",
+        request: latexRequest("current"),
+      });
       finish!(artifact);
     });
     await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(1));
@@ -212,6 +254,10 @@ describe("mounted controlled document host", () => {
   });
 
   it("does not return an in-flight renderer receipt after the host unmounts", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let finish: ((value: typeof artifact) => void) | undefined;
     mocks.renderHtmlPdf.mockImplementationOnce(
       () =>
@@ -219,20 +265,51 @@ describe("mounted controlled document host", () => {
           finish = resolve;
         }),
     );
-    await mount();
+    await mount(_fixture);
     await act(async () => {
-      emit({ type: "request", connectionId: "connection-1", request: renderRequest("printing") });
+      emit(_fixture, {
+        type: "request",
+        connectionId: "connection-1",
+        request: renderRequest("printing"),
+      });
     });
     expect(mocks.renderHtmlPdf).toHaveBeenCalledTimes(1);
+    using _clock = fakeTimers();
     await act(async () => {
-      renderer!.unmount();
+      await _fixture.root0!.unmount();
     });
-    renderer = undefined;
+    _fixture.root0 = undefined;
     // IdleTTL zero finalizes the atom when React releases its lifetime mount.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await act(() => vi.advanceTimersByTimeAsync(0));
     await act(async () => {
       finish!(artifact);
     });
     expect(mocks.respond).not.toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  let registry: AtomRegistry.AtomRegistry;
+  return {
+    get registry() {
+      return registry;
+    },
+    set registry(value: AtomRegistry.AtomRegistry) {
+      registry = value;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

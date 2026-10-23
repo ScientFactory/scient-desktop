@@ -8,6 +8,10 @@ Scient finds directories that Claude Code or Codex has used. The default
 selection includes git repositories active within the last 30 days with at least three conversations. Select **Choose**
 to include older projects or change the selection.
 
+Linked worktrees of bare repositories can be offered as separate projects.
+Other linked worktrees, Codex scratch directories under `Documents/Codex`, and
+directories under `Downloads` are not offered.
+
 A large or malformed history can reach the scan limit. Scient keeps the
 projects it found and warns when projects or conversations may be missing.
 
@@ -34,10 +38,12 @@ are not duplicated. A read-only connection cannot start an import.
 
 ## Hosted connections
 
-When a hosted client has no connected machine, it first offers the upstream connection flow:
-connect an existing server by pairing, or use the account-based connection option when available.
-Account-based cloud features depend on the deployment's configuration; this alignment does not
-enable them. Agent checks and import in that flow target the connected machine.
+Retained hosted-source builds have a separate connection flow and do not
+automatically start setup from the hosted home page. Their `/welcome` route
+remains distinct from Scient's local onboarding. Account linking depends on
+the deployment's configuration; Scient does not operate the upstream hosted
+app or enable Connect through this flow. Use the supported
+[remote connection paths](./remote-access.md) for Scient.
 
 An unreachable hosted environment or unreadable saved settings offers recovery instead of
 replacing saved settings with defaults.

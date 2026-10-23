@@ -1,7 +1,7 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 import { SCIENT_RELEASE_NOTES } from "./catalog";
@@ -27,26 +27,28 @@ vi.mock("./useScientReleaseNotes", async () => {
   };
 });
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   document.documentElement.classList.remove("dark");
-  root = undefined;
-  host = undefined;
-});
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 it.each(["light", "dark"])(
   "keeps the extended note readable and navigable in %s mode",
   async (theme) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(390, 700);
     document.documentElement.classList.toggle("dark", theme === "dark");
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    root.render(<ScientReleaseNotes />);
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+    await _fixture.root0.rerender(<ScientReleaseNotes />);
 
     await page
       .getByRole("button", {
@@ -121,18 +123,42 @@ it.each(["light", "dark"])(
 );
 
 it("hides the release card in a collapsed sidebar and restores it when expanded", async () => {
-  host = document.createElement("div");
-  host.className = "group";
-  host.dataset.collapsible = "icon";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<ScientReleaseNotes />);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  _fixture.host.className = "group";
+  _fixture.host.dataset.collapsible = "icon";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<ScientReleaseNotes />);
 
   const card = page.getByRole("button", {
     name: `Read what is new in Scient version ${SCIENT_RELEASE_NOTES[0].version}`,
     includeHidden: true,
   });
   await expect.element(card).not.toBeVisible();
-  delete host.dataset.collapsible;
+  delete _fixture.host.dataset.collapsible;
   await expect.element(card).toBeVisible();
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

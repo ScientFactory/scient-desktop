@@ -62,6 +62,107 @@ export function buildCodexVoiceTranscriptCorrectionArgs(input: {
   ];
 }
 
+const makeCodexVoiceTranscriptCorrectionEffect = Effect.fn(
+  "CodexVoiceTranscriptCorrection.makeCodexVoiceTranscriptCorrection",
+)(function* (
+  settings: CodexSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<
+  ProviderVoiceTranscriptCorrection,
+  never,
+  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const providerEnvironment = {
+    ...environment,
+    ...(settings.homePath ? { CODEX_HOME: expandHomePath(settings.homePath, homeDirectory) } : {}),
+  };
+
+  const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-voice-codex-",
+        });
+        const schemaPath = path.join(tempDirectory, "output.schema.json");
+        const outputPath = path.join(tempDirectory, "output.json");
+        yield* fileSystem.writeFileString(
+          schemaPath,
+          encodeJson(toJsonSchemaObject(VoiceTranscriptCorrectionOutput)),
+        );
+        yield* fileSystem.writeFileString(outputPath, "");
+
+        yield* runVoiceTranscriptCorrectionProcess({
+          spawner,
+          binaryPath: settings.binaryPath?.trim() || "codex",
+          args: buildCodexVoiceTranscriptCorrectionArgs({
+            model: input.modelSelection.model,
+            schemaPath,
+            outputPath,
+            launchArgs: codexExecLaunchArgs(
+              resolveCodexLaunchArgs(settings.launchArgs, providerEnvironment),
+            ),
+          }),
+          cwd: tempDirectory,
+          environment: providerEnvironment,
+          prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+        });
+
+        const outputInfo = yield* fileSystem.stat(outputPath).pipe(
+          Effect.mapError(
+            () =>
+              new VoiceTranscriptCorrectionError({
+                kind: "malformed-response",
+                message: "Codex did not return a readable correction.",
+              }),
+          ),
+        );
+        if (outputInfo.type !== "File" || Number(outputInfo.size) > MAX_CODEX_OUTPUT_BYTES) {
+          return yield* new VoiceTranscriptCorrectionError({
+            kind: "malformed-response",
+            message: "Codex returned an invalid correction.",
+          });
+        }
+        const rawOutput = yield* fileSystem.readFileString(outputPath).pipe(
+          Effect.mapError(
+            () =>
+              new VoiceTranscriptCorrectionError({
+                kind: "malformed-response",
+                message: "Codex did not return a readable correction.",
+              }),
+          ),
+        );
+        const decoded = yield* decodeJson(rawOutput).pipe(
+          Effect.mapError(
+            () =>
+              new VoiceTranscriptCorrectionError({
+                kind: "malformed-response",
+                message: "Codex returned invalid structured output.",
+              }),
+          ),
+        );
+        return yield* validateVoiceTranscriptCorrectionOutput({
+          transcript: input.transcript,
+          output: decoded,
+        });
+      }).pipe(
+        Effect.mapError((cause) =>
+          isVoiceTranscriptCorrectionError(cause)
+            ? cause
+            : new VoiceTranscriptCorrectionError({
+                kind: "provider-error",
+                message: "Codex transcript correction failed.",
+              }),
+        ),
+      ),
+    );
+
+  return { correct };
+});
+
 export function makeCodexVoiceTranscriptCorrection(
   settings: CodexSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -70,97 +171,5 @@ export function makeCodexVoiceTranscriptCorrection(
   never,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const homeDirectory = yield* HostProcess.HomeDirectory;
-    const providerEnvironment = {
-      ...environment,
-      ...(settings.homePath
-        ? { CODEX_HOME: expandHomePath(settings.homePath, homeDirectory) }
-        : {}),
-    };
-
-    const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "scient-voice-codex-",
-          });
-          const schemaPath = path.join(tempDirectory, "output.schema.json");
-          const outputPath = path.join(tempDirectory, "output.json");
-          yield* fileSystem.writeFileString(
-            schemaPath,
-            encodeJson(toJsonSchemaObject(VoiceTranscriptCorrectionOutput)),
-          );
-          yield* fileSystem.writeFileString(outputPath, "");
-
-          yield* runVoiceTranscriptCorrectionProcess({
-            spawner,
-            binaryPath: settings.binaryPath?.trim() || "codex",
-            args: buildCodexVoiceTranscriptCorrectionArgs({
-              model: input.modelSelection.model,
-              schemaPath,
-              outputPath,
-              launchArgs: codexExecLaunchArgs(
-                resolveCodexLaunchArgs(settings.launchArgs, providerEnvironment),
-              ),
-            }),
-            cwd: tempDirectory,
-            environment: providerEnvironment,
-            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
-          });
-
-          const outputInfo = yield* fileSystem.stat(outputPath).pipe(
-            Effect.mapError(
-              () =>
-                new VoiceTranscriptCorrectionError({
-                  kind: "malformed-response",
-                  message: "Codex did not return a readable correction.",
-                }),
-            ),
-          );
-          if (outputInfo.type !== "File" || Number(outputInfo.size) > MAX_CODEX_OUTPUT_BYTES) {
-            return yield* new VoiceTranscriptCorrectionError({
-              kind: "malformed-response",
-              message: "Codex returned an invalid correction.",
-            });
-          }
-          const rawOutput = yield* fileSystem.readFileString(outputPath).pipe(
-            Effect.mapError(
-              () =>
-                new VoiceTranscriptCorrectionError({
-                  kind: "malformed-response",
-                  message: "Codex did not return a readable correction.",
-                }),
-            ),
-          );
-          const decoded = yield* decodeJson(rawOutput).pipe(
-            Effect.mapError(
-              () =>
-                new VoiceTranscriptCorrectionError({
-                  kind: "malformed-response",
-                  message: "Codex returned invalid structured output.",
-                }),
-            ),
-          );
-          return yield* validateVoiceTranscriptCorrectionOutput({
-            transcript: input.transcript,
-            output: decoded,
-          });
-        }).pipe(
-          Effect.mapError((cause) =>
-            isVoiceTranscriptCorrectionError(cause)
-              ? cause
-              : new VoiceTranscriptCorrectionError({
-                  kind: "provider-error",
-                  message: "Codex transcript correction failed.",
-                }),
-          ),
-        ),
-      );
-
-    return { correct };
-  });
+  return makeCodexVoiceTranscriptCorrectionEffect(settings, environment);
 }

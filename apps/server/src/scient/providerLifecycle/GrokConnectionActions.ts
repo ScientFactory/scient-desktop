@@ -136,8 +136,8 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
 )(function* (runtime: GrokConnectionRuntime): Effect.fn.Return<ProviderConnectionActions, never> {
   const requestSequence = yield* Ref.make(0);
 
-  const start: ProviderConnectionActions["start"] = (method) =>
-    Effect.gen(function* () {
+  const start: ProviderConnectionActions["start"] = Effect.fn("GrokConnectionActions.start")(
+    function* (method) {
       if (method !== GROK_ACCOUNT_METHOD && method !== GROK_DEVICE_METHOD) {
         return yield* actionError("The selected Grok sign-in method is not supported.");
       }
@@ -270,7 +270,8 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
         ),
         cancel: cancelAuthentication,
       };
-    });
+    },
+  );
 
   const disconnect = Effect.gen(function* () {
     const acp = yield* mapFailure(

@@ -36,6 +36,7 @@ it.effect("the disabled adapter retains Scient consent controls without collecti
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;
     yield* analytics.record("server.boot.heartbeat");
+    yield* analytics.recordOwners([{ source: "openai", ownerId: "a".repeat(64) }], "server");
     yield* analytics.flush;
     assert.deepEqual(yield* analytics.status, { available: false, consent: "off" });
   }).pipe(Effect.provide(AnalyticsService.layerDisabled)),

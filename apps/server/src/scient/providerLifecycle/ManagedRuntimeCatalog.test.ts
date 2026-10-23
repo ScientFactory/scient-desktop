@@ -1170,6 +1170,7 @@ describe("ManagedRuntimeCatalog service", () => {
       const settings = yield* ServerSettings.ServerSettingsService;
       const current = yield* settings.getSettings;
       const off = { ...current, enableProviderUpdateChecks: false };
+      const publish = yield* Deferred.make<void>();
       const service = yield* makeWithOptions().pipe(
         Effect.provideService(
           ServerSettings.ServerSettingsService,
@@ -1178,12 +1179,13 @@ describe("ManagedRuntimeCatalog service", () => {
             getSettings: Effect.succeed(off),
             // The change arrives after this test has subscribed.
             subscribeChanges: Effect.succeed(
-              Stream.fromEffect(Effect.sleep("50 millis").pipe(Effect.as(off))),
+              Stream.fromEffect(Deferred.await(publish).pipe(Effect.as(off))),
             ),
           }),
         ),
       );
       const changes = yield* service.subscribeChanges;
+      yield* Deferred.succeed(publish, undefined);
       const announced = Option.getOrThrow(yield* changes.pipe(Stream.runHead));
       assert.deepStrictEqual(announced.changedProviders, []);
       assert.strictEqual((yield* service.freshness).checksDisabled, true);

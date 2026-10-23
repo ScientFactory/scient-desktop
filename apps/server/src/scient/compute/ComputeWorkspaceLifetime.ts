@@ -19,26 +19,30 @@ const contains = (root: string, target: string) => {
 };
 
 /** Register before startup; caller retains the receipt until physical cleanup succeeds. */
+const withComputeWorkspaceReservationEffect = Effect.fn(
+  "ComputeWorkspaceLifetime.withComputeWorkspaceReservation",
+)(function* <A, E, R>(
+  root: string,
+  reserve: (release: Effect.Effect<void>) => Effect.Effect<A, E, R>,
+) {
+  if ([...removals.values()].some((removal) => contains(removal, root) || contains(root, removal)))
+    return yield* new ComputeOperationError({
+      operation: "start",
+      reason: "workspace-changed",
+      message: "This workspace is being removed. Reopen it before starting Compute.",
+    });
+  const id = Symbol("compute-workspace-owner");
+  owners.set(id, root);
+  const release = Effect.sync(() => {
+    owners.delete(id);
+  });
+  return yield* reserve(release).pipe(Effect.onError(() => release));
+}, Effect.uninterruptible);
+
 export const withComputeWorkspaceReservation = <A, E, R>(
   root: string,
   reserve: (release: Effect.Effect<void>) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    if (
-      [...removals.values()].some((removal) => contains(removal, root) || contains(root, removal))
-    )
-      return yield* new ComputeOperationError({
-        operation: "start",
-        reason: "workspace-changed",
-        message: "This workspace is being removed. Reopen it before starting Compute.",
-      });
-    const id = Symbol("compute-workspace-owner");
-    owners.set(id, root);
-    const release = Effect.sync(() => {
-      owners.delete(id);
-    });
-    return yield* reserve(release).pipe(Effect.onError(() => release));
-  }).pipe(Effect.uninterruptible);
+) => withComputeWorkspaceReservationEffect(root, reserve);
 
 /** Run inside the inherited workspace lease; owners in any nested root block removal. */
 export const withoutComputeWorkspaceOwners = <A, E, R>(

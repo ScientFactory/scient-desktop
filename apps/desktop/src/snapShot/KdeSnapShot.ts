@@ -33,7 +33,7 @@ export function kdeCapturePaths(paths: KdeCapturePaths) {
   };
 }
 
-export function kdeCaptureDesktopEntry(executable: string): string {
+function kdeCaptureDesktopEntry(executable: string): string {
   return [
     "[Desktop Entry]",
     "Type=Application",

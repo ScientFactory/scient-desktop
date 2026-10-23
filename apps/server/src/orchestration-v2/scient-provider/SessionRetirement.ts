@@ -23,22 +23,23 @@ type PumpOwner = {
   readonly eventConsumer?: { readonly dispose: Effect.Effect<void> };
 };
 
-export const disposeRetiredEventConsumer = (entry: PumpOwner) =>
-  Effect.gen(function* () {
-    if (!entry.eventConsumer) return;
-    if (entry.eventPump.fiber && !entry.eventPump.ended) entry.eventPump.fiber.interruptUnsafe();
-    yield* entry.eventConsumer.dispose;
-  });
+export const disposeRetiredEventConsumer = Effect.fn(
+  "SessionRetirement.disposeRetiredEventConsumer",
+)(function* (entry: PumpOwner) {
+  if (!entry.eventConsumer) return;
+  if (entry.eventPump.fiber && !entry.eventPump.ended) entry.eventPump.fiber.interruptUnsafe();
+  yield* entry.eventConsumer.dispose;
+});
 
 /** Join this exact sealed pump only after native interruption has released its permits. */
-export const interruptAndJoinRetirement = <E, R>(input: {
-  readonly runtime: ProviderAdapterV2SessionRuntime;
-  readonly request: ProviderAdapterV2InterruptInput;
-  readonly readEntry: Effect.Effect<PumpOwner | undefined>;
-  readonly closeTimeoutMs: number;
-  readonly joinRetainedClose: () => Effect.Effect<void, E, R>;
-}) =>
-  Effect.gen(function* () {
+export const interruptAndJoinRetirement = Effect.fn("SessionRetirement.interruptAndJoinRetirement")(
+  function* <E, R>(input: {
+    readonly runtime: ProviderAdapterV2SessionRuntime;
+    readonly request: ProviderAdapterV2InterruptInput;
+    readonly readEntry: Effect.Effect<PumpOwner | undefined>;
+    readonly closeTimeoutMs: number;
+    readonly joinRetainedClose: () => Effect.Effect<void, E, R>;
+  }) {
     const entry = yield* input.readEntry;
     yield* input.runtime.interruptTurn(input.request);
     if (input.runtime.providerSession.status !== "stopped") return;
@@ -57,19 +58,22 @@ export const interruptAndJoinRetirement = <E, R>(input: {
           }),
       ),
     );
-  });
+  },
+);
 
 /** Opening snapshots cannot make a known-unusable live owner eligible for reuse. */
-export const retireUnusableOwner = <E, R>(
+export const retireUnusableOwner = Effect.fn("SessionRetirement.retireUnusableOwner")(function* <
+  E,
+  R,
+>(
   runtime: ProviderAdapterV2SessionRuntime,
   retire: (reason: "runtime_error" | "manual_shutdown") => Effect.Effect<void, E, R>,
-) =>
-  Effect.gen(function* () {
-    const status = runtime.providerSession.status;
-    if (status !== "error" && status !== "stopped") return false;
-    yield* retire(status === "error" ? "runtime_error" : "manual_shutdown");
-    return true;
-  });
+) {
+  const status = runtime.providerSession.status;
+  if (status !== "error" && status !== "stopped") return false;
+  yield* retire(status === "error" ? "runtime_error" : "manual_shutdown");
+  return true;
+});
 
 /** Keep physical ownership pending even when logical authority retires on timeout. */
 export const makeSessionRetirement = <

@@ -1,22 +1,21 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { AuthoringKeybindingsSettings } from "./AuthoringKeybindingsSettings";
 import { reloadKeyboardPreferences } from "./preferences";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-function renderSettings(scope: "math" | "pdf") {
+async function renderSettings(_fixture: _Fixture, scope: "math" | "pdf") {
   localStorage.clear();
   reloadKeyboardPreferences();
-  host = document.createElement("div");
-  host.className = "mx-auto w-full max-w-[900px]";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  _fixture.host.className = "mx-auto w-full max-w-[900px]";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <AuthoringKeybindingsSettings
       scope={scope}
       query={scope === "math" ? "math.symbol.alpha" : ""}
@@ -24,14 +23,14 @@ function renderSettings(scope: "math" | "pdf") {
   );
 }
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   localStorage.clear();
   reloadKeyboardPreferences();
-});
+}
 
 function bounds(element: Element): DOMRect {
   const rect = element.getBoundingClientRect();
@@ -65,8 +64,11 @@ function expectHorizontallyInside(child: DOMRect, parent: DOMRect) {
 }
 
 it.each([1280, 700, 390])("keeps Math menus inside their card at %ipx", async (width) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(width, 800);
-  renderSettings("math");
+  await renderSettings(_fixture, "math");
   await page.getByRole("button", { name: "Math input behavior and preset" }).click();
   await document.fonts.ready;
   expect(document.querySelector("#math-input-behavior")).not.toBeNull();
@@ -101,8 +103,11 @@ it.each([1280, 700, 390])("keeps Math menus inside their card at %ipx", async (w
 });
 
 it.each([1280, 700, 390])("anchors Restore confirmation to its button at %ipx", async (width) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(width, 800);
-  renderSettings("pdf");
+  await renderSettings(_fixture, "pdf");
   const trigger = page.getByRole("button", { name: "Restore defaults" });
   await trigger.click();
   await document.fonts.ready;
@@ -129,3 +134,22 @@ it.each([1280, 700, 390])("anchors Restore confirmation to its button at %ipx", 
   expect(Math.abs(popupRect.right - triggerRect.right)).toBeLessThanOrEqual(16);
   expect(popupRect.top).toBeGreaterThanOrEqual(triggerRect.bottom - 2);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

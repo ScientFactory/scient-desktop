@@ -295,234 +295,233 @@ const listingFailure = (fallback: string) => (cause: unknown) => ({
  * `open` starts an initialized app-server in the caller's scope, in `cwd`
  * when given.
  */
-export const makeCodexNativeInventory = <E>(
+export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(function* <E>(
   open: (cwd: string | undefined) => Effect.Effect<CodexAppServerClient, E, Scope.Scope>,
-) =>
-  Effect.gen(function* () {
-    const reportsPubSub = yield* Effect.acquireRelease(
-      PubSub.unbounded<ProviderNativeInventory>(),
-      PubSub.shutdown,
+) {
+  const reportsPubSub = yield* Effect.acquireRelease(
+    PubSub.unbounded<ProviderNativeInventory>(),
+    PubSub.shutdown,
+  );
+  /**
+   * The latest report of each machine field, with that field's own read
+   * order. A registry that subscribes late gets both, not only whichever
+   * field happened to finish last.
+   */
+  const latestMachineRef = yield* Ref.make<{
+    readonly plugins?: ProviderNativeInventory;
+    readonly mcpServers?: ProviderNativeInventory;
+  }>({});
+  const publishMachine = (field: "plugins" | "mcpServers", report: ProviderNativeInventory) =>
+    Ref.update(latestMachineRef, (latest) => ({ ...latest, [field]: report })).pipe(
+      Effect.andThen(PubSub.publish(reportsPubSub, report)),
+      Effect.asVoid,
     );
-    /**
-     * The latest report of each machine field, with that field's own read
-     * order. A registry that subscribes late gets both, not only whichever
-     * field happened to finish last.
-     */
-    const latestMachineRef = yield* Ref.make<{
-      readonly plugins?: ProviderNativeInventory;
-      readonly mcpServers?: ProviderNativeInventory;
-    }>({});
-    const publishMachine = (field: "plugins" | "mcpServers", report: ProviderNativeInventory) =>
-      Ref.update(latestMachineRef, (latest) => ({ ...latest, [field]: report })).pipe(
-        Effect.andThen(PubSub.publish(reportsPubSub, report)),
-        Effect.asVoid,
+  // Subscribing before reading the latest values means none is missed; a
+  // report seen twice carries the same sequence and applies once.
+  const reports = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(reportsPubSub);
+      const latest = yield* Ref.get(latestMachineRef);
+      return Stream.concat(
+        Stream.fromIterable(
+          [latest.plugins, latest.mcpServers].filter((report) => report !== undefined),
+        ),
+        Stream.fromSubscription(subscription),
       );
-    // Subscribing before reading the latest values means none is missed; a
-    // report seen twice carries the same sequence and applies once.
-    const reports = Stream.unwrap(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(reportsPubSub);
-        const latest = yield* Ref.get(latestMachineRef);
-        return Stream.concat(
-          Stream.fromIterable(
-            [latest.plugins, latest.mcpServers].filter((report) => report !== undefined),
+    }),
+  );
+  const retired = yield* Deferred.make<void>();
+  yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
+  const instanceScope = yield* Effect.scope;
+
+  /** Runs one bounded listing with its own app-server; failures are logged and dropped. */
+  const enrichment = (
+    cwd: string | undefined,
+    list: (client: CodexAppServerClient) => Effect.Effect<void>,
+  ) =>
+    open(cwd).pipe(
+      Effect.flatMap(list),
+      Effect.scoped,
+      Effect.timeoutOption(CODEX_ACTION_TIMEOUT),
+      Effect.catch((cause) =>
+        Effect.logDebug("Codex inventory enrichment could not start Codex.", { cause }),
+      ),
+      Effect.asVoid,
+    );
+
+  /**
+   * Lists the machine inventory and publishes each field Codex listed
+   * completely as soon as it has it. Runs off the health probe's path, as
+   * snapshot enrichment that the next probe interrupts.
+   */
+  const refresh = enrichment(undefined, (client) =>
+    Effect.gen(function* () {
+      const sequence = yield* nextInventoryReadSequence;
+      yield* Effect.all(
+        [
+          optionalCodexInventory("plugin listing", requestCodexInstalledPlugins(client)).pipe(
+            Effect.flatMap((plugins) =>
+              plugins ? publishMachine("plugins", { plugins, sequence }) : Effect.void,
+            ),
           ),
-          Stream.fromSubscription(subscription),
-        );
-      }),
-    );
-    const retired = yield* Deferred.make<void>();
-    yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
-    const instanceScope = yield* Effect.scope;
-
-    /** Runs one bounded listing with its own app-server; failures are logged and dropped. */
-    const enrichment = (
-      cwd: string | undefined,
-      list: (client: CodexAppServerClient) => Effect.Effect<void>,
-    ) =>
-      open(cwd).pipe(
-        Effect.flatMap(list),
-        Effect.scoped,
-        Effect.timeoutOption(CODEX_ACTION_TIMEOUT),
-        Effect.catch((cause) =>
-          Effect.logDebug("Codex inventory enrichment could not start Codex.", { cause }),
-        ),
-        Effect.asVoid,
+          optionalCodexInventory("MCP server listing", requestCodexMcpServers(client)).pipe(
+            Effect.flatMap((mcpServers) =>
+              mcpServers ? publishMachine("mcpServers", { mcpServers, sequence }) : Effect.void,
+            ),
+          ),
+        ],
+        { concurrency: "unbounded", discard: true },
       );
+    }),
+  );
 
-    /**
-     * Lists the machine inventory and publishes each field Codex listed
-     * completely as soon as it has it. Runs off the health probe's path, as
-     * snapshot enrichment that the next probe interrupts.
-     */
-    const refresh = enrichment(undefined, (client) =>
+  // One background listing per workspace, owned by this instance's scope. At
+  // most CODEX_WORKSPACE_LISTING_CONCURRENCY run at once; the rest wait, and
+  // waiting ones are cancelled like running ones.
+  const workspacePermits = yield* Semaphore.make(CODEX_WORKSPACE_LISTING_CONCURRENCY);
+  const workspaceListingsRef = yield* Ref.make<
+    ReadonlyMap<string, { readonly token: object; readonly fiber: Fiber.Fiber<void> }>
+  >(new Map());
+  const workspaceLock = yield* Semaphore.make(1);
+  /** The listing's own exit removes its entry, unless a newer listing replaced it. */
+  const forgetWorkspaceListing = (cwd: string, token: object) =>
+    Ref.update(workspaceListingsRef, (current) => {
+      if (current.get(cwd)?.token !== token) return current;
+      const next = new Map(current);
+      next.delete(cwd);
+      return next;
+    });
+  /**
+   * Stops the listings of the workspaces `stale` picks and waits until they
+   * have exited. Removing a listing from the map and handing it to an
+   * instance-owned fiber that interrupts it happen together, safe from
+   * interruption, so no stopped listing is lost and a queued one never
+   * starts its app-server. Only the wait for their teardown is interruptible.
+   */
+  const stopWorkspaceListings = (stale: (cwd: string) => boolean) =>
+    Effect.uninterruptible(
       Effect.gen(function* () {
-        const sequence = yield* nextInventoryReadSequence;
-        yield* Effect.all(
-          [
-            optionalCodexInventory("plugin listing", requestCodexInstalledPlugins(client)).pipe(
-              Effect.flatMap((plugins) =>
-                plugins ? publishMachine("plugins", { plugins, sequence }) : Effect.void,
-              ),
-            ),
-            optionalCodexInventory("MCP server listing", requestCodexMcpServers(client)).pipe(
-              Effect.flatMap((mcpServers) =>
-                mcpServers ? publishMachine("mcpServers", { mcpServers, sequence }) : Effect.void,
-              ),
-            ),
-          ],
-          { concurrency: "unbounded", discard: true },
-        );
-      }),
-    );
-
-    // One background listing per workspace, owned by this instance's scope. At
-    // most CODEX_WORKSPACE_LISTING_CONCURRENCY run at once; the rest wait, and
-    // waiting ones are cancelled like running ones.
-    const workspacePermits = yield* Semaphore.make(CODEX_WORKSPACE_LISTING_CONCURRENCY);
-    const workspaceListingsRef = yield* Ref.make<
-      ReadonlyMap<string, { readonly token: object; readonly fiber: Fiber.Fiber<void> }>
-    >(new Map());
-    const workspaceLock = yield* Semaphore.make(1);
-    /** The listing's own exit removes its entry, unless a newer listing replaced it. */
-    const forgetWorkspaceListing = (cwd: string, token: object) =>
-      Ref.update(workspaceListingsRef, (current) => {
-        if (current.get(cwd)?.token !== token) return current;
-        const next = new Map(current);
-        next.delete(cwd);
-        return next;
-      });
-    /**
-     * Stops the listings of the workspaces `stale` picks and waits until they
-     * have exited. Removing a listing from the map and handing it to an
-     * instance-owned fiber that interrupts it happen together, safe from
-     * interruption, so no stopped listing is lost and a queued one never
-     * starts its app-server. Only the wait for their teardown is interruptible.
-     */
-    const stopWorkspaceListings = (stale: (cwd: string) => boolean) =>
-      Effect.uninterruptible(
-        Effect.gen(function* () {
-          const fibers = yield* Ref.modify(workspaceListingsRef, (listings) => {
-            const next = new Map(listings);
-            const picked: Array<Fiber.Fiber<void>> = [];
-            for (const [cwd, listing] of listings) {
-              if (!stale(cwd)) continue;
-              next.delete(cwd);
-              picked.push(listing.fiber);
-            }
-            return [picked, picked.length === 0 ? listings : next] as const;
-          });
-          if (fibers.length > 0) {
-            yield* Fiber.interruptAll(fibers).pipe(Effect.forkIn(instanceScope));
+        const fibers = yield* Ref.modify(workspaceListingsRef, (listings) => {
+          const next = new Map(listings);
+          const picked: Array<Fiber.Fiber<void>> = [];
+          for (const [cwd, listing] of listings) {
+            if (!stale(cwd)) continue;
+            next.delete(cwd);
+            picked.push(listing.fiber);
           }
-          return fibers;
+          return [picked, picked.length === 0 ? listings : next] as const;
+        });
+        if (fibers.length > 0) {
+          yield* Fiber.interruptAll(fibers).pipe(Effect.forkIn(instanceScope));
+        }
+        return fibers;
+      }),
+    ).pipe(Effect.flatMap(Fiber.awaitAll), Effect.asVoid);
+  const workspace: ProviderWorkspaceInventory = {
+    cancel: (cwd) =>
+      workspaceLock.withPermits(1)(stopWorkspaceListings((candidate) => candidate === cwd)),
+    retain: (current) =>
+      workspaceLock.withPermits(1)(
+        Effect.gen(function* () {
+          // Read under the lock that starts listings, so a listing started
+          // for a workspace published after this read is never stopped.
+          const keep = yield* current;
+          yield* stopWorkspaceListings((cwd) => !keep.has(cwd));
         }),
-      ).pipe(Effect.flatMap(Fiber.awaitAll), Effect.asVoid);
-    const workspace: ProviderWorkspaceInventory = {
-      cancel: (cwd) =>
-        workspaceLock.withPermits(1)(stopWorkspaceListings((candidate) => candidate === cwd)),
-      retain: (current) =>
-        workspaceLock.withPermits(1)(
-          Effect.gen(function* () {
-            // Read under the lock that starts listings, so a listing started
-            // for a workspace published after this read is never stopped.
-            const keep = yield* current;
-            yield* stopWorkspaceListings((cwd) => !keep.has(cwd));
-          }),
-        ),
-      refresh: (cwd) =>
-        workspaceLock.withPermits(1)(
-          Effect.gen(function* () {
-            // Waiting for the replaced listing to exit is interruptible: a
-            // cancelled refresh leaves that teardown to the instance-owned
-            // fiber and registers nothing.
-            yield* stopWorkspaceListings((candidate) => candidate === cwd);
-            // Only registering the new listing is masked, so it is always found.
-            yield* Effect.uninterruptible(
-              Effect.gen(function* () {
-                const token = {};
-                // The listing starts only once it is registered.
-                const registered = yield* Deferred.make<void>();
-                const fiber = yield* Deferred.await(registered).pipe(
-                  Effect.andThen(
-                    workspacePermits.withPermits(1)(
-                      enrichment(cwd, (client) =>
-                        Effect.gen(function* () {
-                          const sequence = yield* nextInventoryReadSequence;
-                          const plugins = yield* optionalCodexInventory(
-                            "workspace plugin listing",
-                            requestCodexInstalledPlugins(client, [cwd]),
-                          );
-                          if (plugins) {
-                            yield* PubSub.publish(reportsPubSub, { cwd, plugins, sequence });
-                          }
-                        }),
-                      ),
+      ),
+    refresh: (cwd) =>
+      workspaceLock.withPermits(1)(
+        Effect.gen(function* () {
+          // Waiting for the replaced listing to exit is interruptible: a
+          // cancelled refresh leaves that teardown to the instance-owned
+          // fiber and registers nothing.
+          yield* stopWorkspaceListings((candidate) => candidate === cwd);
+          // Only registering the new listing is masked, so it is always found.
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const token = {};
+              // The listing starts only once it is registered.
+              const registered = yield* Deferred.make<void>();
+              const fiber = yield* Deferred.await(registered).pipe(
+                Effect.andThen(
+                  workspacePermits.withPermits(1)(
+                    enrichment(cwd, (client) =>
+                      Effect.gen(function* () {
+                        const sequence = yield* nextInventoryReadSequence;
+                        const plugins = yield* optionalCodexInventory(
+                          "workspace plugin listing",
+                          requestCodexInstalledPlugins(client, [cwd]),
+                        );
+                        if (plugins) {
+                          yield* PubSub.publish(reportsPubSub, { cwd, plugins, sequence });
+                        }
+                      }),
                     ),
                   ),
-                  Effect.ensuring(forgetWorkspaceListing(cwd, token)),
-                  Effect.interruptible,
-                  Effect.forkIn(instanceScope),
-                );
-                yield* Ref.update(workspaceListingsRef, (current) =>
-                  new Map(current).set(cwd, { token, fiber }),
-                );
-                yield* Deferred.succeed(registered, undefined);
-              }),
+                ),
+                Effect.ensuring(forgetWorkspaceListing(cwd, token)),
+                Effect.interruptible,
+                Effect.forkIn(instanceScope),
+              );
+              yield* Ref.update(workspaceListingsRef, (current) =>
+                new Map(current).set(cwd, { token, fiber }),
+              );
+              yield* Deferred.succeed(registered, undefined);
+            }),
+          );
+        }),
+      ),
+  };
+
+  const actions: ProviderPluginActions = {
+    listPlugins: ({ cwd }) =>
+      open(cwd).pipe(
+        Effect.flatMap((client) =>
+          Effect.gen(function* () {
+            const sequence = yield* nextInventoryReadSequence;
+            const plugins = yield* requestCodexInstalledPlugins(
+              client,
+              cwd === undefined ? undefined : [cwd],
             );
+            return { plugins, sequence };
           }),
         ),
-    };
+        Effect.timeout(CODEX_ACTION_TIMEOUT),
+        Effect.scoped,
+        Effect.mapError(listingFailure("Codex could not list its plugins.")),
+      ),
+    readMcpServer: ({ serverName }) =>
+      open(undefined).pipe(
+        Effect.flatMap((client) => requestCodexMcpServers(client, serverName)),
+        Effect.map((servers) => servers.find((server) => server.name === serverName)),
+        Effect.timeout(CODEX_ACTION_TIMEOUT),
+        Effect.scoped,
+        Effect.mapError(listingFailure(`Codex could not read the MCP server '${serverName}'.`)),
+      ),
+    uninstall: ({ pluginId, cwd }) =>
+      open(cwd).pipe(
+        Effect.flatMap((client) => client.request("plugin/uninstall", { pluginId })),
+        Effect.timeout(CODEX_ACTION_TIMEOUT),
+        Effect.scoped,
+        Effect.asVoid,
+        Effect.mapError((cause) => ({
+          message: `Codex could not uninstall '${pluginId}'.`,
+          cause,
+        })),
+      ),
+    // The app-server stays in the caller's scope: it receives the browser callback.
+    startMcpSignIn: ({ serverName }) =>
+      open(undefined).pipe(
+        Effect.flatMap((client) => startCodexMcpSignIn(client, serverName)),
+        Effect.timeout(CODEX_ACTION_TIMEOUT),
+        Effect.mapError((cause) => ({
+          message: `Codex could not start signing in to '${serverName}'.`,
+          cause,
+        })),
+      ),
+    isRetired: Deferred.isDone(retired),
+    whenRetired: Deferred.await(retired),
+  };
 
-    const actions: ProviderPluginActions = {
-      listPlugins: ({ cwd }) =>
-        open(cwd).pipe(
-          Effect.flatMap((client) =>
-            Effect.gen(function* () {
-              const sequence = yield* nextInventoryReadSequence;
-              const plugins = yield* requestCodexInstalledPlugins(
-                client,
-                cwd === undefined ? undefined : [cwd],
-              );
-              return { plugins, sequence };
-            }),
-          ),
-          Effect.timeout(CODEX_ACTION_TIMEOUT),
-          Effect.scoped,
-          Effect.mapError(listingFailure("Codex could not list its plugins.")),
-        ),
-      readMcpServer: ({ serverName }) =>
-        open(undefined).pipe(
-          Effect.flatMap((client) => requestCodexMcpServers(client, serverName)),
-          Effect.map((servers) => servers.find((server) => server.name === serverName)),
-          Effect.timeout(CODEX_ACTION_TIMEOUT),
-          Effect.scoped,
-          Effect.mapError(listingFailure(`Codex could not read the MCP server '${serverName}'.`)),
-        ),
-      uninstall: ({ pluginId, cwd }) =>
-        open(cwd).pipe(
-          Effect.flatMap((client) => client.request("plugin/uninstall", { pluginId })),
-          Effect.timeout(CODEX_ACTION_TIMEOUT),
-          Effect.scoped,
-          Effect.asVoid,
-          Effect.mapError((cause) => ({
-            message: `Codex could not uninstall '${pluginId}'.`,
-            cause,
-          })),
-        ),
-      // The app-server stays in the caller's scope: it receives the browser callback.
-      startMcpSignIn: ({ serverName }) =>
-        open(undefined).pipe(
-          Effect.flatMap((client) => startCodexMcpSignIn(client, serverName)),
-          Effect.timeout(CODEX_ACTION_TIMEOUT),
-          Effect.mapError((cause) => ({
-            message: `Codex could not start signing in to '${serverName}'.`,
-            cause,
-          })),
-        ),
-      isRetired: Deferred.isDone(retired),
-      whenRetired: Deferred.await(retired),
-    };
-
-    return { actions, refresh, workspace, reports };
-  });
+  return { actions, refresh, workspace, reports };
+});

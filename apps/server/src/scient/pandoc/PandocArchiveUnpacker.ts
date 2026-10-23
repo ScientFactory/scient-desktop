@@ -81,48 +81,49 @@ export const make = Effect.gen(function* () {
       detail: `This computer has no ${command}, which Scient needs to expand the Pandoc download.`,
     });
 
-  const unpack: PandocArchiveUnpacker["Service"]["unpack"] = (input) =>
-    Effect.gen(function* () {
-      if (pinned) {
-        const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
-        if (!present) return yield* unavailable();
-      }
-      const result = yield* processRunner
-        .run({
-          command,
-          args: pandocUnpackArguments(input),
-          timeout: UNPACK_TIMEOUT,
-          maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
-          outputMode: "truncate",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PandocArchiveUnpackError({
-                reason: "unpack-failed",
-                detail: `Scient could not run tar to expand the Pandoc download: ${cause.message}`,
-              }),
-          ),
-        );
-      if (result.timedOut) {
-        return yield* new PandocArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: "Expanding the Pandoc download took too long and was stopped.",
-        });
-      }
-      if (yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr)) {
-        return yield* unavailable();
-      }
-      if (result.code !== 0) {
-        return yield* new PandocArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: `Expanding the Pandoc download failed: ${
-            result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
-          }`,
-        });
-      }
-    });
+  const unpack: PandocArchiveUnpacker["Service"]["unpack"] = Effect.fn(
+    "PandocArchiveUnpacker.unpack",
+  )(function* (input) {
+    if (pinned) {
+      const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
+      if (!present) return yield* unavailable();
+    }
+    const result = yield* processRunner
+      .run({
+        command,
+        args: pandocUnpackArguments(input),
+        timeout: UNPACK_TIMEOUT,
+        maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PandocArchiveUnpackError({
+              reason: "unpack-failed",
+              detail: `Scient could not run tar to expand the Pandoc download: ${cause.message}`,
+            }),
+        ),
+      );
+    if (result.timedOut) {
+      return yield* new PandocArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: "Expanding the Pandoc download took too long and was stopped.",
+      });
+    }
+    if (yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr)) {
+      return yield* unavailable();
+    }
+    if (result.code !== 0) {
+      return yield* new PandocArchiveUnpackError({
+        reason: "unpack-failed",
+        detail: `Expanding the Pandoc download failed: ${
+          result.stderr.trim() || result.stdout.trim() || `tar exited with ${String(result.code)}`
+        }`,
+      });
+    }
+  });
 
   return PandocArchiveUnpacker.of({ unpack });
 });

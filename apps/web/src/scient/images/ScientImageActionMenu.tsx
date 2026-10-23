@@ -4,7 +4,11 @@ import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
-import { VisualCardMenuPopup, VisualCardToolbarMenuItems } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+  useVisualCardToolbarMenuClose,
+} from "../presentation/VisualCardToolbar";
 
 export interface ScientImageAction {
   readonly id: string;
@@ -33,20 +37,29 @@ export function ScientImageActionMenu({
   readonly triggerVariant?: ComponentProps<typeof Button>["variant"];
 }) {
   const pendingAction = useRef<ScientImageAction | null>(null);
+  const menuOpen = useRef(false);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
+  const completeToolbarMove = useVisualCardToolbarMenuClose();
   return (
     <Menu
-      onOpenChange={(open) => {
+      onOpenChange={(open, details) => {
+        // A trailing popup mouseleave must not replace the item's closing reason.
+        if (!open && !menuOpen.current && details.reason === "trigger-hover") {
+          details.cancel();
+          return;
+        }
+        menuOpen.current = open;
         if (open) {
           pendingAction.current = null;
           setHandingOffFocus(false);
         }
       }}
       onOpenChangeComplete={(open) => {
-        if (open || !pendingAction.current) return;
+        if (open) return;
         const action = pendingAction.current;
         pendingAction.current = null;
-        run(action);
+        if (action) run(action);
+        else completeToolbarMove();
       }}
     >
       <Tooltip>

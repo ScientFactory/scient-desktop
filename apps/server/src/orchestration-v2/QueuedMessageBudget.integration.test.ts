@@ -68,7 +68,10 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(name);
       const recorded = yield* readProviderReplayTranscript(
-        new URL("./testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+        new URL(
+          "./scient-fork/fixtures/thread_fork_native/codex_transcript.ndjson",
+          import.meta.url,
+        ),
       );
       const full = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(recorded, cwd),

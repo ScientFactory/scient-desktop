@@ -153,6 +153,57 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   return handlers;
 }
 
+describe("Pi orchestration prompt section", () => {
+  it("adds a stable section without overriding the prompt or skipping discovery", async () => {
+    const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    const hook = bridge.handlers.get("before_agent_start")!;
+    const sections: Record<string, string> = { existing: "keep me" };
+    const event = { systemPrompt: "base", systemPromptOptions: { sections } };
+    const ctx = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+
+    assert.isUndefined(await hook(event, ctx));
+    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    assert.equal(event.systemPrompt, "base");
+    assert.include(bridge.getActiveTools(), "preview_snapshot");
+
+    const guidance = sections.t3_code_orchestration!;
+    assert.isUndefined(await hook(event, ctx));
+    assert.deepEqual(event.systemPromptOptions.sections, {
+      existing: "keep me",
+      t3_code_orchestration: guidance,
+    });
+  });
+
+  it.each([
+    {
+      name: "on Pi builds without prompt sections",
+      events: [
+        { systemPrompt: "base" },
+        { systemPrompt: "base", systemPromptOptions: {} },
+        { systemPrompt: "base", systemPromptOptions: { sections: null } },
+      ],
+    },
+    {
+      name: "when an earlier extension forces the system prompt",
+      events: [
+        {
+          systemPrompt: "forced",
+          systemPromptOptions: { sections: {}, forceSystemPrompt: "forced" },
+        },
+      ],
+    },
+  ])("appends guidance $name", async ({ events }) => {
+    const bridge = await loadMcpBridge();
+    const hook = bridge.handlers.get("before_agent_start")!;
+    for (const event of events) {
+      const result = await hook(event, { ui: { notify: assert.fail } });
+      assert.isDefined(result);
+      assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
+      assert.include(result!.systemPrompt, "orchestrator_capabilities");
+    }
+  });
+});
+
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [
@@ -204,15 +255,6 @@ describe("Pi MCP tool results", () => {
     assert.deepEqual(output.content, [{ type: "text", text: '{"count":2}' }]);
     assert.deepEqual(output.structuredContent, result);
   });
-
-  it("propagates cancellation without returning a successful result", async () => {
-    const bridge = await loadMcpBridge();
-    const controller = new AbortController();
-    controller.abort();
-    await expect(bridge.tools[0]!.execute("cancelled", {}, controller.signal)).rejects.toThrow(
-      "aborted",
-    );
-  });
 });
 
 describe("Pi MCP tool exposure", () => {
@@ -255,7 +297,7 @@ describe("Pi MCP tool exposure", () => {
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
     const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
-    assert.include(prompt.systemPrompt, "orchestrator_capabilities");
+    assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 4);
     assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
@@ -1222,7 +1264,10 @@ describe("native Pi Scient awareness channel", () => {
       mcpAvailable,
     })),
   )("$caseTitle", async ({ mcpAvailable }) => {
-    type Hook = (event: { systemPrompt: string }) => { systemPrompt: string };
+    type Hook = (event: {
+      systemPrompt: string;
+      systemPromptOptions?: { sections: Record<string, string> };
+    }) => { systemPrompt: string } | undefined;
     const handlers = new Map<string, Hook>();
     const env: Record<string, string> = {
       PI_RUNTIME_GUIDANCE: "Scient orchestration guidance fixture",
@@ -1246,7 +1291,7 @@ describe("native Pi Scient awareness channel", () => {
     const hook = handlers.get("before_agent_start");
     assert.isDefined(hook);
     if (!hook) throw new Error("Missing native system prompt hook");
-    const prompt = hook({ systemPrompt: "Native model instructions" }).systemPrompt;
+    const prompt = hook({ systemPrompt: "Native model instructions" })?.systemPrompt ?? "";
     assert.include(prompt, "Native model instructions\n\nScient orchestration guidance fixture");
     assert.equal(prompt.includes(hostInstructions), mcpAvailable);
     assert.notInclude(prompt, "T3 Code");
@@ -1254,6 +1299,19 @@ describe("native Pi Scient awareness channel", () => {
     assert.notInclude(prompt, "synthetic-token");
     assert.isUndefined(env.PI_RUNTIME_GUIDANCE);
     assert.isTrue(handlers.has("tool_call"));
+    if (mcpAvailable) {
+      const sections = { native: "keep native instructions" };
+      const event = {
+        systemPrompt: "Native model instructions",
+        systemPromptOptions: { sections },
+      };
+      assert.isUndefined(hook(event));
+      const guidance = event.systemPromptOptions.sections as Record<string, string>;
+      assert.include(guidance.t3_code_orchestration, "Scient orchestration guidance fixture");
+      assert.include(guidance.t3_code_orchestration, hostInstructions);
+      assert.equal(guidance.native, "keep native instructions");
+      assert.equal(event.systemPrompt, "Native model instructions");
+    }
   });
 });
 

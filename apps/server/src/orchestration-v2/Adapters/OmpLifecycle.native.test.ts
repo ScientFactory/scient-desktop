@@ -36,6 +36,13 @@ const fixture = Effect.fnUntraced(function* () {
   const instanceId = ProviderInstanceId.make("native-lifecycle-instance");
   let sessionRoot = "";
   let launchPrivateFiles: string[] = [];
+  let releaseReceipt = Promise.withResolvers<void>();
+  const lockWatchers = new Set<NodeFS.FSWatcher>();
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const watcher of lockWatchers) watcher.close();
+    }),
+  );
   const open = (
     makeProcess: Parameters<typeof nativeOmpSession>[0]["makeProcess"],
     id = threadId,
@@ -57,13 +64,27 @@ const fixture = Effect.fnUntraced(function* () {
         launchPrivateFiles = NodeFS.readdirSync(sessionRoot)
           .filter((name) => name.startsWith("scient-extension-"))
           .map((name) => NodePath.join(sessionRoot, name));
+        const receipt = Promise.withResolvers<void>();
+        releaseReceipt = receipt;
+        const sessionLock = NodePath.join(sessionRoot, ".session.lock");
+        // Register while this generation still owns its lock, before process loss.
+        const watcher = NodeFS.watch(sessionRoot, () => {
+          // Directory events may coalesce; the owned lock's absence is the receipt.
+          if (NodeFS.existsSync(sessionLock)) return;
+          watcher.close();
+          lockWatchers.delete(watcher);
+          receipt.resolve();
+        });
+        watcher.on("error", receipt.reject);
+        lockWatchers.add(watcher);
         return makeProcess(options);
       },
     });
   const lock = () => NodePath.join(sessionRoot, ".session.lock");
-  const released = Effect.gen(function* () {
-    while (NodeFS.existsSync(lock())) yield* Effect.sleep("5 millis");
-  }).pipe(Effect.timeout("2 seconds"));
+  const released = Effect.promise(() => releaseReceipt.promise).pipe(
+    Effect.tap(() => Effect.sync(() => expect(NodeFS.existsSync(lock())).toBe(false))),
+    Effect.timeout("2 seconds"),
+  );
   const privateFiles = () => [...launchPrivateFiles];
   return { root, open, lock, released, privateFiles };
 });

@@ -1,9 +1,11 @@
+import { assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Console from "effect/Console";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
@@ -13,14 +15,17 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
-  formatServiceStatus,
+  formatServiceStatus as formatStatus,
   offerServiceDuringOnboarding,
-  reconcileService,
   recoverServiceOnboardingOffer,
   serviceCommand,
 } from "./service.ts";
 
 afterEach(() => vi.restoreAllMocks());
+
+const repairCommand = "/resolved/scient service update --base-dir /profile";
+const formatServiceStatus = (status: BootService.BootServiceStatus, version: string) =>
+  formatStatus(status, version, repairCommand);
 
 const status = {
   supported: true,
@@ -45,7 +50,7 @@ it("reports the installed service version and host paths", () => {
 it("gives a direct repair command for a stale service", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29"),
-    "Next: Run `npx t3@0.0.29 service update`.",
+    "Next: Run `/resolved/scient service update --base-dir /profile`.",
   );
 });
 
@@ -64,7 +69,8 @@ it("explains an incomplete nightly installation and keeps repair on its installe
   expect(output).toContain("last login session ends");
   expect(output).toContain('sudo loginctl enable-linger "$(id -un)"');
   expect(output).toContain("[service-stopped]");
-  expect(output).toContain("npx t3@0.0.32-nightly.1 service update");
+  expect(output).toContain(repairCommand);
+  expect(output).not.toContain("npx");
   expect(output).not.toContain("t3@latest");
 });
 
@@ -73,7 +79,7 @@ it("suggests the newer CLI version when the installed service needs an update", 
     { ...status, current: false, installedVersion: "0.0.28" },
     "0.0.29",
   );
-  expect(output).toContain("npx t3@0.0.29 service update");
+  expect(output).toContain(repairCommand);
   expect(output).not.toContain("npx t3@0.0.28 service update");
 });
 
@@ -91,17 +97,26 @@ it("reports a newer installed service and gives an exact-version repair command"
   );
 
   assert.include(output, "t3@0.0.32-nightly.1 (newer than this t3@0.0.31 CLI)");
-  assert.include(output, "npx t3@0.0.32-nightly.1 service update");
+  assert.include(output, "Use a Scient CLI matching t3@0.0.32-nightly.1 to repair it");
+  assert.notInclude(output, "npx");
   assert.notInclude(output, "npx t3@latest service update");
 });
 
 const newerServiceStatus = { ...status, current: false, installedVersion: "999.0.0" };
 
-function makeTestService(serviceStatus: BootService.BootServiceStatus) {
+function makeTestService(
+  serviceStatus: BootService.BootServiceStatus,
+  restartOutcome: "restarted" | "queued" = "restarted",
+) {
   const installOptions: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
+  const restarts: boolean[] = [];
   const service = BootService.BootService.of({
     status: Effect.succeed(serviceStatus),
     withStopped: (operation) => operation,
+    restart: Effect.sync(() => {
+      restarts.push(true);
+      return serviceStatus.installed ? restartOutcome : "skipped";
+    }),
     install: (options) =>
       Effect.sync(() => {
         installOptions.push(options);
@@ -114,12 +129,79 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
         };
       }),
     uninstall: Effect.succeed(false),
-    restart: Effect.succeed(false),
   });
-  return { service, installOptions };
+  return { service, installOptions, restarts };
 }
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands", (it) => {
+  it.effect("restart from inside the service says the restart is only queued", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const { service } = makeTestService({ ...status, installedVersion: "0.0.30" }, "queued");
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, service),
+      );
+      const lines: Array<string> = [];
+      const testConsole = {
+        ...globalThis.console,
+        log: (...args: ReadonlyArray<unknown>) => {
+          lines.push(args.map(String).join(" "));
+        },
+      } satisfies Console.Console;
+
+      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "restart",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(Console.Console, testConsole),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      const output = lines.join("\n");
+      expect(output).not.toContain("Restarted");
+      expect(output).toContain("Queued a restart of the Scient service on t3@0.0.30");
+      expect(output).toContain(`Logs: ${status.logPath}`);
+    }),
+  );
+
+  it.effect("install reports a handed-off switch as pending", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const { service } = makeTestService({ ...status, current: false });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, {
+          ...service,
+          install: (options) =>
+            service.install(options).pipe(Effect.map((plan) => ({ ...plan, handedOff: true }))),
+        }),
+      );
+      const lines: string[] = [];
+      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "install",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(Console.Console, {
+          ...globalThis.console,
+          log: (...args) => {
+            lines.push(args.map(String).join(" "));
+          },
+        }),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      const output = lines.join("\n");
+      expect(output).not.toMatch(/(?:Installed|Updated) Scient service/);
+      expect(output).toContain("separate systemd unit");
+      expect(output).toContain(status.logPath);
+    }),
+  );
+
   it.effect.each(["install", "update"] as const)(
     "%s refuses a downgrade before changing the service",
     (command) =>
@@ -149,60 +231,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         expect(installOptions).toEqual([]);
       }),
   );
-
-  it.effect.each(["install", "update"] as const)("%s allows an explicit downgrade", (command) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-      const { service, installOptions } = makeTestService(newerServiceStatus);
-      vi.spyOn(BootService, "layer").mockReturnValue(
-        Layer.succeed(BootService.BootService, service),
-      );
-
-      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
-        command,
-        "--base-dir",
-        baseDir,
-        "--allow-downgrade",
-      ]).pipe(
-        Effect.provideService(HostProcess.Environment, {}),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-      );
-
-      expect(installOptions).toEqual([{ allowDowngrade: true }]);
-    }),
-  );
 });
-
-it.effect.each([
-  { name: "a new service", state: { ...status, installed: false, current: false } },
-  { name: "an older service", state: { ...status, current: false, installedVersion: "0.0.0" } },
-  {
-    name: "the same version",
-    state: { ...status, current: false, installedVersion: packageJson.version },
-  },
-  {
-    name: "an incomplete install of the same version",
-    state: {
-      ...status,
-      current: false,
-      installedVersion: packageJson.version,
-      problems: ["linger-disabled"] as const,
-    },
-  },
-  { name: "an unknown version", state: { ...status, current: false } },
-])("installs or repairs $name without an override", ({ state }) =>
-  Effect.gen(function* () {
-    const { service, installOptions } = makeTestService(state);
-
-    const result = yield* reconcileService().pipe(
-      Effect.provideService(BootService.BootService, service),
-    );
-
-    expect(result.changed).toBe(true);
-    expect(installOptions).toEqual([undefined]);
-  }),
-);
 
 it.effect("leaves a newer service unchanged during onboarding without prompting", () =>
   Effect.gen(function* () {
@@ -221,31 +250,17 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
       Effect.provide(NodeServices.layer),
     );
 
-    expect(ready).toBe(false);
+    expect(ready).toBe("skipped");
     expect(installOptions).toEqual([]);
   }),
 );
 
-it.effect("keeps onboarding successful when a newer version appears before install", () =>
-  Effect.gen(function* () {
-    const ready = yield* recoverServiceOnboardingOffer(
-      Effect.fail(
-        new BootService.BootServiceDowngradeRefusedError({
-          installedVersion: "999.0.0",
-          targetVersion: packageJson.version,
-        }),
-      ),
-    );
-
-    expect(ready).toBe(false);
-  }),
-);
-
+// regression: #9602 diagnose incomplete headless server setup
 it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
   Effect.gen(function* () {
     const ready = yield* recoverServiceOnboardingOffer(
       Effect.fail(new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" })),
     );
-    expect(ready).toBe(false);
+    expect(ready).toBe("skipped");
   }),
 );

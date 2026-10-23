@@ -1,3 +1,4 @@
+import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -5,9 +6,8 @@ import {
   type ProviderConnectionOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   providers: [] as ReadonlyArray<unknown>,
@@ -44,18 +44,18 @@ function waiting(signInRequestId: string): ProviderConnectionOperation {
   };
 }
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   resetProviderSignInForTests();
-});
+}
 
 it("claims and opens a page already waiting when it mounts, with no further snapshot", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const open = vi.fn(async () => undefined);
   resetProviderSignInForTests({ open });
   // This client holds an id whose start reply was lost.
@@ -93,10 +93,12 @@ it("claims and opens a page already waiting when it mounts, with no further snap
     value: { granted: true, authorizationUrl: url },
   });
 
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  flushSync(() => root!.render(<ProviderSignInPageCoordinator />));
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixtureAct(async () => await _fixture.root0!.rerender(<ProviderSignInPageCoordinator />));
 
   await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   expect(open).toHaveBeenCalledWith(url);
@@ -106,3 +108,22 @@ it("claims and opens a page already waiting when it mounts, with no further snap
     input: { instanceId, operationId: "connect-1", signInRequestId: id },
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

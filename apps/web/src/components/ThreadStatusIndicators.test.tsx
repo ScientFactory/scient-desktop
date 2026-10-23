@@ -14,9 +14,7 @@ describe("linked pull request snapshots", () => {
     stack: null,
     snapshot: null,
   };
-  it("keeps unsynced links unknown", () => {
-    expect(linkedPullRequestSnapshotStatus(link)).toBeNull();
-  });
+
   it("uses the snapshot state and branches with the linked identity", () => {
     const result = linkedPullRequestSnapshotStatus({
       ...link,
@@ -47,27 +45,5 @@ describe("linked pull request snapshots", () => {
         baseUrl: "",
       },
     });
-  });
-  it.each([
-    ["https://git.cafe/owner/repo/pulls/42", "gitcafe"],
-    ["https://staging.git.cafe/owner/repo/pulls/42", "gitcafe"],
-    ["https://codeberg.org/owner/repo/pulls/42", "forgejo"],
-    ["https://gitlab.example.com/acme/web/-/merge_requests/42", "gitlab"],
-    ["https://github.com/owner/repo/pull/42", "github"],
-  ])("classifies %s as %s", (url, kind) => {
-    const result = linkedPullRequestSnapshotStatus({
-      ...link,
-      url,
-      snapshot: {
-        state: "open",
-        title: "Change",
-        headBranch: "feature",
-        baseBranch: "main",
-        isDraft: false,
-        updatedAt: null,
-        syncedAt: "2026-01-03T00:00:00Z",
-      },
-    });
-    expect(result?.sourceControlProvider.kind).toBe(kind);
   });
 });

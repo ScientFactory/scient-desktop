@@ -454,21 +454,20 @@ export function makePythonRuntimeAdapter(
     return probe;
   };
 
-  const readProbe = (executable: string) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const cached = cachedProbe(executable, now);
-      if (cached !== null) return cached;
-      const stdout = yield* spawnProbe(executable);
-      return yield* Effect.try({
-        try: () => rememberProbe(executable, parseProbeOutput(stdout), now),
-        catch: (cause) =>
-          runtimeError("verify", `Probe output from ${executable} was malformed.`, cause),
-      });
+  const readProbe = Effect.fn("PythonRuntimeAdapter.readProbe")(function* (executable: string) {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = cachedProbe(executable, now);
+    if (cached !== null) return cached;
+    const stdout = yield* spawnProbe(executable);
+    return yield* Effect.try({
+      try: () => rememberProbe(executable, parseProbeOutput(stdout), now),
+      catch: (cause) =>
+        runtimeError("verify", `Probe output from ${executable} was malformed.`, cause),
     });
+  });
 
-  const discover: ComputeLanguageAdapter["discover"] = (request) =>
-    Effect.gen(function* () {
+  const discover: ComputeLanguageAdapter["discover"] = Effect.fn("PythonRuntimeAdapter.discover")(
+    function* (request) {
       if (request.refresh === true) probeCache.clear();
       const platform = yield* HostProcess.Platform;
       const managedRuntime =
@@ -521,10 +520,11 @@ export function makePythonRuntimeAdapter(
       }
 
       return profiles;
-    });
+    },
+  );
 
-  const verify: ComputeLanguageAdapter["verify"] = (launchRequest) =>
-    Effect.gen(function* () {
+  const verify: ComputeLanguageAdapter["verify"] = Effect.fn("PythonRuntimeAdapter.verify")(
+    function* (launchRequest) {
       // Discovery's unavailable placeholder must not be probed a second time,
       // especially when the managed path failed its ownership/containment check.
       if (launchRequest.profile.languageVersion === "unknown") {
@@ -583,7 +583,8 @@ export function makePythonRuntimeAdapter(
         message: verificationMessage(readiness, missing),
         packages: observedPackages(probe),
       } satisfies ComputeRuntimeVerification;
-    });
+    },
+  );
 
   const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = (request) =>
     Effect.try({
@@ -594,13 +595,14 @@ export function makePythonRuntimeAdapter(
   const normalizeDiagnostic: ComputeLanguageAdapter["normalizeDiagnostic"] = (report, context) =>
     normalizePythonDiagnostic(report, context);
 
-  const fingerprintEnvironment: ComputeLanguageAdapter["fingerprintEnvironment"] = (profile) =>
-    Effect.gen(function* () {
-      const probe = yield* readProbe(profile.executable).pipe(
-        Effect.mapError((cause) => runtimeError("fingerprint", cause.message, cause)),
-      );
-      return computeFingerprint(profile, probe);
-    });
+  const fingerprintEnvironment: ComputeLanguageAdapter["fingerprintEnvironment"] = Effect.fn(
+    "PythonRuntimeAdapter.fingerprintEnvironment",
+  )(function* (profile) {
+    const probe = yield* readProbe(profile.executable).pipe(
+      Effect.mapError((cause) => runtimeError("fingerprint", cause.message, cause)),
+    );
+    return computeFingerprint(profile, probe);
+  });
 
   return {
     languageId: PYTHON_LANGUAGE_ID,

@@ -1,4 +1,6 @@
+import type * as HttpClient from "effect/http/HttpClient";
 import type { ProviderDriverKind } from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
 
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
@@ -12,6 +14,11 @@ export interface ProviderMaintenanceCapabilities {
   readonly latestVersion?: string | null;
   /** Official Homebrew API endpoint used to check the current formula or cask version. */
   readonly homebrewApiUrl?: string;
+  /**
+   * Deferred until update checks are enabled; `null` falls back to
+   * `latestVersion`, then npm.
+   */
+  readonly lookupLatestVersion?: Effect.Effect<string | null, never, HttpClient.HttpClient>;
   readonly compareVersions?: (current: string, latest: string) => number;
   /**
    * The executable T3 Code runs, symlinks followed, when no update command is

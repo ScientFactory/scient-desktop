@@ -33,6 +33,8 @@ function ScientRichFenceFindSource({ source }: { readonly source: string }) {
   const revealRef = findRevealRef(() => setVisible(true));
   return (
     <pre
+      aria-hidden="true"
+      data-markdown-copy=""
       data-scient-rich-fence-find-source
       ref={revealRef}
       hidden={!visible}

@@ -37,49 +37,46 @@ describe("native artwork allocation guard", () => {
   });
 });
 
-it.live(
-  "bounds a successful process whose output stream never closes and releases its owner",
-  () =>
-    Effect.gen(function* () {
-      let canceled = 0;
-      const process = Layer.succeed(
-        ExecutionProcess,
-        ExecutionProcess.of({
-          start: () =>
-            Effect.succeed({
-              exitCode: Effect.succeed(0),
-              output: Stream.never,
-              cancel: Effect.sync(() => {
-                canceled++;
-              }),
+it.live("bounds a successful process whose output stream never closes and releases its owner", () =>
+  Effect.gen(function* () {
+    let canceled = 0;
+    const process = Layer.succeed(
+      ExecutionProcess,
+      ExecutionProcess.of({
+        start: () =>
+          Effect.succeed({
+            exitCode: Effect.succeed(0),
+            output: Stream.never,
+            cancel: Effect.sync(() => {
+              canceled++;
             }),
-        }),
-      );
-      const renderer = makeLatexArtworkRaster.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            process,
-            Layer.succeed(SpawnExecutableResolution, () => "/synthetic/native-tool"),
-            NodeServices.layer,
-          ),
-        ),
-      );
-      const result = yield* renderer.pipe(
-        Effect.flatMap((render) =>
-          render({
-            pdfPath: "/synthetic/picture.pdf",
-            pngPrefix: "/synthetic/pixels",
-            cwd: "/synthetic",
-            environment: {},
-            ratio: 2,
-            onRetirementFailure: Effect.die("The fixture process must prove retirement."),
           }),
+      }),
+    );
+    const renderer = makeLatexArtworkRaster.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          process,
+          Layer.succeed(SpawnExecutableResolution, () => "/synthetic/native-tool"),
+          NodeServices.layer,
         ),
-        Effect.timeoutOption("4 seconds"),
-      );
-      expect(Option.isSome(result)).toBe(true);
-      expect(Option.getOrThrow(result)).toBeNull();
-      expect(canceled).toBe(1);
-    }),
-  10_000,
+      ),
+    );
+    const result = yield* renderer.pipe(
+      Effect.flatMap((render) =>
+        render({
+          pdfPath: "/synthetic/picture.pdf",
+          pngPrefix: "/synthetic/pixels",
+          cwd: "/synthetic",
+          environment: {},
+          ratio: 2,
+          onRetirementFailure: Effect.die("The fixture process must prove retirement."),
+        }),
+      ),
+      Effect.timeoutOption("4 seconds"),
+    );
+    expect(Option.isSome(result)).toBe(true);
+    expect(Option.getOrThrow(result)).toBeNull();
+    expect(canceled).toBe(1);
+  }),
 );

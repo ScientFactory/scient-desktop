@@ -289,7 +289,7 @@ describe("createMarkdownSourceLedger", () => {
       }
       expect(previousEnd).toBe(source.length);
     }
-  }, 30_000);
+  });
 });
 
 describe("applyMarkdownSourcePatches", () => {

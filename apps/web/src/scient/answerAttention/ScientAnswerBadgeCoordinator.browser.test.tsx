@@ -3,12 +3,13 @@ import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render, stubGlobal } from "../../../test/render";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { makeThreadFixture } from "../../test-fixtures";
+import { useUiStateStore } from "../../uiStateStore";
 
 // Stands in for the catalog and shell atoms, which re-render their readers on change.
 const shells = vi.hoisted(() => {
@@ -103,44 +104,47 @@ function SettingsSwitch() {
     />
   );
 }
-let container: HTMLDivElement;
-let root: Root;
-const render = () =>
-  act(async () =>
-    root.render(
-      <>
-        <ScientAnswerBadgeCoordinator />
-        <SettingsSwitch />
-      </>,
-    ),
+function renderBadge() {
+  // The coordinator observes shell state without navigating.
+  return render(
+    <>
+      <ScientAnswerBadgeCoordinator />
+      <SettingsSwitch />
+    </>,
+    { router: false },
   );
-const update = (patch: Parameters<typeof shells.set>[0]) => act(async () => shells.set(patch));
+}
+const update = (patch: Parameters<typeof shells.set>[0]) => act(() => shells.set(patch));
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
+  const stack = new DisposableStack();
+  const previousEnabled = localStorage.getItem(APP_BADGE_ENABLED_KEY);
+  const previousVisits = useUiStateStore.getState().threadLastVisitedAtById;
+  stack.defer(() => {
+    if (previousEnabled === null) localStorage.removeItem(APP_BADGE_ENABLED_KEY);
+    else localStorage.setItem(APP_BADGE_ENABLED_KEY, previousEnabled);
+    useUiStateStore.setState({ threadLastVisitedAtById: previousVisits });
+  });
   localStorage.removeItem(APP_BADGE_ENABLED_KEY);
+  useUiStateStore.setState({ threadLastVisitedAtById: {} });
   shells.set({ catalog: complete, bootstrapped: true, threads: [thread("one"), thread("two")] });
   platform = "darwin";
   localEnvironment.disabled = false;
   setBadge.mockClear();
-  Object.assign(window, {
-    desktopBridge: { getClientPlatform: () => platform, setUnreadAnswerBadge: setBadge },
-  });
-  container = document.createElement("div");
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  delete window.desktopBridge;
-  localStorage.removeItem(APP_BADGE_ENABLED_KEY);
-  vi.unstubAllGlobals();
-});
+  stack.use(
+    stubGlobal("desktopBridge", {
+      getClientPlatform: () => platform,
+      setUnreadAnswerBadge: setBadge,
+    }),
+  );
+  return stack;
+}
 
 it("keeps the badge until every environment is known and loaded, then follows reading", async () => {
+  using _fixture = setup();
   // A saved catalog can arrive before discovery adds this machine's environment.
   shells.set({ catalog: { isReady: true, entries: new Map() } });
-  await render();
+  await using _screen = await renderBadge();
   await update({ catalog: complete, bootstrapped: false });
   expect(setBadge).not.toHaveBeenCalled();
   await update({ bootstrapped: true });
@@ -155,6 +159,7 @@ it("keeps the badge until every environment is known and loaded, then follows re
 });
 
 it("clears the badge when the last remote environment goes, with this machine's turned off", async () => {
+  using _fixture = setup();
   localEnvironment.disabled = true;
   const remote = EnvironmentId.make("remote");
   const entry = { enabled: true, target: { _tag: "SavedConnectionTarget" } };
@@ -162,13 +167,14 @@ it("clears the badge when the last remote environment goes, with this machine's 
     catalog: { isReady: true, entries: new Map([[remote, entry]]) },
     threads: [thread("one", {}, remote), thread("two", {}, remote)],
   });
-  await render();
+  await using _screen = await renderBadge();
   expect(setBadge).toHaveBeenLastCalledWith({ count: 2, image: null });
   await update({ catalog: { isReady: true, entries: new Map() }, threads: [] });
   expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
 });
 
 it("ends snoozes in UTC, whatever the machine's time zone", async () => {
+  using _fixture = setup();
   // Only a run outside UTC can tell the two readings of the clock apart.
   shells.set({
     threads: [
@@ -176,13 +182,14 @@ it("ends snoozes in UTC, whatever the machine's time zone", async () => {
       thread("snoozed", { snoozedUntil: DateTime.makeUnsafe("2026-10-22T12:30:00.000Z") }),
     ],
   });
-  await render();
+  await using _screen = await renderBadge();
   expect(setBadge).toHaveBeenLastCalledWith({ count: 1, image: null });
 });
 
 it("draws the Windows taskbar overlay, and clears it with the count", async () => {
+  using _fixture = setup();
   platform = "win32";
-  await render();
+  await using _screen = await renderBadge();
   expect(setBadge.mock.lastCall?.[0]).toEqual({
     count: 2,
     image: expect.stringMatching(/^data:image\/png;base64,/),
@@ -192,8 +199,9 @@ it("draws the Windows taskbar overlay, and clears it with the count", async () =
 });
 
 it("follows the Settings switch", async () => {
-  await render();
-  const toggle = () => act(async () => container.querySelector("input")!.click());
+  using _fixture = setup();
+  await using screen = await renderBadge();
+  const toggle = () => act(() => screen.container.querySelector("input")!.click());
   await toggle();
   expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
   await toggle();
@@ -201,7 +209,8 @@ it("follows the Settings switch", async () => {
 });
 
 it("does nothing without the desktop bridge", async () => {
-  delete window.desktopBridge;
-  await render();
+  using _fixture = setup();
+  using _bridge = stubGlobal("desktopBridge", undefined);
+  await using _screen = await renderBadge();
   expect(setBadge).not.toHaveBeenCalled();
 });

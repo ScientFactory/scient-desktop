@@ -221,16 +221,15 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   const cleanupActive = (active: ActiveConnection, mode: ActiveConnectionCleanupMode) =>
     settleActive(active, mode, Effect.void);
 
-  const cleanupIfCurrent = (
+  const cleanupIfCurrent = Effect.fn("ProviderConnectionManager.cleanupIfCurrent")(function* (
     instanceId: ProviderInstanceId,
     operationId: string,
     mode: ActiveConnectionCleanupMode,
-  ) =>
-    Effect.gen(function* () {
-      const active = yield* takeIfCurrent(instanceId, operationId);
-      if (active) yield* cleanupActive(active, mode);
-      return active;
-    });
+  ) {
+    const active = yield* takeIfCurrent(instanceId, operationId);
+    if (active) yield* cleanupActive(active, mode);
+    return active;
+  });
 
   const cleanupAll = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, new Map());

@@ -22,7 +22,7 @@ export type QueueUsageLimitProjection = Pick<
   Projection,
   "runs" | "turnItems" | "providerSessions"
 > & {
-  readonly thread: Pick<Projection["thread"], "providerInstanceId">;
+  readonly thread: Pick<Projection["thread"], "providerInstanceId" | "modelSelection">;
 };
 
 export type QueuedRunProjection = Pick<Projection, "runs" | "messages">;
@@ -44,10 +44,13 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
  * True while the subscription limit stopped the thread. Resuming the queue
  * would only send the waiting messages into the same limit.
  */
-export function isQueueUsageLimited(projection: QueueUsageLimitProjection): boolean {
+function isQueueUsageLimited(
+  projection: QueueUsageLimitProjection,
+  providerInstanceId = projection.thread.providerInstanceId,
+): boolean {
   let latestSession: Projection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
-    if (session.providerInstanceId !== projection.thread.providerInstanceId) continue;
+    if (session.providerInstanceId !== providerInstanceId) continue;
     if (
       latestSession === undefined ||
       DateTime.toEpochMillis(session.updatedAt) > DateTime.toEpochMillis(latestSession.updatedAt)
@@ -55,11 +58,8 @@ export function isQueueUsageLimited(projection: QueueUsageLimitProjection): bool
       latestSession = session;
   }
   return (
-    usageLimitBlockedRun(
-      projection.runs,
-      projection.turnItems,
-      latestSession?.lastError ?? null,
-    ) !== null
+    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
+      ?.providerInstanceId === providerInstanceId
   );
 }
 
@@ -105,6 +105,25 @@ export function canSendQueuedRun(
   runId: RunId,
   options?: { readonly usageLimited?: boolean },
 ): boolean {
-  const usageLimited = options?.usageLimited ?? isQueueUsageLimited(projection);
-  return !usageLimited && queuedRunSendRefusal(projection, runId) === null;
+  if (queuedRunSendRefusal(projection, runId) !== null) return false;
+  const automaticMessageIds = new Set(
+    projection.messages
+      .filter((message) => message.delegatedCompletion !== undefined)
+      .map((message) => message.id),
+  );
+  const firstAutomatic = projection.runs
+    .filter((run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId))
+    .sort(
+      (left, right) =>
+        (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
+        left.ordinal - right.ordinal,
+    )[0];
+  const head = firstAutomatic ?? projection.runs.find((run) => run.id === runId);
+  const message = projection.messages.find((candidate) => candidate.id === head?.userMessageId);
+  // Send cannot select a notification. An automatic completion may follow the current monitor.
+  const providerInstanceId =
+    message?.notification?.source.kind === "monitor"
+      ? projection.thread.modelSelection.instanceId
+      : (head?.modelSelection.instanceId ?? projection.thread.providerInstanceId);
+  return options?.usageLimited === false || !isQueueUsageLimited(projection, providerInstanceId);
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { ScientPdfRuntime } from "../pdfRuntime";
 import { readPdfTextSelection } from "./pdfTextLayer";
@@ -28,13 +28,24 @@ function pages(
       pdfPage: { view: [0, 0, 612, 792], rotate: 0, userUnit: 1 },
     };
   });
-  document.body.append(viewer);
+  const container = document.createElement("div");
+  container.append(viewer);
+  document.body.append(container);
   const runtime = {
     viewer: { viewer, getPageView: (index: number) => views[index] },
   } as unknown as ScientPdfRuntime;
   const text = (page: number, line: number) =>
     viewer.querySelectorAll(".page")[page - 1]!.querySelectorAll("span")[line]!.firstChild as Text;
-  return { viewer, runtime, text };
+  return {
+    container,
+    viewer,
+    runtime,
+    text,
+    [Symbol.dispose]() {
+      document.getSelection()?.removeAllRanges();
+      container.remove();
+    },
+  };
 }
 
 function select(start: Text, startOffset: number, end: Text, endOffset: number) {
@@ -48,17 +59,9 @@ function select(start: Text, startOffset: number, end: Text, endOffset: number) 
 }
 
 describe("reading a PDF selection", () => {
-  afterEach(() => {
-    document.getSelection()?.removeAllRanges();
-    document.body.replaceChildren();
-  });
-
   it("maps a selection across pages to per-page offsets in the text-layer profile", () => {
-    const { runtime, text } = pages([
-      ["alpha one", "alpha two"],
-      ["beta one"],
-      ["gamma one", "gamma two"],
-    ]);
+    using fixture = pages([["alpha one", "alpha two"], ["beta one"], ["gamma one", "gamma two"]]);
+    const { runtime, text } = fixture;
     const read = readPdfTextSelection(runtime, select(text(1, 1), 6, text(3, 0), 5));
     expect(read._tag).toBe("Ready");
     if (read._tag !== "Ready") return;
@@ -76,12 +79,13 @@ describe("reading a PDF selection", () => {
   });
 
   it("allows four pages when a fifth holds only the selection's end", () => {
-    const { runtime, text } = pages([["p1"], ["p2"], ["p3"], ["p4"], ["p5"]]);
+    using fixture = pages([["p1"], ["p2"], ["p3"], ["p4"], ["p5"]]);
+    const { runtime, text } = fixture;
     const read = readPdfTextSelection(runtime, select(text(1, 0), 0, text(5, 0), 0));
     expect(read._tag).toBe("Ready");
     if (read._tag === "Ready") expect(read.pages.map((page) => page.page)).toEqual([1, 2, 3, 4]);
     // Both ends on boundary-only pages: pages 2–5 hold the text.
-    const both = pages([["p1"], ["p2"], ["p3"], ["p4"], ["p5"], ["p6"]]);
+    using both = pages([["p1"], ["p2"], ["p3"], ["p4"], ["p5"], ["p6"]]);
     const spanning = readPdfTextSelection(
       both.runtime,
       select(both.text(1, 0), 2, both.text(6, 0), 0),
@@ -97,14 +101,15 @@ describe("reading a PDF selection", () => {
   });
 
   it("refuses diagonal text and ignores selections outside the viewer", () => {
-    const { runtime, text } = pages([["slanted words"]], () => "30");
+    using fixture = pages([["slanted words"]], () => "30");
+    const { runtime, text } = fixture;
     expect(readPdfTextSelection(runtime, select(text(1, 0), 0, text(1, 0), 7))).toEqual({
       _tag: "Refused",
       reason: "unsupported-text-angle",
     });
     const outside = document.createElement("p");
     outside.textContent = "chat text";
-    document.body.append(outside);
+    fixture.container.append(outside);
     const node = outside.firstChild as Text;
     expect(readPdfTextSelection(runtime, select(node, 0, node, 4))).toEqual({ _tag: "Empty" });
   });

@@ -39,20 +39,21 @@ const jsonError = (
     { status, headers: { "cache-control": "no-store", ...headers } },
   );
 
-const readBoundedBody = (request: HttpServerRequest.HttpServerRequest) =>
-  Effect.gen(function* () {
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    yield* request.stream.pipe(
-      Stream.runForEach((chunk) => {
-        total += chunk.byteLength;
-        if (total > CONNECTOR_MAX_REQUEST_BYTES) return Effect.fail(new RequestTooLarge());
-        chunks.push(chunk);
-        return Effect.void;
-      }),
-    );
-    return Buffer.concat(chunks);
-  });
+const readBoundedBody = Effect.fn("ConnectorProxyRoute.readBoundedBody")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  yield* request.stream.pipe(
+    Stream.runForEach((chunk) => {
+      total += chunk.byteLength;
+      if (total > CONNECTOR_MAX_REQUEST_BYTES) return Effect.fail(new RequestTooLarge());
+      chunks.push(chunk);
+      return Effect.void;
+    }),
+  );
+  return Buffer.concat(chunks);
+});
 
 const handler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;

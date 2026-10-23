@@ -3,12 +3,12 @@ import * as Semaphore from "effect/Semaphore";
 import type { OmpRpcProcess, OmpProcessExit } from "../../provider/omp/OmpRpcProcess.ts";
 
 /** Reuse only confirmed exits; an uncertain process keeps its conversation lock. */
-export const makeOmpProcessOwnership = <E>(input: {
-  readonly shutdown: () => OmpRpcProcess["shutdown"];
-  readonly releaseLock: () => Effect.Effect<void>;
-  readonly unconfirmed: () => Effect.Effect<void, E>;
-}) =>
-  Effect.gen(function* () {
+export const makeOmpProcessOwnership = Effect.fn("OmpProcessOwnership.makeOmpProcessOwnership")(
+  function* <E>(input: {
+    readonly shutdown: () => OmpRpcProcess["shutdown"];
+    readonly releaseLock: () => Effect.Effect<void>;
+    readonly unconfirmed: () => Effect.Effect<void, E>;
+  }) {
     let confirmedExit: OmpProcessExit | undefined;
     const permit = yield* Semaphore.make(1);
     const shutdown = permit.withPermit(
@@ -30,4 +30,5 @@ export const makeOmpProcessOwnership = <E>(input: {
       yield* input.releaseLock();
     });
     return { shutdown, stop };
-  });
+  },
+);

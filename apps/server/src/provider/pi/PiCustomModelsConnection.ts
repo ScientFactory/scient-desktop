@@ -171,39 +171,41 @@ export const makePiCustomModelsConnectionFactory = Effect.fn("PiCustomModelsConn
         const connection = yield* Deferred.await(opened);
         return {
           ...connection,
-          request: (record: PiRpcRecord, timeoutMs?: number) =>
-            Effect.gen(function* () {
-              const client = yield* Deferred.await(ready);
-              switch (record.type) {
-                case "set_model": {
-                  const provider = piRecordString(record, "provider");
-                  const modelId = piRecordString(record, "modelId");
-                  if (provider === undefined || modelId === undefined)
-                    return yield* new PiRpcProtocolError({ detail: "Invalid Pi model selection." });
-                  return yield* client.setModel(provider, modelId);
-                }
-                case "get_available_models":
-                  return yield* client.getAvailableModels();
-                case "get_available_thinking_levels":
-                  return yield* client.getThinkingLevels();
-                case "get_commands":
-                  return yield* client.getCommands();
-                case "get_state": {
-                  // Settlement probes keep their short timeout and retain metadata.
-                  const state = yield* connection
-                    .request(record, timeoutMs)
-                    .pipe(Effect.flatMap(decodeState));
-                  return {
-                    ...state,
-                    ...(state.model === undefined
-                      ? {}
-                      : { model: client.annotateModel(state.model) }),
-                  };
-                }
-                default:
-                  return yield* connection.request(record, timeoutMs);
+          request: Effect.fn("PiCustomModelsConnection.request")(function* (
+            record: PiRpcRecord,
+            timeoutMs?: number,
+          ) {
+            const client = yield* Deferred.await(ready);
+            switch (record.type) {
+              case "set_model": {
+                const provider = piRecordString(record, "provider");
+                const modelId = piRecordString(record, "modelId");
+                if (provider === undefined || modelId === undefined)
+                  return yield* new PiRpcProtocolError({ detail: "Invalid Pi model selection." });
+                return yield* client.setModel(provider, modelId);
               }
-            }).pipe(Effect.mapError(connectionError)),
+              case "get_available_models":
+                return yield* client.getAvailableModels();
+              case "get_available_thinking_levels":
+                return yield* client.getThinkingLevels();
+              case "get_commands":
+                return yield* client.getCommands();
+              case "get_state": {
+                // Settlement probes keep their short timeout and retain metadata.
+                const state = yield* connection
+                  .request(record, timeoutMs)
+                  .pipe(Effect.flatMap(decodeState));
+                return {
+                  ...state,
+                  ...(state.model === undefined
+                    ? {}
+                    : { model: client.annotateModel(state.model) }),
+                };
+              }
+              default:
+                return yield* connection.request(record, timeoutMs);
+            }
+          }, Effect.mapError(connectionError)),
           send: (record: PiRpcRecord) =>
             (record.type === "prompt" || record.type === "compact"
               ? Deferred.await(ready).pipe(

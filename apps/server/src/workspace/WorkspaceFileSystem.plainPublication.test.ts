@@ -2,7 +2,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
@@ -408,19 +407,21 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await NodeFSP.mkdir(b);
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: a }));
         const parentQueued = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: a, expectedEpoch: epoch }, () =>
             Effect.gen(function* () {
+              held.resolve();
               yield* Effect.promise(() => parentQueued.promise);
               yield* h.methods.writeFile({ cwd: b, relativePath: "x.tex", contents: "B" });
             }),
           ),
         );
-        await NodeTimersPromises.setTimeout(20);
+        await held.promise;
         const parentSave = h.run(
           h.methods.writeFile({ cwd: parent, relativePath: "p.tex", contents: "P" }),
         );
-        await NodeTimersPromises.setTimeout(20);
+        await h.publication.waiting(parent);
         parentQueued.resolve();
         await fence;
         await parentSave;
@@ -435,11 +436,16 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await NodeFSP.mkdir(other);
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         const gate = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            Effect.promise(() => gate.promise),
+            Effect.promise(() => {
+              held.resolve();
+              return gate.promise;
+            }),
           ),
         );
+        await held.promise;
         // The first save holds its id while it waits behind the fence.
         const waiting = h.run(
           h.methods.writeFile({
@@ -449,7 +455,7 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
             mutationId: "shared",
           }),
         );
-        await NodeTimersPromises.setTimeout(20);
+        await h.publication.waiting(h.cwd);
         await expect(
           h.run(
             h.methods.writeFile({
@@ -476,11 +482,16 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await NodeFSP.mkdir(other);
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         const gate = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            Effect.promise(() => gate.promise),
+            Effect.promise(() => {
+              held.resolve();
+              return gate.promise;
+            }),
           ),
         );
+        await held.promise;
         const save = h.methods.writeFile({
           cwd: h.cwd,
           relativePath: "a.tex",
@@ -493,7 +504,7 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         const cancelling = h.run(
           Effect.gen(function* () {
             const original = yield* Effect.forkChild(save);
-            yield* Effect.sleep("20 millis");
+            yield* Effect.promise(() => h.publication.waiting(h.cwd));
             originalWaiting.resolve();
             yield* Effect.promise(() => cancelNow.promise);
             yield* Fiber.interrupt(original);
@@ -501,7 +512,7 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         );
         await originalWaiting.promise;
         const retry = h.run(save);
-        await NodeTimersPromises.setTimeout(20);
+        await h.publication.waiting(h.cwd);
         cancelNow.resolve();
         await cancelling;
         await expect(
@@ -525,11 +536,16 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         const gate = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            Effect.promise(() => gate.promise),
+            Effect.promise(() => {
+              held.resolve();
+              return gate.promise;
+            }),
           ),
         );
+        await held.promise;
         let settled = false,
           epochRead = false;
         const read = h.settledRead("main.tex").then((value) => {
@@ -540,7 +556,8 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
           epochRead = true;
           return value;
         });
-        await NodeTimersPromises.setTimeout(50);
+        await h.publication.waiting(h.cwd);
+        await h.publication.waiting(h.cwd);
         expect([settled, epochRead]).toEqual([false, false]);
         gate.resolve();
         await fence;
@@ -555,11 +572,16 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await NodeFSP.writeFile(target, "A");
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         const gate = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            Effect.promise(() => gate.promise),
+            Effect.promise(() => {
+              held.resolve();
+              return gate.promise;
+            }),
           ),
         );
+        await held.promise;
         // Queue a save behind the held fence, then cancel it before it gets the lock.
         const cancelled = h.run(
           Effect.gen(function* () {
@@ -571,14 +593,13 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
                 expectedRevision: revision("A"),
               }),
             );
-            yield* Effect.sleep("50 millis");
+            yield* Effect.promise(() => h.publication.waiting(h.cwd));
             yield* Fiber.interrupt(save);
           }),
         );
-        await NodeTimersPromises.setTimeout(150);
+        await cancelled;
         gate.resolve();
         await fence;
-        await cancelled;
         expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
       }),
     );
@@ -612,6 +633,23 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         expect(
           await h.run(h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" })),
         ).toMatchObject({ versions: [], attention: null });
+      }),
+    );
+
+    it.live("publishes when passive observation has already closed", () =>
+      plain(async (h) => {
+        await h.publication.close();
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+        const saved = await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents: "B",
+            expectedRevision: revision("A"),
+          }),
+        );
+        expect(saved).toMatchObject({ revision: revision("B") });
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("B");
       }),
     );
   },
@@ -666,21 +704,24 @@ describe("plain creation beside native replacement", () => {
         const other = NodePath.join(h.root, "other");
         await NodeFSP.mkdir(other);
         await NodeFSP.writeFile(NodePath.join(h.cwd, "a.tex"), "A");
-        const hold = (cwd: string, gate: Promise<void>) =>
-          h
-            .run(h.methods.getMutationEpoch({ cwd }))
-            .then((expectedEpoch) =>
-              h.run(
-                h.methods.withWorkspacePublicationFence({ cwd, expectedEpoch }, () =>
-                  Effect.promise(() => gate),
-                ),
+        const hold = (cwd: string, gate: Promise<void>, entered: () => void) =>
+          h.run(h.methods.getMutationEpoch({ cwd })).then((expectedEpoch) =>
+            h.run(
+              h.methods.withWorkspacePublicationFence({ cwd, expectedEpoch }, () =>
+                Effect.promise(() => {
+                  entered();
+                  return gate;
+                }),
               ),
-            );
+            ),
+          );
         const gateA = Promise.withResolvers<void>(),
           gateB = Promise.withResolvers<void>();
-        const fenceA = hold(h.cwd, gateA.promise),
-          fenceB = hold(other, gateB.promise);
-        await NodeTimersPromises.setTimeout(50);
+        const heldA = Promise.withResolvers<void>(),
+          heldB = Promise.withResolvers<void>();
+        const fenceA = hold(h.cwd, gateA.promise, heldA.resolve),
+          fenceB = hold(other, gateB.promise, heldB.resolve);
+        await Promise.all([heldA.promise, heldB.promise]);
         // The native replacement holds its id while it waits behind the first fence.
         const replaced = h.run(
           h.methods.writeFile({
@@ -691,7 +732,7 @@ describe("plain creation beside native replacement", () => {
             mutationId: "shared",
           }),
         );
-        await NodeTimersPromises.setTimeout(50);
+        await h.publication.claimed("shared");
         await expect(
           h.run(
             h.methods.createBinaryFile({
@@ -724,11 +765,16 @@ describe("plain creation beside native replacement", () => {
         await NodeFSP.writeFile(NodePath.join(other, "b.tex"), "B");
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         const gate = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<void>();
         const fence = h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            Effect.promise(() => gate.promise),
+            Effect.promise(() => {
+              held.resolve();
+              return gate.promise;
+            }),
           ),
         );
+        await held.promise;
         // Creation is plain on this volume and waits behind the fence, holding its id.
         const created = h.run(
           h.methods.createBinaryFile({
@@ -738,7 +784,7 @@ describe("plain creation beside native replacement", () => {
             mutationId: "shared",
           }),
         );
-        await NodeTimersPromises.setTimeout(50);
+        await h.publication.claimed("shared");
         await expect(
           h.run(
             h.methods.writeFile({

@@ -16,6 +16,7 @@ import {
   checkpointRefForScopeOrdinal,
   isWorkspaceBoundRootScopeId,
 } from "../orchestration-v2/CheckpointService.ts";
+import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -30,6 +31,7 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
+const DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
 
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
   const batches: string[][] = [];
@@ -164,6 +166,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // SCIENT-FORK:START — baselines and adjacent parents never cross workspace roots.
       const workspaceRoots = projection.checkpointScopes.filter(
         (scope) => scope.kind === "root_run" && scope.cwd === toScope.cwd,
       );
@@ -202,9 +205,19 @@ export const make = Effect.gen(function* () {
             a.ordinalWithinScope - b.ordinalWithinScope || a.scopeId.localeCompare(b.scopeId),
         )[0]?.ref;
       } else {
-        const fromCheckpoint = readyCheckpoints.find(
-          (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-        );
+        // Capture's parent can belong to a stopped run or be a runless boundary.
+        const parentCheckpoint =
+          input.fromTurnCount === input.toTurnCount - 1
+            ? projection.checkpoints.find(
+                (checkpoint) =>
+                  checkpoint.status === "ready" &&
+                  checkpoint.scopeId === toCheckpoint.scopeId &&
+                  checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1,
+              )
+            : undefined;
+        const fromCheckpoint =
+          parentCheckpoint ??
+          readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
         const fromScope = projection.checkpointScopes.find(
           (scope) => scope.id === fromCheckpoint?.scopeId,
         );
@@ -234,6 +247,8 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // SCIENT-FORK:END
+
       const comparison = {
         cwd: toScope.cwd,
         fromCheckpointRef,
@@ -253,19 +268,36 @@ export const make = Effect.gen(function* () {
             );
       const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
       // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
-      const diff =
-        retainedFiles.length === files.length
-          ? yield* checkpointStore
-              .diffCheckpoints(comparison)
-              .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
-          : (yield* Effect.forEach(
-              batchFilePaths(retainedFiles),
-              (filePaths) =>
-                checkpointStore
-                  .diffCheckpoints({ ...comparison, filePaths })
-                  .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
-              { concurrency: 4 },
-            )).join("");
+      const pathBatches =
+        retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
+      let diff = "";
+      let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
+      for (const filePaths of pathBatches) {
+        const patch = yield* checkpointStore
+          .diffCheckpoints({
+            ...comparison,
+            ...(filePaths === undefined ? {} : { filePaths }),
+            // One extra byte distinguishes an exact fit from a truncated patch.
+            maxOutputBytes: remainingBytes + 1,
+          })
+          .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+        const patchBytes = Buffer.byteLength(patch);
+        diff += patch;
+        if (patchBytes > remainingBytes) {
+          // Reserve marker space only on overflow, which may trim an earlier batch.
+          // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
+          diff =
+            new TextDecoder().decode(
+              Buffer.from(diff).subarray(
+                0,
+                CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
+              ),
+              { stream: true },
+            ) + DIFF_TRUNCATED_MARKER;
+          break;
+        }
+        remainingBytes -= patchBytes;
+      }
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

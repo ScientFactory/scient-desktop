@@ -84,78 +84,77 @@ export function makeAntigravityConnectionActionsFromController(input: {
   return {
     methods: [antigravityConnectionMethod(input.authMethod)],
     startingMessage: ANTIGRAVITY_STARTING_MESSAGE,
-    start: (method) =>
-      Effect.gen(function* () {
-        if (method !== antigravityConnectionMethod(input.authMethod)) {
-          return yield* failure(
-            "The selected connection method does not match this Antigravity account.",
-          );
-        }
-        const owner = `scient-provider-lifecycle-${yield* input.randomOwnerId.pipe(
-          Effect.mapError((cause) => failure("Could not start Antigravity sign-in.", cause)),
-        )}`;
-        const started = yield* Effect.acquireRelease(
-          input.controller.start(owner, input.stopSessions).pipe(Effect.mapError(mapSetupError)),
-          (state) =>
-            state.flowId
-              ? input.controller.cancel(owner, state.flowId).pipe(Effect.ignore)
-              : Effect.void,
+    start: Effect.fn("AntigravityAcpLifecycleActions.start")(function* (method) {
+      if (method !== antigravityConnectionMethod(input.authMethod)) {
+        return yield* failure(
+          "The selected connection method does not match this Antigravity account.",
         );
-        const initial =
-          started.phase === "starting"
-            ? yield* input.controller.subscribe(owner).pipe(
-                Stream.filter((state) => state.phase !== "starting"),
-                Stream.runHead,
-                Effect.flatMap(
-                  Option.match({
-                    onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
-                    onSome: Effect.succeed,
-                  }),
-                ),
-              )
-            : started;
-        if (isTerminalAuthPhase(initial.phase) && initial.phase !== "succeeded") {
-          return yield* authFailure(initial);
-        }
-        const flowId = initial.flowId ?? started.flowId;
-        if (!flowId) {
-          return yield* failure("Antigravity did not provide a sign-in operation identifier.");
-        }
-        const waitForCompletion = input.controller.subscribe(owner).pipe(
-          Stream.filter((state) => state.flowId === flowId && isTerminalAuthPhase(state.phase)),
-          Stream.runHead,
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
-              onSome: (state) =>
-                state.phase === "succeeded" ? Effect.void : Effect.fail(authFailure(state)),
-            }),
-          ),
-        );
-        return {
-          ...(initial.authorizationUrl
-            ? {
-                authorizationUrl: initial.authorizationUrl,
-                authorizationUrlKind: "primary" as const,
-              }
-            : {}),
-          initialStatus:
-            initial.phase === "waiting" ? ("waiting_for_browser" as const) : ("verifying" as const),
-          ...(initial.phase === "waiting" && antigravityAuthUsesBrowser(input.authMethod)
-            ? {
-                authorizationResponseKind: "callback_url" as const,
-                submitAuthorizationCode: (callbackUrl: string) =>
-                  input.controller
-                    .complete(owner, { flowId, callbackUrl })
-                    .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
-              }
-            : {}),
-          waitForCompletion,
-          cancel: input.controller
-            .cancel(owner, flowId)
-            .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
-        };
-      }),
+      }
+      const owner = `scient-provider-lifecycle-${yield* input.randomOwnerId.pipe(
+        Effect.mapError((cause) => failure("Could not start Antigravity sign-in.", cause)),
+      )}`;
+      const started = yield* Effect.acquireRelease(
+        input.controller.start(owner, input.stopSessions).pipe(Effect.mapError(mapSetupError)),
+        (state) =>
+          state.flowId
+            ? input.controller.cancel(owner, state.flowId).pipe(Effect.ignore)
+            : Effect.void,
+      );
+      const initial =
+        started.phase === "starting"
+          ? yield* input.controller.subscribe(owner).pipe(
+              Stream.filter((state) => state.phase !== "starting"),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            )
+          : started;
+      if (isTerminalAuthPhase(initial.phase) && initial.phase !== "succeeded") {
+        return yield* authFailure(initial);
+      }
+      const flowId = initial.flowId ?? started.flowId;
+      if (!flowId) {
+        return yield* failure("Antigravity did not provide a sign-in operation identifier.");
+      }
+      const waitForCompletion = input.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.flowId === flowId && isTerminalAuthPhase(state.phase)),
+        Stream.runHead,
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(failure("Antigravity sign-in stopped unexpectedly.")),
+            onSome: (state) =>
+              state.phase === "succeeded" ? Effect.void : Effect.fail(authFailure(state)),
+          }),
+        ),
+      );
+      return {
+        ...(initial.authorizationUrl
+          ? {
+              authorizationUrl: initial.authorizationUrl,
+              authorizationUrlKind: "primary" as const,
+            }
+          : {}),
+        initialStatus:
+          initial.phase === "waiting" ? ("waiting_for_browser" as const) : ("verifying" as const),
+        ...(initial.phase === "waiting" && antigravityAuthUsesBrowser(input.authMethod)
+          ? {
+              authorizationResponseKind: "callback_url" as const,
+              submitAuthorizationCode: (callbackUrl: string) =>
+                input.controller
+                  .complete(owner, { flowId, callbackUrl })
+                  .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+            }
+          : {}),
+        waitForCompletion,
+        cancel: input.controller
+          .cancel(owner, flowId)
+          .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
+      };
+    }),
     disconnect: input.controller
       .logout(input.stopSessions)
       .pipe(Effect.asVoid, Effect.mapError(mapSetupError)),
@@ -295,33 +294,32 @@ export function makeAntigravityManagedRuntimeActions(input: {
     Effect.mapError((cause) => failure("Scient could not inspect Antigravity's runtime.", cause)),
   );
 
-  const plan: ProviderManagedRuntimeActions["plan"] = (action) =>
-    Effect.gen(function* () {
-      const asset = yield* action === "remove"
-        ? input.installation.latestRelease
-        : input.installation.refreshLatestRelease;
-      const summary = yield* getSummary;
-      if (!summary.actions.includes(action) || (action !== "remove" && !asset)) {
-        return yield* failure(
-          `The ${action} action is not available for this Antigravity runtime.`,
-        );
-      }
-      return {
-        action,
-        target,
-        version: action === "remove" ? null : (asset?.version ?? null),
-        downloadBytes: action === "remove" ? null : (asset?.archiveBytes ?? null),
-        sourceLabel: "Official Google Antigravity ACP release",
-        catalogRevision:
-          action === "remove"
-            ? `antigravity-acp:remove:${summary.managedVersion ?? "none"}`
-            : runtimeRevision(asset!.version, asset!.sha256),
-        message:
-          action === "remove"
-            ? "Remove Scient's private Antigravity ACP runtime. System and custom installations are untouched."
-            : `${action === "repair" ? "Repair" : action === "update" ? "Update" : "Install"} Google's verified Antigravity ACP runtime privately for Scient.`,
-      };
-    });
+  const plan: ProviderManagedRuntimeActions["plan"] = Effect.fn(
+    "AntigravityAcpLifecycleActions.plan",
+  )(function* (action) {
+    const asset = yield* action === "remove"
+      ? input.installation.latestRelease
+      : input.installation.refreshLatestRelease;
+    const summary = yield* getSummary;
+    if (!summary.actions.includes(action) || (action !== "remove" && !asset)) {
+      return yield* failure(`The ${action} action is not available for this Antigravity runtime.`);
+    }
+    return {
+      action,
+      target,
+      version: action === "remove" ? null : (asset?.version ?? null),
+      downloadBytes: action === "remove" ? null : (asset?.archiveBytes ?? null),
+      sourceLabel: "Official Google Antigravity ACP release",
+      catalogRevision:
+        action === "remove"
+          ? `antigravity-acp:remove:${summary.managedVersion ?? "none"}`
+          : runtimeRevision(asset!.version, asset!.sha256),
+      message:
+        action === "remove"
+          ? "Remove Scient's private Antigravity ACP runtime. System and custom installations are untouched."
+          : `${action === "repair" ? "Repair" : action === "update" ? "Update" : "Install"} Google's verified Antigravity ACP runtime privately for Scient.`,
+    };
+  });
 
   const runInstall = Effect.fn("AntigravityLifecycleBridge.runInstall")(function* (
     asset: AntigravityReleaseAsset,
@@ -350,13 +348,13 @@ export function makeAntigravityManagedRuntimeActions(input: {
 
   // The Antigravity installer replaces its runtime in one step, so the
   // activation window is awaited before installing rather than mid-install.
-  const run: ProviderManagedRuntimeActions["run"] = (
-    action,
-    revision,
-    report,
-    awaitActivationWindow = Effect.void,
-  ) =>
-    Effect.gen(function* () {
+  const runEffect = Effect.fn("AntigravityAcpLifecycleActions.run")(
+    function* (
+      action: Parameters<ProviderManagedRuntimeActions["run"]>[0],
+      revision: Parameters<ProviderManagedRuntimeActions["run"]>[1],
+      report: Parameters<ProviderManagedRuntimeActions["run"]>[2],
+      awaitActivationWindow: NonNullable<Parameters<ProviderManagedRuntimeActions["run"]>[3]>,
+    ) {
       const summary = yield* getSummary;
       if (!summary.actions.includes(action)) {
         return yield* failure(`The ${action} action is no longer available for Antigravity.`);
@@ -379,15 +377,25 @@ export function makeAntigravityManagedRuntimeActions(input: {
       }
       yield* awaitActivationWindow;
       yield* runInstall(asset, report);
-    }).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof ProviderConnectionActionError
-          ? cause
-          : cause instanceof Error && cause.message.trim()
-            ? failure(cause.message, cause)
-            : failure(`Scient could not ${action} Antigravity.`, cause),
+    },
+    (effect, action) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          cause instanceof ProviderConnectionActionError
+            ? cause
+            : cause instanceof Error && cause.message.trim()
+              ? failure(cause.message, cause)
+              : failure(`Scient could not ${action} Antigravity.`, cause),
+        ),
       ),
-    );
+  );
+
+  const run: ProviderManagedRuntimeActions["run"] = (
+    action,
+    revision,
+    report,
+    awaitActivationWindow = Effect.void,
+  ) => runEffect(action, revision, report, awaitActivationWindow);
 
   return { getSummary, plan, run };
 }

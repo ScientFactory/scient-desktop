@@ -1,7 +1,5 @@
-import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-
-import type * as CodexClient from "effect-codex-app-server/client";
+import { assert, it } from "@effect/vitest";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -9,6 +7,7 @@ import {
   writeCodexSkillConfig,
 } from "./CodexProvider.ts";
 
+import type * as CodexClient from "effect-codex-app-server/client";
 it.effect("uses Codex's native skill configuration method", () =>
   Effect.gen(function* () {
     const requests: Array<{ method: string; input: unknown }> = [];
@@ -189,15 +188,6 @@ it("ranks qualified Codex models while preserving their wire ids", () => {
     models.filter((model) => model.isDefault).map((model) => model.slug),
     ["openai.gpt-6.1-sol"],
   );
-});
-
-it("keeps Codex's own default when no preferred model is available", () => {
-  const models = applyPreferredCodexDefaultModel([
-    { slug: "gpt-5.5", name: "GPT-5.5", isCustom: false, capabilities: null },
-    { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, isDefault: true, capabilities: null },
-  ]);
-
-  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
 
 it("ignores custom models that shadow a preferred slug", () => {

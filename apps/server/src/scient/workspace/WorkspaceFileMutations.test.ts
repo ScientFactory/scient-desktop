@@ -11,6 +11,7 @@ import { makeWorkspaceFileMutations } from "./WorkspaceFileMutations.ts";
 const entries = WorkspaceEntries.WorkspaceEntries.of({
   browse: () => Effect.die("unused"),
   list: () => Effect.die("unused"),
+  listIgnoredFiles: () => Effect.die("unused"),
   listDirectory: () => Effect.die("unused"),
   search: () => Effect.die("unused"),
   searchContents: () => Effect.die("unused"),
@@ -33,7 +34,7 @@ it.layer(NodeServices.layer)("WorkspaceFileMutations", (it) => {
         workspacePaths: yield* WorkspacePaths.WorkspacePaths,
         workspaceEntries: entries,
         readFile: () => Effect.die("unused"),
-        retentionStorageDirectory: path.join(root, "retention"),
+        resolveRetentionStorageDirectory: async () => path.join(root, "retention"),
         retentionDirectoryFor: () => Promise.reject(new Error("unused")),
         isProtectedPath: async (absolutePath) => {
           checked.push(absolutePath);

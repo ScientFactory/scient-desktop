@@ -1,7 +1,7 @@
-import { act, StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { StrictMode } from "react";
+import { act, render } from "../../../test/render";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as Option from "effect/Option";
 
 const transport = vi.hoisted(() => ({
@@ -44,35 +44,32 @@ function View({ visible, environment }: { visible: boolean; environment: string 
   return null;
 }
 
-describe("analytics view hook lifecycle", () => {
-  let dispose = () => {};
-  afterEach(async () => {
-    await act(async () => dispose());
-    vi.restoreAllMocks();
+function setup() {
+  transport.connection = {};
+  transport.requestedEnvironment = null;
+  transport.record.mockClear();
+  transport.status.mockReset().mockResolvedValue({
+    available: true,
+    consent: "product",
+    collectionContext: "context",
   });
+}
 
+describe("analytics view hook lifecycle", () => {
   it("does not recount rerenders or hidden retained editors and routes to the explicit environment", async () => {
-    transport.connection = {};
-    transport.record.mockClear();
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    dispose = () => {
-      root.unmount();
-      container.remove();
-    };
-    const render = (visible: boolean) =>
-      act(async () => {
-        root.render(
-          <StrictMode>
-            <View visible={visible} environment="remote" />
-          </StrictMode>,
-        );
-      });
-    await render(false);
+    setup();
+    // The hook receives its environment directly and has no route dependency.
+    await using screen = await render(null, { router: false });
+    const show = (visible: boolean) =>
+      screen.rerender(
+        <StrictMode>
+          <View visible={visible} environment="remote" />
+        </StrictMode>,
+      );
+    await show(false);
     expect(transport.record).not.toHaveBeenCalled();
-    await render(true);
-    for (let i = 0; i < 100; i++) await render(true);
+    await show(true);
+    for (let i = 0; i < 100; i++) await show(true);
     expect(transport.record).toHaveBeenCalledOnce();
     expect(transport.requestedEnvironment).toBe("remote");
     expect(transport.record).toHaveBeenCalledWith({
@@ -83,34 +80,29 @@ describe("analytics view hook lifecycle", () => {
         collectionContext: "context",
       },
     });
-    await render(false);
-    await render(true);
+    await show(false);
+    await show(true);
     expect(transport.record).toHaveBeenCalledTimes(2);
     transport.connection = {};
-    await render(true);
+    await show(true);
     expect(transport.record).toHaveBeenCalledTimes(3);
   });
 
   it("only observes the current view after consent discovery and document visibility changes", async () => {
-    transport.connection = {};
-    transport.record.mockClear();
+    setup();
     const status = Promise.withResolvers<{
       available: boolean;
       consent: string;
       collectionContext: string;
     }>();
     transport.status.mockReturnValueOnce(status.promise);
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    dispose = () => {
-      root.unmount();
-      container.remove();
-    };
+    // The hook receives its environment directly and has no route dependency.
+    await using screen = await render(null, { router: false });
     let hidden = true;
-    vi.spyOn(document, "visibilityState", "get").mockImplementation(() =>
-      hidden ? "hidden" : "visible",
-    );
-    await act(async () => root.render(<View visible environment="remote" />));
+    using _visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockImplementation(() => (hidden ? "hidden" : "visible"));
+    await screen.rerender(<View visible environment="remote" />);
     await act(async () =>
       status.resolve({ available: true, consent: "product", collectionContext: "late" }),
     );

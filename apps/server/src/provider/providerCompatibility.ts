@@ -192,11 +192,20 @@ export function applyProviderCompatibility(
   const advisory = resolve(snapshot.version);
   const latestVersion = snapshot.versionAdvisory?.latestVersion;
   const latestAdvisory = latestVersion ? resolve(latestVersion) : undefined;
+  const updateCommand = snapshot.versionAdvisory?.updateCommand;
+  // The maintenance resolver emits this command only for confirmed Homebrew installs.
+  const needsHomebrewRefresh =
+    updateCommand?.startsWith("brew upgrade ") &&
+    (advisory?.status === "unsupported" || advisory?.status === "broken") &&
+    (latestAdvisory?.status === "unsupported" || latestAdvisory?.status === "broken");
   return advisory
     ? {
         ...base,
         compatibilityAdvisory: {
           ...advisory,
+          message: needsHomebrewRefresh
+            ? `${advisory.message} Homebrew's local package metadata may be stale. Run brew update && ${updateCommand} on this environment's host, then refresh provider status.`
+            : advisory.message,
           ...(latestAdvisory ? { latestVersionStatus: latestAdvisory.status } : {}),
         },
       }

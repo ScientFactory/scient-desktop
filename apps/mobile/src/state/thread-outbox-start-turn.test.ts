@@ -1,4 +1,5 @@
 import {
+  ChatAttachmentId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -75,22 +76,33 @@ describe("existing thread outbox delivery", () => {
     expect(delivered({ ...message, text }, 2)).not.toHaveProperty("titleSeed");
   });
 
-  it("seeds attachment-only first messages from prepared attachment names", () => {
-    const command = buildExistingThreadOutboxStartTurnInput({
-      message: { ...message, text: "" },
-      settings,
-      itemCount: 0,
-      attachments: [
-        {
-          type: "image",
-          id: "uploaded",
-          name: "experiment.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-        },
-      ],
-    });
-    expect(command.titleSeed).toBe("Image: experiment.png");
-    expect(command.message.attachments[0]?.id).toBe("uploaded");
-  });
+  it.each([
+    {
+      attachment: { type: "image", name: "experiment.png", mimeType: "image/png" },
+      title: "Attached image",
+    },
+    {
+      attachment: { type: "file", name: "experiment.csv", mimeType: "text/csv" },
+      title: "File: experiment.csv",
+    },
+  ] as const)(
+    "seeds attachment-only first messages from prepared $attachment.type attachments",
+    ({ attachment, title }) => {
+      const command = buildExistingThreadOutboxStartTurnInput({
+        message: { ...message, text: "" },
+        settings,
+        itemCount: 0,
+        attachments: [
+          {
+            ...attachment,
+            id: ChatAttachmentId.make("uploaded"),
+            sizeBytes: 5,
+          },
+        ],
+      });
+      expect(command.titleSeed).toBe(title);
+      expect(command.message.attachments[0]?.id).toBe("uploaded");
+      expect(command.message.attachments[0]?.name).toBe(attachment.name);
+    },
+  );
 });

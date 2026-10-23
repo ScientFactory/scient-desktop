@@ -237,6 +237,7 @@ const analyticsFixture = Effect.gen(function* () {
   let status: AnalyticsStatus = { available: true, consent: "product" };
   let epoch = 0;
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.gen(function* () {
         events.push({ name, properties });

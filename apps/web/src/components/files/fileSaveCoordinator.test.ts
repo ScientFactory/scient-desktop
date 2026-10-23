@@ -946,3 +946,76 @@ describe("durable generic file publication", () => {
     });
   });
 });
+
+describe("durable publication lifecycle", () => {
+  it.each([false, true])(
+    "keeps newer input pending during an in-flight write and flushes it with closing=%s",
+    async (closing) => {
+      const started = Promise.withResolvers<void>();
+      const response = Promise.withResolvers<AtomCommandResult<Result, Error>>();
+      const pending = vi.fn();
+      const persist = vi.fn(async (source: string) => {
+        if (source === "B") {
+          started.resolve();
+          return response.promise;
+        }
+        return AsyncResult.success({ revision: `r${source}` });
+      });
+      const owner = open({ persist, onPendingChange: pending });
+      await owner.ready();
+      owner.change("B");
+      const first = owner.flush();
+      await started.promise;
+      owner.change("C");
+      await vi.advanceTimersByTimeAsync(500);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(owner.hasPendingChanges).toBe(true);
+      expect(pending).not.toHaveBeenCalledWith(false);
+      if (closing) owner.dispose();
+      response.resolve(AsyncResult.success({ revision: "rB" }));
+      await first;
+      await expect(owner.flush()).resolves.toBe(true);
+      expect(persist.mock.calls.map(([source]) => source)).toEqual(["B", "C"]);
+      expect(pending).toHaveBeenLastCalledWith(false);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps journaled input pending when permission is revoked before debounce, closing=%s",
+    async (closing) => {
+      let canWrite = true;
+      const pending = vi.fn();
+      const persist = vi.fn(async () => AsyncResult.success({ revision: "rB" }));
+      const owner = open({ canPersist: () => canWrite, persist, onPendingChange: pending });
+      await owner.ready();
+      owner.change("B");
+      canWrite = false;
+      if (closing) owner.dispose();
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(owner.flush()).resolves.toBe(false);
+      expect(persist).not.toHaveBeenCalled();
+      expect(owner.hasPendingChanges).toBe(true);
+      expect(pending).toHaveBeenLastCalledWith(true);
+    },
+  );
+
+  it("retains a failed write as pending and retries the same durable intent on disposal", async () => {
+    const pending = vi.fn();
+    const persist = vi
+      .fn()
+      .mockResolvedValueOnce(refused())
+      .mockResolvedValueOnce(AsyncResult.success({ revision: "rB" }));
+    const owner = open({ persist, onPendingChange: pending });
+    await owner.ready();
+    owner.change("B");
+    await expect(owner.flush()).resolves.toBe(false);
+    expect(pending).toHaveBeenCalledWith(true);
+    expect(pending).not.toHaveBeenCalledWith(false);
+    expect(owner.hasPendingChanges).toBe(true);
+    owner.dispose();
+    await expect(owner.flush()).resolves.toBe(true);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[1]).toEqual(persist.mock.calls[0]);
+    expect(pending).toHaveBeenLastCalledWith(false);
+  });
+});

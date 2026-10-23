@@ -356,8 +356,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         showLinkFeedback(anchor, "This link isn't available.");
         return;
       }
-      void openHomeRelativeFile(homeRelativePath, anchor);
-      return;
+      return openHomeRelativeFile(homeRelativePath, anchor);
     }
     const path = resolveMarkdownUrlPath(props.relativePath, target);
     if (!path) {
@@ -369,8 +368,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         // An absolute spelling of a workspace file stays an editable workspace file.
         const workspacePath = workspaceRelativeFilePath(hostPath, props.cwd);
         if (workspacePath !== null) {
-          void openWorkspaceFile(workspacePath, anchor);
-          return;
+          return openWorkspaceFile(workspacePath, anchor);
         }
         onOpenFile(hostPath);
         return;
@@ -378,7 +376,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       showLinkFeedback(anchor, "This link isn't available.");
       return;
     }
-    void openWorkspaceFile(path.relativePath, anchor);
+    return openWorkspaceFile(path.relativePath, anchor);
   };
   const handleOpenWikiLink = (target: string, anchor: HTMLElement) => {
     const path = resolveWikiLinkPath(props.relativePath, target);

@@ -104,22 +104,22 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     return { stagingDir, stagedPaths };
   });
 
-  const runAntigravityJson = <S extends Schema.Top>({
-    operation,
-    cwd,
-    prompt,
-    outputSchema,
-    modelSelection,
-    attachments,
-  }: {
-    readonly operation: Operation;
-    readonly cwd: string;
-    readonly prompt: string;
-    readonly outputSchema: S;
-    readonly modelSelection: ModelSelection;
-    readonly attachments?: ReadonlyArray<ChatAttachment>;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
+  const runAntigravityJsonEffect = Effect.fn("LegacyAntigravityTextGeneration.runAntigravityJson")(
+    function* <S extends Schema.Top>({
+      operation,
+      cwd,
+      prompt,
+      outputSchema,
+      modelSelection,
+      attachments,
+    }: {
+      readonly operation: Operation;
+      readonly cwd: string;
+      readonly prompt: string;
+      readonly outputSchema: S;
+      readonly modelSelection: ModelSelection;
+      readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+    }) {
       const schemaJson = yield* encodeJson(toJsonSchemaObject(outputSchema)).pipe(
         Effect.mapError((cause) =>
           generationError(operation, "Failed to encode the structured output schema.", cause),
@@ -180,14 +180,41 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           generationError(operation, "Antigravity returned invalid structured output.", cause),
         ),
       );
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : generationError(operation, "Antigravity text generation failed.", cause),
+    },
+    (effect, { operation }) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : generationError(operation, "Antigravity text generation failed.", cause),
+        ),
+        Effect.scoped,
       ),
-      Effect.scoped,
-    );
+  );
+
+  const runAntigravityJson = <S extends Schema.Top>({
+    operation,
+    cwd,
+    prompt,
+    outputSchema,
+    modelSelection,
+    attachments,
+  }: {
+    readonly operation: Operation;
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly outputSchema: S;
+    readonly modelSelection: ModelSelection;
+    readonly attachments?: ReadonlyArray<ChatAttachment>;
+  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
+    runAntigravityJsonEffect({
+      operation,
+      cwd,
+      prompt,
+      outputSchema,
+      modelSelection,
+      attachments,
+    });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("AntigravityTextGeneration.generateCommitMessage")(function* (input) {

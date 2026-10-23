@@ -124,7 +124,7 @@ export type RetainedRecord = typeof Journal.Type;
 export const decodeRetainedRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Union([Journal, LegacyJournal])),
 );
-const decodeCurrent = Schema.decodeUnknownSync(Schema.fromJsonString(Journal));
+
 export type Identity = NativeFileIdentity;
 export interface RetainedMutationInput {
   readonly cwd: string;

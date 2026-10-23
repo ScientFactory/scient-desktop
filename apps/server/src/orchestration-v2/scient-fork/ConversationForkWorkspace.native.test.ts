@@ -51,6 +51,7 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   layerMemory as SqlitePersistenceMemory,
@@ -1268,7 +1269,8 @@ it.live(
         );
         // Closing the first scoped runtime closes SQLite. A fresh service construction
         // reconciles the persisted journal in the background; every record closes.
-        for (let repeat = 0; repeat < 2; repeat++)
+        for (let repeat = 0; repeat < 2; repeat++) {
+          const ownership = yield* observeCheckpointOwnership();
           yield* Effect.scoped(
             Effect.gen(function* () {
               yield* ConversationForkService;
@@ -1276,7 +1278,8 @@ it.live(
               const remaining = sql<{
                 attempt_id: string;
               }>`SELECT attempt_id FROM scient_fork_checkpoint_ownership ORDER BY attempt_id`;
-              while ((yield* remaining).length > 0) yield* Effect.sleep("20 millis");
+              yield* ownership.recovered;
+              assert.isEmpty(yield* remaining);
               assert.equal(yield* git(cwd, ["rev-parse", acceptedRef]), acceptedOid);
               // A retry of the accepted command was accepted with another snapshot,
               // so this attempt's ref is an orphan.
@@ -1286,8 +1289,9 @@ it.live(
                 yield* git(cwd, ["rev-parse", changed]),
                 yield* git(cwd, ["rev-parse", "HEAD"]),
               );
-            }).pipe(Effect.provide(runtime)),
+            }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(ownership.layer)))),
           );
+        }
       }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("30 seconds")),
     ),
 );

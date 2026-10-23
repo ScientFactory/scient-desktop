@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -25,7 +24,7 @@ vi.mock("react-native", () => ({
   Share: {},
 }));
 vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ themeAppearance: "light" }),
+  useAppearancePreferences: () => ({ themeAppearance: "light", mathRenderingEnabled: false }),
 }));
 vi.mock("../components/ui/Menu", () => ({ Menu: "div" }));
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));

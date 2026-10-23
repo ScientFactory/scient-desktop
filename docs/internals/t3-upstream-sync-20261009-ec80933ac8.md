@@ -340,14 +340,14 @@ environment routing and management scope checks are unchanged.
 Affected qualification against `532b0883bd` plus this correction:
 
 - From `apps/web`, `pnpm exec vp test run --project unit
-src/components/settings/ProviderSettingsPanel.environment.test.tsx
-src/components/settings/ProviderSettingsPanel.logic.test.ts
-src/components/settings/ProviderInstanceCard.test.ts
-src/components/settings/ProviderInstanceCard.tabs.test.tsx
-src/components/settings/providerDriverMeta.test.ts
-src/components/settings/AddProviderInstanceDialog.environment.test.tsx
-src/components/settings/AddProviderInstanceDialog.test.ts
-src/components/settings/SettingsPanels.logic.test.ts --reporter verbose`:
+  src/components/settings/ProviderSettingsPanel.environment.test.tsx
+  src/components/settings/ProviderSettingsPanel.logic.test.ts
+  src/components/settings/ProviderInstanceCard.test.ts
+  src/components/settings/ProviderInstanceCard.tabs.test.tsx
+  src/components/settings/providerDriverMeta.test.ts
+  src/components/settings/AddProviderInstanceDialog.environment.test.tsx
+  src/components/settings/AddProviderInstanceDialog.test.ts
+  src/components/settings/SettingsPanels.logic.test.ts --reporter verbose`:
   eight files, 124 tests passed. Fresh-settings coverage includes loading, empty
   and partial snapshots, disabled defaults, no writes and no fabricated ACP slot.
 - `pnpm exec vp run --filter @t3tools/web typecheck`: passed; existing Effect

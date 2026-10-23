@@ -257,8 +257,8 @@ export const make = Effect.gen(function* () {
     }).pipe(mapError("apply"));
   });
 
-  const apply: ProjectStoreV2["Service"]["apply"] = (event) =>
-    Effect.gen(function* () {
+  const apply: ProjectStoreV2["Service"]["apply"] = Effect.fn("ProjectStore.apply")(
+    function* (event) {
       const previous = yield* get(event.payload.projectId, { includeDeleted: true });
       yield* applyRow(event);
       const current = yield* get(event.payload.projectId, { includeDeleted: true });
@@ -288,7 +288,9 @@ export const make = Effect.gen(function* () {
           last_sequence = excluded.last_sequence,
           updated_at = excluded.updated_at
       `;
-    }).pipe(sql.withTransaction, mapError("apply-workspace-authority"));
+    },
+    (effect, _argument0) => effect.pipe(sql.withTransaction, mapError("apply-workspace-authority")),
+  );
 
   return ProjectStoreV2.of({
     apply,

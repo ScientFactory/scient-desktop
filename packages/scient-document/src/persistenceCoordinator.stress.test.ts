@@ -82,5 +82,5 @@ describe("DocumentPersistenceCoordinator under randomized interleavings", () => 
     expect(total.bursts).toBeGreaterThan(200);
     expect(total.deferrals).toBeGreaterThan(20);
     expect(total.viewRefusals).toBeGreaterThan(10);
-  }, 60_000);
+  });
 });

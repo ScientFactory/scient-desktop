@@ -1,0 +1,451 @@
+import { TextSelection } from "prosemirror-state";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { scientMarkdownParser } from "./schema";
+import { resolveScientMarkdownDocumentDirection } from "./directionPresentation";
+import { ScientMarkdownEditorView } from "./view";
+
+describe("rich Markdown direction presentation", () => {
+  async function _cleanupFixture0(_fixture: _Fixture) {
+    _fixture.mounted.splice(0).forEach((controller) => controller.destroy());
+    _clearOwnedDOM(_fixture);
+  }
+
+  function mount(_fixture: _Fixture, source: string) {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, host));
+    _fixture.mounted.push(controller);
+    return { controller, onUserSourceChange, view: controller.mount(host) };
+  }
+
+  function inheritedDirection(element: Element | null): string | null {
+    return element?.closest("[dir]")?.getAttribute("dir") ?? null;
+  }
+
+  it("recognizes scientific math without changing its Markdown source", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = String.raw`ערך $PCO_2$ ו-$HCO_3^-$ וגם $\text{HER2}^+$`;
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    const values: string[] = [];
+    view.state.doc.descendants((node) => {
+      if (node.type.name === "inline_math") values.push(node.attrs.tex);
+    });
+    expect(values).toEqual(["PCO_2", "HCO_3^-", String.raw`\text{HER2}^+`]);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("derives the document base from visible prose rather than technical source", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const document = scientMarkdownParser.parse(
+      [
+        "English prose remains the document language.",
+        "",
+        "```text",
+        "שלום שלום שלום שלום שלום שלום",
+        "```",
+        "",
+        "`עברית בתוך קוד`",
+      ].join("\n"),
+    );
+
+    expect(resolveScientMarkdownDocumentDirection(document)).toBe("ltr");
+    expect(
+      resolveScientMarkdownDocumentDirection(
+        scientMarkdownParser.parse("Methods\n\nשלום עולם, זהו מסמך עברי ארוך וברור מאוד.\n"),
+      ),
+    ).toBe("rtl");
+  });
+
+  it("matches ordinary Markdown direction for mixed prose and structural blocks", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "# Methods and Results",
+      "",
+      "English-only paragraph.",
+      "",
+      "שלום עולם, זהו מסמך עברי עם תוכן נוסף.",
+      "",
+      "> ציטוט עברי ברור.",
+      "",
+      "- RF — רגיש מאוד",
+      "- Anti-CCP — ספציפי מאוד",
+      "",
+      "1. Standard deviation",
+      "2. Confidence interval",
+      "",
+      "- [ ] משימה פתוחה",
+      "",
+      "| Name | ערך |",
+      "| --- | --- |",
+      "| OA | אוטואימונית |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+
+    expect(view.dom.dir).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("h1"))).toBe("rtl");
+    const paragraphs = Array.from(view.dom.querySelectorAll("p"));
+    expect(
+      inheritedDirection(
+        paragraphs.find((node) => node.textContent === "English-only paragraph.") ?? null,
+      ),
+    ).toBe("ltr");
+    expect(
+      inheritedDirection(
+        paragraphs.find((node) => node.textContent?.startsWith("שלום עולם")) ?? null,
+      ),
+    ).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("blockquote"))).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("ul"))).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("ol"))).toBe("ltr");
+    const task = view.dom.querySelector("li[data-task-checked]");
+    expect(inheritedDirection(task)).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("table"))).toBe("rtl");
+    expect(
+      Array.from(view.dom.querySelectorAll("th, td")).map((cell) => [
+        cell.textContent,
+        inheritedDirection(cell),
+      ]),
+    ).toEqual([
+      ["Name", "ltr"],
+      ["ערך", "rtl"],
+      ["OA", "ltr"],
+      ["אוטואימונית", "rtl"],
+    ]);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps cell text flow independent from manual table layout and restores Auto", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "| Label | Details |",
+      "| --- | --- |",
+      "| English | A sentence, with punctuation. |",
+      "| Mixed RTL | English בתוך עברית נוספת. |",
+      "| Mixed LTR | English sentence with עברית. |",
+      "| Arabic | العربية فقط. |",
+      "| Neutral | 123 — — |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    const table = view.dom.querySelector("table")!;
+    const cells = Array.from(view.dom.querySelectorAll("th, td"));
+    const directionFor = (text: string) =>
+      inheritedDirection(cells.find((cell) => cell.textContent === text) ?? null);
+
+    expect(inheritedDirection(table)).toBe("ltr");
+    expect(directionFor("A sentence, with punctuation.")).toBe("ltr");
+    expect(directionFor("English בתוך עברית נוספת.")).toBe("rtl");
+    expect(directionFor("English sentence with עברית.")).toBe("ltr");
+    expect(directionFor("العربية فقط.")).toBe("rtl");
+    expect(directionFor("123 — —")).toBe("ltr");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    let firstCellPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (firstCellPosition === null && node.type.spec.tableRole === "header_cell") {
+        firstCellPosition = position;
+        return false;
+      }
+      return true;
+    });
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, firstCellPosition! + 2)),
+    );
+    expect(controller.execute("direction-rtl")).toBe(true);
+
+    expect(table.getAttribute("dir")).toBe("rtl");
+    expect(inheritedDirection(table)).toBe("rtl");
+    expect(directionFor("A sentence, with punctuation.")).toBe("ltr");
+    expect(directionFor("English בתוך עברית נוספת.")).toBe("rtl");
+    expect(directionFor("English sentence with עברית.")).toBe("ltr");
+    expect(directionFor("العربية فقط.")).toBe("rtl");
+    expect(directionFor("123 — —")).toBe("ltr");
+    expect(controller.session.session.draftSource).toContain('<div dir="rtl">');
+
+    expect(controller.execute("direction-auto")).toBe(true);
+    expect(table.getAttribute("dir")).toBeNull();
+    expect(inheritedDirection(table)).toBe("ltr");
+    expect(directionFor("English בתוך עברית נוספת.")).toBe("rtl");
+    expect(directionFor("English sentence with עברית.")).toBe("ltr");
+    expect(directionFor("123 — —")).toBe("ltr");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).toHaveBeenCalled();
+  });
+
+  it("keeps scientific identifiers from deciding automatic table column order", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "| מאפיין HER2 TNBC cN0 BCS NET | טיפול |",
+      "| --- | --- |",
+      "| HER2 TNBC BCS NET | טיפול מותאם |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
+    expect(view.dom.querySelector(".scient-markdown-table")).not.toBeNull();
+    const table = view.dom.querySelector("table");
+    const cells = Array.from(view.dom.querySelectorAll("th, td"));
+
+    expect(inheritedDirection(table)).toBe("rtl");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent?.includes("HER2")) ?? null),
+    ).toBe("ltr");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent === "טיפול מותאם") ?? null),
+    ).toBe("rtl");
+    expect(cells.map((cell) => cell.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "rtl",
+      "rtl",
+      "rtl",
+      "rtl",
+    ]);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("aligns logical columns consistently without changing each cell's text direction", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "| אבחנה | Treatment | Explicit |",
+      "| --- | --- | :---: |",
+      "| TNBC | טיפול | מרכז |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
+    const rows = Array.from(view.dom.querySelectorAll("tr")).map((row) =>
+      Array.from(row.querySelectorAll("th, td")),
+    );
+
+    expect(inheritedDirection(rows[1]?.[0] ?? null)).toBe("ltr");
+    expect(inheritedDirection(rows[1]?.[1] ?? null)).toBe("rtl");
+    expect(rows.map((row) => row[0]?.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "rtl",
+      "rtl",
+    ]);
+    expect(rows.map((row) => row[1]?.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "ltr",
+      "ltr",
+    ]);
+    expect(rows[0]?.[2]?.getAttribute("data-alignment")).toBe("center");
+    expect(rows[1]?.[2]?.getAttribute("data-alignment")).toBe("center");
+    expect(rows[0]?.[2]?.hasAttribute("data-scient-table-column-direction")).toBe(false);
+    expect(rows[1]?.[2]?.hasAttribute("data-scient-table-column-direction")).toBe(false);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("updates a complete column when an edit changes its dominant prose", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = ["| אבחנה | Value |", "| --- | --- |", "| TNBC | stable |", ""].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    await vi.waitFor(() =>
+      expect(view.dom.querySelector("th")?.getAttribute("data-scient-table-column-direction")).toBe(
+        "rtl",
+      ),
+    );
+    const columnDirections = () =>
+      Array.from(view.dom.querySelectorAll("tr")).map((row) =>
+        row.querySelector("th, td")?.getAttribute("data-scient-table-column-direction"),
+      );
+    expect(columnDirections()).toEqual(["rtl", "rtl"]);
+
+    let headerPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (headerPosition === null && node.type.spec.tableRole === "header_cell") {
+        headerPosition = position;
+        return false;
+      }
+      return true;
+    });
+    const header = view.state.doc.nodeAt(headerPosition!);
+    view.dispatch(
+      view.state.tr.insertText(
+        "Diagnosis details",
+        headerPosition! + 1,
+        headerPosition! + 1 + (header?.content.size ?? 0),
+      ),
+    );
+    await vi.waitFor(() => expect(columnDirections()).toEqual(["ltr", "ltr"]));
+    expect(controller.session.session.draftSource).toContain("Diagnosis details");
+    expect(onUserSourceChange).toHaveBeenCalled();
+  });
+
+  it("keeps explicit direction authoritative and recomputes automatic direction after edits", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = '<div dir="ltr">\n\nשלום עולם.\n\n</div>\n';
+    const { controller, view } = mount(_fixture, source);
+    const paragraph = view.dom.querySelector("p")!;
+
+    expect(view.dom.dir).toBe("rtl");
+    expect(paragraph.dir).toBe("ltr");
+    view.dispatch(
+      view.state.tr
+        .setSelection(TextSelection.create(view.state.doc, 1, view.state.doc.content.size - 1))
+        .insertText("English replacement."),
+    );
+
+    expect(view.dom.dir).toBe("ltr");
+    expect(view.dom.querySelector("p")?.dir).toBe("ltr");
+    expect(controller.session.session.draftSource).toContain("English replacement.");
+  });
+
+  it("updates only a changed automatic block while the document base stays stable", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const { controller, view } = mount(
+      _fixture,
+      "This English document has enough ordinary prose to keep its stable base direction.\n\nשלום עולם.\n",
+    );
+    let hebrewPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "paragraph" && node.textContent === "שלום עולם.") {
+        hebrewPosition = position;
+        return false;
+      }
+      return true;
+    });
+    expect(hebrewPosition).not.toBeNull();
+    const hebrewParagraph = Array.from(view.dom.querySelectorAll("p")).find(
+      (node) => node.textContent === "שלום עולם.",
+    );
+    expect(view.dom.dir).toBe("ltr");
+    expect(inheritedDirection(hebrewParagraph ?? null)).toBe("rtl");
+
+    const node = view.state.doc.nodeAt(hebrewPosition!);
+    view.dispatch(
+      view.state.tr.insertText(
+        "English replacement.",
+        hebrewPosition! + 1,
+        hebrewPosition! + 1 + (node?.content.size ?? 0),
+      ),
+    );
+
+    const replacement = Array.from(view.dom.querySelectorAll("p")).find(
+      (paragraph) => paragraph.textContent === "English replacement.",
+    );
+    expect(view.dom.dir).toBe("ltr");
+    expect(inheritedDirection(replacement ?? null)).toBe("ltr");
+    expect(controller.session.session.draftSource).toContain("English replacement.");
+  });
+
+  it("mirrors only eligible RTL prose arrows without changing source or copied text", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "שלב ראשון → שלב שני.",
+      "",
+      "[קישור → עברי](other.md)",
+      "",
+      "`קוד → עברי`",
+      "",
+      "עברית: H2O → CO2",
+      "",
+      "שלב ⟶ הבא",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+    const arrows = Array.from(
+      view.dom.querySelectorAll<HTMLElement>(".scient-markdown-rtl-flow-arrow"),
+    );
+
+    expect(arrows).toHaveLength(2);
+    expect(arrows.map((arrow) => arrow.textContent)).toEqual(["→", "⟶"]);
+    expect(arrows[1]?.classList.contains("is-long")).toBe(true);
+    expect(view.dom.querySelector("a")?.textContent).toBe("קישור → עברי");
+    expect(view.dom.querySelector("code")?.textContent).toBe("קוד → עברי");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a heading with its section when the document base differs", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = [
+      "English introduction remains left to right.",
+      "",
+      "## כותרת עברית",
+      "",
+      "- פריט ראשון",
+      "- פריט שני",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(_fixture, source);
+
+    expect(view.dom.dir).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("h2"))).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("ul"))).toBe("rtl");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    mounted: [] as ScientMarkdownEditorView[],
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
+}

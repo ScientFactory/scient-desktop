@@ -700,27 +700,28 @@ export const uploadOpenedConversationFile = makeIpcMethod({
   channel: UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL,
   payload: DesktopConversationFileUploadRequest,
   result: DesktopConversationFileUploadResult,
-  handler: (request) =>
-    Effect.gen(function* () {
-      const pool = yield* DesktopBackendPool.DesktopBackendPool;
-      const dialog = yield* ElectronDialog.ElectronDialog;
-      const runPromise = Effect.runPromiseWith(
-        yield* Effect.context<ElectronDialog.ElectronDialog>(),
+  handler: Effect.fn("scient.conversationImport.uploadOpenedConversationFile")(function* (
+    request: DesktopConversationFileUploadRequest,
+  ) {
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const runPromise = Effect.runPromiseWith(
+      yield* Effect.context<ElectronDialog.ElectronDialog>(),
+    );
+    const instances = yield* pool.list;
+    const origins = new Set<string>();
+    for (const instance of instances) {
+      const config = yield* instance.currentConfig;
+      if (Option.isSome(config)) origins.add(config.value.httpBaseUrl.origin);
+    }
+    const approveRemote = (origin: string, fileName: string, plaintextNetwork: boolean) =>
+      runPromise(
+        dialog
+          .showMessageBox(remoteUploadApprovalOptions(origin, fileName, plaintextNetwork))
+          .pipe(Effect.map((result) => result.response === 1)),
       );
-      const instances = yield* pool.list;
-      const origins = new Set<string>();
-      for (const instance of instances) {
-        const config = yield* instance.currentConfig;
-        if (Option.isSome(config)) origins.add(config.value.httpBaseUrl.origin);
-      }
-      const approveRemote = (origin: string, fileName: string, plaintextNetwork: boolean) =>
-        runPromise(
-          dialog
-            .showMessageBox(remoteUploadApprovalOptions(origin, fileName, plaintextNetwork))
-            .pipe(Effect.map((result) => result.response === 1)),
-        );
-      return yield* Effect.promise(() =>
-        uploadOpenedConversationFileTo(request, origins, approveRemote),
-      );
-    }),
+    return yield* Effect.promise(() =>
+      uploadOpenedConversationFileTo(request, origins, approveRemote),
+    );
+  }),
 });

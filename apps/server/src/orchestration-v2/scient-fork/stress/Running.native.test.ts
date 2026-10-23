@@ -362,5 +362,4 @@ it.live.each([false, true])(
         }).pipe(Effect.provide(runtime));
       }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("60 seconds")),
     ),
-  90000,
 );

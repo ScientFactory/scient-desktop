@@ -1,10 +1,11 @@
+import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   type EnvironmentQueryView,
@@ -14,47 +15,41 @@ import {
 
 type Result = AsyncResult.AsyncResult<string, Error>;
 
-let registry: AtomRegistry.AtomRegistry;
-let renderer: Root | undefined;
-let latest: {
-  readonly query: EnvironmentQueryView<string, Error>;
-  readonly subscription: EnvironmentQueryView<string, Error>;
-};
-
-function Probe({ atom }: { atom: Atom.Atom<Result> | null }) {
+function Probe({ _fixture, atom }: { atom: Atom.Atom<Result> | null } & { _fixture: _Fixture }) {
   const query = useEnvironmentQuery(atom);
   const subscription = useEnvironmentSubscription(atom);
   useLayoutEffect(() => {
-    latest = { query, subscription };
+    _fixture.publishLatest({ query, subscription });
   });
   return null;
 }
 
-async function render(result: Result | null) {
+async function render(_fixture: _Fixture, result: Result | null) {
   const atom = result === null ? null : Atom.make(result);
-  await act(() => renderer?.unmount());
-  await act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(
-      <RegistryContext.Provider value={registry}>
-        <Probe atom={atom} />
+  await act(async () => await _fixture.root0?.unmount());
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(
+      <RegistryContext.Provider value={_fixture.registry}>
+        <Probe _fixture={_fixture} atom={atom} />
       </RegistryContext.Provider>,
     );
   });
-  return latest;
+  return _fixture.latest;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  registry = AtomRegistry.make();
-});
+async function _setupFixture0(_fixture: _Fixture) {
+  _fixture.registry = AtomRegistry.make();
+}
 
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
-  registry.dispose();
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
+  _fixture.registry.dispose();
   vi.unstubAllGlobals();
-});
+}
 
 describe("environment query pending state", () => {
   it.each([
@@ -89,7 +84,11 @@ describe("environment query pending state", () => {
     ],
     ["without an atom", null, false, false],
   ])("reports pending %s", async (_label, result, queryPending, subscriptionPending) => {
-    const { query, subscription } = await render(result);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { query, subscription } = await render(_fixture, result);
 
     expect(query.isPending).toBe(queryPending);
     expect(subscription.isPending).toBe(subscriptionPending);
@@ -100,13 +99,24 @@ describe("environment query pending state", () => {
   });
 
   it("keeps the value and error alongside the subscription pending state", async () => {
-    const open = await render(AsyncResult.success<string, Error>("value", { waiting: true }));
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const open = await render(
+      _fixture,
+      AsyncResult.success<string, Error>("value", { waiting: true }),
+    );
     expect(open.subscription).toMatchObject({ data: "value", error: null, isSuccess: true });
 
-    const failed = await render(AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))));
+    const failed = await render(
+      _fixture,
+      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))),
+    );
     expect(failed.subscription).toMatchObject({ data: null, error: "boom", isSuccess: false });
 
     const failedAfterValue = await render(
+      _fixture,
       AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
         previous: Option.some(AsyncResult.success<string, Error>("value")),
       }),
@@ -119,3 +129,35 @@ describe("environment query pending state", () => {
     expect(failed.subscription.failure).toBeInstanceOf(Error);
   });
 });
+
+function _createFixture() {
+  let _published_latest = undefined! as {
+    readonly query: EnvironmentQueryView<string, Error>;
+    readonly subscription: EnvironmentQueryView<string, Error>;
+  };
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    registry: undefined! as AtomRegistry.AtomRegistry,
+    get latest() {
+      return _published_latest;
+    },
+    publishLatest(next: typeof _published_latest) {
+      _published_latest = next;
+      return next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

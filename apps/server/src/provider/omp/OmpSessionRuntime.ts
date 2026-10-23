@@ -526,32 +526,33 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   const staleRunOpen = () =>
     openRunId !== undefined && (openRunId === turn.staleRunId || openRunId === abandonedRunId);
 
-  const clearQuestions = () =>
-    Effect.gen(function* () {
-      const ids = [...questions.keys()];
-      questions.clear();
-      if (ids.length > 0) yield* publish({ type: "questions-cleared", ids });
-    });
+  const clearQuestions = Effect.fn("OmpSessionRuntime.clearQuestions")(function* () {
+    const ids = [...questions.keys()];
+    questions.clear();
+    if (ids.length > 0) yield* publish({ type: "questions-cleared", ids });
+  });
 
   const publishContent = (updates: ReadonlyArray<OmpAssistantContentUpdate>) =>
     Effect.forEach(updates, publish, { discard: true });
 
-  const finishAssistant = (status: "completed" | "failed" = "completed", message?: unknown) =>
-    Effect.gen(function* () {
-      if (!activeAssistantContent) return;
-      yield* publishContent(activeAssistantContent.finish(status, message));
-      if (activeAssistantNativeId) {
-        completedAssistantIds.add(activeAssistantNativeId);
-      }
-      latestCompletedAssistantReference = {
-        responseId: activeAssistantResponseId,
-        timestamp: activeAssistantTimestamp,
-      };
-      activeAssistantContent = undefined;
-      activeAssistantNativeId = undefined;
-      activeAssistantResponseId = undefined;
-      activeAssistantTimestamp = undefined;
-    });
+  const finishAssistant = Effect.fn("OmpSessionRuntime.finishAssistant")(function* (
+    status: "completed" | "failed" = "completed",
+    message?: unknown,
+  ) {
+    if (!activeAssistantContent) return;
+    yield* publishContent(activeAssistantContent.finish(status, message));
+    if (activeAssistantNativeId) {
+      completedAssistantIds.add(activeAssistantNativeId);
+    }
+    latestCompletedAssistantReference = {
+      responseId: activeAssistantResponseId,
+      timestamp: activeAssistantTimestamp,
+    };
+    activeAssistantContent = undefined;
+    activeAssistantNativeId = undefined;
+    activeAssistantResponseId = undefined;
+    activeAssistantTimestamp = undefined;
+  });
 
   const rememberSettledPrompt = (requestId: string | undefined) => {
     if (!requestId || settledPromptIds.includes(requestId)) return;
@@ -610,58 +611,61 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     return { outcome: verdict.outcome };
   };
 
-  const settleTurn = (outcome: OmpTurnOutcome, signal: OmpTurnSignal) =>
-    Effect.gen(function* () {
-      yield* finishAssistant(outcome === "failed" ? "failed" : "completed");
-      yield* clearQuestions();
-      const requestId = turn.requestId;
-      rememberSettledPrompt(requestId);
-      pendingOutcomes = [];
-      abandonedRunId = openRunId;
-      yield* publish({
-        type: "turn-outcome",
-        ...turnOutcome(outcome, signal),
-        ...(requestId ? { requestId } : {}),
-      });
-      activeTurnId = undefined;
+  const settleTurn = Effect.fn("OmpSessionRuntime.settleTurn")(function* (
+    outcome: OmpTurnOutcome,
+    signal: OmpTurnSignal,
+  ) {
+    yield* finishAssistant(outcome === "failed" ? "failed" : "completed");
+    yield* clearQuestions();
+    const requestId = turn.requestId;
+    rememberSettledPrompt(requestId);
+    pendingOutcomes = [];
+    abandonedRunId = openRunId;
+    yield* publish({
+      type: "turn-outcome",
+      ...turnOutcome(outcome, signal),
+      ...(requestId ? { requestId } : {}),
     });
+    activeTurnId = undefined;
+  });
 
-  const applySignal = (signal: OmpTurnSignal) =>
-    Effect.gen(function* () {
-      const transition = reduceOmpTurn(turn, signal);
-      turn = transition.state;
-      if (transition.outcome) yield* settleTurn(transition.outcome, signal);
-    });
+  const applySignal = Effect.fn("OmpSessionRuntime.applySignal")(function* (signal: OmpTurnSignal) {
+    const transition = reduceOmpTurn(turn, signal);
+    turn = transition.state;
+    if (transition.outcome) yield* settleTurn(transition.outcome, signal);
+  });
 
-  const startTurn = (turnId: string, autonomous: boolean) =>
-    Effect.gen(function* () {
-      activeTurnId = turnId;
-      autonomousTurn = autonomous;
-      assistantMessageSequence = 0;
-      activeAssistantContent = undefined;
-      activeAssistantNativeId = undefined;
-      activeAssistantResponseId = undefined;
-      activeAssistantTimestamp = undefined;
-      latestCompletedAssistantReference = undefined;
-      completedAssistantIds.clear();
-      turnToolCalls.clear();
-      assistantMessageSeen = false;
-      drainRetries = 0;
-      // A retry already scheduled stays the only one: it rechecks whichever
-      // turn is draining when it fires.
-      pendingDrainState = undefined;
-      failureDetail = undefined;
-      commandRejected = false;
-      promptReported = false;
-      promptWaitStartedAt = undefined;
-      evidence = {};
-      pendingOutcomes = [];
-      yield* applySignal({
-        type: "begin",
-        ...(openRunId === undefined ? {} : { staleRunId: openRunId }),
-      });
-      yield* publish({ type: "turn-started", turnId });
+  const startTurn = Effect.fn("OmpSessionRuntime.startTurn")(function* (
+    turnId: string,
+    autonomous: boolean,
+  ) {
+    activeTurnId = turnId;
+    autonomousTurn = autonomous;
+    assistantMessageSequence = 0;
+    activeAssistantContent = undefined;
+    activeAssistantNativeId = undefined;
+    activeAssistantResponseId = undefined;
+    activeAssistantTimestamp = undefined;
+    latestCompletedAssistantReference = undefined;
+    completedAssistantIds.clear();
+    turnToolCalls.clear();
+    assistantMessageSeen = false;
+    drainRetries = 0;
+    // A retry already scheduled stays the only one: it rechecks whichever
+    // turn is draining when it fires.
+    pendingDrainState = undefined;
+    failureDetail = undefined;
+    commandRejected = false;
+    promptReported = false;
+    promptWaitStartedAt = undefined;
+    evidence = {};
+    pendingOutcomes = [];
+    yield* applySignal({
+      type: "begin",
+      ...(openRunId === undefined ? {} : { staleRunId: openRunId }),
     });
+    yield* publish({ type: "turn-started", turnId });
+  });
 
   const sessionInfo = (sessionFile: string | undefined, sessionId: string | undefined) =>
     sessionFile || sessionId
@@ -705,49 +709,50 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* scheduleDrainRetry;
   });
 
-  const finishIdleState = (state: OmpRpcState) =>
-    Effect.gen(function* () {
-      yield* sessionInfo(state.sessionFile, state.sessionId);
-      if (state.isSettled !== undefined) reportsPromptResults = true;
-      if (state.isSettled === true) sessionSettled();
-      const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
-      if (pending !== undefined) yield* publish({ type: "background-work", pending });
-      // An acknowledged prompt may never emit agent_start. Only count time
-      // when OMP is idle and no extension is waiting for the user's answer.
-      if (turn.phase === "accepted") {
-        if (state.isStreaming === true || state.isCompacting === true || questions.size > 0) {
-          promptWaitStartedAt = undefined;
-          yield* scheduleDrainRetry;
-        } else {
-          yield* waitForPrompt;
-        }
+  const finishIdleState = Effect.fn("OmpSessionRuntime.finishIdleState")(function* (
+    state: OmpRpcState,
+  ) {
+    yield* sessionInfo(state.sessionFile, state.sessionId);
+    if (state.isSettled !== undefined) reportsPromptResults = true;
+    if (state.isSettled === true) sessionSettled();
+    const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
+    if (pending !== undefined) yield* publish({ type: "background-work", pending });
+    // An acknowledged prompt may never emit agent_start. Only count time
+    // when OMP is idle and no extension is waiting for the user's answer.
+    if (turn.phase === "accepted") {
+      if (state.isStreaming === true || state.isCompacting === true || questions.size > 0) {
+        promptWaitStartedAt = undefined;
+        yield* scheduleDrainRetry;
+      } else {
+        yield* waitForPrompt;
+      }
+      return;
+    }
+    const decision = ompDrainRetry(
+      drainRetries,
+      state.isStreaming === true || state.isCompacting === true,
+    );
+    if (decision === "confirm") {
+      drainRetries = 0;
+      if (awaitingOwnPrompt()) {
+        yield* waitForPrompt;
         return;
       }
-      const decision = ompDrainRetry(
-        drainRetries,
-        state.isStreaming === true || state.isCompacting === true,
-      );
-      if (decision === "confirm") {
-        drainRetries = 0;
-        if (awaitingOwnPrompt()) {
-          yield* waitForPrompt;
-          return;
-        }
-        yield* applySignal({ type: "drain-idle" });
-        return;
-      }
-      if (decision === "give-up") {
-        yield* publish({
-          type: "warning",
-          message: `${input.target.name} stayed busy after the turn ended.`,
-        });
-        yield* applySignal({ type: "unconfirmed" });
-        return;
-      }
-      if (drainRetryPending) return;
-      drainRetries += 1;
-      yield* scheduleDrainRetry;
-    });
+      yield* applySignal({ type: "drain-idle" });
+      return;
+    }
+    if (decision === "give-up") {
+      yield* publish({
+        type: "warning",
+        message: `${input.target.name} stayed busy after the turn ended.`,
+      });
+      yield* applySignal({ type: "unconfirmed" });
+      return;
+    }
+    if (drainRetryPending) return;
+    drainRetries += 1;
+    yield* scheduleDrainRetry;
+  });
 
   const confirmIdle = Effect.gen(function* () {
     if (turn.phase !== "draining" && !(turn.phase === "accepted" && turn.requestId !== undefined)) {
@@ -775,26 +780,28 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* input.client.flushEvents();
   });
 
-  const ensureAssistant = (nativeId?: string, message?: unknown) =>
-    Effect.gen(function* () {
-      if (activeAssistantContent) {
-        activeAssistantNativeId ??= nativeId;
-        if (isRecord(message)) {
-          activeAssistantResponseId ??= text(message.responseId);
-          if (typeof message.timestamp === "number") activeAssistantTimestamp ??= message.timestamp;
-        }
-        return activeAssistantContent;
+  const ensureAssistant = Effect.fn("OmpSessionRuntime.ensureAssistant")(function* (
+    nativeId?: string,
+    message?: unknown,
+  ) {
+    if (activeAssistantContent) {
+      activeAssistantNativeId ??= nativeId;
+      if (isRecord(message)) {
+        activeAssistantResponseId ??= text(message.responseId);
+        if (typeof message.timestamp === "number") activeAssistantTimestamp ??= message.timestamp;
       }
-      const nextId = nativeId ?? `message-${++assistantMessageSequence}`;
-      activeAssistantContent = makeOmpAssistantContent(nextId, message);
-      activeAssistantNativeId = nativeId;
-      activeAssistantResponseId = isRecord(message) ? text(message.responseId) : undefined;
-      activeAssistantTimestamp =
-        isRecord(message) && typeof message.timestamp === "number" ? message.timestamp : undefined;
-      assistantMessageSeen = true;
-      yield* publish({ type: "assistant-started", messageId: nextId });
       return activeAssistantContent;
-    });
+    }
+    const nextId = nativeId ?? `message-${++assistantMessageSequence}`;
+    activeAssistantContent = makeOmpAssistantContent(nextId, message);
+    activeAssistantNativeId = nativeId;
+    activeAssistantResponseId = isRecord(message) ? text(message.responseId) : undefined;
+    activeAssistantTimestamp =
+      isRecord(message) && typeof message.timestamp === "number" ? message.timestamp : undefined;
+    assistantMessageSeen = true;
+    yield* publish({ type: "assistant-started", messageId: nextId });
+    return activeAssistantContent;
+  });
 
   const rejectHostTool = (id: string) =>
     cancelledHostTools.has(id)
@@ -841,684 +848,683 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       : Effect.void;
   };
 
-  const publishQuestion = (event: OmpRpcEvent) =>
-    Effect.gen(function* () {
-      const id = text(event.id);
-      const method = text(event.method);
-      if (method === "cancel") {
-        const target = text(event.targetId) ?? id;
-        if (target && questions.delete(target))
-          yield* publish({ type: "question-resolved", id: target });
-        return;
+  const publishQuestion = Effect.fn("OmpSessionRuntime.publishQuestion")(function* (
+    event: OmpRpcEvent,
+  ) {
+    const id = text(event.id);
+    const method = text(event.method);
+    if (method === "cancel") {
+      const target = text(event.targetId) ?? id;
+      if (target && questions.delete(target))
+        yield* publish({ type: "question-resolved", id: target });
+      return;
+    }
+    if (method === "open_url") {
+      const url = text(event.url);
+      if (url) {
+        const launchUrl = text(event.launchUrl);
+        const instructions = text(event.instructions);
+        yield* publish({
+          type: "open-url",
+          url,
+          ...(launchUrl ? { launchUrl } : {}),
+          ...(instructions ? { instructions } : {}),
+        });
       }
-      if (method === "open_url") {
-        const url = text(event.url);
-        if (url) {
-          const launchUrl = text(event.launchUrl);
-          const instructions = text(event.instructions);
-          yield* publish({
-            type: "open-url",
-            url,
-            ...(launchUrl ? { launchUrl } : {}),
-            ...(instructions ? { instructions } : {}),
-          });
-        }
-        return;
-      }
-      if (
-        !id ||
-        (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
-      ) {
-        // Notification-style extension UI methods do not expect a response.
-        // In particular, do not acknowledge setWidget/setTitle/open_url as if
-        // they were interactive questions.
-        return;
-      }
-      const options = Array.isArray(event.options)
-        ? event.options.filter(
-            (option): option is string => typeof option === "string" && option.length > 0,
-          )
-        : [];
-      const details = Array.isArray(event.optionDetails) ? event.optionDetails : [];
-      const questionOptions =
-        method === "confirm"
-          ? [
-              { label: "Yes", description: "", value: "true" },
-              { label: "No", description: "", value: "false" },
-            ]
-          : options.map((option, index) => ({
-              label: option,
-              description:
-                isRecord(details[index]) && typeof details[index]?.description === "string"
-                  ? details[index].description
-                  : "",
-              value: option,
-            }));
-      questions.set(id, {
-        method,
-        ...(method === "select" || method === "confirm"
-          ? { allowedValues: questionOptions.map((option) => option.value) }
-          : {}),
-      });
-      yield* publish({
-        type: "question",
-        id,
-        method,
-        title: text(event.title) ?? input.target.name,
-        message:
-          text(event.message) ??
-          text(event.placeholder) ??
-          text(event.prefill) ??
-          "Choose a response.",
-        options: questionOptions,
-      });
+      return;
+    }
+    if (
+      !id ||
+      (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
+    ) {
+      // Notification-style extension UI methods do not expect a response.
+      // In particular, do not acknowledge setWidget/setTitle/open_url as if
+      // they were interactive questions.
+      return;
+    }
+    const options = Array.isArray(event.options)
+      ? event.options.filter(
+          (option): option is string => typeof option === "string" && option.length > 0,
+        )
+      : [];
+    const details = Array.isArray(event.optionDetails) ? event.optionDetails : [];
+    const questionOptions =
+      method === "confirm"
+        ? [
+            { label: "Yes", description: "", value: "true" },
+            { label: "No", description: "", value: "false" },
+          ]
+        : options.map((option, index) => ({
+            label: option,
+            description:
+              isRecord(details[index]) && typeof details[index]?.description === "string"
+                ? details[index].description
+                : "",
+            value: option,
+          }));
+    questions.set(id, {
+      method,
+      ...(method === "select" || method === "confirm"
+        ? { allowedValues: questionOptions.map((option) => option.value) }
+        : {}),
     });
+    yield* publish({
+      type: "question",
+      id,
+      method,
+      title: text(event.title) ?? input.target.name,
+      message:
+        text(event.message) ??
+        text(event.placeholder) ??
+        text(event.prefill) ??
+        "Choose a response.",
+      options: questionOptions,
+    });
+  });
 
-  const applyEvent = (event: OmpRpcEvent) =>
-    Effect.gen(function* () {
-      eventSequence += 1;
-      const sequence = eventSequence;
-      if (event.type === "agent_start") {
-        pendingDrainState = undefined;
-        // A new run ends any wait for this turn's prompt_result; the next
-        // drain starts its own bound.
-        promptWaitStartedAt = undefined;
-        // Only a fresh native run can wake a settled turn. Late message/tool
-        // frames never manufacture turns. A turn whose outcome was uncertain
-        // still leaves a live process whose background work can wake it; a
-        // protocol failure ends the process instead.
-        if (
-          !turnIsOpen(turn) &&
-          !protocolFailed &&
-          (turn.phase === "terminal" || turn.phase === "failed" || turn.phase === "unknown")
-        ) {
-          yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
-        }
-        openRunId = ++runSequence;
-        yield* applySignal({ type: "agent-start", runId: openRunId });
-        return;
-      }
-      if (event.type === "agent_end") {
-        const runId = openRunId;
-        openRunId = undefined;
-        // The tail of an aborted run carries no output for the current turn.
-        const stale = runId !== undefined && runId === turn.staleRunId;
-        // Yield ends the visible response even when a background result can
-        // wake another run. Older OMP versions only report isTerminal.
-        if (event.yielded !== undefined) reportsPromptResults = true;
-        const terminal = event.yielded ?? event.isTerminal !== false;
-        const fallbackMessage =
-          !stale && turnIsOpen(turn) ? lastAssistantMessage(event.messages) : undefined;
-        // A run-end snapshot can repair its open envelope or recover a new
-        // envelope after this turn's observed one in the ordered native transcript.
-        // Identity and position establish ownership; wall-clock order does not.
-        if (fallbackMessage) {
-          const activeReference = {
-            responseId: activeAssistantResponseId,
-            timestamp: activeAssistantTimestamp,
-          };
-          const ownsSnapshot =
-            activeAssistantContent && matchesAssistantReference(activeReference, fallbackMessage);
-          const reference = activeAssistantContent
-            ? activeReference
-            : latestCompletedAssistantReference;
-          const anchorIndex =
-            reference && Array.isArray(event.messages)
-              ? event.messages.findLastIndex(
-                  (message) =>
-                    isAssistantMessage(message) &&
-                    isRecord(message) &&
-                    matchesAssistantReference(reference, message),
-                )
-              : -1;
-          const newerSnapshot =
-            anchorIndex >= 0 &&
-            Array.isArray(event.messages) &&
-            event.messages.lastIndexOf(fallbackMessage) > anchorIndex;
-          if (ownsSnapshot || !assistantMessageSeen || newerSnapshot) {
-            if (!ownsSnapshot && activeAssistantContent) yield* finishAssistant();
-            yield* ensureAssistant(undefined, fallbackMessage);
-            evidence.assistantEnded = true;
-            evidence.stopReason = text(fallbackMessage.stopReason);
-            evidence.errorMessage = text(fallbackMessage.errorMessage);
-            yield* finishAssistant(assistantItemStatus(fallbackMessage), fallbackMessage);
-          }
-        }
-        yield* applySignal({
-          type: "agent-end",
-          terminal,
-          ...(runId === undefined ? {} : { runId }),
-        });
-        return;
-      }
-      if (event.type === "prompt_result") {
-        const promptId = event.id;
-        // A settled or abandoned prompt's late result (for example after an
-        // acknowledged abort) must not be attributed to the next turn.
-        const route = routePromptOutcome(promptId);
-        if (route === "hold") holdPromptOutcome({ _tag: "Event", event });
-        if (route !== "current") return;
-        if (event.status !== undefined) {
-          reportsPromptResults = true;
-          promptReported = true;
-        }
-        if (event.sessionSettled !== undefined) {
-          if (event.sessionSettled) sessionSettled();
-          yield* publish({ type: "background-work", pending: !event.sessionSettled });
-        }
-        evidence.promptStatus = event.status;
-        evidence.promptError = event.promptError?.message;
-        if (typeof event.agentInvoked === "boolean") {
-          yield* applySignal({
-            type: "prompt-result",
-            ...(promptId ? { requestId: promptId } : {}),
-            agentInvoked: event.agentInvoked,
-            ...(event.status !== undefined ? { reported: true } : {}),
-          });
-        }
-        return;
-      }
-      if (event.type === "auto_retry_start") {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
-        evidence.retryExhausted = false;
-        evidence.retryFinalError = undefined;
-        const attempt =
-          typeof event.attempt === "number" && typeof event.maxAttempts === "number"
-            ? ` (attempt ${event.attempt} of ${event.maxAttempts})`
-            : "";
-        const cause = clip(event.errorMessage);
-        yield* publish({
-          type: "warning",
-          message: `${input.target.name} is retrying the model request${attempt}${cause ? `: ${cause}` : "."}`,
-        });
-        return;
-      }
-      if (event.type === "auto_retry_end") {
-        // A recovered retry reports success after the turn settled; nothing is
-        // left to decide then.
-        if (event.success !== false || !turnIsOpen(turn) || staleRunOpen()) return;
-        evidence.retryExhausted = true;
-        evidence.retryFinalError = text(event.finalError);
-        return;
-      }
-      if (event.type === "model_changed" || event.type === "thinking_level_changed") {
-        const state = yield* input.client.getState().pipe(Effect.exit);
-        if (state._tag === "Failure") {
-          yield* publish({
-            type: "warning",
-            message: `${input.target.name} changed model state but did not report a readable state.`,
-          });
-          return;
-        }
-        const model = state.value.model
-          ? encodeOmpModelSlug(state.value.model.provider, state.value.model.id)
-          : undefined;
-        yield* publish({
-          type: "model-changed",
-          ...(model ? { model } : {}),
-          ...(state.value.thinkingLevel ? { thinkingLevel: state.value.thinkingLevel } : {}),
-        });
-        return;
-      }
-      if (event.type === "auto_compaction_end" || event.type === "compaction_end") {
-        // A failed compaction reports errorMessage and must not read as
-        // success; a skipped one changed nothing and reports nothing.
-        const failure = clip(event.errorMessage);
-        if (failure) {
-          yield* publish({
-            type: "warning",
-            message: `${input.target.name} compaction failed${event.willRetry === true ? " and will retry" : ""}: ${failure}`,
-          });
-        } else if (event.aborted === true) {
-          yield* publish({
-            type: "warning",
-            message: `${input.target.name} compaction was aborted.`,
-          });
-        } else if (event.skipped === true) {
-          return;
-        } else if (event.willRetry === true) {
-          yield* publish({
-            type: "warning",
-            message: `${input.target.name} compaction will retry.`,
-          });
-        } else {
-          yield* publish({ type: "compacted" });
-        }
-        return;
-      }
-      // Message frames outside an open turn (or from an aborted run) have no
-      // owner; they are dropped without a warning.
-      if (event.type === "message_start") {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
-        if (isAssistantMessage(event.message)) {
-          const nativeId = text(event.messageId);
-          if (nativeId && completedAssistantIds.has(nativeId)) return;
-          if (nativeId && nativeId === activeAssistantNativeId) return;
-          if (activeAssistantContent) yield* finishAssistant();
-          yield* ensureAssistant(nativeId, event.message);
-        }
-        return;
-      }
-      if (event.type === "message_end") {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
-        if (isBackgroundResultMessage(event.message)) {
-          // Marks where OMP resumed with a background job's result, since
-          // that run can also carry the answer to a newer message.
-          const detail = messageText(event.message);
-          if (!detail) return;
-          // Native deliveries include their job IDs in the content. Hash the complete
-          // receipt before redaction: repeated frames reuse an item without merging jobs.
-          const id = `background-result:${NodeCrypto.createHash("sha256").update(detail).digest("hex")}`;
-          yield* publish({ type: "background-result", id, detail });
-          return;
-        }
-        if (!isAssistantMessage(event.message)) return;
-        const nativeId = text(event.messageId);
-        if (
-          nativeId &&
-          (completedAssistantIds.has(nativeId) ||
-            (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
-        )
-          return;
-        const message = isRecord(event.message) ? event.message : {};
-        evidence.assistantEnded = true;
-        evidence.stopReason = text(message.stopReason);
-        evidence.errorMessage = text(message.errorMessage);
-        yield* ensureAssistant(nativeId, message);
-        yield* finishAssistant(assistantItemStatus(message), message);
-        return;
-      }
-      if (event.type === "message_update") {
-        if (
-          !isAssistantMessage(event.message) ||
-          !isRecord(event.assistantMessageEvent) ||
-          !turnIsOpen(turn) ||
-          staleRunOpen()
-        )
-          return;
-        const update = event.assistantMessageEvent;
-        const kind =
-          update.type === "text_delta" || update.type === "text_end"
-            ? "text"
-            : update.type === "thinking_delta" || update.type === "thinking_end"
-              ? "reasoning"
-              : undefined;
-        if (!kind) return;
-        const nativeId = text(event.messageId);
-        if (
-          nativeId &&
-          (completedAssistantIds.has(nativeId) ||
-            (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
-        )
-          return;
-        const content = yield* ensureAssistant(nativeId, event.message);
-        const index =
-          typeof update.contentIndex === "number" &&
-          Number.isInteger(update.contentIndex) &&
-          update.contentIndex >= 0
-            ? update.contentIndex
-            : 0;
-        const updates =
-          update.type === "text_delta" || update.type === "thinking_delta"
-            ? content.delta(index, kind, typeof update.delta === "string" ? update.delta : "")
-            : content.end(
-                index,
-                kind,
-                typeof update.content === "string" ? update.content : undefined,
-              );
-        yield* publishContent(updates);
-        return;
-      }
-      // A fresh agent_start gives autonomous runs a turn. Unowned frames
-      // and the tail of an aborted run still cannot leak into another turn.
-      if (event.type === "tool_stream_update") {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
-        const toolCallId = text(event.toolCallId);
-        if (toolCallId) {
-          const name = text(event.toolName) ?? "tool";
-          // An argument stream is the open run's, and may come before the call's start.
-          turnToolCalls.set(toolCallId, name);
-          yield* publish({
-            type: "tool",
-            phase: "updated",
-            toolCallId,
-            name,
-            status: "inProgress",
-            data: event.update,
-          });
-        }
-        return;
-      }
+  const applyEvent = Effect.fn("OmpSessionRuntime.applyEvent")(function* (event: OmpRpcEvent) {
+    eventSequence += 1;
+    const sequence = eventSequence;
+    if (event.type === "agent_start") {
+      pendingDrainState = undefined;
+      // A new run ends any wait for this turn's prompt_result; the next
+      // drain starts its own bound.
+      promptWaitStartedAt = undefined;
+      // Only a fresh native run can wake a settled turn. Late message/tool
+      // frames never manufacture turns. A turn whose outcome was uncertain
+      // still leaves a live process whose background work can wake it; a
+      // protocol failure ends the process instead.
       if (
-        event.type === "tool_execution_start" ||
-        event.type === "tool_execution_update" ||
-        event.type === "tool_execution_end"
+        !turnIsOpen(turn) &&
+        !protocolFailed &&
+        (turn.phase === "terminal" || turn.phase === "failed" || turn.phase === "unknown")
       ) {
-        const name = text(event.toolName) ?? text(event.name) ?? "tool";
-        const toolCallId = text(event.toolCallId) ?? text(event.id) ?? name;
-        const published = turnIsOpen(turn) && !staleRunOpen();
-        // Background jobs are tracked from every frame, published or not.
-        if (event.type === "tool_execution_update") {
-          const jobId = backgroundJobId(event.partialResult);
-          const job = jobId === undefined ? undefined : backgroundJobs.get(jobId);
-          if (jobId !== undefined && settlesBackgroundJob(event.partialResult)) {
-            if (job) backgroundJobs.delete(jobId);
-            else {
-              settledJobIds.add(jobId);
-              dropOldest(settledJobIds, OMP_JOB_MEMORY);
-            }
-          } else if (jobId !== undefined && job) {
-            // A job that reports is still alive, so it outlasts the quiet ones.
-            backgroundJobs.delete(jobId);
-            backgroundJobs.set(jobId, job);
-          }
-          const ownCall = job
-            ? job.turnId === activeTurnId
-            : jobId !== undefined
-              ? turnToolCalls.has(toolCallId)
-              : (!failedToolCallIds.has(toolCallId) || turnToolCalls.get(toolCallId) === name) &&
-                ![...backgroundJobs.values()].some(
-                  (other) =>
-                    other.running &&
-                    other.toolCallId === toolCallId &&
-                    other.turnId !== activeTurnId,
-                );
-          if (!ownCall) return;
-        } else if (event.type === "tool_execution_end") {
-          if (toolFailed(event)) rememberFailedCall(toolCallId);
-          const jobId = backgroundJobId(event.result);
-          // The end consumes its job's early last frame, whatever state it reports.
-          const settledEarly = jobId !== undefined && settledJobIds.delete(jobId);
-          if (
-            jobId !== undefined &&
-            !settledEarly &&
-            backgroundJobState(event.result) === "running"
-          ) {
-            backgroundJobs.delete(jobId);
-            backgroundJobs.set(jobId, {
-              toolCallId,
-              turnId: published ? activeTurnId : undefined,
-              running: true,
-            });
-            dropOldest(backgroundJobs, OMP_JOB_MEMORY);
-          }
+        yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
+      }
+      openRunId = ++runSequence;
+      yield* applySignal({ type: "agent-start", runId: openRunId });
+      return;
+    }
+    if (event.type === "agent_end") {
+      const runId = openRunId;
+      openRunId = undefined;
+      // The tail of an aborted run carries no output for the current turn.
+      const stale = runId !== undefined && runId === turn.staleRunId;
+      // Yield ends the visible response even when a background result can
+      // wake another run. Older OMP versions only report isTerminal.
+      if (event.yielded !== undefined) reportsPromptResults = true;
+      const terminal = event.yielded ?? event.isTerminal !== false;
+      const fallbackMessage =
+        !stale && turnIsOpen(turn) ? lastAssistantMessage(event.messages) : undefined;
+      // A run-end snapshot can repair its open envelope or recover a new
+      // envelope after this turn's observed one in the ordered native transcript.
+      // Identity and position establish ownership; wall-clock order does not.
+      if (fallbackMessage) {
+        const activeReference = {
+          responseId: activeAssistantResponseId,
+          timestamp: activeAssistantTimestamp,
+        };
+        const ownsSnapshot =
+          activeAssistantContent && matchesAssistantReference(activeReference, fallbackMessage);
+        const reference = activeAssistantContent
+          ? activeReference
+          : latestCompletedAssistantReference;
+        const anchorIndex =
+          reference && Array.isArray(event.messages)
+            ? event.messages.findLastIndex(
+                (message) =>
+                  isAssistantMessage(message) &&
+                  isRecord(message) &&
+                  matchesAssistantReference(reference, message),
+              )
+            : -1;
+        const newerSnapshot =
+          anchorIndex >= 0 &&
+          Array.isArray(event.messages) &&
+          event.messages.lastIndexOf(fallbackMessage) > anchorIndex;
+        if (ownsSnapshot || !assistantMessageSeen || newerSnapshot) {
+          if (!ownsSnapshot && activeAssistantContent) yield* finishAssistant();
+          yield* ensureAssistant(undefined, fallbackMessage);
+          evidence.assistantEnded = true;
+          evidence.stopReason = text(fallbackMessage.stopReason);
+          evidence.errorMessage = text(fallbackMessage.errorMessage);
+          yield* finishAssistant(assistantItemStatus(fallbackMessage), fallbackMessage);
         }
-        if (!published) return;
-        turnToolCalls.set(toolCallId, name);
-        const detail =
-          detailText(event.partialResult) ?? detailText(event.result) ?? detailText(event.output);
-        const failed = toolFailed(event);
-        yield* publish({
-          type: "tool",
-          phase:
-            event.type === "tool_execution_start"
-              ? "started"
-              : event.type === "tool_execution_update"
-                ? "updated"
-                : "completed",
-          toolCallId,
-          name,
-          ...(event.args !== undefined || event.arguments !== undefined
-            ? { input: event.args ?? event.arguments }
-            : {}),
-          status:
-            event.type === "tool_execution_end" ? (failed ? "failed" : "completed") : "inProgress",
-          ...(detail ? { detail } : {}),
-          ...(event.result !== undefined || event.partialResult !== undefined
-            ? { data: event.result ?? event.partialResult }
-            : {}),
+      }
+      yield* applySignal({
+        type: "agent-end",
+        terminal,
+        ...(runId === undefined ? {} : { runId }),
+      });
+      return;
+    }
+    if (event.type === "prompt_result") {
+      const promptId = event.id;
+      // A settled or abandoned prompt's late result (for example after an
+      // acknowledged abort) must not be attributed to the next turn.
+      const route = routePromptOutcome(promptId);
+      if (route === "hold") holdPromptOutcome({ _tag: "Event", event });
+      if (route !== "current") return;
+      if (event.status !== undefined) {
+        reportsPromptResults = true;
+        promptReported = true;
+      }
+      if (event.sessionSettled !== undefined) {
+        if (event.sessionSettled) sessionSettled();
+        yield* publish({ type: "background-work", pending: !event.sessionSettled });
+      }
+      evidence.promptStatus = event.status;
+      evidence.promptError = event.promptError?.message;
+      if (typeof event.agentInvoked === "boolean") {
+        yield* applySignal({
+          type: "prompt-result",
+          ...(promptId ? { requestId: promptId } : {}),
+          agentInvoked: event.agentInvoked,
+          ...(event.status !== undefined ? { reported: true } : {}),
         });
-        return;
       }
-      // Subagent frames are not the run's: they report with or without an
-      // open turn. In OMP 18.3.1 a `task` spawn runs as a detached background
-      // job by default (task/index.ts, `async.enabled` pinned on for RPC in
-      // tools/settings.ts), an abort does not cancel it
-      // (AgentSession.abort), and a run can end terminal while it still runs.
-      // Its frames and closing `subagent_lifecycle` then arrive after the
-      // turn settled, up to `session_settled` (docs/rpc.md). The adapter
-      // attributes them to the turn that started the task.
-      if (event.type === "subagent_lifecycle" || event.type === "subagent_progress") {
-        const id = subagentId(event) ?? "activity";
-        const status = subagentStatus(event);
-        const previous = subagentStatuses.get(id);
-        const terminal = previous !== undefined && previous !== "inProgress";
-        if (terminal && (input.target.driverKind !== "scient" || status !== previous)) return;
-        if (status !== previous) subagentStatuses.set(id, status);
-        if (input.target.driverKind === "scient") {
-          const observed = parseScientSubagent(event, status !== "inProgress");
-          const prior = scientSubagents.get(id);
-          const title = prior?.title ?? observed.title;
-          const prompt = observed.prompt ?? prior?.prompt;
-          const observation = {
-            ...prior,
-            ...observed,
-            presentation:
-              prior === undefined
-                ? observed.presentation
-                : {
-                    ...prior.presentation,
-                    ...observed.presentation,
-                    ...(observed.presentation.usage === undefined
-                      ? {}
-                      : {
-                          usage: {
-                            ...prior.presentation.usage,
-                            ...observed.presentation.usage,
-                          },
-                        }),
-                  },
-            ...(title === undefined ? {} : { title }),
-            ...(prompt === undefined ? {} : { prompt }),
-          };
-          // Terminal progress precedes lifecycle artifacts; unchanged repeats are still ignored.
-          if (terminal && Equal.equals(prior, observation)) return;
-          scientSubagents.set(id, observation);
-          yield* publish({
-            ...observation,
-            type: "subagent",
-            id,
-            title: title ?? "Subagent",
-            status,
-          });
-        } else {
-          const detail = subagentDetail(event);
-          yield* publish({
-            type: "subagent",
-            id,
-            title: subagentTitle(event) ?? "Subagent",
-            status,
-            ...(detail ? { detail } : {}),
-          });
-        }
-        return;
-      }
-      if (event.type === "subagent_event") return;
-      if (event.type === "command_output") {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
-        const output = rawText(event.output) ?? rawText(event.text) ?? rawText(event.delta);
-        if (output) yield* publish({ type: "command-output", delta: output });
-        return;
-      }
-      if (event.type === "extension_ui_request") {
-        // A cancel may still close a dialog that was already shown. Dialogs
-        // outside any run (login flows, session start) are still shown.
-        if (staleRunOpen() && text(event.method) !== "cancel") {
-          yield* cancelStaleQuestion(event);
-          return;
-        }
-        yield* publishQuestion(event);
-        return;
-      }
-      if (event.type === "extension_error") {
-        yield* publish({
-          type: "warning",
-          message: clip(event.error) ?? `${input.target.name} reported an extension error.`,
-        });
-        return;
-      }
-      if (event.type === "available_commands_update") {
-        const commands = commandRecords(event.commands);
-        if (commands) catalog = compileOmpCommandCatalog(commands);
-        return;
-      }
-      if (event.type === "session_info_update") {
-        yield* sessionInfo(text(event.sessionFile), text(event.sessionId));
-        return;
-      }
-      if (event.type === "host_tool_cancel") {
-        const target = text(event.targetId);
-        if (target) cancelledHostTools.add(target);
-        return;
-      }
-      if (event.type === "host_uri_cancel") {
-        const target = text(event.targetId);
-        if (target) cancelledHostUris.add(target);
-        return;
-      }
-      if (event.type === "host_tool_call") {
-        const id = text(event.id);
-        if (id) yield* rejectHostTool(id);
-        yield* publish({
-          type: "warning",
-          message: `Ignored ${input.target.nameWithArticle} host-tool call. Scient tools are not registered.`,
-        });
-        return;
-      }
-      if (event.type === "host_uri_request") {
-        const id = text(event.id);
-        if (id) yield* rejectHostUri(id);
-        yield* publish({
-          type: "warning",
-          message: `Ignored ${input.target.nameWithArticle} host URI request. No host URI schemes are registered.`,
-        });
-        return;
-      }
-      if (event.type === "session_settled") {
-        // This event is newer than any state buffered before the event drain.
-        pendingDrainState = undefined;
-        sessionSettled();
-        yield* publish({ type: "session-settled" });
-        return;
-      }
-      if (ignoredLifecycleEvents.has(event.type)) return;
-      if (seenUnknownEvents.has(event.type)) return;
-      seenUnknownEvents.add(event.type);
+      return;
+    }
+    if (event.type === "auto_retry_start") {
+      if (!turnIsOpen(turn) || staleRunOpen()) return;
+      evidence.retryExhausted = false;
+      evidence.retryFinalError = undefined;
+      const attempt =
+        typeof event.attempt === "number" && typeof event.maxAttempts === "number"
+          ? ` (attempt ${event.attempt} of ${event.maxAttempts})`
+          : "";
+      const cause = clip(event.errorMessage);
       yield* publish({
         type: "warning",
-        message: `Unrecognized ${input.target.name} event "${eventTypeLabel(event.type)}" at sequence ${sequence}.`,
+        message: `${input.target.name} is retrying the model request${attempt}${cause ? `: ${cause}` : "."}`,
       });
-    });
-
-  const applyNotification = (notification: OmpRpcNotification) =>
-    Effect.gen(function* () {
-      const onNativeNotification = input.onNativeNotification;
-      if (onNativeNotification) {
-        yield* onNativeNotification(notification).pipe(Effect.ignore);
-      }
-      yield* interpretNotification(notification);
-    });
-
-  const interpretNotification = (notification: OmpRpcNotification) =>
-    Effect.gen(function* () {
-      if (notification._tag === "ProtocolFailure") {
-        protocolFailed = true;
-        yield* publish({ type: "error", message: notification.detail });
-        if (turnIsOpen(turn) || turn.phase === "accepted") {
-          yield* applySignal({ type: "process-exit" });
-        }
-        return;
-      }
-      if (notification._tag === "AsyncCommandFailure") {
-        const route = routePromptOutcome(notification.id);
-        if (route === "hold") holdPromptOutcome(notification);
-        if (route !== "current") return;
-        failureDetail = clipOmpErrorMessage(input.target, notification.error);
-        yield* applySignal({ type: "prompt-failed", requestId: notification.id });
-        return;
-      }
-      if (notification._tag === "Drain") return;
-      if (notification._tag === "UndecodableEvent") {
-        // Stay observable without ending a conversation over a field change in
-        // an informational event.
-        yield* publish({ type: "warning", message: notification.detail });
-        return;
-      }
-      if (notification._tag === "CommandParseFailure") {
-        // OMP reports an unparseable frame without a request id, so no turn owns it.
-        yield* publish({ type: "warning", message: notification.error.slice(0, 512) });
-        return;
-      }
-      yield* applyEvent(notification.event);
-    });
-
-  const consume = (item: InboxItem) =>
-    Effect.gen(function* () {
-      if (item.type === "begin" && item.turnId && item.admission) {
-        if (turnIsOpen(turn) && activeTurnId) {
-          yield* Deferred.succeed(item.admission, { turnId: activeTurnId, steering: true });
-        } else {
-          yield* startTurn(item.turnId, false);
-          yield* Deferred.succeed(item.admission, { turnId: item.turnId, steering: false });
-        }
-        return;
-      }
-      if (item.type === "accepted" && item.requestId) {
-        if (item.turnId !== undefined && item.turnId !== activeTurnId) {
-          rememberSettledPrompt(item.requestId);
-          return;
-        }
-        if (item.mode === "steer") {
-          yield* applySignal({ type: "steer-accepted" });
-        } else if (!turnIsOpen(turn)) {
-          // The turn settled (for example by an acknowledged abort) before
-          // OMP acknowledged its prompt: that prompt's frames have no owner.
-          rememberSettledPrompt(item.requestId);
-        } else {
-          yield* applySignal({
-            type: "prompt-accepted",
-            requestId: item.requestId,
-            ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
-          });
-          // A prompt OMP handled locally is never reported. If this turn took
-          // in a racing background run, the idle session decides it.
-          if (item.agentInvoked === false) promptReported = true;
-          const held = pendingOutcomes;
-          pendingOutcomes = [];
-          for (const notification of held) yield* interpretNotification(notification);
-        }
-        yield* confirmIdle;
-        return;
-      }
-      if (item.type === "command-failed") {
-        if (item.turnId !== undefined && item.turnId !== activeTurnId) return;
-        commandRejected = true;
-        yield* applySignal({ type: "command-failed" });
-        return;
-      }
-      if (item.type === "retry-drain") {
-        drainRetryPending = false;
-        yield* confirmIdle;
-        return;
-      }
-      if (item.type === "process-exit") {
-        yield* applySignal({ type: "process-exit" });
+      return;
+    }
+    if (event.type === "auto_retry_end") {
+      // A recovered retry reports success after the turn settled; nothing is
+      // left to decide then.
+      if (event.success !== false || !turnIsOpen(turn) || staleRunOpen()) return;
+      evidence.retryExhausted = true;
+      evidence.retryFinalError = text(event.finalError);
+      return;
+    }
+    if (event.type === "model_changed" || event.type === "thinking_level_changed") {
+      const state = yield* input.client.getState().pipe(Effect.exit);
+      if (state._tag === "Failure") {
         yield* publish({
-          type: "process-exited",
-          ...(protocolFailed ? { cause: "protocol" as const } : {}),
+          type: "warning",
+          message: `${input.target.name} changed model state but did not report a readable state.`,
         });
-        if (item.done) yield* Deferred.succeed(item.done, undefined);
         return;
       }
-      if (item.type === "event" && item.notification) {
-        if (item.notification._tag === "Drain") {
-          yield* confirmIdle;
-          return;
-        }
-        yield* applyNotification(item.notification);
-        if (pendingDrainState === undefined) yield* confirmIdle;
+      const model = state.value.model
+        ? encodeOmpModelSlug(state.value.model.provider, state.value.model.id)
+        : undefined;
+      yield* publish({
+        type: "model-changed",
+        ...(model ? { model } : {}),
+        ...(state.value.thinkingLevel ? { thinkingLevel: state.value.thinkingLevel } : {}),
+      });
+      return;
+    }
+    if (event.type === "auto_compaction_end" || event.type === "compaction_end") {
+      // A failed compaction reports errorMessage and must not read as
+      // success; a skipped one changed nothing and reports nothing.
+      const failure = clip(event.errorMessage);
+      if (failure) {
+        yield* publish({
+          type: "warning",
+          message: `${input.target.name} compaction failed${event.willRetry === true ? " and will retry" : ""}: ${failure}`,
+        });
+      } else if (event.aborted === true) {
+        yield* publish({
+          type: "warning",
+          message: `${input.target.name} compaction was aborted.`,
+        });
+      } else if (event.skipped === true) {
+        return;
+      } else if (event.willRetry === true) {
+        yield* publish({
+          type: "warning",
+          message: `${input.target.name} compaction will retry.`,
+        });
+      } else {
+        yield* publish({ type: "compacted" });
       }
+      return;
+    }
+    // Message frames outside an open turn (or from an aborted run) have no
+    // owner; they are dropped without a warning.
+    if (event.type === "message_start") {
+      if (!turnIsOpen(turn) || staleRunOpen()) return;
+      if (isAssistantMessage(event.message)) {
+        const nativeId = text(event.messageId);
+        if (nativeId && completedAssistantIds.has(nativeId)) return;
+        if (nativeId && nativeId === activeAssistantNativeId) return;
+        if (activeAssistantContent) yield* finishAssistant();
+        yield* ensureAssistant(nativeId, event.message);
+      }
+      return;
+    }
+    if (event.type === "message_end") {
+      if (!turnIsOpen(turn) || staleRunOpen()) return;
+      if (isBackgroundResultMessage(event.message)) {
+        // Marks where OMP resumed with a background job's result, since
+        // that run can also carry the answer to a newer message.
+        const detail = messageText(event.message);
+        if (!detail) return;
+        // Native deliveries include their job IDs in the content. Hash the complete
+        // receipt before redaction: repeated frames reuse an item without merging jobs.
+        const id = `background-result:${NodeCrypto.createHash("sha256").update(detail).digest("hex")}`;
+        yield* publish({ type: "background-result", id, detail });
+        return;
+      }
+      if (!isAssistantMessage(event.message)) return;
+      const nativeId = text(event.messageId);
+      if (
+        nativeId &&
+        (completedAssistantIds.has(nativeId) ||
+          (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
+      )
+        return;
+      const message = isRecord(event.message) ? event.message : {};
+      evidence.assistantEnded = true;
+      evidence.stopReason = text(message.stopReason);
+      evidence.errorMessage = text(message.errorMessage);
+      yield* ensureAssistant(nativeId, message);
+      yield* finishAssistant(assistantItemStatus(message), message);
+      return;
+    }
+    if (event.type === "message_update") {
+      if (
+        !isAssistantMessage(event.message) ||
+        !isRecord(event.assistantMessageEvent) ||
+        !turnIsOpen(turn) ||
+        staleRunOpen()
+      )
+        return;
+      const update = event.assistantMessageEvent;
+      const kind =
+        update.type === "text_delta" || update.type === "text_end"
+          ? "text"
+          : update.type === "thinking_delta" || update.type === "thinking_end"
+            ? "reasoning"
+            : undefined;
+      if (!kind) return;
+      const nativeId = text(event.messageId);
+      if (
+        nativeId &&
+        (completedAssistantIds.has(nativeId) ||
+          (activeAssistantNativeId !== undefined && nativeId !== activeAssistantNativeId))
+      )
+        return;
+      const content = yield* ensureAssistant(nativeId, event.message);
+      const index =
+        typeof update.contentIndex === "number" &&
+        Number.isInteger(update.contentIndex) &&
+        update.contentIndex >= 0
+          ? update.contentIndex
+          : 0;
+      const updates =
+        update.type === "text_delta" || update.type === "thinking_delta"
+          ? content.delta(index, kind, typeof update.delta === "string" ? update.delta : "")
+          : content.end(
+              index,
+              kind,
+              typeof update.content === "string" ? update.content : undefined,
+            );
+      yield* publishContent(updates);
+      return;
+    }
+    // A fresh agent_start gives autonomous runs a turn. Unowned frames
+    // and the tail of an aborted run still cannot leak into another turn.
+    if (event.type === "tool_stream_update") {
+      if (!turnIsOpen(turn) || staleRunOpen()) return;
+      const toolCallId = text(event.toolCallId);
+      if (toolCallId) {
+        const name = text(event.toolName) ?? "tool";
+        // An argument stream is the open run's, and may come before the call's start.
+        turnToolCalls.set(toolCallId, name);
+        yield* publish({
+          type: "tool",
+          phase: "updated",
+          toolCallId,
+          name,
+          status: "inProgress",
+          data: event.update,
+        });
+      }
+      return;
+    }
+    if (
+      event.type === "tool_execution_start" ||
+      event.type === "tool_execution_update" ||
+      event.type === "tool_execution_end"
+    ) {
+      const name = text(event.toolName) ?? text(event.name) ?? "tool";
+      const toolCallId = text(event.toolCallId) ?? text(event.id) ?? name;
+      const published = turnIsOpen(turn) && !staleRunOpen();
+      // Background jobs are tracked from every frame, published or not.
+      if (event.type === "tool_execution_update") {
+        const jobId = backgroundJobId(event.partialResult);
+        const job = jobId === undefined ? undefined : backgroundJobs.get(jobId);
+        if (jobId !== undefined && settlesBackgroundJob(event.partialResult)) {
+          if (job) backgroundJobs.delete(jobId);
+          else {
+            settledJobIds.add(jobId);
+            dropOldest(settledJobIds, OMP_JOB_MEMORY);
+          }
+        } else if (jobId !== undefined && job) {
+          // A job that reports is still alive, so it outlasts the quiet ones.
+          backgroundJobs.delete(jobId);
+          backgroundJobs.set(jobId, job);
+        }
+        const ownCall = job
+          ? job.turnId === activeTurnId
+          : jobId !== undefined
+            ? turnToolCalls.has(toolCallId)
+            : (!failedToolCallIds.has(toolCallId) || turnToolCalls.get(toolCallId) === name) &&
+              ![...backgroundJobs.values()].some(
+                (other) =>
+                  other.running && other.toolCallId === toolCallId && other.turnId !== activeTurnId,
+              );
+        if (!ownCall) return;
+      } else if (event.type === "tool_execution_end") {
+        if (toolFailed(event)) rememberFailedCall(toolCallId);
+        const jobId = backgroundJobId(event.result);
+        // The end consumes its job's early last frame, whatever state it reports.
+        const settledEarly = jobId !== undefined && settledJobIds.delete(jobId);
+        if (
+          jobId !== undefined &&
+          !settledEarly &&
+          backgroundJobState(event.result) === "running"
+        ) {
+          backgroundJobs.delete(jobId);
+          backgroundJobs.set(jobId, {
+            toolCallId,
+            turnId: published ? activeTurnId : undefined,
+            running: true,
+          });
+          dropOldest(backgroundJobs, OMP_JOB_MEMORY);
+        }
+      }
+      if (!published) return;
+      turnToolCalls.set(toolCallId, name);
+      const detail =
+        detailText(event.partialResult) ?? detailText(event.result) ?? detailText(event.output);
+      const failed = toolFailed(event);
+      yield* publish({
+        type: "tool",
+        phase:
+          event.type === "tool_execution_start"
+            ? "started"
+            : event.type === "tool_execution_update"
+              ? "updated"
+              : "completed",
+        toolCallId,
+        name,
+        ...(event.args !== undefined || event.arguments !== undefined
+          ? { input: event.args ?? event.arguments }
+          : {}),
+        status:
+          event.type === "tool_execution_end" ? (failed ? "failed" : "completed") : "inProgress",
+        ...(detail ? { detail } : {}),
+        ...(event.result !== undefined || event.partialResult !== undefined
+          ? { data: event.result ?? event.partialResult }
+          : {}),
+      });
+      return;
+    }
+    // Subagent frames are not the run's: they report with or without an
+    // open turn. In OMP 18.3.1 a `task` spawn runs as a detached background
+    // job by default (task/index.ts, `async.enabled` pinned on for RPC in
+    // tools/settings.ts), an abort does not cancel it
+    // (AgentSession.abort), and a run can end terminal while it still runs.
+    // Its frames and closing `subagent_lifecycle` then arrive after the
+    // turn settled, up to `session_settled` (docs/rpc.md). The adapter
+    // attributes them to the turn that started the task.
+    if (event.type === "subagent_lifecycle" || event.type === "subagent_progress") {
+      const id = subagentId(event) ?? "activity";
+      const status = subagentStatus(event);
+      const previous = subagentStatuses.get(id);
+      const terminal = previous !== undefined && previous !== "inProgress";
+      if (terminal && (input.target.driverKind !== "scient" || status !== previous)) return;
+      if (status !== previous) subagentStatuses.set(id, status);
+      if (input.target.driverKind === "scient") {
+        const observed = parseScientSubagent(event, status !== "inProgress");
+        const prior = scientSubagents.get(id);
+        const title = prior?.title ?? observed.title;
+        const prompt = observed.prompt ?? prior?.prompt;
+        const observation = {
+          ...prior,
+          ...observed,
+          presentation:
+            prior === undefined
+              ? observed.presentation
+              : {
+                  ...prior.presentation,
+                  ...observed.presentation,
+                  ...(observed.presentation.usage === undefined
+                    ? {}
+                    : {
+                        usage: {
+                          ...prior.presentation.usage,
+                          ...observed.presentation.usage,
+                        },
+                      }),
+                },
+          ...(title === undefined ? {} : { title }),
+          ...(prompt === undefined ? {} : { prompt }),
+        };
+        // Terminal progress precedes lifecycle artifacts; unchanged repeats are still ignored.
+        if (terminal && Equal.equals(prior, observation)) return;
+        scientSubagents.set(id, observation);
+        yield* publish({
+          ...observation,
+          type: "subagent",
+          id,
+          title: title ?? "Subagent",
+          status,
+        });
+      } else {
+        const detail = subagentDetail(event);
+        yield* publish({
+          type: "subagent",
+          id,
+          title: subagentTitle(event) ?? "Subagent",
+          status,
+          ...(detail ? { detail } : {}),
+        });
+      }
+      return;
+    }
+    if (event.type === "subagent_event") return;
+    if (event.type === "command_output") {
+      if (!turnIsOpen(turn) || staleRunOpen()) return;
+      const output = rawText(event.output) ?? rawText(event.text) ?? rawText(event.delta);
+      if (output) yield* publish({ type: "command-output", delta: output });
+      return;
+    }
+    if (event.type === "extension_ui_request") {
+      // A cancel may still close a dialog that was already shown. Dialogs
+      // outside any run (login flows, session start) are still shown.
+      if (staleRunOpen() && text(event.method) !== "cancel") {
+        yield* cancelStaleQuestion(event);
+        return;
+      }
+      yield* publishQuestion(event);
+      return;
+    }
+    if (event.type === "extension_error") {
+      yield* publish({
+        type: "warning",
+        message: clip(event.error) ?? `${input.target.name} reported an extension error.`,
+      });
+      return;
+    }
+    if (event.type === "available_commands_update") {
+      const commands = commandRecords(event.commands);
+      if (commands) catalog = compileOmpCommandCatalog(commands);
+      return;
+    }
+    if (event.type === "session_info_update") {
+      yield* sessionInfo(text(event.sessionFile), text(event.sessionId));
+      return;
+    }
+    if (event.type === "host_tool_cancel") {
+      const target = text(event.targetId);
+      if (target) cancelledHostTools.add(target);
+      return;
+    }
+    if (event.type === "host_uri_cancel") {
+      const target = text(event.targetId);
+      if (target) cancelledHostUris.add(target);
+      return;
+    }
+    if (event.type === "host_tool_call") {
+      const id = text(event.id);
+      if (id) yield* rejectHostTool(id);
+      yield* publish({
+        type: "warning",
+        message: `Ignored ${input.target.nameWithArticle} host-tool call. Scient tools are not registered.`,
+      });
+      return;
+    }
+    if (event.type === "host_uri_request") {
+      const id = text(event.id);
+      if (id) yield* rejectHostUri(id);
+      yield* publish({
+        type: "warning",
+        message: `Ignored ${input.target.nameWithArticle} host URI request. No host URI schemes are registered.`,
+      });
+      return;
+    }
+    if (event.type === "session_settled") {
+      // This event is newer than any state buffered before the event drain.
+      pendingDrainState = undefined;
+      sessionSettled();
+      yield* publish({ type: "session-settled" });
+      return;
+    }
+    if (ignoredLifecycleEvents.has(event.type)) return;
+    if (seenUnknownEvents.has(event.type)) return;
+    seenUnknownEvents.add(event.type);
+    yield* publish({
+      type: "warning",
+      message: `Unrecognized ${input.target.name} event "${eventTypeLabel(event.type)}" at sequence ${sequence}.`,
     });
+  });
+
+  const applyNotification = Effect.fn("OmpSessionRuntime.applyNotification")(function* (
+    notification: OmpRpcNotification,
+  ) {
+    const onNativeNotification = input.onNativeNotification;
+    if (onNativeNotification) {
+      yield* onNativeNotification(notification).pipe(Effect.ignore);
+    }
+    yield* interpretNotification(notification);
+  });
+
+  const interpretNotification = Effect.fn("OmpSessionRuntime.interpretNotification")(function* (
+    notification: OmpRpcNotification,
+  ) {
+    if (notification._tag === "ProtocolFailure") {
+      protocolFailed = true;
+      yield* publish({ type: "error", message: notification.detail });
+      if (turnIsOpen(turn) || turn.phase === "accepted") {
+        yield* applySignal({ type: "process-exit" });
+      }
+      return;
+    }
+    if (notification._tag === "AsyncCommandFailure") {
+      const route = routePromptOutcome(notification.id);
+      if (route === "hold") holdPromptOutcome(notification);
+      if (route !== "current") return;
+      failureDetail = clipOmpErrorMessage(input.target, notification.error);
+      yield* applySignal({ type: "prompt-failed", requestId: notification.id });
+      return;
+    }
+    if (notification._tag === "Drain") return;
+    if (notification._tag === "UndecodableEvent") {
+      // Stay observable without ending a conversation over a field change in
+      // an informational event.
+      yield* publish({ type: "warning", message: notification.detail });
+      return;
+    }
+    if (notification._tag === "CommandParseFailure") {
+      // OMP reports an unparseable frame without a request id, so no turn owns it.
+      yield* publish({ type: "warning", message: notification.error.slice(0, 512) });
+      return;
+    }
+    yield* applyEvent(notification.event);
+  });
+
+  const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
+    if (item.type === "begin" && item.turnId && item.admission) {
+      if (turnIsOpen(turn) && activeTurnId) {
+        yield* Deferred.succeed(item.admission, { turnId: activeTurnId, steering: true });
+      } else {
+        yield* startTurn(item.turnId, false);
+        yield* Deferred.succeed(item.admission, { turnId: item.turnId, steering: false });
+      }
+      return;
+    }
+    if (item.type === "accepted" && item.requestId) {
+      if (item.turnId !== undefined && item.turnId !== activeTurnId) {
+        rememberSettledPrompt(item.requestId);
+        return;
+      }
+      if (item.mode === "steer") {
+        yield* applySignal({ type: "steer-accepted" });
+      } else if (!turnIsOpen(turn)) {
+        // The turn settled (for example by an acknowledged abort) before
+        // OMP acknowledged its prompt: that prompt's frames have no owner.
+        rememberSettledPrompt(item.requestId);
+      } else {
+        yield* applySignal({
+          type: "prompt-accepted",
+          requestId: item.requestId,
+          ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
+        });
+        // A prompt OMP handled locally is never reported. If this turn took
+        // in a racing background run, the idle session decides it.
+        if (item.agentInvoked === false) promptReported = true;
+        const held = pendingOutcomes;
+        pendingOutcomes = [];
+        for (const notification of held) yield* interpretNotification(notification);
+      }
+      yield* confirmIdle;
+      return;
+    }
+    if (item.type === "command-failed") {
+      if (item.turnId !== undefined && item.turnId !== activeTurnId) return;
+      commandRejected = true;
+      yield* applySignal({ type: "command-failed" });
+      return;
+    }
+    if (item.type === "retry-drain") {
+      drainRetryPending = false;
+      yield* confirmIdle;
+      return;
+    }
+    if (item.type === "process-exit") {
+      yield* applySignal({ type: "process-exit" });
+      yield* publish({
+        type: "process-exited",
+        ...(protocolFailed ? { cause: "protocol" as const } : {}),
+      });
+      if (item.done) yield* Deferred.succeed(item.done, undefined);
+      return;
+    }
+    if (item.type === "event" && item.notification) {
+      if (item.notification._tag === "Drain") {
+        yield* confirmIdle;
+        return;
+      }
+      yield* applyNotification(item.notification);
+      if (pendingDrainState === undefined) yield* confirmIdle;
+    }
+  });
 
   yield* input.client.events.pipe(
     Stream.runForEach((notification) =>
@@ -1542,15 +1548,14 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     removeQuestion: (id) => {
       questions.delete(id);
     },
-    begin: (turnId) =>
-      Effect.gen(function* () {
-        const admission = yield* Deferred.make<{
-          readonly turnId: string;
-          readonly steering: boolean;
-        }>();
-        yield* offer({ type: "begin", turnId, admission });
-        return yield* Deferred.await(admission);
-      }),
+    begin: Effect.fn("OmpSessionRuntime.begin")(function* (turnId) {
+      const admission = yield* Deferred.make<{
+        readonly turnId: string;
+        readonly steering: boolean;
+      }>();
+      yield* offer({ type: "begin", turnId, admission });
+      return yield* Deferred.await(admission);
+    }),
     accepted: (requestId, agentInvoked, mode = "prompt", turnId) =>
       offer({
         type: "accepted",
@@ -1561,11 +1566,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }),
     commandFailed: (turnId) =>
       offer({ type: "command-failed", ...(turnId === undefined ? {} : { turnId }) }),
-    requestProcessExit: () =>
-      Effect.gen(function* () {
-        const done = yield* Deferred.make<void>();
-        yield* offer({ type: "process-exit", done });
-        yield* Deferred.await(done);
-      }),
+    requestProcessExit: Effect.fn("OmpSessionRuntime.requestProcessExit")(function* () {
+      const done = yield* Deferred.make<void>();
+      yield* offer({ type: "process-exit", done });
+      yield* Deferred.await(done);
+    }),
   };
 });

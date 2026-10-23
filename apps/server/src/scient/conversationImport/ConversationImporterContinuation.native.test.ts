@@ -79,6 +79,7 @@ const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   })).messages;
 });
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
+import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import {
@@ -2991,11 +2992,22 @@ it.live(
           workspaceMode: "local",
         };
         const peer = yield* ImportPeer;
-        yield* Effect.sleep("1 second").pipe(
-          Effect.andThen(peer.setTime(Date.parse("2026-09-28T09:31:00.000Z"))),
-          Effect.forkScoped,
-        );
+        const outbox = yield* EffectOutboxV2;
+        const completion = yield* Stream.toPull(yield* outbox.subscribeCompletions);
+        const awaitEffects = Effect.fn("test.awaitEffects")(function* (commandId: CommandId) {
+          while (true) {
+            const jobs = yield* outbox.listByCommandId(commandId);
+            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
+              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
+              return;
+            }
+            yield* completion;
+          }
+        });
         const receipt = yield* forks.dispatch(command);
+        yield* awaitEffects(command.commandId);
+        // Advancing past an active provisioning lease would manufacture a takeover.
+        yield* peer.setTime(Date.parse("2026-09-28T09:31:00.000Z"));
         const frozen = yield* store.getThreadProjection(childId);
         const baseline = (yield* readThread(childId))!;
         const inherited = frozen.visibleTurnItems
@@ -3149,21 +3161,10 @@ it.live(
             yield* (yield* CommandReceiptStoreV2).getByCommandId(failedCommand.commandId),
           ),
         );
-        const outbox = yield* EffectOutboxV2;
-        const completion = yield* Stream.toPull(
-          Stream.merge(yield* outbox.subscribeCompletions, Stream.tick("10 millis")),
-        );
         const deleteThread = Effect.fn("test.deleteThread")(function* (threadId: ThreadId) {
           const commandId = CommandId.make(`durable-delete-${threadId}`);
           yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
-          while (true) {
-            const jobs = yield* outbox.listByCommandId(commandId);
-            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
-              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
-              return;
-            }
-            yield* completion;
-          }
+          yield* awaitEffects(commandId);
         });
         yield* deleteThread(sourceId);
         assert.isNotNull((yield* store.getThreadProjection(sourceId)).thread.deletedAt);
@@ -3303,6 +3304,7 @@ it.live(
               Layer.mergeAll(
                 Layer.mock(TerminalManager)({ close: () => Effect.void }),
                 Layer.mock(PreviewManager)({ close: () => Effect.void }),
+                Layer.mock(ScheduledTaskService)({ deleteForThread: () => Effect.void }),
               ),
             ),
           ),

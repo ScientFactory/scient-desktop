@@ -8,7 +8,13 @@ export {
   type GrokRuntimeResolution,
   type GrokRuntimeResolverInput,
 } from "./server/driver.ts";
-export { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./server/adapter.ts";
+/**
+ * Default native Grok adapter for hosts without an application bridge.
+ *
+ * @public
+ */
+export { GrokAdapterV2Driver } from "./server/adapter.ts";
+export { type GrokAdapterV2DriverEnv } from "./server/adapter.ts";
 export {
   GROK_AUTH_EXTENSION_METHOD,
   GROK_AUTH_METHOD_ACCOUNT,

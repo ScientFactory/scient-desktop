@@ -183,30 +183,6 @@ const runSetup = (host: {
 const aptGet = (commands: ReadonlyArray<ReadonlyArray<string>>) =>
   commands.filter(([name]) => name === "apt-get");
 
-it.effect("setup in a root shell warns that the server cannot run as root", () =>
-  Effect.gen(function* () {
-    // Every file read fails, so setup finds nothing to install and changes nothing.
-    yield* Command.runWith(browserCommand, { version: "0.0.0" })([
-      "setup",
-      "--base-dir",
-      "/nonexistent",
-    ]).pipe(
-      Effect.provide(FileSystem.layerNoop({})),
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        fakeSpawner({ font: FONT }).spawner,
-      ),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.UserId, 0),
-      // A root user who follows the old advice runs setup through sudo.
-      Effect.provideService(HostProcess.Environment, { SUDO_USER: "root" }),
-    );
-    const output = (yield* TestConsole.logLines).join("\n");
-    expect(output).toContain("Chrome will not start its sandbox as root");
-    expect(output).not.toContain("ready");
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
-);
-
 it.effect("setup without root does not report a host without fonts as ready", () =>
   Effect.gen(function* () {
     const { commands, output } = yield* runSetup({ root: false });

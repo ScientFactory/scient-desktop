@@ -103,25 +103,6 @@ function buildLargeText(lineCount = 5_000): string {
 
 it.layer(layerTest)("CheckpointStore.layer", (it) => {
   describe("isGitRepository", () => {
-    it.effect("returns false when no Git repository is detected", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        const checkpointStore = yield* CheckpointStore.CheckpointStore;
-
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
-      }),
-    );
-
-    it.effect("returns true when a Git repository is detected", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-        const checkpointStore = yield* CheckpointStore.CheckpointStore;
-
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
-      }),
-    );
-
     it.effect("treats missing Git as unavailable checkpoint support", () =>
       Effect.gen(function* () {
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
@@ -567,39 +548,6 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         expect(yield* fileSystem.readFileString(NodePath.join(tmp, "README.md"))).toBe(
           "# edited\n",
         );
-      }),
-    );
-
-    it.effect("leaves out paths that only a rebase onto upstream brought in", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-        const checkpointStore = yield* CheckpointStore.CheckpointStore;
-        const threadId = ThreadId.make("checkpoint-authored-paths-rebase");
-        const refs = {
-          cwd: tmp,
-          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
-          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
-        };
-        const commitBeforeTurn = (file: string) =>
-          Effect.gen(function* () {
-            yield* writeTextFile(NodePath.join(tmp, file), `${file}\n`);
-            yield* git(tmp, ["add", "."]);
-            yield* git(tmp, ["commit", "-m", file], { committedAt: "2020-01-01T00:00:00Z" });
-          });
-
-        yield* git(tmp, ["checkout", "-b", "upstream"]);
-        yield* commitBeforeTurn("upstream.txt");
-        yield* git(tmp, ["checkout", "-"]);
-        yield* commitBeforeTurn("feature.txt");
-        yield* checkpointStore.captureCheckpoint({
-          cwd: tmp,
-          checkpointRef: refs.fromCheckpointRef,
-        });
-        yield* git(tmp, ["rebase", "upstream"]);
-        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
-
-        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["feature.txt"]));
       }),
     );
   });

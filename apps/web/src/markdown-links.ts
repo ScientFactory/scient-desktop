@@ -3,6 +3,7 @@
 import {
   collapseAbsoluteFilePath,
   fileBasename,
+  isAbsolutePath,
   workspaceRelativeFilePath,
 } from "@t3tools/shared/path";
 import {
@@ -25,6 +26,7 @@ import { isTerminalLinkActivation } from "./terminal-links";
 
 export interface MarkdownFileLinkMeta {
   filePath: string;
+  workspaceLookupPath: string | null;
   targetPath: string;
   displayPath: string;
   workspaceRelativePath: string | null;
@@ -95,7 +97,10 @@ export function resolveInlineCodeFileLinkMeta(
     workspaceRoot,
     preserveRelativeSegments,
   );
-  return withAuthoredHomeRelativePath(candidate, meta);
+  return withAuthoredHomeRelativePath(candidate, {
+    ...meta,
+    workspaceLookupPath: workspaceLookupPath(candidate, cwd, candidateBase, workspaceRoot),
+  });
   // SCIENT-FORK:END
 }
 
@@ -124,7 +129,27 @@ export function resolveMarkdownFileLinkMeta(
   // buildFileLinkMetaFromTarget: home-relative links, the relative copy path, and canonical
   // file-link paths resolved against the editable workspace root.
   const meta = buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
-  return withAuthoredHomeRelativePath(href, meta);
+  return withAuthoredHomeRelativePath(href, {
+    ...meta,
+    workspaceLookupPath: workspaceLookupPath(href, cwd, baseDir, workspaceRoot),
+  });
+}
+
+function workspaceLookupPath(
+  href: string | undefined,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+  workspaceRoot: string | null | undefined,
+): string | null {
+  const source = href ? parseMarkdownFileLink(href) : null;
+  return workspaceRoot !== null &&
+    source !== null &&
+    !isAbsolutePath(source.path) &&
+    !/^~[\\/]/.test(source.path) &&
+    baseDir !== undefined &&
+    workspaceRelativeFilePath(baseDir, cwd) === "."
+    ? source.path
+    : null;
 }
 
 function withAuthoredHomeRelativePath(
@@ -174,6 +199,7 @@ function buildFileLinkMetaFromTarget(
   });
   return {
     filePath: path,
+    workspaceLookupPath: null,
     targetPath: resolvedTargetPath,
     displayPath: formatWorkspaceRelativePath(
       formatFilePathPosition({

@@ -31,6 +31,17 @@
     "[Pp]luginActions",
     "Scient Extensions"
   ],
+  "diffSignalRefinements": [
+    {
+      "signal": "[Cc]onnectors?\\b",
+      "changed": "\\b[Cc]onnectors\\b"
+    },
+    {
+      "signal": "[Cc]onnectors?\\b",
+      "changed": "\\b(?:[A-Za-z][A-Za-z0-9]*)?[Cc]onnectors?\\b",
+      "fileContext": "\\bmcp[A-Za-z0-9_]*\\b|Mcp|MCP|scient/extensions|/settings/extensions|ConnectorRuntime|ConnectorSessionDelivery|OmpScientExtensionConnector|ExtensionDeliveryReceipt"
+    }
+  ],
   "upstreamMounts": [
     {
       "path": "apps/server/scripts/acp-mock-agent.ts",

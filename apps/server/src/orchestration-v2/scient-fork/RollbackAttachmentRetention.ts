@@ -117,3 +117,42 @@ export const retainedRollbackAttachmentIds = (
   }
   return input.attachmentIds.filter((id) => retained.has(id.toLowerCase()));
 };
+
+/** Only locally-owned records released by this rollback can offer cleanup candidates. */
+export function rollbackAttachmentCandidateIds(input: {
+  readonly threadId: ThreadId;
+  readonly revertedRunIds: ReadonlyArray<RunId>;
+  readonly messages: OrchestrationV2ThreadProjection["messages"];
+  readonly turnItems: OrchestrationV2ThreadProjection["turnItems"];
+}): ReadonlyArray<string> {
+  const reverted = new Set(input.revertedRunIds);
+  return [
+    ...new Set([
+      ...input.messages
+        .filter(
+          (message) =>
+            message.threadId === input.threadId &&
+            message.runId !== null &&
+            reverted.has(message.runId),
+        )
+        .flatMap((message) => message.attachments.map((attachment) => attachment.id)),
+      ...input.turnItems
+        .filter(
+          (item) =>
+            item.threadId === input.threadId &&
+            item.inheritedFrom === undefined &&
+            item.runId !== null &&
+            reverted.has(item.runId) &&
+            item.type === "user_input_request" &&
+            item.status === "completed",
+        )
+        .flatMap((item) =>
+          item.type === "user_input_request" && item.questionAnswer !== undefined
+            ? Object.values(item.questionAnswer.attachmentsByQuestionId)
+                .flat()
+                .map((attachment) => attachment.id)
+            : [],
+        ),
+    ]),
+  ];
+}

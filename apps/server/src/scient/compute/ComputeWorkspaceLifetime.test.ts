@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -8,6 +8,44 @@ import {
 } from "./ComputeWorkspaceLifetime.ts";
 
 describe("Compute workspace lifetime", () => {
+  it.effect("defers admission while retaining per-run spans, receipts and finalizer scope", () =>
+    Effect.gen(function* () {
+      let admissions = 0;
+      let removed = 0;
+      const operation = withComputeWorkspaceReservation("/test/lazy-reservation", (release) =>
+        Effect.gen(function* () {
+          admissions++;
+          yield* Effect.addFinalizer(() => release);
+          const span = yield* Effect.currentSpan;
+          return [span, release] as const;
+        }),
+      );
+      const remove = withoutComputeWorkspaceOwners(
+        "/test/lazy-reservation",
+        Effect.sync(() => removed++),
+      );
+      assert.strictEqual(admissions, 0);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* operation;
+          const second = yield* operation;
+          assert.strictEqual(admissions, 2);
+          assert.strictEqual(
+            first[0].name,
+            "ComputeWorkspaceLifetime.withComputeWorkspaceReservation",
+          );
+          assert.strictEqual(second[0].name, first[0].name);
+          assert.notStrictEqual(second[0].spanId, first[0].spanId);
+          assert.notStrictEqual(second[1], first[1]);
+          yield* remove;
+          assert.strictEqual(removed, 0);
+        }),
+      );
+      yield* remove;
+      assert.strictEqual(removed, 1);
+    }).pipe(Effect.withTracerEnabled(true)),
+  );
+
   it.effect("retains the worktree until every descendant owner releases it", () =>
     Effect.gen(function* () {
       let removed = 0;

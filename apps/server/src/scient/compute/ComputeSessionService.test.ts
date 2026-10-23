@@ -1456,6 +1456,7 @@ const analyticsFixture = () => {
   let status: AnalyticsStatus = { available: true, consent: "product" };
   let epoch = 0;
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
@@ -1723,6 +1724,7 @@ describe("compute outcome analytics", () => {
       let status: AnalyticsStatus = { available: true, consent: initialConsent };
       let epoch = 0;
       const analytics = AnalyticsService.of({
+        recordOwners: () => Effect.void,
         record: (name, properties) =>
           Effect.sync(() => {
             events.push({ name, properties });

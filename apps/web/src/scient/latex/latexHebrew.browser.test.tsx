@@ -1,9 +1,10 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
 import type { MathfieldElement } from "mathlive";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -16,23 +17,23 @@ import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
 import template from "./fixtures/hebrew-math-and-tables.tex?raw";
 
-let host: HTMLDivElement;
-let root: Root;
 let source = "";
 const draftKey = "hebrew-babel-review";
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
   clearVisualDraft(draftKey);
-});
-async function mount(input: string) {
+}
+async function mount(_fixture: _Fixture, input: string) {
   await page.viewport(1300, 900);
   source = input;
   clearVisualDraft(draftKey);
-  host = document.createElement("div");
-  host.style.cssText = "width:1100px;height:850px";
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1100px;height:850px";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   function Harness() {
     const [text, setText] = useState(input);
     const owner = useLatexVisualTestOwner(text);
@@ -56,15 +57,16 @@ async function mount(input: string) {
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   await expect
     .poll(
       () =>
-        host.querySelector<HTMLElement & { editor: Editor }>(".scient-latex-visual-document")
-          ?.editor,
+        _fixture.host.querySelector<HTMLElement & { editor: Editor }>(
+          ".scient-latex-visual-document",
+        )?.editor,
     )
     .toBeTruthy();
-  const editor = host.querySelector<HTMLElement & { editor: Editor }>(
+  const editor = _fixture.host.querySelector<HTMLElement & { editor: Editor }>(
     ".scient-latex-visual-document",
   )!.editor;
   await expect
@@ -82,22 +84,33 @@ const preamble = String.raw`\documentclass{article}
 \begin{document}`;
 
 it("renders every template 26 block with Hebrew direction, labels, figure and code", async () => {
-  const editor = await mount(template);
-  expect(host.querySelector(".scient-latex-visual-paper")?.getAttribute("dir")).toBe("rtl");
-  expect(host.querySelector(".scient-latex-visual-paper")?.getAttribute("lang")).toBe("he");
-  expect(host.querySelector(".scient-latex-visual-raw")).toBeNull();
-  const figure = host.querySelector<HTMLElement>(".scient-latex-framed-figure")!;
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const editor = await mount(_fixture, template);
+  expect(_fixture.host.querySelector(".scient-latex-visual-paper")?.getAttribute("dir")).toBe(
+    "rtl",
+  );
+  expect(_fixture.host.querySelector(".scient-latex-visual-paper")?.getAttribute("lang")).toBe(
+    "he",
+  );
+  expect(_fixture.host.querySelector(".scient-latex-visual-raw")).toBeNull();
+  const figure = _fixture.host.querySelector<HTMLElement>(".scient-latex-framed-figure")!;
   expect(figure).toBeTruthy();
   expect(figure.textContent).toContain("איור 1:");
   expect(figure.textContent).toContain("שלבי בדיקה");
-  const code = host.querySelector<HTMLTextAreaElement>('[aria-label="Literal text"]');
+  const code = _fixture.host.querySelector<HTMLTextAreaElement>('[aria-label="Literal text"]');
   expect(code?.value).toContain("return x * x");
   expect(getComputedStyle(code!).direction).toBe("ltr");
-  const english = host.querySelector<HTMLElement>('[data-latex-direction-mark="latexEnglish"]')!;
+  const english = _fixture.host.querySelector<HTMLElement>(
+    '[data-latex-direction-mark="latexEnglish"]',
+  )!;
   expect(getComputedStyle(english).direction).toBe("ltr");
   expect(getComputedStyle(english).fontFamily).toContain("Latin Modern Roman");
   expect(getComputedStyle(editor.view.dom).fontFamily).toContain("Arial");
-  const table = host.querySelector<HTMLTableElement>('figure[data-table-kind="stretch"] table')!;
+  const table = _fixture.host.querySelector<HTMLTableElement>(
+    'figure[data-table-kind="stretch"] table',
+  )!;
   const description = table.rows[1]!.cells[1]!;
   expect(getComputedStyle(description).textAlign).toBe("justify");
   const quantity = table.rows[1]!.cells[2]!;
@@ -127,17 +140,21 @@ it("renders every template 26 block with Hebrew direction, labels, figure and co
   );
   table.style.zoom = initialZoom;
   expect(source).toBe(template);
-}, 45000);
+});
 
 it("renders and edits Hebrew math text while preserving its authored command", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const editor = await mount(
+    _fixture,
     preamble +
       "\nשלום לפני הנוסחה.\n\n" +
       String.raw`\[\underbrace{1+1}_{\text{\texthebrew{מספר האיברים הוא}}\ n}=n+\texttt{code}.\]` +
       "\n\\end{document}",
   );
   const preview = () =>
-    [...host.querySelectorAll(".scient-latex-math-preview")]
+    [..._fixture.host.querySelectorAll(".scient-latex-math-preview")]
       .map((e) => e.shadowRoot?.querySelector<HTMLElement>('[data-scient-format="texthebrew"]'))
       .find(Boolean);
   await expect.poll(preview, { timeout: 15000 }).toBeTruthy();
@@ -147,9 +164,9 @@ it("renders and edits Hebrew math text while preserving its authored command", a
   expect(
     getComputedStyle((preview()!.getRootNode() as ShadowRoot).querySelector(".ML__tt")!).fontFamily,
   ).toContain("KaTeX_Typewriter");
-  await userEvent.click(host.querySelector<HTMLElement>(".scient-latex-mathfield")!);
-  await expect.poll(() => host.querySelector("math-field")).toBeTruthy();
-  const math = host.querySelector<MathfieldElement>("math-field")!;
+  await userEvent.click(_fixture.host.querySelector<HTMLElement>(".scient-latex-mathfield")!);
+  await expect.poll(() => _fixture.host.querySelector("math-field")).toBeTruthy();
+  const math = _fixture.host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue("latex-without-placeholders")).toContain("\\texthebrew{");
   expect(math.getValue("latex-without-placeholders")).not.toContain("htmlData");
   math.position = math.lastOffset;
@@ -163,16 +180,19 @@ it("renders and edits Hebrew math text while preserving its authored command", a
   expect(source).not.toContain("htmlData");
   editor.commands.undo();
   await expect.poll(() => source).toBe(original);
-}, 45000);
+});
 
 it("copies and pastes mixed prose in logical order, undoes it and reopens preserved source", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const original =
     preamble +
     String.raw`שלום \textenglish{English 123} עולם.
 
 סוף.` +
     "\n\\end{document}";
-  const editor = await mount(original);
+  const editor = await mount(_fixture, original);
   const first = editor.state.doc.firstChild!;
   editor.commands.setTextSelection({ from: 1, to: first.nodeSize - 1 });
   const transfer = new DataTransfer();
@@ -192,9 +212,28 @@ it("copies and pastes mixed prose in logical order, undoes it and reopens preser
   expect(source.match(/\\textenglish\{English 123\}/gu)?.length).toBe(2);
   editor.commands.undo();
   await expect.poll(() => source).toBe(original);
-  root.unmount();
-  host.remove();
-  const reopened = await mount(source);
+  await _fixture.root0.unmount();
+  _fixture.host.remove();
+  const reopened = await mount(_fixture, source);
   expect(reopened.state.doc.textContent).toContain("שלום English 123 עולם.");
-  expect(host.querySelector('[data-latex-direction-mark="latexEnglish"]')).toBeTruthy();
-}, 45000);
+  expect(_fixture.host.querySelector('[data-latex-direction-mark="latexEnglish"]')).toBeTruthy();
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

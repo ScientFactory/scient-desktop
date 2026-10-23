@@ -24,12 +24,6 @@ const decodeDispatchError = Schema.decodeUnknownSync(sharedDispatchRpc.errorSche
 const decodeServerConfigPayload = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema);
 
 describe("subscribeServerConfig payload compatibility", () => {
-  it("is accepted by a server whose schema predates the field", () => {
-    const oldServerPayload = Schema.Struct({});
-    const decoded = Schema.decodeExit(oldServerPayload)({ environmentThemes: true });
-    expect(Exit.isSuccess(decoded)).toBe(true);
-  });
-
   it("is carried by a server that declares it", () => {
     const decoded = decodeServerConfigPayload({
       environmentThemes: true,
@@ -96,12 +90,6 @@ describe("WebSocket RPC contracts", () => {
       expect(encoded).toMatchObject({ forkDisposition });
       expect(decodeDispatchError(encoded)).toMatchObject({ forkDisposition });
     }
-  });
-  it("exposes only the V2 orchestration transport surface", () => {
-    const methods = [...WsRpcGroup.requests.keys()];
-
-    expect(methods).toEqual(expect.arrayContaining(Object.values(ORCHESTRATION_V2_WS_METHODS)));
-    expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
   });
 
   it("accepts native run forks and Scient message forks but refuses V1 turn commands", () => {

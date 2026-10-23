@@ -53,53 +53,51 @@ const decorateCursorSnapshot = (
   },
 });
 
-const resolveRuntime = (
+const resolveRuntime = Effect.fn("CursorDriverComposition.resolveRuntime")(function* (
   input: CursorRuntimeResolverInput,
-): Effect.Effect<
+): Effect.fn.Return<
   CursorRuntimeResolution<CursorDriverCompositionEnv, CursorDriverCompositionExtension>,
   never,
   CursorDriverCompositionEnv
-> =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cursorRuntime = yield* makeCursorInstanceRuntime({
-      config: input.config,
-      enabled: input.enabled,
-      baseDir: input.baseDir,
-      managedInstallationAllowed: config.mode === "desktop",
-      processEnv: input.processEnv,
-      spawner,
-    });
-
-    return {
-      effectiveConfig: cursorRuntime.effectiveConfig,
-      effectiveEnvironment: cursorRuntime.effectiveProcessEnv,
-      maintenanceResolver: cursorRuntime.maintenanceResolver,
-      orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
-      runtimeInstructions: buildScientRuntimeInstructions,
-      decorateSnapshot: (snapshot) =>
-        decorateCursorSnapshot(
-          snapshot,
-          cursorRuntime.managedRuntime.summary,
-          cursorRuntime.connectionMethods,
-        ),
-      composeInstance: (instance) =>
-        Effect.gen(function* () {
-          const connectionActions =
-            cursorRuntime.connectionMethods.includes("cursor_browser") && instance.auth
-              ? yield* makeCursorSdkConnectionActions(instance.auth)
-              : undefined;
-          return {
-            ...instance,
-            ...(connectionActions ? { connectionActions } : {}),
-            managedRuntimeActions: cursorRuntime.managedRuntime.actions,
-          };
-        }),
-      turnStartError: (turnIdentity, cause) =>
-        turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
-    };
+> {
+  const config = yield* ServerConfig.ServerConfig;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const cursorRuntime = yield* makeCursorInstanceRuntime({
+    config: input.config,
+    enabled: input.enabled,
+    baseDir: input.baseDir,
+    managedInstallationAllowed: config.mode === "desktop",
+    processEnv: input.processEnv,
+    spawner,
   });
+
+  return {
+    effectiveConfig: cursorRuntime.effectiveConfig,
+    effectiveEnvironment: cursorRuntime.effectiveProcessEnv,
+    maintenanceResolver: cursorRuntime.maintenanceResolver,
+    orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
+    runtimeInstructions: buildScientRuntimeInstructions,
+    decorateSnapshot: (snapshot) =>
+      decorateCursorSnapshot(
+        snapshot,
+        cursorRuntime.managedRuntime.summary,
+        cursorRuntime.connectionMethods,
+      ),
+    composeInstance: Effect.fn("CursorDriverComposition.composeInstance")(function* (instance) {
+      const connectionActions =
+        cursorRuntime.connectionMethods.includes("cursor_browser") && instance.auth
+          ? yield* makeCursorSdkConnectionActions(instance.auth)
+          : undefined;
+      return {
+        ...instance,
+        ...(connectionActions ? { connectionActions } : {}),
+        managedRuntimeActions: cursorRuntime.managedRuntime.actions,
+      };
+    }),
+    turnStartError: (turnIdentity, cause) =>
+      turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
+  };
+});
 
 /** The exact Cursor driver registered in the production server catalog. */
 export const CursorDriver: CursorDriverFactory<

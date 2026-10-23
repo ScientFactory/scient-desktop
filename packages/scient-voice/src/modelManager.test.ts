@@ -5,10 +5,12 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { VoiceModelManager } from "./modelManager.ts";
 import { GGML_MAGIC_HEADER_HEX, type VoiceModelDefinition } from "./modelManifest.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 // A tiny stand-in model: real GGML magic header + arbitrary payload. Small
 // enough to hold in memory so tests never touch the network or a real model.
@@ -394,20 +396,32 @@ describe("VoiceModelManager with a shared models folder", () => {
   it("stays removed when a status probe was about to copy the shared model again", async () => {
     const { first, second } = await installations();
     await first.ensureInstalled(signal());
+    const copying = Promise.withResolvers<void>();
+    const releaseCopy = Promise.withResolvers<void>();
+    const { copyFile } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    vi.mocked(NodeFSP.copyFile).mockClear();
+    using copy = vi.spyOn(NodeFSP, "copyFile").mockImplementation(async (...args) => {
+      copying.resolve();
+      await releaseCopy.promise;
+      return copyFile(...args);
+    });
     const internals = second as unknown as {
       activeSharedCopy: Promise<boolean> | null;
       sharedCopySkipped: boolean;
       takeSharedCopy: () => Promise<boolean>;
     };
     const probe = second.getStatus();
-    while (internals.activeSharedCopy === null)
-      await new Promise((resolve) => setImmediate(resolve));
+    await copying.promise;
+    expect(copy).toHaveBeenCalledOnce();
+    expect(internals.activeSharedCopy).not.toBeNull();
     // A second probe that has read the receipt and reaches its next step the
     // moment the first copy finishes: the same check-then-copy step as getStatus.
-    const lateProbe = internals.activeSharedCopy.then(() =>
+    const lateProbe = internals.activeSharedCopy!.then(() =>
       internals.sharedCopySkipped ? false : internals.takeSharedCopy(),
     );
-    await second.remove();
+    const removing = second.remove();
+    releaseCopy.resolve();
+    await removing;
     await Promise.all([probe, lateProbe]);
     expect((await second.getStatus()).state).toBe("missing");
     expect(await NodeFSP.readdir(NodePath.dirname(second.modelPath))).toEqual([]);

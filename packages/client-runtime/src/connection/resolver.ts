@@ -79,7 +79,9 @@ function primarySocketUrl(
   if (url.pathname === "" || url.pathname === "/") {
     url.pathname = "/ws";
   }
+  // SCIENT-FORK:START — a direct connection does not collect telemetry identities.
   appendClientConnectionParams(url, clientMetadata, "direct");
+  // SCIENT-FORK:END
   return url.toString();
 }
 

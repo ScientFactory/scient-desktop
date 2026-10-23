@@ -93,8 +93,8 @@ export const harness = Effect.fnUntraced(function* (options?: {
             mcpSessionInjection: true,
             capabilities: AcpProviderCapabilitiesV2,
             continuations: { offer: () => Effect.void },
-            open: (input) =>
-              Effect.gen(function* () {
+            open: Effect.fn("ProviderInstanceRegistryNativeLifetime.test-harness.open")(
+              function* (input) {
                 log.push(`open:${instanceId}:${config.revision}`);
                 yield* Effect.addFinalizer(() =>
                   Effect.sync(() => {
@@ -127,7 +127,8 @@ export const harness = Effect.fnUntraced(function* (options?: {
                       log.push(`respond:${instanceId}`);
                     }),
                 };
-              }),
+              },
+            ),
           }),
         } satisfies ProviderInstance;
       }),
@@ -148,13 +149,15 @@ export const harness = Effect.fnUntraced(function* (options?: {
       cwd: null,
     },
   });
-  const open = (instanceId: ProviderInstanceId, ordinal = 1) =>
-    Effect.gen(function* () {
-      const instance = yield* registry.getInstance(instanceId);
-      if (!instance) return yield* Effect.die("Missing native test instance");
-      return yield* instance.orchestrationAdapter
-        .openSession(input(instanceId, ordinal))
-        .pipe(Effect.provideService(Scope.Scope, callerScope));
-    });
+  const open = Effect.fn("ProviderInstanceRegistryNativeLifetime.test-harness.open")(function* (
+    instanceId: ProviderInstanceId,
+    ordinal = 1,
+  ) {
+    const instance = yield* registry.getInstance(instanceId);
+    if (!instance) return yield* Effect.die("Missing native test instance");
+    return yield* instance.orchestrationAdapter
+      .openSession(input(instanceId, ordinal))
+      .pipe(Effect.provideService(Scope.Scope, callerScope));
+  });
   return { registry, mutator, callerScope, log, input, open };
 });

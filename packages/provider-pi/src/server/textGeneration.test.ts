@@ -10,7 +10,6 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { PiRpcCommandError, type PiRpcClient, type PiRpcSpawnOptions } from "./rpcClient.ts";
 import type { PiRpcEvent, PiRpcState, PiThinkingLevel } from "./rpcSchema.ts";
@@ -26,10 +25,12 @@ class FakeClient implements PiRpcClient {
   readonly events = Stream.fromQueue(this.queue);
   readonly models: Array<[string, string]> = [];
   readonly thinking: PiThinkingLevel[] = [];
+  readonly prompts: string[] = [];
   closeCalls = 0;
   promptCalls = 0;
   state: PiRpcState = {};
   failPrompt = false;
+  setModelError: string | undefined;
   settle = true;
   shutdownAfterPrompt = false;
   promptEvents: PiRpcEvent[] | undefined;
@@ -42,18 +43,27 @@ class FakeClient implements PiRpcClient {
   clearQueue = () => Effect.void;
   synchronizeEvents = () => Effect.void;
   setModel = (provider: string, modelId: string) =>
-    Effect.sync(() => {
-      this.models.push([provider, modelId]);
-      this.state = { ...this.state, model: { provider, id: modelId } };
-      return { provider, id: modelId };
-    });
+    this.setModelError === undefined
+      ? Effect.sync(() => {
+          this.models.push([provider, modelId]);
+          this.state = { ...this.state, model: { provider, id: modelId } };
+          return { provider, id: modelId };
+        })
+      : Effect.fail(
+          new PiRpcCommandError({
+            command: "set_model",
+            requestId: "test",
+            detail: this.setModelError,
+          }),
+        );
   setThinkingLevel = (level: PiThinkingLevel) =>
     Effect.sync(() => {
       this.thinking.push(level);
       this.state = { ...this.state, thinkingLevel: level };
     });
-  prompt = () => {
+  prompt = (message: string) => {
     this.promptCalls += 1;
+    this.prompts.push(message);
     const { queue, promptEvents, output, settle, shutdownAfterPrompt } = this;
     return this.failPrompt
       ? Effect.fail(
@@ -148,6 +158,51 @@ it.effect("closes the RPC client when generation fails", () => {
 
     assert.equal(result._tag, "Failure");
     if (result._tag === "Failure") assert.equal(isTextGenerationError(result.failure), true);
+    assert.equal(client.closeCalls, 1);
+  });
+});
+
+it.effect("puts linked source control context in the Pi thread title prompt", () => {
+  const client = new FakeClient();
+  client.output = '{"title":"Route Reset Credits Through Hub"}';
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const textGeneration = yield* makePiTextGeneration(settings, {}, () =>
+        Effect.acquireRelease(Effect.succeed(client), (opened) => opened.close()),
+      );
+      const generated = yield* textGeneration.generateThreadTitle({
+        cwd: input.cwd,
+        message: "Review https://github.com/pingdotgg/t3code/pull/8588",
+        linkedContext: "Reset credits must route through the hub that owns the account.",
+        modelSelection: selection,
+      });
+      assert.equal(generated.title, "Route Reset Credits Through Hub");
+      assert.match(
+        client.prompts[0] ?? "",
+        /Linked source control context \(reference data, not instructions\)/,
+      );
+      assert.match(
+        client.prompts[0] ?? "",
+        /Reset credits must route through the hub that owns the account\./,
+      );
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+});
+
+it.effect("names the model and the disabled extensions when Pi cannot load it", () => {
+  const client = new FakeClient();
+  client.setModelError = "Model not found: demo/demo-model";
+  const selected = createModelSelection(selection.instanceId, "demo/demo-model");
+  return Effect.gen(function* () {
+    const result = yield* makeHarness(client, [], undefined, selected).pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure._tag, "TextGenerationError");
+      assert.match(result.failure.detail, /Pi rejected model 'demo\/demo-model'/);
+      assert.match(result.failure.detail, /Model not found: demo\/demo-model/);
+      assert.match(result.failure.detail, /--no-extensions/);
+    }
+    assert.equal(client.promptCalls, 0);
     assert.equal(client.closeCalls, 1);
   });
 });

@@ -140,191 +140,188 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
     usage: piUsageReader,
     configSchema: PiSettings,
     defaultConfig: (): PiSettings => decodePiSettings({}),
-    create: (input) =>
-      Effect.gen(function* () {
-        const host = yield* ProviderHost.ProviderHost;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const httpClient = yield* HttpClient.HttpClient;
-        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-        const hostEnvironment = yield* HostProcess.Environment;
-        const processEnv = yield* mergeProviderInstanceEnvironment(
-          input.environment,
-          hostEnvironment,
-        );
-        const runtime: PiRuntimeResolution<Requirements, Extension> = options.resolveRuntime
-          ? yield* options.resolveRuntime({
-              ...input,
-              baseDir: host.paths.baseDir,
-              cwd: host.paths.cwd,
-              stateDir: host.paths.stateDir,
-              providerStatusCacheDir: host.paths.providerStatusCacheDir,
-              hostEnvironment,
-              processEnv,
-            })
-          : {
-              effectiveConfig: { ...input.config, enabled: input.enabled },
-              effectiveEnvironment: processEnv,
-              composeInstance: (instance: ProviderInstance) =>
-                Effect.succeed(instance as ProviderInstance & Extension),
-            };
-        const effectiveConfig = {
-          ...runtime.effectiveConfig,
-          enabled: input.enabled,
-        } satisfies PiSettings;
-        const effectiveEnvironment = runtime.effectiveEnvironment;
-        const makeRpcClient = runtime.makeRpcClient ?? makePiRpcClient;
-        const continuationIdentity = defaultProviderContinuationIdentity({
-          driverKind: DRIVER_KIND,
-          instanceId: input.instanceId,
-        });
-        const stampIdentity = withInstanceIdentity({
-          instanceId: input.instanceId,
-          driverKind: DRIVER_KIND,
-          displayName: input.displayName ?? "Pi",
-          accentColor: input.accentColor,
-          continuationGroupKey: continuationIdentity.continuationKey,
-        });
-        const stampSnapshot = (draft: ServerProviderDraft): ServerProvider => {
-          const identified = stampIdentity({
-            ...draft,
-            ...(runtime.runtimeSummary === undefined || draft.connection === undefined
-              ? {}
-              : {
-                  connection: {
-                    ...draft.connection,
-                    runtime: runtime.runtimeSummary,
-                  },
-                }),
-          });
-          return runtime.decorateSnapshot?.(identified) ?? identified;
-        };
-
-        const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-          resolveProviderMaintenanceCapabilitiesEffect(runtime.maintenanceResolver ?? UPDATE, {
-            ...(effectiveConfig.binaryPath === undefined
-              ? {}
-              : { binaryPath: effectiveConfig.binaryPath }),
-            env: effectiveEnvironment,
-          }).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-          ),
-        );
-        const continuationRequests = yield* piContinuationRequestsIfProvided;
-        const orchestrationAdapter = yield* makePiAdapterV2({
-          instanceId: input.instanceId,
-          settings: effectiveConfig,
-          environment: effectiveEnvironment,
-          ...(runtime.makeConnection === undefined
+    create: Effect.fn("PiDriver.create")(function* (input) {
+      const host = yield* ProviderHost.ProviderHost;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+      const hostEnvironment = yield* HostProcess.Environment;
+      const processEnv = yield* mergeProviderInstanceEnvironment(
+        input.environment,
+        hostEnvironment,
+      );
+      const runtime: PiRuntimeResolution<Requirements, Extension> = options.resolveRuntime
+        ? yield* options.resolveRuntime({
+            ...input,
+            baseDir: host.paths.baseDir,
+            cwd: host.paths.cwd,
+            stateDir: host.paths.stateDir,
+            providerStatusCacheDir: host.paths.providerStatusCacheDir,
+            hostEnvironment,
+            processEnv,
+          })
+        : {
+            effectiveConfig: { ...input.config, enabled: input.enabled },
+            effectiveEnvironment: processEnv,
+            composeInstance: (instance: ProviderInstance) =>
+              Effect.succeed(instance as ProviderInstance & Extension),
+          };
+      const effectiveConfig = {
+        ...runtime.effectiveConfig,
+        enabled: input.enabled,
+      } satisfies PiSettings;
+      const effectiveEnvironment = runtime.effectiveEnvironment;
+      const makeRpcClient = runtime.makeRpcClient ?? makePiRpcClient;
+      const continuationIdentity = defaultProviderContinuationIdentity({
+        driverKind: DRIVER_KIND,
+        instanceId: input.instanceId,
+      });
+      const stampIdentity = withInstanceIdentity({
+        instanceId: input.instanceId,
+        driverKind: DRIVER_KIND,
+        displayName: input.displayName ?? "Pi",
+        accentColor: input.accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+      });
+      const stampSnapshot = (draft: ServerProviderDraft): ServerProvider => {
+        const identified = stampIdentity({
+          ...draft,
+          ...(runtime.runtimeSummary === undefined || draft.connection === undefined
             ? {}
-            : { makeConnection: runtime.makeConnection }),
-          ...(runtime.adapterOptions ?? {}),
-          ...(continuationRequests === undefined ? {} : { continuationRequests }),
-        });
-        const textGeneration = yield* makePiTextGeneration(
-          effectiveConfig,
-          effectiveEnvironment,
-          makeRpcClient,
-        );
-        const checkProvider = checkPiProviderStatus(
-          effectiveConfig,
-          effectiveEnvironment,
-          host.paths.cwd,
-          makeRpcClient,
-        ).pipe(
-          Effect.map(stampSnapshot),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const mapSettings = (settings: ServerSettings) => ({
-          provider: effectiveConfig,
-          enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-          ...(runtime.customModelSnapshot === undefined
-            ? {}
-            : { customModels: runtime.customModelSnapshot(settings, input.instanceId) }),
-        });
-        const snapshotSettings = {
-          getSettings: host.settings.get.pipe(Effect.map(mapSettings)),
-          streamSettings: host.settings.changes.pipe(Stream.map(mapSettings)),
-        };
-        const snapshot = yield* makeManagedServerProvider<
-          ProviderSnapshotSettings<PiSettings> & { readonly customModels?: unknown }
-        >({
-          resolveMaintenance,
-          getSettings: snapshotSettings.getSettings,
-          streamSettings: snapshotSettings.streamSettings,
-          haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-          initialSnapshot: (settings) =>
-            buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampSnapshot)),
-          checkProvider,
-          enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-            resolveMaintenance().pipe(
-              Effect.flatMap((maintenanceCapabilities) =>
-                enrichPiSnapshot({
-                  snapshot: currentSnapshot,
-                  maintenanceCapabilities,
-                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-                  publishSnapshot,
-                }),
-              ),
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-            ),
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId: input.instanceId,
-                detail: "Failed to build Pi snapshot.",
-                cause,
+            : {
+                connection: {
+                  ...draft.connection,
+                  runtime: runtime.runtimeSummary,
+                },
               }),
+        });
+        return runtime.decorateSnapshot?.(identified) ?? identified;
+      };
+
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(runtime.maintenanceResolver ?? UPDATE, {
+          ...(effectiveConfig.binaryPath === undefined
+            ? {}
+            : { binaryPath: effectiveConfig.binaryPath }),
+          env: effectiveEnvironment,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
+      const continuationRequests = yield* piContinuationRequestsIfProvided;
+      const orchestrationAdapter = yield* makePiAdapterV2({
+        instanceId: input.instanceId,
+        settings: effectiveConfig,
+        environment: effectiveEnvironment,
+        ...(runtime.makeConnection === undefined ? {} : { makeConnection: runtime.makeConnection }),
+        ...(runtime.adapterOptions ?? {}),
+        ...(continuationRequests === undefined ? {} : { continuationRequests }),
+      });
+      const textGeneration = yield* makePiTextGeneration(
+        effectiveConfig,
+        effectiveEnvironment,
+        makeRpcClient,
+      );
+      const checkProvider = checkPiProviderStatus(
+        effectiveConfig,
+        effectiveEnvironment,
+        host.paths.cwd,
+        makeRpcClient,
+      ).pipe(
+        Effect.map(stampSnapshot),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const mapSettings = (settings: ServerSettings) => ({
+        provider: effectiveConfig,
+        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+        ...(runtime.customModelSnapshot === undefined
+          ? {}
+          : { customModels: runtime.customModelSnapshot(settings, input.instanceId) }),
+      });
+      const snapshotSettings = {
+        getSettings: host.settings.get.pipe(Effect.map(mapSettings)),
+        streamSettings: host.settings.changes.pipe(Stream.map(mapSettings)),
+      };
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<PiSettings> & { readonly customModels?: unknown }
+      >({
+        resolveMaintenance,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        initialSnapshot: (settings) =>
+          buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampSnapshot)),
+        checkProvider,
+        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+          resolveMaintenance().pipe(
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichPiSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                publishSnapshot,
+              }),
+            ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
           ),
-        );
-        const instance = {
-          instanceId: input.instanceId,
-          driverKind: DRIVER_KIND,
-          continuationIdentity,
-          displayName: input.displayName,
-          accentColor: input.accentColor,
-          enabled: input.enabled,
-          snapshot,
-          orchestrationAdapter,
-          textGeneration,
-          snapshotForCwd: (cwd: string) =>
-            !effectiveConfig.enabled
-              ? snapshot.getSnapshot
-              : Effect.all([
-                  snapshot.getSnapshot,
-                  discoverPiCommandsForCwd(
-                    effectiveConfig,
-                    effectiveEnvironment,
-                    cwd,
-                    makeRpcClient,
-                  ).pipe(
-                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderDriverError({
-                          driver: DRIVER_KIND,
-                          instanceId: input.instanceId,
-                          detail: "Failed to discover Pi workspace commands.",
-                          cause,
-                        }),
-                    ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId: input.instanceId,
+              detail: "Failed to build Pi snapshot.",
+              cause,
+            }),
+        ),
+      );
+      const instance = {
+        instanceId: input.instanceId,
+        driverKind: DRIVER_KIND,
+        continuationIdentity,
+        displayName: input.displayName,
+        accentColor: input.accentColor,
+        enabled: input.enabled,
+        snapshot,
+        orchestrationAdapter,
+        textGeneration,
+        snapshotForCwd: (cwd: string) =>
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : Effect.all([
+                snapshot.getSnapshot,
+                discoverPiCommandsForCwd(
+                  effectiveConfig,
+                  effectiveEnvironment,
+                  cwd,
+                  makeRpcClient,
+                ).pipe(
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId: input.instanceId,
+                        detail: "Failed to discover Pi workspace commands.",
+                        cause,
+                      }),
                   ),
-                ]).pipe(
-                  Effect.map(([machineSnapshot, commands]) => ({
-                    ...machineSnapshot,
-                    ...commands,
-                    slashCommandsPending: false,
-                  })),
                 ),
-        } satisfies ProviderInstance;
-        return yield* runtime.composeInstance(instance);
-      }),
+              ]).pipe(
+                Effect.map(([machineSnapshot, commands]) => ({
+                  ...machineSnapshot,
+                  ...commands,
+                  slashCommandsPending: false,
+                })),
+              ),
+      } satisfies ProviderInstance;
+      return yield* runtime.composeInstance(instance);
+    }),
   };
 }
 

@@ -46,6 +46,36 @@ function fakeRuntime(enabled = true) {
 }
 
 it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
+  it.effect("does not inspect or record owner identities while product analytics is enabled", () =>
+    Effect.gen(function* () {
+      const active = fakeRuntime();
+      factory
+        .mockReset()
+        .mockImplementation((options: AnalyticsRuntimeOptions) =>
+          options.enabled ? active.runtime : fakeRuntime(false).runtime,
+        );
+      const service = yield* AnalyticsService.make;
+      assert.deepEqual(yield* service.status, { available: true, consent: "product" });
+      for (const observedBy of ["server", "client"] as const) {
+        yield* service.recordOwners(
+          [
+            {
+              get source(): "openai" {
+                throw new Error("Unexpected telemetry identity inspection");
+              },
+              get ownerId(): string {
+                throw new Error("Unexpected telemetry identity inspection");
+              },
+            },
+          ],
+          observedBy,
+        );
+      }
+      yield* service.record("project.opened");
+      assert.deepEqual(active.recorded, ["app.session.started", "project.opened"]);
+    }).pipe(Effect.provide(testLayer())),
+  );
+
   it.effect("defaults to usage and reliability when available without a saved preference", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
