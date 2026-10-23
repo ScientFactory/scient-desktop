@@ -145,7 +145,8 @@ describe("formatting menu focus", () => {
         expect(inputs).toHaveLength(1);
         return inputs[0]!;
       });
-      expect(document.activeElement).toBe(input);
+      // The popup moves focus into the field just after it mounts.
+      await vi.waitFor(() => expect(document.activeElement).toBe(input));
 
       const cancel = Array.from(
         document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
