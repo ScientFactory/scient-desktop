@@ -1,5 +1,7 @@
-import { expect, it } from "vite-plus/test";
-import { PDFDocument, PDFName, PDFNumber, StandardFonts } from "pdf-lib";
+import { expect, it, vi } from "vite-plus/test";
+import { PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, StandardFonts } from "pdf-lib";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { PdfEditWorkerRequest, PdfEditWorkerResponse } from "./pdfPageEdits";
 
 function request(worker: Worker, input: PdfEditWorkerRequest) {
@@ -72,4 +74,143 @@ it("preserves resources and page boxes inherited from a nested page tree when ro
   } finally {
     worker.terminate();
   }
+});
+
+function editingWorker() {
+  const worker = new Worker(new URL("./pdfEdit.worker.ts", import.meta.url), { type: "module" });
+  return { worker, [Symbol.dispose]: () => worker.terminate() };
+}
+
+async function pageLabels(bytes: Uint8Array) {
+  using _workerUrl = vi
+    .spyOn(GlobalWorkerOptions, "workerSrc", "get")
+    .mockReturnValue(pdfWorkerUrl);
+  const task = getDocument({ data: bytes });
+  await using _task = { [Symbol.asyncDispose]: () => task.destroy() };
+  return await (await task.promise).getPageLabels();
+}
+
+async function labeledPdf() {
+  const document = await PDFDocument.create();
+  for (let i = 0; i < 8; i++) document.addPage();
+  const frontMatter = document.context.register(
+    document.context.obj({
+      Limits: [0, 2],
+      Nums: [0, { S: "r" }, 2, { S: "D", St: 1 }],
+    }),
+  );
+  const appendix = document.context.register(
+    document.context.obj({
+      Limits: [4, 6],
+      Nums: [4, { S: "A", St: 27, P: PDFString.of("A-") }, 6, { P: PDFHexString.fromText("封面") }],
+    }),
+  );
+  document.catalog.set(
+    PDFName.of("PageLabels"),
+    document.context.obj({ Kids: [frontMatter, appendix] }),
+  );
+  return document.save();
+}
+
+it.each([
+  {
+    action: "deleting a Roman-numbered front-matter page",
+    order: [1, 2, 3, 4, 5, 6, 7],
+    labels: ["ii", "1", "2", "A-AA", "A-BB", "封面", "封面"],
+  },
+  {
+    action: "moving pages across numbering sections",
+    order: [3, 1, 6, 0, 2, 4, 5, 7],
+    labels: ["2", "ii", "封面", "i", "1", "A-AA", "A-BB", "封面"],
+  },
+])(
+  "keeps labels with their source pages when $action, and restores their original order",
+  async ({ order, labels }) => {
+    using editor = editingWorker();
+    const loaded = await request(editor.worker, {
+      kind: "load",
+      id: 1,
+      sourceId: "labels",
+      bytes: await labeledPdf(),
+    });
+    if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+    const built = await request(editor.worker, {
+      kind: "build",
+      id: 2,
+      pages: order.map((index) => loaded.pages[index]!),
+    });
+    if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+    expect(await pageLabels(built.bytes)).toEqual(labels);
+    const restored = await request(editor.worker, { kind: "build", id: 3, pages: loaded.pages });
+    if (restored.kind !== "built") throw new Error("Expected the restored PDF.");
+    expect(await pageLabels(restored.bytes)).toEqual([
+      "i",
+      "ii",
+      "1",
+      "2",
+      "A-AA",
+      "A-BB",
+      "封面",
+      "封面",
+    ]);
+  },
+);
+
+it("keeps automatic numbering without labels and preserves imported and duplicated labels beside blank pages", async () => {
+  using editor = editingWorker();
+  const source = await PDFDocument.create();
+  source.addPage();
+  source.addPage();
+  const base = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "base",
+    bytes: await source.save(),
+  });
+  if (base.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const ordinary = await request(editor.worker, {
+    kind: "build",
+    id: 2,
+    pages: [base.pages[1]!, base.pages[0]!],
+  });
+  if (ordinary.kind !== "built") throw new Error("Expected the edited PDF.");
+  expect(await pageLabels(ordinary.bytes)).toBeNull();
+  const imported = await request(editor.worker, {
+    kind: "load",
+    id: 3,
+    sourceId: "imported",
+    bytes: await labeledPdf(),
+  });
+  if (imported.kind !== "loaded") throw new Error("Expected imported pages.");
+  const firstBodyPage = imported.pages[2]!;
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 4,
+    pages: [
+      base.pages[0]!,
+      imported.pages[1]!,
+      firstBodyPage,
+      { ...firstBodyPage, id: "duplicate" },
+      { ...base.pages[0]!, id: "blank", sourceId: null },
+      base.pages[1]!,
+    ],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  expect(await pageLabels(built.bytes)).toEqual(["1", "ii", "1", "1", "5", "6"]);
+});
+
+it("rejects a label tree without an initial range before editing", async () => {
+  using editor = editingWorker();
+  const source = await PDFDocument.create();
+  source.addPage();
+  source.addPage();
+  source.catalog.set(PDFName.of("PageLabels"), source.context.obj({ Nums: [1, { S: "D" }] }));
+  await expect(
+    request(editor.worker, {
+      kind: "load",
+      id: 1,
+      sourceId: "invalid-labels",
+      bytes: await source.save(),
+    }),
+  ).rejects.toThrow("page labels could not be preserved");
 });

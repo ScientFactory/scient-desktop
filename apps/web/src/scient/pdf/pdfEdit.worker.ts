@@ -20,8 +20,12 @@ import {
   type PdfEditWorkerRequest,
   type PdfEditWorkerResponse,
 } from "./pdfPageEdits";
+import { readPdfPageLabels, writePdfPageLabels } from "./pdfPageLabels";
 
-const sources = new Map<string, { document: PDFDocument; bytes: Uint8Array }>();
+const sources = new Map<
+  string,
+  { document: PDFDocument; bytes: Uint8Array; labels: ReturnType<typeof readPdfPageLabels> }
+>();
 let totalBytes = 0,
   baseSourceId: string | null = null;
 const name = (value: string) => PDFName.of(value);
@@ -231,6 +235,12 @@ async function build(entries: readonly PdfEditPage[]) {
         targetsBySource.get(entry.sourceId)!,
       );
   }
+  writePdfPageLabels(
+    output,
+    entries.map((entry) =>
+      entry.sourceId ? (sources.get(entry.sourceId)!.labels?.[entry.sourceIndex] ?? null) : null,
+    ),
+  );
   const bytes = await output.save({ addDefaultPage: false, updateFieldAppearances: false });
   if (bytes.byteLength > PDF_EDIT_MAX_BYTES)
     throw new Error("The PDF exceeds the 50 MB save limit.");
@@ -259,7 +269,8 @@ async function execute(request: PdfEditWorkerRequest): Promise<PdfEditWorkerResp
       height: page.getCropBox().height,
       rotation: page.getRotation().angle,
     }));
-    sources.set(request.sourceId, { document, bytes: request.bytes });
+    const labels = readPdfPageLabels(document);
+    sources.set(request.sourceId, { document, bytes: request.bytes, labels });
     baseSourceId ??= request.sourceId;
     totalBytes += request.bytes.byteLength;
     return { id: request.id, kind: "loaded", pages };

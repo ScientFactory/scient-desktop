@@ -233,7 +233,12 @@ attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.
 Inherited resources and page boxes are materialized before reparenting original
-page nodes. Distinct duplicated page nodes can be rotated independently. Unsupported forms,
+page nodes. Page-label number trees are read before editing and rebuilt in output
+order so Roman, alphabetic, prefixed and custom labels follow their source pages,
+including duplicates and imports. Unlabeled and blank pages use their physical
+position when mixed with custom labels; wholly unlabeled PDFs retain automatic
+numbering. Malformed label trees fail before publication rather than saving stale
+ranges. Distinct duplicated page nodes can be rotated independently. Unsupported forms,
 certificate permissions and encrypted documents fail before publication.
 The session retains up to 100 undo steps; undo/redo uses the same save precondition.
 Generated source revisions have separate editing sessions. An unpublished cache
