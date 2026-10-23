@@ -11,6 +11,7 @@
  * happens before the section is taken.
  */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -35,7 +36,11 @@ import {
   type OverleafOperationReceipt,
 } from "./OverleafConnectionState.ts";
 import { newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
-import { captureOverleafInventory, type OverleafInventoryRefusal } from "./OverleafInventory.ts";
+import {
+  captureOverleafInventory,
+  OVERLEAF_LIMITS,
+  type OverleafInventoryRefusal,
+} from "./OverleafInventory.ts";
 import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
 import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import {
@@ -175,10 +180,16 @@ export interface OverleafKeptCopy {
   readonly retainedAt: string;
   /** The bytes when kept, for the record's main version; null for another version beside it. */
   readonly revision: string | null;
-  /** The copy's bytes now; different from `revision` means a late writer, null means gone. */
+  /** The copy's bytes now; different from `revision` means a late writer. Null when gone or unread. */
   readonly keptRevision: string | null;
-  /** The folder's file now; null when absent. */
+  /** The folder's file now; null when absent or unread. */
   readonly currentRevision: string | null;
+  /**
+   * A file was left unread: larger than a restore reads back, past one listing's
+   * read budget, or changing while read. Its null revision does not mean gone, and
+   * this version cannot be restored from this listing.
+   */
+  readonly unread: boolean;
 }
 
 export type OverleafRestoreResult =
@@ -226,6 +237,8 @@ export interface OverleafCoordinatorOptions {
   /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
   readonly registry?: OverleafReviewRegistry;
+  /** Test seam: read limits, defaulting to `RESTORE_MAX_BYTES` and `LISTING_MAX_BYTES`. */
+  readonly limits?: { readonly keptFileBytes?: number; readonly listingBytes?: number };
   /** Fault points for tests: a throw stops the operation there, as a crash would. */
   readonly hooks?: {
     readonly at?: (point: "linked" | "applied" | "adopted") => Effect.Effect<void>;
@@ -240,12 +253,83 @@ const KEPT_PATH =
 const MANAGED_PATH_LIMIT = 2_000;
 /** The largest kept file a restore reads back. */
 const RESTORE_MAX_BYTES = 50 * 1024 * 1024;
+/** What one listing of kept copies reads at most: as much as one inventory may hold. */
+const LISTING_MAX_BYTES = OVERLEAF_LIMITS.totalBytes;
 const PRIOR_BASE_LIMIT = 20;
 const LOCAL_SNAPSHOT_LIMIT = 10;
 
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const unique = (paths: Iterable<string>) => [...new Set(paths)].sort(byPath);
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
+type FileRead =
+  | {
+      readonly _tag: "read";
+      readonly revision: string;
+      /** Size and change time, the same before and after the read. */
+      readonly stamp: string;
+      readonly size: number;
+      readonly bytes: Uint8Array | null;
+    }
+  | { readonly _tag: "absent" }
+  /** Larger than the limit, or changing while read; `size` is what was read. */
+  | { readonly _tag: "unread"; readonly size: number };
+
+/**
+ * Reads a regular file without following a link and never past `limit` bytes:
+ * its revision, with the stamp it kept throughout the read. `keep` returns the bytes.
+ */
+const readWithin = async (path: string, limit: number, keep = false): Promise<FileRead> => {
+  let handle: NodeFSP.FileHandle | undefined;
+  try {
+    handle = await NodeFSP.open(
+      path,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()) return { _tag: "absent" };
+    if (before.size > BigInt(limit)) return { _tag: "unread", size: 0 };
+    const hash = NodeCrypto.createHash("sha256");
+    const chunks: Uint8Array[] = [];
+    const buffer = new Uint8Array(256 * 1024);
+    let size = 0;
+    for (;;) {
+      // One byte past the limit reveals a file that grew while being read.
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, limit + 1 - size),
+        null,
+      );
+      if (bytesRead === 0) break;
+      size += bytesRead;
+      if (size > limit) return { _tag: "unread", size };
+      hash.update(buffer.subarray(0, bytesRead));
+      if (keep) chunks.push(buffer.slice(0, bytesRead));
+    }
+    const after = await handle.stat({ bigint: true });
+    if (
+      BigInt(size) !== before.size ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    )
+      return { _tag: "unread", size };
+    return {
+      _tag: "read",
+      revision: `sha256:${hash.digest("hex")}`,
+      stamp: `${before.size}:${before.ctimeNs}`,
+      size,
+      bytes: keep ? new Uint8Array(Buffer.concat(chunks, size)) : null,
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return { _tag: "absent" };
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+};
+
 const hook = (
   options: OverleafCoordinatorOptions,
   point: "linked" | "applied" | "adopted",
@@ -300,6 +384,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const registry = options.registry ?? makeOverleafReviewRegistry();
   const volumeUuid = options.volumeUuid ?? macVolumeUuid;
   const credentialEpoch = options.credentialEpoch ?? (() => 0);
+  const keptFileBytes = options.limits?.keptFileBytes ?? RESTORE_MAX_BYTES;
+  const listingBytes = options.limits?.listingBytes ?? LISTING_MAX_BYTES;
   /** Connection → the operation holding it. */
   const reservations = new Map<string, string>();
 
@@ -390,9 +476,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       connection.base.tree === null
         ? []
         : yield* repos.readTree({ repo, tree: connection.base.tree });
+    // What this connection syncs: the base, the last reviewed result, and every path
+    // an interrupted apply left in a forced conflict, which may be in neither (the
+    // new name of a rename it undid, say).
     const managedPaths = unique([
       ...baseTree.map((entry) => entry.path),
       ...connection.managedPaths,
+      ...connection.forcedConflicts.flat(),
     ]);
     const scratch = NodePath.join(options.stateRoot, "scratch", newOverleafId());
     let requested = input.selections.collisionPaths;
@@ -501,26 +591,30 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           const others = unique(
             versions.filter((kept) => kept !== main).map((kept) => keptAt(kept.retainedPath)!),
           );
-          const state = versions.some((kept) => kept.changed)
-            ? ("changed" as const)
-            : others.length > 0
-              ? ("ambiguous" as const)
-              : settle(relativePath);
+          // The stamp is taken around a fresh read of the kept bytes: a late writer
+          // may have changed them since the applier hashed them. Only a file that
+          // still holds what was kept, unchanged throughout the read, gets one.
+          const now = yield* Effect.promise(() => readWithin(main.retainedPath!, keptFileBytes));
+          const verified = now._tag === "read" && now.revision === main.retainedRevision;
+          const state =
+            versions.some((kept) => kept.changed) || (!verified && now._tag !== "absent")
+              ? ("changed" as const)
+              : !verified || others.length > 0
+                ? ("ambiguous" as const)
+                : settle(relativePath);
           return {
             applyId: link.applyId,
             relativePath,
             revision: main.retainedRevision!,
-            state:
-              others.length > KEPT_VERSION_LIMIT && state !== "changed"
-                ? ("ambiguous" as const)
-                : state,
+            state,
             retainedAt: updatedAt,
             retainedAtSyncCount: syncCount,
             kept: keptAt(main.retainedPath)!,
             markers: markers.includes(relativePath),
             // Beyond the limit, the rest stay in the apply's folder; the record is ambiguous.
             versions: others.slice(0, KEPT_VERSION_LIMIT),
-            stamp: (yield* stampAt(main.retainedPath!)) ?? "0:0",
+            // No stamp matches "0:0": an unverified copy is read again whenever listed.
+            stamp: verified ? now.stamp : "0:0",
           };
         }),
       );
@@ -610,7 +704,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             ].slice(0, PRIOR_BASE_LIMIT),
       completedSyncCount,
       // The reviewed result's paths (bounded by the review's file limit). Paths an
-      // interrupted unit left as they were stay in the base, which inventory reads too.
+      // interrupted unit left as they were stay in the base or its forced conflicts,
+      // both of which inventory reads too.
       managedPaths: unique(candidate.map((entry) => entry.path)),
       localOnlyPaths: unique(link.localOnly),
       forcedConflicts: result.interrupted.map((group) => unique(group)),
@@ -887,6 +982,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       })
       .pipe(Effect.map((retention) => retention.directory));
   const revisionAt = (path: string) => Effect.promise(() => fileRevision(path));
+  const revisionOf = (read: FileRead) => (read._tag === "read" ? read.revision : null);
 
   const keptCopies: OverleafCoordinator["Service"]["keptCopies"] = Effect.fn(
     "OverleafCoordinator.keptCopies",
@@ -894,18 +990,29 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const connection = yield* readActive(input.connectionId);
     const vault = yield* vaultOf(connection);
     const folder = folderOf(connection);
-    const current = new Map<string, string | null>();
+    // A late writer can grow kept files, so one listing reads within a budget; a
+    // file past it, or larger than a restore reads back, is listed unread.
+    let budget = listingBytes;
+    const readOnce = (path: string, limit: number) =>
+      Effect.promise(async () => {
+        const read = await readWithin(path, Math.max(0, Math.min(limit, budget)));
+        if (read._tag !== "absent") budget -= read.size;
+        return read;
+      });
+    const current = new Map<string, FileRead>();
     const listed: OverleafKeptCopy[] = [];
     for (const copy of connection.retention.copies) {
-      if (!current.has(copy.relativePath))
-        current.set(copy.relativePath, yield* revisionAt(NodePath.join(folder, copy.relativePath)));
+      const now =
+        current.get(copy.relativePath) ??
+        (yield* readOnce(NodePath.join(folder, copy.relativePath), listingBytes));
+      current.set(copy.relativePath, now);
       for (const kept of [copy.kept, ...copy.versions]) {
         const path = NodePath.join(vault, kept);
-        // An unchanged main version is what was recorded; only others are read again.
-        const keptRevision =
+        // An unchanged main version holds what was recorded; only others are read again.
+        const read: FileRead =
           kept === copy.kept && (yield* stampAt(path)) === copy.stamp
-            ? copy.revision
-            : yield* revisionAt(path);
+            ? { _tag: "read", revision: copy.revision, stamp: copy.stamp, size: 0, bytes: null }
+            : yield* readOnce(path, keptFileBytes);
         listed.push({
           applyId: copy.applyId,
           kept,
@@ -913,8 +1020,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           state: copy.state,
           retainedAt: copy.retainedAt,
           revision: kept === copy.kept ? copy.revision : null,
-          keptRevision,
-          currentRevision: current.get(copy.relativePath)!,
+          keptRevision: revisionOf(read),
+          currentRevision: revisionOf(now),
+          unread: read._tag === "unread" || now._tag === "unread",
         });
       }
     }
@@ -995,19 +1103,19 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "managed-paths",
                 });
-              const keptPath = NodePath.join(vault, input.kept);
+              // Read once and never past what a restore reads back: the bytes
+              // checked are the bytes restored.
+              const keptNow = yield* Effect.promise(() =>
+                readWithin(NodePath.join(vault, input.kept), keptFileBytes, true),
+              );
               const target = NodePath.join(folderOf(connection), copy.relativePath);
               if (
-                (yield* revisionAt(keptPath)) !== input.keptRevision ||
+                keptNow._tag !== "read" ||
+                keptNow.revision !== input.keptRevision ||
                 (yield* revisionAt(target)) !== input.currentRevision
               )
                 return { _tag: "stale" as const };
-              const bytes = yield* Effect.promise(async () => {
-                const read = await NodeFSP.readFile(keptPath);
-                return read.byteLength <= RESTORE_MAX_BYTES ? new Uint8Array(read) : null;
-              });
-              if (bytes === null || bytesRevision(bytes) !== input.keptRevision)
-                return { _tag: "stale" as const };
+              const bytes = keptNow.bytes!;
               const oid = yield* repos.writeBlob({ repo, bytes });
               const intentTree = yield* repos.writeTree({
                 repo,
@@ -1091,6 +1199,17 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         yield* reserve(connectionId, () => recoverHeld(connectionId, section)).pipe(
           Effect.mapError(() => refuse),
         );
+        // Recovery can find structural source copies the apply left in the folder:
+        // the record it adopted decides, not the one read before.
+        const adopted = yield* store
+          .readConnection(connectionId)
+          .pipe(Effect.mapError(() => refuse));
+        if (
+          adopted._tag !== "ready" ||
+          adopted.document.activeApply !== null ||
+          adopted.document.stagingPaths.length > 0
+        )
+          return yield* refuse;
       }
     }),
   );

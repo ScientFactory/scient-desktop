@@ -52,6 +52,15 @@ const write = (folder: string, files: Record<string, string>) =>
   });
 const read = (folder: string, path: string) =>
   Effect.promise(() => NodeFSP.readFile(NodePath.join(folder, path), "utf8").catch(() => null));
+const revision = (text: string) => bytesRevision(new TextEncoder().encode(text));
+/** The kept copy of the plan's first step, wherever the vault placed it. */
+const firstKept = (stateRoot: string) =>
+  NodeFSP.readdir(stateRoot, { recursive: true }).then((paths) =>
+    NodePath.join(
+      stateRoot,
+      paths.find((path) => /\/step-0\/(?:slot|retained)$/u.test(path))!,
+    ),
+  );
 
 /**
  * A connected folder whose last sync left `synced` on both sides, and an
@@ -69,6 +78,7 @@ const world = (input: {
   readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
   /** Wraps the real applier, to shape what it reports. */
   readonly applier?: (real: WorkspaceApplier["Service"]) => WorkspaceApplier["Service"];
+  readonly limits?: OverleafCoordinator.OverleafCoordinatorOptions["limits"];
 }) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -194,6 +204,7 @@ const world = (input: {
       volumeUuid,
       registry,
       hooks: { at: (point) => input.at?.(point) ?? Effect.void },
+      ...(input.limits ? { limits: input.limits } : {}),
     }).pipe(
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),
       Effect.provideService(OverleafRepository.OverleafRepository, repos),
@@ -412,6 +423,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     let bulk: Fiber.Fiber<void, CheckoutRecoveryRequiredError | CheckoutLookupError> | undefined;
     let barrier: ReturnType<typeof makeCheckoutBarrier> | undefined;
     let checkout = "";
+    let before = 0;
+    let entered = false;
     return run(
       Effect.gen(function* () {
         const w = yield* world({
@@ -420,21 +433,24 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           at: (point) =>
             Effect.gen(function* () {
               order.push(point);
-              if (point !== "linked" || !barrier) return;
+              if (!barrier) return;
               const epoch = Effect.orDie(
                 Effect.map(barrier.current(checkout), (section) => section.epoch),
               );
-              const before = yield* epoch;
-              bulk = yield* barrier
-                .bulk(
-                  checkout,
-                  Effect.sync(() => {
-                    order.push("bulk");
-                  }),
-                )
-                .pipe(Effect.forkDetach);
-              // The bulk change moves the epoch as it enters, then waits for the apply.
-              while ((yield* epoch) === before) yield* Effect.yieldNow;
+              if (point === "linked") {
+                before = yield* epoch;
+                bulk = yield* barrier
+                  .bulk(
+                    checkout,
+                    Effect.sync(() => {
+                      order.push("bulk");
+                    }),
+                  )
+                  .pipe(Effect.forkDetach);
+              }
+              // By adoption the applier's whole run has passed: the bulk change has
+              // entered (its entry moves the epoch) and waits for this apply's section.
+              if (point === "adopted") entered = (yield* epoch) > before;
             }),
         });
         barrier = w.barrier;
@@ -443,6 +459,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         // review stale, but this apply was admitted first and finishes.
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
         yield* Fiber.join(bulk!);
+        expect(entered).toBe(true);
         expect(order).toEqual(["linked", "applied", "adopted", "bulk"]);
       }),
     );
@@ -505,6 +522,52 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     ),
   );
 
+  it.live("refuses a bulk change when inline recovery finds structural copies", () => {
+    let crash = true;
+    let staging = "";
+    let stateRoot = "";
+    let folder = "";
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          // A source copy of this apply, left in the folder just before a crash: only
+          // the applier's recovery finds it, so the record read before recovery cannot.
+          at: (point) =>
+            crash && point === "applied"
+              ? Effect.promise(async () => {
+                  const intent = (await NodeFSP.readdir(stateRoot, { recursive: true })).find(
+                    (path) => path.endsWith("/apply.json"),
+                  );
+                  staging = `.scient-overleaf-apply-${NodePath.basename(NodePath.dirname(intent!))}-held-source`;
+                  await NodeFSP.writeFile(NodePath.join(folder, staging), "the only copy");
+                }).pipe(Effect.andThen(Effect.die(new Error("process died"))))
+              : Effect.void,
+        });
+        stateRoot = w.stateRoot;
+        folder = w.folder;
+        expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
+        crash = false;
+        let mutated = false;
+        const refused = yield* Effect.exit(
+          w.barrier.bulk(
+            w.checkout,
+            Effect.sync(() => {
+              mutated = true;
+            }),
+          ),
+        );
+        expect(String(refused)).toContain("CheckoutRecoveryRequiredError");
+        expect(mutated).toBe(false);
+        const after = yield* w.connection;
+        expect(after.activeApply).toBeNull();
+        expect(after.stagingPaths).toEqual([staging]);
+        expect(yield* read(w.folder, staging)).toBe("the only copy");
+      }),
+    );
+  });
+
   it.live("keeps a group interrupted partway as a forced conflict for the next review", () => {
     let prepared = 0;
     return run(
@@ -532,6 +595,66 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(next.review.conflicts.map((conflict) => [...conflict.paths].sort())).toContainEqual([
           "new.tex",
           "old.tex",
+        ]);
+      }),
+    );
+  });
+
+  it.live("keeps reading a path an interrupted group left outside the base and result", () => {
+    let prepared = 0;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "old.tex": "chapter text that moves" },
+          remote: { "theirs.tex": "chapter text that moves" },
+          // The group's second step removes new.tex; it changes just before.
+          native: async (point, folder) => {
+            if (point === "prepared" && ++prepared === 2)
+              await NodeFSP.writeFile(NodePath.join(folder, "new.tex"), "edited meanwhile");
+          },
+        });
+        // Renamed here to new.tex, and on Overleaf to theirs.tex: Overleaf's name wins.
+        yield* Effect.promise(() =>
+          NodeFSP.rename(NodePath.join(w.folder, "old.tex"), NodePath.join(w.folder, "new.tex")),
+        );
+        const selections = (choices: OverleafCoordinator.OverleafSelections["choices"]) => ({
+          selectedAdditions: ["new.tex"],
+          collisionPaths: [],
+          choices,
+        });
+        const first = yield* w.coordinator.prepare({
+          connectionId: CONNECTION,
+          selections: selections(new Map()),
+        });
+        if (first._tag !== "review") return yield* Effect.die(first);
+        const chosen = yield* w.coordinator.prepare({
+          connectionId: CONNECTION,
+          selections: selections(
+            new Map(first.review.conflicts.map((conflict) => [conflict.key, "theirs" as const])),
+          ),
+        });
+        if (chosen._tag !== "review") return yield* Effect.die(chosen);
+        expect(
+          yield* w.coordinator.confirm({
+            connectionId: CONNECTION,
+            requestId: "request-1",
+            reviewId: chosen.review.id,
+            digest: chosen.review.digest,
+            acknowledgements: chosen.review.binding.acknowledgements,
+          }),
+        ).toMatchObject({ _tag: "applied", adopted: { outcome: "attention" } });
+        const after = yield* w.connection;
+        expect(after.forcedConflicts).toEqual([["new.tex", "old.tex", "theirs.tex"]]);
+        // new.tex is in neither the base nor the reviewed result, yet the next review
+        // reads it as part of the group to decide.
+        expect(after.managedPaths).toEqual(["theirs.tex"]);
+        expect(yield* read(w.folder, "new.tex")).toBe("edited meanwhile");
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.conflicts.map((conflict) => [...conflict.paths].sort())).toContainEqual([
+          "new.tex",
+          "old.tex",
+          "theirs.tex",
         ]);
       }),
     );
@@ -711,7 +834,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
       Effect.gen(function* () {
         const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
         const records = NodePath.join(w.stateRoot, "connections");
-        const [file] = (yield* Effect.promise(() => NodeFSP.readdir(records))).filter((name) =>
+        const file = (yield* Effect.promise(() => NodeFSP.readdir(records))).find((name) =>
           name.endsWith(".json"),
         );
         yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(records, file!), "{ broken"));
@@ -856,6 +979,114 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           (yield* w.connection).retention.copies.find((entry) => entry.applyId === copy!.applyId)!
             .state,
         ).toBe("changed");
+      }),
+    ),
+  );
+
+  it.live("never releases a copy a late writer changed before adoption", () => {
+    let stateRoot = "";
+    let rewritten = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          // After the applier hashed the kept copy, a writer still holding the displaced
+          // file rewrites it at the same size, before the coordinator adopts it.
+          at: (point) =>
+            point !== "applied" || rewritten
+              ? Effect.void
+              : Effect.promise(async () => {
+                  rewritten = true;
+                  await NodeFSP.writeFile(await firstKept(stateRoot), "Z");
+                }),
+        });
+        stateRoot = w.stateRoot;
+        expect(yield* w.sync()).toMatchObject({
+          _tag: "applied",
+          adopted: { outcome: "complete" },
+        });
+        expect(yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).toMatchObject([
+          { state: "changed", revision: revision("A"), keptRevision: revision("Z"), unread: false },
+        ]);
+        // A later sync keeps it changed.
+        w.setRemote({ "main.tex": "B", "other.tex": "O" });
+        expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).retention.copies).toMatchObject([{ state: "changed" }]);
+      }),
+    );
+  });
+
+  it.live("lists a copy grown past what a restore reads back as unread, and restores none", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          limits: { keptFileBytes: 4 },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(copy).toMatchObject({ keptRevision: revision("A"), unread: false });
+        yield* Effect.promise(async () =>
+          NodeFSP.writeFile(await firstKept(w.stateRoot), "grown by a late writer"),
+        );
+        expect(yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).toMatchObject([
+          { keptRevision: null, currentRevision: revision("B"), unread: true },
+        ]);
+        // Even naming the grown bytes exactly, a restore never reads past its limit.
+        for (const [attempt, keptRevision] of [
+          copy!.keptRevision!,
+          revision("grown by a late writer"),
+        ].entries())
+          expect(
+            yield* w.coordinator.restoreKept({
+              connectionId: CONNECTION,
+              requestId: `restore-${attempt}`,
+              applyId: copy!.applyId,
+              kept: copy!.kept,
+              keptRevision,
+              currentRevision: copy!.currentRevision,
+            }),
+          ).toEqual({ _tag: "stale" });
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+      }),
+    ),
+  );
+
+  it.live("stops reading at one listing's budget and lists the rest unread", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "B", "other.tex": "P" },
+          // Each folder file is one byte: the budget covers the first one read.
+          limits: { listingBytes: 1 },
+        });
+        expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
+        // The kept copies' stamps still match, so they need no read; the folder's files do.
+        const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(listed.map((copy) => copy.keptRevision).sort()).toEqual(
+          [revision("A"), revision("O")].sort(),
+        );
+        const unread = listed.filter((copy) => copy.unread);
+        expect(unread).toHaveLength(1);
+        expect(unread[0]!.currentRevision).toBeNull();
+        expect(listed.find((copy) => !copy.unread)!.currentRevision).not.toBeNull();
+        // Unread is not absent: a restore claiming the file is gone finds it stale.
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: unread[0]!.applyId,
+            kept: unread[0]!.kept,
+            keptRevision: unread[0]!.keptRevision!,
+            currentRevision: unread[0]!.currentRevision,
+          }),
+        ).toEqual({ _tag: "stale" });
+        expect(yield* read(w.folder, unread[0]!.relativePath)).toBe(
+          unread[0]!.relativePath === "main.tex" ? "B" : "P",
+        );
       }),
     ),
   );

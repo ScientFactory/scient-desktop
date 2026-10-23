@@ -256,7 +256,8 @@ copies. It never publishes; step 4 continues from an adopted result.
   then the file layer's locks. Overleaf is fetched before the section.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
-  selections and choices. A different digest is a stale review: the fresh one
+  selections and choices. Capture reads the base's paths, the managed paths and
+  every path in a forced conflict. A different digest is a stale review: the fresh one
   is offered and nothing is applied. Before the applier runs, it records the
   receipt, a local snapshot, the intent pin and `activeApply`, in that order.
 - **Adoption** is one document replacement:
@@ -264,7 +265,9 @@ copies. It never publishes; step 4 continues from an adopted result.
     remote commit, with the previous base moved into `priorBases`;
   - managed and local-only paths;
   - `forcedConflicts` (interrupted groups) and `markerPaths`;
-  - kept copies, each with its place in the retention folder;
+  - kept copies, each with its place in the retention folder and a stamp (size
+    and change time) taken around a fresh read of its bytes. A copy that no
+    longer holds what the applier kept is recorded `changed`, never released;
   - `completedSyncCount`, which advances only on `complete`;
   - unknown publication attempts, which become `superseded-unresolved`;
   - the link, cleared.
@@ -275,10 +278,14 @@ copies. It never publishes; step 4 continues from an adopted result.
 - **Bulk changes.** The coordinator registers the barrier's settler: a bulk
   change of a checkout with a pending apply recovers it inline when the
   reservation is free, and is refused otherwise. Structural copies in the
-  folder always refuse it.
+  folder always refuse it, including any the inline recovery finds.
+- **Listing kept copies** compares each copy by its stamp and reads again only
+  a changed or extra version. One listing reads at most one inventory's total;
+  a file past that budget, or larger than a restore reads back, is listed
+  `unread`, which is not the same as gone.
 - **Restore.** It puts a kept copy back as a one-file `retained-restore` apply,
   only if both the copy and the folder's file still have the revisions the
-  request saw. The file it replaces is kept (state `kept`), the base never
+  request saw. It reads the copy once, never past 50 MiB. The file it replaces is kept (state `kept`), the base never
   moves, and the restored bytes are a local change for the next review.
 
 ## Remaining integration gates
