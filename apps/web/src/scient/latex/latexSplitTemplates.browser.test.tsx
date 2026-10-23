@@ -187,6 +187,25 @@ function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = tru
   }
   throw new Error(`Missing word: ${word}`);
 }
+async function clickVisualPane(editor: ProseEditor) {
+  const bounds = editor.view.dom.getBoundingClientRect();
+  const viewport = editor.view.dom
+    .closest<HTMLElement>(".scient-latex-visual-scroll")!
+    .getBoundingClientRect();
+  const top = Math.max(bounds.top, viewport.top);
+  const bottom = Math.min(bounds.bottom, viewport.bottom);
+  expect(bottom).toBeGreaterThan(top);
+  await page
+    .getByTestId("active-visual-split")
+    .nth(0)
+    .click({
+      position: {
+        x: 16,
+        y: (top + bottom) / 2 - bounds.top,
+      },
+    });
+  expect(editor.view.dom.contains(document.activeElement)).toBe(true);
+}
 async function scrollToWord(editor: ProseEditor, word: string, context: TestContext) {
   const target = wordPosition(editor.view.dom, word, false).element;
   const visible = Promise.withResolvers<void>();
@@ -249,6 +268,13 @@ it.for([
     const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     await scrollToWord(state.visual, word, context);
     // Exposing an offscreen block can request another font before hit measurement.
+    const target = wordPosition(state.visual.view.dom, word, false).element;
+    const font = getComputedStyle(target);
+    // The computed font shorthand can be empty.
+    await document.fonts.load(
+      `${font.fontStyle} ${font.fontWeight} ${font.fontSize} ${font.fontFamily}`,
+      word,
+    );
     await document.fonts.ready;
     await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
@@ -338,10 +364,7 @@ it.for([
     }
     const selection = state.source().getViewState().selections;
     state.visual.view.dom.dataset.testid = "active-visual-split";
-    await page
-      .getByTestId("active-visual-split")
-      .nth(0)
-      .click({ position: { x: 100, y: 100 } });
+    await clickVisualPane(state.visual);
     expect(state.source().getViewState().selections).toEqual(selection);
     const container = _fixture.host.querySelector("diffs-container")!;
     await expect
@@ -364,10 +387,7 @@ it.for([
       ).toBe(word);
     });
     const manuallySelected = state.source().getViewState().selections;
-    await page
-      .getByTestId("active-visual-split")
-      .nth(0)
-      .click({ position: { x: 100, y: 100 } });
+    await clickVisualPane(state.visual);
     expect(state.source().getViewState().selections).toEqual(manuallySelected);
     expect(state.text()).toBe(source);
   },
