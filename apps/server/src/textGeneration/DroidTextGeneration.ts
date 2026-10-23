@@ -493,12 +493,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
 
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
     Effect.fn("DroidTextGeneration.generateThreadTitle")(function* (input) {
-      const { prompt, outputSchema } = buildThreadTitlePrompt({
-        message: input.message,
-        previousTitle: input.previousTitle,
-        linkedContext: input.linkedContext,
-        attachments: input.attachments,
-      });
+      const { prompt, outputSchema } = buildThreadTitlePrompt(input);
 
       const generated = yield* runDroidJson({
         operation: "generateThreadTitle",

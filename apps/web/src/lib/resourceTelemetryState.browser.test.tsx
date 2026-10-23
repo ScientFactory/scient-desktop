@@ -1,107 +1,292 @@
-import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import { RegistryContext } from "@effect/atom-react";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ResourceTelemetryHistory,
+  type ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { useLayoutEffect } from "react";
-
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const environmentId = EnvironmentId.make("primary");
-const snapshot = { readAt: "2026-10-10T12:00:00Z" };
-const state = vi.hoisted(() => ({
-  telemetry: null as Atom.Writable<AsyncResult.AsyncResult<{ readonly readAt: string }>> | null,
+import { act, render } from "../../test/render";
+
+const monitor = vi.hoisted(() => ({
+  telemetry:
+    vi.fn<
+      (args: {
+        environmentId: EnvironmentId;
+      }) => Atom.Atom<AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>>
+    >(),
+  history:
+    vi.fn<
+      (args: {
+        environmentId: EnvironmentId;
+        input: { windowMs: number; bucketMs: number };
+      }) => Atom.Atom<AsyncResult.AsyncResult<ResourceTelemetryHistory, MonitorError>>
+    >(),
+  retry: vi.fn(),
 }));
 
-vi.mock("../state/environments", () => ({
-  usePrimaryEnvironment: () => ({ environmentId }),
+vi.mock("../components/settings/settingsLayout", () => ({
+  SettingsSection: ({
+    title,
+    headerAction,
+    children,
+  }: {
+    title: string;
+    headerAction?: ReactNode;
+    children: ReactNode;
+  }) => (
+    <section aria-label={title}>
+      {headerAction}
+      {children}
+    </section>
+  ),
 }));
-vi.mock("../state/server", () => ({
-  serverEnvironment: {
-    resourceTelemetry: () => state.telemetry,
-    retryResourceTelemetry: Symbol("retryResourceTelemetry"),
-  },
-}));
+
+vi.mock("../state/environments", () => ({ usePrimaryEnvironment: () => null }));
 vi.mock("../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
 }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/server", () => ({
+  serverEnvironment: {
+    resourceTelemetry: monitor.telemetry,
+    resourceTelemetryHistory: monitor.history,
+  },
+}));
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => monitor.retry }));
 
-import { type ResourceTelemetryState, useResourceTelemetry } from "./resourceTelemetryState";
+import { ResourceTelemetryDiagnostics } from "../components/settings/ResourceTelemetryDiagnostics";
+import { useResourceTelemetry } from "./resourceTelemetryState";
 
-function Probe({ _fixture }: { _fixture: _Fixture }) {
-  const telemetry = useResourceTelemetry();
-  useLayoutEffect(() => {
-    _fixture.publishLatest(telemetry);
-  });
-  return null;
-}
+class MonitorError extends Data.TaggedError("MonitorError")<{ readonly message: string }> {}
 
-async function _setupFixture0(_fixture: _Fixture) {
-  _fixture.registry = AtomRegistry.make();
-  state.telemetry = Atom.make<AsyncResult.AsyncResult<{ readonly readAt: string }>>(
-    AsyncResult.initial(true),
-  );
-  await act(async () => {
-    _fixture.root0 = _fixture.stack.use(
-      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
-    );
-    await _fixture.root0.rerender(
-      <RegistryContext.Provider value={_fixture.registry}>
-        <Probe _fixture={_fixture} />
-      </RegistryContext.Provider>,
-    );
-  });
-}
+const environmentId = EnvironmentId.make("remote");
+const startError = "The resource monitor is not available.";
+const historyError = "Resource history could not start.";
 
-async function _cleanupFixture1(_fixture: _Fixture) {
-  await act(async () => await _fixture.root0?.unmount());
-  _fixture.root0 = undefined;
-  _fixture.registry.dispose();
-  vi.unstubAllGlobals();
-}
-
-describe("resource telemetry subscription", () => {
-  it("stops reporting pending once the open subscription delivers a snapshot", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(_fixture.latest).toMatchObject({ data: null, isPending: true });
-
-    await act(() =>
-      _fixture.registry.set(state.telemetry!, AsyncResult.success(snapshot, { waiting: true })),
-    );
-
-    expect(_fixture.latest).toMatchObject({ data: snapshot, error: null, isPending: false });
-  });
-});
-
-function _createFixture() {
-  let _published_latest = undefined! as ResourceTelemetryState;
-
-  const stack = new AsyncDisposableStack();
-  const cleanup = new AsyncDisposableStack();
-  return {
-    registry: undefined! as AtomRegistry.AtomRegistry,
-    get latest() {
-      return _published_latest;
+function setup({ retryFails = false, holdRetry = false } = {}) {
+  const readAt = DateTime.makeUnsafe(0);
+  const aggregate = {
+    processCount: 0,
+    currentCpuPercent: 0,
+    cpuTimeMs: 0,
+    currentRssBytes: 0,
+    peakRssBytes: 0,
+    ioReadBytes: 0,
+    ioWriteBytes: 0,
+    ioReadBytesPerSecond: 0,
+    ioWriteBytesPerSecond: 0,
+    processStarts: 0,
+    processExits: 0,
+  };
+  const source = {
+    status: "healthy" as const,
+    lastSampleAt: Option.some(readAt),
+    lastError: Option.none<string>(),
+  };
+  const snapshot: ResourceTelemetrySnapshot = {
+    readAt,
+    sampleIntervalMs: 1000,
+    processes: [],
+    groups: { backend: aggregate, electron: aggregate, monitor: aggregate, allT3: aggregate },
+    power: {
+      source: "unknown",
+      idle: "unknown",
+      idleSeconds: null,
+      locked: "unknown",
+      suspended: false,
+      onBattery: "unknown",
+      lowPowerMode: "unknown",
+      thermalState: "unknown",
+      stale: false,
+      updatedAt: readAt,
     },
-    publishLatest(next: typeof _published_latest) {
-      _published_latest = next;
-      return next;
-    },
-
-    stack,
-    cleanup,
-    root0: undefined! as Screen | undefined,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
+    speedLimitPercent: Option.none(),
+    attribution: { readAt, entries: [] },
+    health: {
+      native: source,
+      desktop: source,
+      sidecarVersion: Option.none(),
+      sidecarPid: Option.none(),
+      restartCount: 1,
+      collectionDurationMicros: 0,
+      scannedProcessCount: 0,
+      retainedProcessCount: 0,
+      inaccessibleProcessCount: 0,
     },
   };
+  const history: ResourceTelemetryHistory = {
+    readAt,
+    windowMs: 900000,
+    bucketMs: 30000,
+    sampleIntervalMs: 1000,
+    retainedSampleCount: 0,
+    buckets: [],
+    topProcesses: [],
+    health: snapshot.health,
+  };
+  let running = false;
+  const telemetryQueries = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(
+      Effect.suspend(() =>
+        running ? Effect.succeed(snapshot) : Effect.fail(new MonitorError({ message: startError })),
+      ),
+    ).pipe(Atom.keepAlive),
+  );
+  monitor.telemetry.mockReset();
+  monitor.telemetry.mockImplementation(({ environmentId }) => telemetryQueries(environmentId));
+  const historyReads = vi.fn<(key: string) => void>();
+  const historyQueries = Atom.family((key: string) =>
+    Atom.make(
+      Effect.suspend(() => {
+        historyReads(key);
+        return running
+          ? Effect.succeed(history)
+          : Effect.fail(new MonitorError({ message: historyError }));
+      }),
+    ).pipe(Atom.keepAlive),
+  );
+  monitor.history.mockReset();
+  monitor.history.mockImplementation(({ environmentId, input }) =>
+    historyQueries(`${environmentId}:${input.windowMs}`),
+  );
+  let releaseRetry = () => {};
+  const retryRelease = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
+  monitor.retry.mockReset();
+  monitor.retry.mockImplementation(async () => {
+    if (holdRetry) await retryRelease;
+    if (retryFails)
+      return AsyncResult.failure(Cause.fail(new MonitorError({ message: "Restart failed." })));
+    running = true;
+    return AsyncResult.success({ accepted: true, snapshot });
+  });
+  const registry = AtomRegistry.make();
+  return {
+    registry,
+    snapshot,
+    historyQueries,
+    historyReads,
+    releaseRetry,
+    [Symbol.dispose]: () => registry.dispose(),
+  };
 }
-type _Fixture = ReturnType<typeof _createFixture>;
+
+describe("resource monitor retry", () => {
+  it("stops reporting pending after an open subscription delivers its first snapshot", async () => {
+    using fixture = setup();
+    const telemetry = Atom.make<AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>>(
+      AsyncResult.initial(true),
+    );
+    monitor.telemetry.mockImplementation(() => telemetry);
+    function Probe() {
+      const state = useResourceTelemetry(environmentId);
+      return <output>{state.isPending ? "Loading resources" : "Resources ready"}</output>;
+    }
+    // This fixture observes the subscription hook directly, without navigation.
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <Probe />
+      </RegistryContext.Provider>,
+      { router: false },
+    );
+    await expect.element(screen.getByText("Loading resources", { exact: true })).toBeVisible();
+    await act(() =>
+      fixture.registry.set(telemetry, AsyncResult.success(fixture.snapshot, { waiting: true })),
+    );
+    expect(fixture.registry.get(telemetry).waiting).toBe(true);
+    await expect.element(screen.getByText("Resources ready", { exact: true })).toBeVisible();
+  });
+  it("clears the settings and history errors after a successful retry without remounting", async () => {
+    using fixture = setup();
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
+    await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+
+    await screen.getByRole("button", { name: "Retry monitor" }).click();
+
+    await expect.element(screen.getByText(startError, { exact: true })).not.toBeInTheDocument();
+    await expect.element(screen.getByText(historyError, { exact: true })).not.toBeInTheDocument();
+    await expect.element(screen.getByText("Native healthy", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Retry monitor" }))
+      .not.toBeInTheDocument();
+  });
+
+  it.each([false, true])(
+    "refreshes the changed history window only in the retry environment (switch environment: %s)",
+    async (switchEnvironment) => {
+      using fixture = setup({ holdRetry: true });
+      const view = (selectedEnvironment: EnvironmentId) => (
+        <RegistryContext.Provider value={fixture.registry}>
+          <ResourceTelemetryDiagnostics environmentId={selectedEnvironment} />
+        </RegistryContext.Provider>
+      );
+      await using screen = await render(view(environmentId));
+      await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+      await screen.getByRole("button", { name: "Retry monitor" }).click();
+      await expect.element(screen.getByRole("button", { name: "Retry monitor" })).toBeDisabled();
+      const selectedEnvironment = switchEnvironment ? EnvironmentId.make("other") : environmentId;
+      if (switchEnvironment) await screen.rerender(view(selectedEnvironment));
+      await screen.getByRole("button", { name: "5m", exact: true }).click();
+      await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+      const selectedKey = `${selectedEnvironment}:300000`;
+      expect(fixture.registry.get(fixture.historyQueries(selectedKey))._tag).toBe("Failure");
+      fixture.historyReads.mockClear();
+
+      await act(() => fixture.releaseRetry());
+
+      if (switchEnvironment) {
+        await expect.element(screen.getByRole("button", { name: "Retry monitor" })).toBeEnabled();
+        await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+        expect(fixture.registry.get(fixture.historyQueries(selectedKey))._tag).toBe("Failure");
+        expect(fixture.historyReads).not.toHaveBeenCalled();
+      } else {
+        await expect.element(screen.getByText(startError, { exact: true })).not.toBeInTheDocument();
+        await expect
+          .element(screen.getByText(historyError, { exact: true }))
+          .not.toBeInTheDocument();
+        expect(fixture.registry.get(fixture.historyQueries(selectedKey))._tag).toBe("Success");
+        expect(fixture.historyReads.mock.calls.map(([key]) => key)).toEqual([selectedKey]);
+        await screen.getByRole("button", { name: "15m", exact: true }).click();
+        await expect
+          .element(screen.getByText(historyError, { exact: true }))
+          .not.toBeInTheDocument();
+      }
+      expect(fixture.registry.get(fixture.historyQueries(`${environmentId}:900000`))._tag).toBe(
+        "Success",
+      );
+      expect(monitor.retry).toHaveBeenCalledExactlyOnceWith({ environmentId, input: {} });
+    },
+  );
+
+  it("keeps the failed monitor and history errors visible when retry fails", async () => {
+    using fixture = setup({ retryFails: true });
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
+    await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+
+    await screen.getByRole("button", { name: "Retry monitor" }).click();
+
+    await expect.element(screen.getByRole("button", { name: "Retry monitor" })).toBeEnabled();
+    expect(monitor.retry).toHaveBeenCalledExactlyOnceWith({ environmentId, input: {} });
+    await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
+    await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+  });
+});

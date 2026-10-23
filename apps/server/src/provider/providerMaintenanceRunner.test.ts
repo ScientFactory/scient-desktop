@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -681,8 +682,18 @@ describe("providerMaintenanceRunner", () => {
       providers.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)?.updateState;
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
+      const queued = yield* Deferred.make<void>();
       const updater = yield* makeTestRunner({
         ...registry,
+        setProviderMaintenanceActionState: Effect.fn(
+          "providerMaintenanceRunner.test.observeQueuedUpdate",
+        )(function* (input) {
+          const providers = yield* registry.setProviderMaintenanceActionState(input);
+          if (input.instanceId === OPENCODE_INSTANCE_ID && input.state?.status === "queued") {
+            yield* Deferred.succeed(queued, undefined);
+          }
+          return providers;
+        }),
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
@@ -701,10 +712,7 @@ describe("providerMaintenanceRunner", () => {
       const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
       yield* Effect.promise(() => firstStarted);
       const second = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (statusOf(yield* registry.getProviders)?.status === "queued") break;
-        yield* Effect.yieldNow;
-      }
+      yield* Deferred.await(queued);
       assert.strictEqual(statusOf(yield* registry.getProviders)?.status, "queued");
 
       // The client's connection drops while the update still waits for the lock.

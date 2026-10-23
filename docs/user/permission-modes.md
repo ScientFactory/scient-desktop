@@ -44,6 +44,8 @@ by the permission mode. See [ACP Registry permissions](./providers-acp.md#permis
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
 approval for an action.
+While a Claude approval is pending, type a text reply to decline that request and give feedback
+directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 
 Antigravity uses its own permission policy for each mode. Scient still shows any approval or
 question the official agent sends in **Full access**. A remembered approval is available only

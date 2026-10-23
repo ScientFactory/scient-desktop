@@ -117,6 +117,10 @@ To generate a fresh title from the conversation, open a thread's context menu an
 **Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
 
+To change how titles are written, add **Thread title instructions** in **Settings → General →
+Text generation**, such as a length limit or an identifier to put first. They apply to new and
+regenerated titles. Select a project to give it its own instructions.
+
 Agents connected through Scient can use the same server-owned metadata workflow to rename a thread,
 regenerate its title, or link and unlink a pull request. These changes appear on web, desktop, and
 mobile without requiring the originating browser to remain open.

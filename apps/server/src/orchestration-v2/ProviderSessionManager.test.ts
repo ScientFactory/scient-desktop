@@ -1581,10 +1581,9 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
 
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
-      // SCIENT-FORK: the release takes a few more scheduler turns, not more time.
-      for (let turn = 0; turn < 1_000 && stopping.pollUnsafe() === undefined; turn++)
-        yield* Effect.yieldNow;
+      yield* Fiber.await(stopping);
       assert.isDefined(stopping.pollUnsafe());
+      yield* Fiber.join(stopping);
     }).pipe(
       Effect.ensuring(Deferred.succeed(scopeCloseRelease, undefined)),
       Effect.provide(

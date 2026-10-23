@@ -15,8 +15,10 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -133,7 +135,8 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
  if (message.params.sessionId !== sessionId) throw new Error("Foreign native session prompt");
  const text = message.params.prompt.filter(part => part.type === "text").map(part => part.text).join("\\n");
  if (text.includes(${encodeString(targetText)})) {
-   fs.writeFileSync(${encodeString(pendingPath)}, JSON.stringify({pid:process.pid, sessionId, model, autonomy, message}));
+   fs.writeFileSync(${encodeString(`${pendingPath}.tmp`)}, JSON.stringify({pid:process.pid, sessionId, model, autonomy, message}));
+   fs.renameSync(${encodeString(`${pendingPath}.tmp`)}, ${encodeString(pendingPath)});
    await new Promise(resolve => {
      const watch = fs.watch(${encodeString(control)}, () => {
        if (fs.existsSync(${encodeString(releasePath)})) { watch.close(); resolve(); }
@@ -342,13 +345,26 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
               createdBy: "user" as const,
               creationSource: "web" as const,
             };
+            const pendingWatchReady = yield* Deferred.make<void>();
+            const pendingWritten = yield* fs
+              .watch(control, {
+                onReady: () => {
+                  Deferred.doneUnsafe(pendingWatchReady, Effect.void);
+                },
+              })
+              .pipe(
+                Stream.filter(
+                  (event) =>
+                    event._tag === "Create" && path.resolve(control, event.path) === pendingPath,
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+            yield* Effect.raceFirst(Deferred.await(pendingWatchReady), Fiber.join(pendingWritten));
             const sendReceipt = yield* orchestrator.dispatch(command);
             yield* worker.drain(24);
-            yield* TestClock.withLive(
-              Effect.gen(function* () {
-                while (!(yield* fs.exists(pendingPath))) yield* Effect.sleep("10 millis");
-              }).pipe(Effect.timeout("15 seconds")),
-            );
+            yield* Fiber.join(pendingWritten);
             const pending = yield* decodePending(yield* fs.readFileString(pendingPath));
             assert.isTrue(Number.isSafeInteger(pending.pid) && pending.pid > 0);
             assert.doesNotThrow(() => process.kill(pending.pid, 0));

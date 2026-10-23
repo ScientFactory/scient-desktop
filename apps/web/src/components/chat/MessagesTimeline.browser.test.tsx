@@ -278,6 +278,46 @@ async function copyRange(range: Range) {
 async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
+describe("MessagesTimeline activity announcements", () => {
+  it("keeps one announcer from the empty view into the first turn and silences held content", async () => {
+    const props = baseProps();
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={[]} />);
+    const region = screen.container.querySelector<HTMLElement>('[aria-live="polite"].sr-only')!;
+    expect(region).not.toBeNull();
+    expect(region.textContent).toBe("");
+    const running = {
+      ...props,
+      isWorking: true,
+      activeTurnInProgress: true,
+      announcedRun: { runId: RunId.make("first-announced-run"), status: "running" as const },
+    };
+    await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} />);
+    expect(screen.container.querySelector('[aria-live="polite"].sr-only')).toBe(region);
+    await expect.element(region).toHaveTextContent("Working");
+    await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} paintOnly />);
+    await expect.element(region).toBeEmptyDOMElement();
+    await screen.rerender(
+      <MessagesTimeline
+        {...running}
+        routeThreadKey="environment-local:another-thread"
+        timelineEntries={[]}
+      />,
+    );
+    await expect.element(region).toBeEmptyDOMElement();
+    await screen.rerender(
+      <MessagesTimeline
+        {...running}
+        routeThreadKey="environment-local:another-thread"
+        timelineEntries={[]}
+        awaitingUser="approval"
+        awaitingRequestId="shown-request"
+        announceTurnStatus={false}
+      />,
+    );
+    await expect.element(region).toBeEmptyDOMElement();
+  });
+});
+
 describe("MessagesTimeline work rows", () => {
   it("formats changed file paths from the workspace root", async () => {
     await using screen = await renderTimeline(

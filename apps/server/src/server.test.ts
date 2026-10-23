@@ -7001,6 +7001,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ],
       };
       const started = yield* Deferred.make<void>();
+      const deadlineRegistered = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const clock = yield* Clock.Clock;
       const instance: ProviderInstance = {
         instanceId: id,
         driverKind: ProviderDriverKind.make("droid"),
@@ -7015,7 +7018,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         textGeneration: {
           generateThreadTitle: () =>
-            Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Deferred.succeed(cancelled, undefined)),
+            ),
           generateBranchName: (): never => {
             throw new Error("Unexpected generation");
           },
@@ -7039,7 +7045,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
         },
-      });
+      }).pipe(
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          sleep: (duration) =>
+            Duration.toMillis(duration) === 45_000
+              ? clock.sleep(duration).pipe(
+                  Effect.forkChild({ startImmediately: true }),
+                  Effect.tap(() => Deferred.succeed(deadlineRegistered, undefined)),
+                  Effect.flatMap(Fiber.join),
+                )
+              : clock.sleep(duration),
+        }),
+      );
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -7051,24 +7069,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               instanceId: id,
             }).pipe(Effect.result, Effect.forkChild);
             yield* Deferred.await(started);
-            // The timeout's timer registers on the server's own schedule, and its
-            // answer travels back in real time. Advance test time once past the
-            // timeout and wait; advancing while the answer is on its way would add
-            // minutes of test time and trip the connection's own timers.
-            const waitLive = (millis: number) =>
-              Effect.gen(function* () {
-                for (
-                  let waited = 0;
-                  waited < millis && pending.pollUnsafe() === undefined;
-                  waited += 20
-                )
-                  yield* Effect.sleep("20 millis").pipe(TestClock.withLive);
-              });
-            yield* waitLive(100);
-            for (let attempt = 0; attempt < 3 && pending.pollUnsafe() === undefined; attempt += 1) {
-              yield* TestClock.adjust("46 seconds");
-              yield* waitLive(2_000);
-            }
+            // The RPC server owns this timer. Observe its registration before advancing it.
+            yield* Deferred.await(deadlineRegistered);
+            yield* TestClock.adjust("44999 millis");
+            assert.isFalse(yield* Deferred.isDone(cancelled));
+            yield* TestClock.adjust("1 millis");
+            yield* Deferred.await(cancelled);
             return yield* Fiber.join(pending);
           }),
         ),

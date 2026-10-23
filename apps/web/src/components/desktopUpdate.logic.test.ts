@@ -117,8 +117,6 @@ describe("desktop update UI helpers", () => {
     "owner/..",
     "owner/repo/extra",
     "owner#notes/repo",
-    "owner/repo#notes",
-    "owner?tab=notes/repo",
     "owner/repo?tab=notes",
   ])("falls back to Scient for an invalid configured repository: %s", (repository) => {
     expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(

@@ -2116,19 +2116,18 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               [latestSkills],
             );
 
+            // Subscribe before the instance change so the rebuilt publication cannot be missed.
+            const rebuiltPublication = yield* Stream.toPull(
+              registry.streamChanges.pipe(
+                Stream.filter((providers) => providers[0]?.checkedAt === rebuiltProvider.checkedAt),
+              ),
+            );
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);
-            let rebuilt = yield* registry.getProviders;
-            for (
-              let attempt = 0;
-              attempt < 50 && rebuilt[0]?.checkedAt !== rebuiltProvider.checkedAt;
-              attempt += 1
-            ) {
-              yield* Effect.yieldNow;
-              rebuilt = yield* registry.getProviders;
-            }
+            const [rebuilt] = yield* rebuiltPublication;
             assert.strictEqual(rebuilt[0]?.checkedAt, rebuiltProvider.checkedAt);
             assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
+            assert.deepStrictEqual(yield* registry.getProviders, rebuilt);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -3077,17 +3076,17 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            let providers = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* Effect.yieldNow;
-              providers = yield* registry.getProviders;
-            }
+            const isCodexPersonalError = (candidates: ReadonlyArray<ServerProvider>) =>
+              candidates.find((provider) => provider.instanceId === "codex_personal")?.status ===
+              "error";
+            // Subscribe before reading so a probe that settles in between is still observed.
+            const codexPersonalErrors = yield* Stream.toPull(
+              registry.streamChanges.pipe(Stream.filter(isCodexPersonalError)),
+            );
+            const current = yield* registry.getProviders;
+            const providers = isCodexPersonalError(current)
+              ? current
+              : (yield* codexPersonalErrors)[0];
             const codexPersonal = providers.find(
               (provider) => provider.instanceId === "codex_personal",
             );

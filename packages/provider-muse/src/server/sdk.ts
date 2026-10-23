@@ -50,6 +50,7 @@ export interface MuseSdkHostOptions {
   readonly startupTimeoutMs?: number;
   /** Called only after this host's native shutdown is confirmed, including failed initialization. */
   readonly onClosed?: () => void;
+  readonly onProcessExit?: (exit: ProcessExit) => void;
 }
 
 export function makeMuseEnvironment(
@@ -177,6 +178,7 @@ export async function createMuseSdkHost(
     ...(options.cwd ? { cwd: options.cwd } : {}),
     env: options.environment ?? makeMuseEnvironment(),
     shutdownTimeoutMs: 10_000,
+    ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {}),
   });
   let closePromise: Promise<void> | undefined;
   const close = () => {

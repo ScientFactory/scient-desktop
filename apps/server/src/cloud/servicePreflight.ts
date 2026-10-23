@@ -23,8 +23,13 @@ export function runServicePreflight(input: {
     return {
       status: "blocked",
       version,
-      reason:
-        "This release requires a newer Scient service launcher. Update it on the server machine.",
+      reason: [
+        // SCIENT-FORK:START — diagnostics identify the matching Scient installation.
+        `The installed Scient service launcher speaks protocol ${input.launcherProtocol}, but Scient ${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
+        // SCIENT-FORK:END
+        "On the server machine, use the matching Scient installation to update the launcher for this profile. Check that installation's version and absolute executable path before repairing the service.",
+        "Updating the desktop app does not update this CLI; service repair uses the CLI and profile that run it.",
+      ].join(" "),
     };
   }
 

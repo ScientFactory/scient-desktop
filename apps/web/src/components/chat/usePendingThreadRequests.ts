@@ -326,9 +326,13 @@ export function usePendingThreadRequests(input: {
     setRespondingRequestIds,
     onResponseError: setRequestResponseError,
   });
-  const onRespondToApproval = (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) =>
+  const onRespondToApproval = (
+    requestId: RuntimeRequestId,
+    decision: ProviderApprovalDecision,
+    feedback?: string,
+  ) =>
     readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-      ? respondToApproval(requestId, decision)
+      ? respondToApproval(requestId, decision, feedback)
       : Promise.resolve(undefined);
   // SCIENT-FORK:END
   const onRespondToApprovalStable = useStableCallback(onRespondToApproval);

@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -15,7 +16,7 @@ import { settlePromise, type AtomCommandResult } from "@t3tools/client-runtime/s
 import { useNavigate } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { useLayoutEffect } from "react";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   useComposerDraftStore,
@@ -35,6 +36,11 @@ import { useComposerSend, type ComposerSendInput } from "./useComposerSend";
 import { useComposerResume } from "./useComposerResume";
 import { useImplementPlanInNewThread } from "./useProposedPlanSend";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
+import {
+  countPreparingComposerImages,
+  removePreparingComposerImages,
+  usePreparingComposerImages,
+} from "./preparingComposerImages";
 import * as imageCompression from "../../lib/imageCompression";
 import type { ChatMessage } from "../../types";
 import { useMultipleModelSend } from "./useMultipleModelSend";
@@ -189,7 +195,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       collapseForTimelineScrollKey: noop,
       addDroppedFiles: noop,
       addDroppedFolders: noop,
-      hasPendingAttachments: () => false,
+      hasPendingAttachments: () => countPreparingComposerImages(composerTargetKey(target)) > 0,
       insertTextAtEnd: () => true,
       pasteTextAtEnd: () => true,
       citeAssistantText: () => true,
@@ -204,7 +210,11 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       readSnapshot: () => ({ value: context.prompt, cursor: 0, expandedCursor: 0, contextIds: [] }),
       resetCursorState: vi.fn(),
       addTerminalContext: noop,
-      getSendContext: () => context,
+      getSendContext: () => ({
+        ...context,
+        pendingAttachments:
+          context.pendingAttachments || countPreparingComposerImages(composerTargetKey(target)) > 0,
+      }),
       validateProviderInput: () => true,
       setMultipleModelSelections: noop,
     };
@@ -313,15 +323,19 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       | undefined;
     let fanout: ReturnType<typeof useMultipleModelSend> | undefined;
     let implement: ReturnType<typeof useImplementPlanInNewThread> | undefined;
-    const pendingCompressions = { current: new Map<string, number>() };
+    let preparingImages: ReturnType<typeof usePreparingComposerImages> = [];
+    let removeImage:
+      | ReturnType<typeof useComposerAttachmentIntake>["removeComposerImage"]
+      | undefined;
     function Owner() {
+      const preparing = usePreparingComposerImages(composerTargetKey(target));
       const onSend = useComposerSend(input).onSend;
       const sendMultiple = useMultipleModelSend(input);
       const implementPlan = useImplementPlanInNewThread({
         ...input,
         defaultRuntimeMode: "full-access",
       });
-      const { addComposerAttachments } = useComposerAttachmentIntake({
+      const { addComposerAttachments, removeComposerImage } = useComposerAttachmentIntake({
         environmentId,
         attachmentDraftTarget: target,
         activeThreadId: threadId,
@@ -340,11 +354,14 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         composerFilesRef,
         composerEditorRef: { current: null },
         isRevertingCheckpointRef: { current: false },
-        pendingImageCompressionsRef: pendingCompressions,
         setThreadError: input.setThreadError,
         countReservedAttachments: () => {
           const draft = useComposerDraftStore.getState().getComposerDraft(target);
-          return (draft?.images.length ?? 0) + (draft?.files.length ?? 0);
+          return (
+            (draft?.images.length ?? 0) +
+            (draft?.files.length ?? 0) +
+            countPreparingComposerImages(composerTargetKey(target))
+          );
         },
         addComposerImage: (image) => useComposerDraftStore.getState().addImages(target, [image]),
         addComposerImagesToDraft: (images) =>
@@ -366,16 +383,30 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         send = onSend;
         resume = onResume;
         intake = addComposerAttachments;
+        removeImage = removeComposerImage;
+        preparingImages = preparing;
         fanout = sendMultiple;
         implement = implementPlan;
-      }, [onSend, onResume, addComposerAttachments, sendMultiple, implementPlan]);
+      }, [
+        onSend,
+        onResume,
+        addComposerAttachments,
+        removeComposerImage,
+        preparing,
+        sendMultiple,
+        implementPlan,
+      ]);
       return null;
     }
     // Navigation is a command adapter here, not the fixture router.
     stack.use(await render(<Owner />, { router: false }));
-    if (!send || !resume || !intake || !fanout || !implement)
+    if (!send || !resume || !intake || !fanout || !implement || !removeImage)
       throw new Error("The composer owners did not render");
     stack.defer(() => {
+      removePreparingComposerImages(
+        composerTargetKey(target),
+        new Set(preparingImages.map((image) => image.id)),
+      );
       draftSendState(routeKey).sendInFlight.current = false;
       draftSendState(routeKey).uncertainSubmissions.current.clear();
     });
@@ -387,7 +418,10 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       fanout,
       implement,
       navigate,
-      pendingCompressions,
+      removeImage,
+      get preparingImages() {
+        return preparingImages;
+      },
       storage,
       route,
       command: bindings.command,
@@ -447,6 +481,206 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe("mounted composer send admission owner", () => {
+  it.each(["/compact keep the API notes", "/compact\n  tests"])(
+    "dispatches an instructed compaction once without a preceding bare command: %s",
+    async (prompt) => {
+      await using fixture = await setup({
+        keepFullHistory: false,
+        resumeCompactionTokens: 120_000,
+      });
+      fixture.context = { ...fixture.context, prompt };
+      fixture.input.promptRef.current = prompt;
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      await fixture.send();
+      expect(fixture.command).toHaveBeenCalledTimes(1);
+      expect(fixture.command.mock.calls[0]?.[0].input.message.text).toBe(prompt);
+      expect(fixture.command.mock.calls[0]?.[0].input.dispatchMode).toBe("auto");
+    },
+  );
+
+  it.each(["unchanged", "new text", "retyped same text"] as const)(
+    "sends feedback only to the shown request and retains newer typing: %s",
+    async (editWhileReplying) => {
+      const requestId = RuntimeRequestId.make("feedback-request");
+      const reply = Promise.withResolvers<AtomCommandResult<unknown, unknown>>();
+      const started = Promise.withResolvers<void>();
+      const respond = vi.fn(async () => {
+        started.resolve();
+        return reply.promise;
+      });
+      await using fixture = await setup({
+        pendingApprovals: [
+          {
+            requestId,
+            requestKind: "command",
+            createdAt: "2026-10-24T00:00:00Z",
+            responseCapability: "live",
+            supportsFeedback: true,
+          },
+        ],
+        onRespondToApproval: respond,
+      });
+      const prompt = "Keep the tests";
+      fixture.context = { ...fixture.context, prompt, shownPendingApprovalIds: [requestId] };
+      fixture.input.promptRef.current = prompt;
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      const sending = fixture.send();
+      await started.promise;
+      await fixture.send();
+      if (editWhileReplying !== "unchanged") {
+        fixture.input.promptRef.current = "New draft";
+        useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "New draft");
+        if (editWhileReplying === "retyped same text") {
+          fixture.input.promptRef.current = prompt;
+          useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+        }
+      }
+      reply.resolve(AsyncResult.success(undefined));
+      await sending;
+      expect(respond).toHaveBeenCalledExactlyOnceWith(requestId, "decline", prompt);
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
+          ?.prompt ?? "",
+      ).toBe(
+        editWhileReplying === "unchanged"
+          ? ""
+          : editWhileReplying === "new text"
+            ? "New draft"
+            : prompt,
+      );
+    },
+  );
+
+  it("retains feedback and attachments without declining the request or dispatching a parent turn", async () => {
+    const requestId = RuntimeRequestId.make("feedback-with-file");
+    const respond = vi.fn();
+    await using fixture = await setup({
+      pendingApprovals: [
+        {
+          requestId,
+          requestKind: "command",
+          createdAt: "2026-10-24T00:00:00Z",
+          responseCapability: "live",
+          supportsFeedback: true,
+        },
+      ],
+      onRespondToApproval: respond,
+    });
+    fixture.context = {
+      ...fixture.context,
+      shownPendingApprovalIds: [requestId],
+      files: [
+        {
+          type: "file",
+          id: "paper",
+          name: "paper.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 3,
+          file: new File(["pdf"], "paper.pdf", { type: "application/pdf" }),
+        },
+      ],
+    };
+    const before = useComposerDraftStore
+      .getState()
+      .getComposerDraft(fixture.input.composerDraftTarget);
+    await fixture.send();
+    expect(respond).not.toHaveBeenCalled();
+    expect(fixture.command).not.toHaveBeenCalled();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
+    ).toBe(before);
+    expect(fixture.input.setThreadError).toHaveBeenLastCalledWith(
+      fixture.input.activeThread?.id,
+      "Send approval feedback without attachments or added context.",
+    );
+  });
+
+  it("keeps the feedback draft when the native reply fails", async () => {
+    const requestId = RuntimeRequestId.make("failed-feedback");
+    const failure = await settlePromise(async () => {
+      throw new Error("Reply rejected");
+    });
+    const respond = vi.fn(async () => failure);
+    await using fixture = await setup({
+      pendingApprovals: [
+        {
+          requestId,
+          requestKind: "command",
+          createdAt: "2026-10-24T00:00:00Z",
+          responseCapability: "live",
+          supportsFeedback: true,
+        },
+      ],
+      onRespondToApproval: respond,
+    });
+    fixture.context = { ...fixture.context, shownPendingApprovalIds: [requestId] };
+    const before = useComposerDraftStore
+      .getState()
+      .getComposerDraft(fixture.input.composerDraftTarget);
+    await fixture.send();
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(fixture.command).not.toHaveBeenCalled();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
+    ).toBe(before);
+  });
+
+  it("does not answer a feedback request after navigation during queue recovery", async () => {
+    const requestId = RuntimeRequestId.make("stale-feedback");
+    const respond = vi.fn();
+    await using fixture = await setup({
+      pendingApprovals: [
+        {
+          requestId,
+          requestKind: "command",
+          createdAt: "2026-10-24T00:00:00Z",
+          responseCapability: "live",
+          supportsFeedback: true,
+        },
+      ],
+      onRespondToApproval: respond,
+    });
+    fixture.context = { ...fixture.context, shownPendingApprovalIds: [requestId] };
+    using recovery = deferredRecovery();
+    const sending = fixture.send();
+    fixture.route.current = "another-thread";
+    recovery.resolve({ intent: undefined, retryResult: undefined });
+    await sending;
+    expect(respond).not.toHaveBeenCalled();
+    expect(fixture.command).not.toHaveBeenCalled();
+  });
+
+  it("drops a removed preparing tile and drains reservations after a rejected conversion", async () => {
+    await using fixture = await setup();
+    const converted =
+      Promise.withResolvers<
+        Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>
+      >();
+    vi.mocked(imageCompression.prepareImageForAttachment).mockImplementationOnce(
+      () => converted.promise,
+    );
+    let adding!: Promise<boolean>;
+    await act(() => {
+      adding = fixture.intake([new File(["image"], "cancelled.png", { type: "image/png" })]);
+    });
+    const targetKey = composerTargetKey(fixture.input.composerDraftTarget);
+    expect(countPreparingComposerImages(targetKey)).toBe(1);
+    await fixture.send();
+    expect(fixture.command).not.toHaveBeenCalled();
+    const imageId = fixture.preparingImages[0]!.id;
+    await act(() => fixture.removeImage(imageId));
+    converted.reject(new Error("decode failed"));
+    await adding;
+    expect(countPreparingComposerImages(targetKey)).toBe(0);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.images,
+    ).toEqual([]);
+    expect(fixture.input.setThreadError).not.toHaveBeenCalledWith(
+      fixture.input.activeThread?.id,
+      expect.stringContaining("could not be read"),
+    );
+  });
   it("fences a transferred draft and replays its frozen native admission after a lost ACK", async () => {
     const frameSubmittedMessage = vi.fn();
     const setOptimisticUserMessages = vi.fn();
@@ -1017,9 +1251,9 @@ describe("mounted composer send admission owner", () => {
     expect(
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.files,
     ).toEqual([]);
-    expect(
-      fixture.pendingCompressions.current.get(composerTargetKey(fixture.input.composerDraftTarget)),
-    ).toBe(1);
+    expect(countPreparingComposerImages(composerTargetKey(fixture.input.composerDraftTarget))).toBe(
+      1,
+    );
     converted.resolve({ ok: true, file: image, recompressed: false });
     await adding;
     const draft = useComposerDraftStore
@@ -1027,7 +1261,9 @@ describe("mounted composer send admission owner", () => {
       .getComposerDraft(fixture.input.composerDraftTarget);
     expect(draft?.files.map((file) => file.file)).toEqual([pdf]);
     expect(draft?.images.map((file) => file.file)).toEqual([image]);
-    expect(fixture.pendingCompressions.current.size).toBe(0);
+    expect(countPreparingComposerImages(composerTargetKey(fixture.input.composerDraftTarget))).toBe(
+      0,
+    );
   });
 
   it("rechecks current attachment bytes after conversion and rejects the whole new batch", async () => {
@@ -1068,7 +1304,9 @@ describe("mounted composer send admission owner", () => {
       fixture.input.activeThread?.id,
       expect.stringContaining("80 MiB"),
     );
-    expect(fixture.pendingCompressions.current.size).toBe(0);
+    expect(countPreparingComposerImages(composerTargetKey(fixture.input.composerDraftTarget))).toBe(
+      0,
+    );
   });
 
   it("admits a plan follow-up under the same lock and clears only its matching draft", async () => {

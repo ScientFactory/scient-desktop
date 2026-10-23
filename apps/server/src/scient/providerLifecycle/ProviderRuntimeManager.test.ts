@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 
 import type {
@@ -102,18 +103,20 @@ const ACTIVE_STATUSES = new Set([
   "removing",
 ]);
 
-const yieldUntil = <A>(
-  effect: Effect.Effect<A>,
+/** The first value of `ref`, current or later, that satisfies `predicate`. */
+const awaitState = <A>(
+  ref: SubscriptionRef.SubscriptionRef<A>,
   predicate: (value: A) => boolean,
 ): Effect.Effect<A> =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const value = yield* effect;
-      if (predicate(value)) return value;
-      yield* Effect.yieldNow;
-    }
-    return yield* Effect.die(new Error("Timed out waiting for provider runtime state."));
-  });
+  SubscriptionRef.changes(ref).pipe(
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.flatMap((value) =>
+      value._tag === "Some"
+        ? Effect.succeed(value.value)
+        : Effect.die(new Error("The provider runtime state stream ended.")),
+    ),
+  );
 
 function makeHarness(
   actions: ProviderManagedRuntimeActions,
@@ -130,9 +133,9 @@ function makeHarness(
   } = {},
 ) {
   return Effect.gen(function* () {
-    const providersRef = yield* Ref.make(initialProviders);
+    const providersRef = yield* SubscriptionRef.make(initialProviders);
     const actionsRef = yield* Ref.make(actions);
-    const reloadCountRef = yield* Ref.make(0);
+    const reloadCountRef = yield* SubscriptionRef.make(0);
     const reloadedInstancesRef = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
     const closedInstancesRef = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
     const stopCountRef = yield* Ref.make(0);
@@ -140,7 +143,7 @@ function makeHarness(
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
       Effect.gen(function* () {
         yield* hooks.beforeSetRuntime?.(input.runtime) ?? Effect.void;
-        const providers = yield* Ref.updateAndGet(providersRef, (providers) =>
+        const providers = yield* SubscriptionRef.updateAndGet(providersRef, (providers) =>
           providers.map((candidate) =>
             candidate.instanceId === input.instanceId && candidate.connection && input.runtime
               ? {
@@ -154,8 +157,8 @@ function makeHarness(
         return providers;
       });
     const reloadInstance = Effect.gen(function* () {
-      yield* Ref.update(reloadCountRef, (count) => count + 1);
-      const providers = yield* Ref.get(providersRef);
+      yield* SubscriptionRef.update(reloadCountRef, (count) => count + 1);
+      const providers = yield* SubscriptionRef.get(providersRef);
       const operationStatus =
         providers.find((candidate) => candidate.instanceId === INSTANCE)?.connection?.runtime
           ?.operation?.status ?? null;
@@ -165,14 +168,15 @@ function makeHarness(
       return providers;
     });
     const registry: ProviderRegistryShape = {
-      getProviders: Ref.get(providersRef),
-      refresh: () => Ref.get(providersRef),
-      refreshAfterUpdate: () => Ref.get(providersRef),
-      refreshInstance: () => Ref.get(providersRef),
-      refreshWorkspaceSnapshot: () => Ref.get(providersRef),
-      refreshInstanceStrict: () => Ref.get(providersRef),
-      refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
-      reloadInstance: () => reloadInstance.pipe(Effect.catch(() => Ref.get(providersRef))),
+      getProviders: SubscriptionRef.get(providersRef),
+      refresh: () => SubscriptionRef.get(providersRef),
+      refreshAfterUpdate: () => SubscriptionRef.get(providersRef),
+      refreshInstance: () => SubscriptionRef.get(providersRef),
+      refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
+      refreshInstanceStrict: () => SubscriptionRef.get(providersRef),
+      refreshInstanceAfterAccountChange: () => SubscriptionRef.get(providersRef),
+      reloadInstance: () =>
+        reloadInstance.pipe(Effect.catch(() => SubscriptionRef.get(providersRef))),
       reloadInstanceStrict: (instanceId) =>
         Ref.update(reloadedInstancesRef, (instances) => [...instances, instanceId]).pipe(
           Effect.andThen(reloadInstance),
@@ -185,24 +189,28 @@ function makeHarness(
       getProviderManagedRuntimeActionsForInstance: () => Ref.get(actionsRef),
       getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
       getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
-      recordProviderNativeInventory: () => Ref.get(providersRef),
+      recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-      setProviderMaintenanceActionState: () => Ref.get(providersRef),
-      setProviderConnectionOperation: () => Ref.get(providersRef),
-      setProviderAuthenticationFailure: () => Ref.get(providersRef),
+      setProviderMaintenanceActionState: () => SubscriptionRef.get(providersRef),
+      setProviderConnectionOperation: () => SubscriptionRef.get(providersRef),
+      setProviderAuthenticationFailure: () => SubscriptionRef.get(providersRef),
       setProviderManagedRuntimeSummary: setRuntime,
       streamChanges: Stream.empty,
     };
     const coordinator = yield* makeLifecycleCoordinator;
-    const lifecycleReleaseCountRef = yield* Ref.make(0);
+    const lifecycleReleaseCountRef = yield* SubscriptionRef.make(0);
     const trackedCoordinator = ProviderLifecycleCoordinator.of({
       ...coordinator,
+      // Counted once the coordinator has processed the release, so awaiting the count
+      // observes the released reservation.
       release: (input) =>
-        Ref.update(lifecycleReleaseCountRef, (count) => count + 1).pipe(
-          Effect.andThen(coordinator.release(input)),
-        ),
+        coordinator
+          .release(input)
+          .pipe(
+            Effect.ensuring(SubscriptionRef.update(lifecycleReleaseCountRef, (count) => count + 1)),
+          ),
     });
     const activity = ProviderActivity.of({
       isBusy: hooks.isBusy ?? (() => Effect.succeed(false)),
@@ -307,7 +315,7 @@ describe("ProviderRuntimeManager", () => {
         action: "install",
         catalogRevision: planned.catalogRevision,
       });
-      const completed = yield* yieldUntil(Ref.get(providersRef), (providers) =>
+      const completed = yield* awaitState(providersRef, (providers) =>
         providers.some(
           (candidate) => candidate.connection?.runtime?.operation?.status === "succeeded",
         ),
@@ -317,7 +325,7 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(runtime?.managedVersion, "0.147.0");
       assert.strictEqual(completed[1]?.connection?.runtime?.source, "scient_managed");
       assert.strictEqual(completed[1]?.connection?.runtime?.managedVersion, "0.147.0");
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 2);
       assert.strictEqual(yield* Ref.get(stopCountRef), 4);
       assert.deepStrictEqual(yield* Ref.get(reloadOperationsRef), ["downloading", "downloading"]);
     }),
@@ -380,8 +388,8 @@ describe("ProviderRuntimeManager", () => {
         );
 
       yield* manager.start({ instanceId: INSTANCE, action, catalogRevision: "reviewed:1" });
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.equal(yield* Ref.get(activated), true);
@@ -392,7 +400,7 @@ describe("ProviderRuntimeManager", () => {
         SECOND_INSTANCE,
       ]);
       assert.deepEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
-      assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.equal(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -427,8 +435,8 @@ describe("ProviderRuntimeManager", () => {
         action: "install",
         catalogRevision: "reviewed:1",
       });
-      const completed = yield* yieldUntil(
-        Ref.get(providersRef),
+      const completed = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
       );
 
@@ -436,7 +444,7 @@ describe("ProviderRuntimeManager", () => {
         completed[0]?.connection?.runtime?.operation?.message,
         "The runtime change finished, but Scient could not verify the resulting provider state.",
       );
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -471,8 +479,8 @@ describe("ProviderRuntimeManager", () => {
         catalogRevision: "reviewed:1",
       });
 
-      const completed = yield* yieldUntil(
-        Ref.get(providersRef),
+      const completed = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(
@@ -533,8 +541,8 @@ describe("ProviderRuntimeManager", () => {
         catalogRevision: "managed-droid:remove:0.202.0",
       });
 
-      const completed = yield* yieldUntil(
-        Ref.get(providersRef),
+      const completed = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(completed[0]?.connection?.runtime?.source, "system");
@@ -563,7 +571,7 @@ describe("ProviderRuntimeManager", () => {
 
   it.effect("starts a switch to an older managed release without special acceptance", () =>
     Effect.gen(function* () {
-      const runCount = yield* Ref.make(0);
+      const runCount = yield* SubscriptionRef.make(0);
       const olderPlan = {
         ...installPlan(),
         catalogRevision: "reviewed:1:older-than-system",
@@ -573,7 +581,7 @@ describe("ProviderRuntimeManager", () => {
       const actions: ProviderManagedRuntimeActions = {
         getSummary: Effect.succeed(systemRuntime),
         plan: () => Effect.succeed(olderPlan),
-        run: () => Ref.update(runCount, (count) => count + 1),
+        run: () => SubscriptionRef.update(runCount, (count) => count + 1),
       };
       const { manager } = yield* makeHarness(actions, [systemProvider]);
       const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
@@ -585,7 +593,7 @@ describe("ProviderRuntimeManager", () => {
         action: "install",
         catalogRevision: planned.catalogRevision,
       });
-      yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
+      yield* awaitState(runCount, (count) => count === 1);
     }),
   );
 
@@ -598,7 +606,7 @@ describe("ProviderRuntimeManager", () => {
     })),
   )("$caseTitle", ({ action }) =>
     Effect.gen(function* () {
-      const runCount = yield* Ref.make(0);
+      const runCount = yield* SubscriptionRef.make(0);
       const summary = { ...systemRuntime, actions: [action] };
       const actions: ProviderManagedRuntimeActions = {
         getSummary: Effect.succeed(summary),
@@ -610,7 +618,7 @@ describe("ProviderRuntimeManager", () => {
             systemVersion: null,
             olderThanSystem: false,
           }),
-        run: () => Ref.update(runCount, (count) => count + 1),
+        run: () => SubscriptionRef.update(runCount, (count) => count + 1),
       };
       const { manager } = yield* makeHarness(actions, [
         { ...systemProvider, connection: { ...systemProvider.connection!, runtime: summary } },
@@ -620,7 +628,7 @@ describe("ProviderRuntimeManager", () => {
         action,
         catalogRevision: "reviewed:1:system-version-unknown",
       });
-      yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
+      yield* awaitState(runCount, (count) => count === 1);
     }),
   );
 
@@ -651,8 +659,8 @@ describe("ProviderRuntimeManager", () => {
         catalogRevision: "reviewed:1",
       });
 
-      const waiting = yield* yieldUntil(
-        Ref.get(providersRef),
+      const waiting = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.waitingForIdle === true,
       );
       assert.strictEqual(waiting[0]?.connection?.runtime?.operation?.status, "activating");
@@ -667,8 +675,8 @@ describe("ProviderRuntimeManager", () => {
       yield* Ref.set(busy, false);
       yield* TestClock.adjust("1 second");
       yield* TestClock.adjust("1 second");
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(yield* Ref.get(installed), true);
@@ -698,15 +706,15 @@ describe("ProviderRuntimeManager", () => {
         action: "install",
         catalogRevision: "reviewed:1",
       });
-      const waiting = yield* yieldUntil(
-        Ref.get(providersRef),
+      const waiting = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.waitingForIdle === true,
       );
       const operationId = waiting[0]?.connection?.runtime?.operation?.operationId ?? "";
       assert.isDefined(started);
       yield* manager.cancel({ instanceId: INSTANCE, operationId });
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "cancelled",
       );
       assert.strictEqual(yield* Ref.get(installed), false);
@@ -734,17 +742,17 @@ describe("ProviderRuntimeManager", () => {
       );
       const reselecting = yield* manager.reselect(INSTANCE).pipe(Effect.forkChild);
       yield* TestClock.adjust("5 seconds");
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 0);
 
       yield* Ref.set(busy, false);
       yield* TestClock.adjust("1 second");
       yield* TestClock.adjust("1 second");
       assert.strictEqual(yield* Fiber.join(reselecting), true);
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 1);
 
       yield* Ref.set(recovered, false);
       assert.strictEqual(yield* manager.reselect(INSTANCE), false);
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 1);
     }),
   );
 
@@ -772,7 +780,7 @@ describe("ProviderRuntimeManager", () => {
       yield* TestClock.adjust("1 second");
       yield* TestClock.adjust("1 second");
       assert.strictEqual(yield* Fiber.join(first), true);
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 1);
     }),
   );
 
@@ -819,7 +827,7 @@ describe("ProviderRuntimeManager", () => {
           { isBusy: () => Ref.get(busy) },
         );
         const operationId = () =>
-          Ref.get(providersRef).pipe(
+          SubscriptionRef.get(providersRef).pipe(
             Effect.map((providers) => providers[0]?.connection?.runtime?.operation?.operationId),
           );
         for (let step = 0; step < 14; step += 1) {
@@ -845,7 +853,7 @@ describe("ProviderRuntimeManager", () => {
         // Once the provider goes idle, everything settles and releases.
         yield* Ref.set(busy, false);
         for (let step = 0; step < 6; step += 1) yield* TestClock.adjust("1 second");
-        const settled = yield* yieldUntil(Ref.get(providersRef), (providers) => {
+        const settled = yield* awaitState(providersRef, (providers) => {
           const status = providers[0]?.connection?.runtime?.operation?.status;
           return status === undefined || !ACTIVE_STATUSES.has(status);
         });
@@ -909,8 +917,8 @@ describe("ProviderRuntimeManager", () => {
         catalogRevision: "reviewed:1",
       });
       yield* Deferred.await(finished);
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.deepStrictEqual(
@@ -918,7 +926,7 @@ describe("ProviderRuntimeManager", () => {
         new Set([INSTANCE, SECOND_INSTANCE]),
       );
       assert.deepStrictEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
-      const providers = yield* Ref.get(providersRef);
+      const providers = yield* SubscriptionRef.get(providersRef);
       assert.deepStrictEqual(providers.slice(2), [other, custom, unverified]);
     }),
   );
@@ -932,7 +940,7 @@ describe("ProviderRuntimeManager", () => {
       };
       const { manager, reloadCountRef } = yield* makeHarness(actions, [systemProvider]);
       assert.strictEqual(yield* manager.reselect(INSTANCE), false);
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 0);
     }),
   );
 
@@ -962,8 +970,8 @@ describe("ProviderRuntimeManager", () => {
         catalogRevision: "reviewed:1",
       });
 
-      const completed = yield* yieldUntil(
-        Ref.get(providersRef),
+      const completed = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
       );
       assert.strictEqual(yield* Ref.get(runCount), 0);
@@ -998,7 +1006,7 @@ describe("ProviderRuntimeManager", () => {
       );
       assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "system");
       yield* Effect.yieldNow;
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+      assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 0);
     }),
   );
 
@@ -1052,7 +1060,7 @@ describe("ProviderRuntimeManager", () => {
         "cancelled",
       );
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -1088,9 +1096,9 @@ describe("ProviderRuntimeManager", () => {
 
         assert.strictEqual(yield* Ref.get(runInterruptions), 1);
         assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
         assert.strictEqual(
-          (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+          (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime?.operation?.status,
           "preparing",
         );
         const inactive = yield* manager
@@ -1100,7 +1108,7 @@ describe("ProviderRuntimeManager", () => {
 
         yield* closeManager;
         assert.strictEqual(yield* Ref.get(runInterruptions), 1);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -1127,8 +1135,8 @@ describe("ProviderRuntimeManager", () => {
       yield* Fiber.interrupt(caller);
       yield* Deferred.succeed(planGate, undefined);
 
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(yield* Ref.get(runCount), 1);
@@ -1164,7 +1172,7 @@ describe("ProviderRuntimeManager", () => {
         plan: () => Effect.succeed(installPlan()),
         run: () => Effect.die("must not run"),
       };
-      const { manager, coordinator } = yield* makeHarness(actions);
+      const { manager, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(actions);
 
       const caller = yield* manager
         .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
@@ -1174,7 +1182,8 @@ describe("ProviderRuntimeManager", () => {
       assert.notStrictEqual(yield* coordinator.current(INSTANCE), undefined);
       yield* TestClock.adjust("2 minutes");
 
-      yield* yieldUntil(coordinator.current(INSTANCE), (current) => current === undefined);
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
     }),
   );
 
@@ -1273,7 +1282,7 @@ describe("ProviderRuntimeManager", () => {
 
         assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
         assert.strictEqual(
-          (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+          (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime?.operation?.status,
           "cancelled",
         );
       }),
@@ -1312,7 +1321,7 @@ describe("ProviderRuntimeManager", () => {
       });
       const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
       assert.ok(operationId);
-      yield* yieldUntil(Ref.get(reloadCountRef), (count) => count === 1);
+      yield* awaitState(reloadCountRef, (count) => count === 1);
 
       const cancellationFailure = yield* manager
         .cancel({ instanceId: INSTANCE, operationId })
@@ -1324,18 +1333,18 @@ describe("ProviderRuntimeManager", () => {
         "The runtime change is already being finalized and can no longer be cancelled.",
       );
       assert.strictEqual(
-        (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+        (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime?.operation?.status,
         "activating",
       );
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 0);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 0);
 
       yield* Deferred.succeed(reloadGate, undefined);
-      const completed = yield* yieldUntil(
-        Ref.get(providersRef),
+      const completed = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(completed[0]?.connection?.runtime?.operation?.status, "succeeded");
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
